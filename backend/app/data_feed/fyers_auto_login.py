@@ -1,0 +1,260 @@
+"""Automated Fyers OAuth2 login using TOTP-based headless authentication.
+
+Fyers requires daily re-authentication. This module automates the full flow:
+1. Request login OTP (send_login_otp)
+2. Verify TOTP (generated from TOTP secret, replacing SMS OTP)
+3. Verify 4-digit PIN
+4. Extract auth code from redirect URL
+5. Exchange auth code for access token using SessionModel
+
+Uses Fyers' undocumented login API at api-t2.fyers.in, which is the same
+flow the web app uses internally.
+"""
+
+import base64
+import hashlib
+import logging
+from urllib.parse import parse_qs, urlparse
+
+import httpx
+import pyotp
+
+from app.config import settings
+from app.core.redis import get_redis
+
+logger = logging.getLogger(__name__)
+
+# Fyers login API base (separate from the data API)
+LOGIN_API = "https://api-t2.fyers.in/vagator/v2"
+TOKEN_API = "https://api-t1.fyers.in/api/v3/validate-authcode"
+
+# Redis key and TTL (matches auth.py)
+FYERS_TOKEN_KEY = "fyers:access_token"
+FYERS_TOKEN_TTL_SECONDS = 10 * 60 * 60  # 10 hours
+
+
+class FyersAutoLoginError(Exception):
+    """Raised when automated login fails at any step."""
+
+    pass
+
+
+def _generate_totp(totp_secret: str) -> str:
+    """Generate a time-based OTP from the TOTP secret."""
+    totp = pyotp.TOTP(totp_secret)
+    return totp.now()
+
+
+def _compute_app_id_hash(app_id: str, secret_key: str) -> str:
+    """Compute SHA-256 hash of app_id:secret_key for token exchange."""
+    hash_val = hashlib.sha256(f"{app_id}:{secret_key}".encode())
+    return hash_val.hexdigest()
+
+
+async def _send_login_otp(client: httpx.AsyncClient, username: str) -> str:
+    """Step 1: Send login OTP request. Returns request_key for next step."""
+    payload = {"fy_id": base64.b64encode(username.encode()).decode(), "app_id": "2"}
+    response = await client.post(f"{LOGIN_API}/send_login_otp_v2", json=payload)
+    data = response.json()
+
+    if data.get("s") != "ok" and data.get("code") != 200:
+        raise FyersAutoLoginError(
+            f"send_login_otp failed: {data.get('message', data)}"
+        )
+
+    request_key = data.get("request_key")
+    if not request_key:
+        raise FyersAutoLoginError("No request_key in send_login_otp response")
+
+    logger.debug("send_login_otp succeeded, got request_key")
+    return request_key
+
+
+async def _verify_totp(
+    client: httpx.AsyncClient, request_key: str, totp: str
+) -> str:
+    """Step 2: Verify the TOTP. Returns request_key for PIN verification."""
+    payload = {"request_key": request_key, "otp": int(totp)}
+    response = await client.post(f"{LOGIN_API}/verify_otp", json=payload)
+    data = response.json()
+
+    if data.get("s") != "ok" and data.get("code") != 200:
+        raise FyersAutoLoginError(
+            f"verify_otp failed: {data.get('message', data)}"
+        )
+
+    request_key = data.get("request_key")
+    if not request_key:
+        raise FyersAutoLoginError("No request_key in verify_otp response")
+
+    logger.debug("verify_otp succeeded")
+    return request_key
+
+
+async def _verify_pin(
+    client: httpx.AsyncClient, request_key: str, pin: str, username: str
+) -> str:
+    """Step 3: Verify 4-digit PIN. Returns access_token (login token, not API token)."""
+    payload = {
+        "request_key": request_key,
+        "identity_type": "pin",
+        "identifier": base64.b64encode(str(pin).encode()).decode(),
+    }
+    response = await client.post(f"{LOGIN_API}/verify_pin_v2", json=payload)
+    data = response.json()
+
+    if data.get("s") != "ok" and data.get("code") != 200:
+        raise FyersAutoLoginError(
+            f"verify_pin failed: {data.get('message', data)}"
+        )
+
+    access_token = data.get("data", {}).get("access_token")
+    if not access_token:
+        raise FyersAutoLoginError("No access_token in verify_pin response")
+
+    logger.debug("verify_pin succeeded")
+    return access_token
+
+
+async def _get_auth_code(
+    client: httpx.AsyncClient, login_token: str, app_id: str, redirect_uri: str
+) -> str:
+    """Step 4: Use the login token to generate an auth code via the token endpoint."""
+    payload = {
+        "fyers_id": settings.fyers_username,
+        "app_id": app_id.split("-")[0],  # Extract the numeric app_id part
+        "redirect_uri": redirect_uri,
+        "appType": "100",
+        "code_challenge": "",
+        "state": "stocktrading",
+        "scope": "",
+        "nonce": "",
+        "response_type": "code",
+        "create_cookie": True,
+    }
+    headers = {"Authorization": f"Bearer {login_token}"}
+
+    response = await client.post(
+        "https://api-t1.fyers.in/api/v3/token",
+        json=payload,
+        headers=headers,
+    )
+    data = response.json()
+
+    if data.get("s") != "ok" and data.get("code") != 200:
+        raise FyersAutoLoginError(
+            f"token (auth_code) request failed: {data.get('message', data)}"
+        )
+
+    # The auth code is in the Url field as a redirect URL with ?auth_code=xxx
+    url_str = data.get("Url")
+    if not url_str:
+        raise FyersAutoLoginError("No Url in token response")
+
+    parsed = urlparse(url_str)
+    auth_code_params = parse_qs(parsed.query)
+    auth_code = auth_code_params.get("auth_code", [None])[0]
+
+    if not auth_code:
+        raise FyersAutoLoginError(f"Could not extract auth_code from URL: {url_str}")
+
+    logger.debug("Got auth_code from redirect URL")
+    return auth_code
+
+
+async def _exchange_auth_code_for_token(
+    client: httpx.AsyncClient, auth_code: str, app_id: str, secret_key: str
+) -> str:
+    """Step 5: Exchange auth code for the final API access token."""
+    app_id_hash = _compute_app_id_hash(app_id, secret_key)
+    payload = {
+        "grant_type": "authorization_code",
+        "appIdHash": app_id_hash,
+        "code": auth_code,
+    }
+
+    response = await client.post(TOKEN_API, json=payload)
+    data = response.json()
+
+    if data.get("s") != "ok":
+        raise FyersAutoLoginError(
+            f"validate-authcode failed: {data.get('message', data)}"
+        )
+
+    access_token = data.get("access_token")
+    if not access_token:
+        raise FyersAutoLoginError("No access_token in validate-authcode response")
+
+    logger.info("Successfully obtained Fyers API access token")
+    return access_token
+
+
+async def auto_login() -> str:
+    """Execute the full automated login flow and return the access token.
+
+    Raises FyersAutoLoginError if any step fails.
+    """
+    # Validate required settings
+    if not settings.fyers_app_id:
+        raise FyersAutoLoginError("FYERS_APP_ID not configured")
+    if not settings.fyers_secret_key:
+        raise FyersAutoLoginError("FYERS_SECRET_KEY not configured")
+    if not settings.fyers_username:
+        raise FyersAutoLoginError("FYERS_USERNAME not configured")
+    if not settings.fyers_pin:
+        raise FyersAutoLoginError("FYERS_PIN not configured")
+    if not settings.fyers_totp_secret:
+        raise FyersAutoLoginError("FYERS_TOTP_SECRET not configured")
+
+    logger.info("Starting Fyers auto-login for user %s", settings.fyers_username)
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Step 1: Send login OTP
+        request_key = await _send_login_otp(client, settings.fyers_username)
+
+        # Step 2: Generate and verify TOTP
+        totp = _generate_totp(settings.fyers_totp_secret)
+        request_key = await _verify_totp(client, request_key, totp)
+
+        # Step 3: Verify PIN
+        login_token = await _verify_pin(
+            client, request_key, settings.fyers_pin, settings.fyers_username
+        )
+
+        # Step 4: Get auth code
+        auth_code = await _get_auth_code(
+            client,
+            login_token,
+            settings.fyers_app_id,
+            settings.fyers_redirect_uri,
+        )
+
+        # Step 5: Exchange for API access token
+        access_token = await _exchange_auth_code_for_token(
+            client,
+            auth_code,
+            settings.fyers_app_id,
+            settings.fyers_secret_key,
+        )
+
+    return access_token
+
+
+async def auto_login_and_store() -> str:
+    """Run auto-login and store the token in Redis.
+
+    Returns the access token on success.
+    Raises FyersAutoLoginError on failure.
+    """
+    access_token = await auto_login()
+
+    # Store in Redis with 10-hour TTL
+    r = get_redis()
+    await r.set(FYERS_TOKEN_KEY, access_token, ex=FYERS_TOKEN_TTL_SECONDS)
+    logger.info(
+        "Fyers access token stored in Redis (key=%s, TTL=%ds)",
+        FYERS_TOKEN_KEY,
+        FYERS_TOKEN_TTL_SECONDS,
+    )
+
+    return access_token

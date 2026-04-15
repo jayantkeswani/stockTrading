@@ -1,0 +1,99 @@
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export const api = {
+  // Market
+  getPrice: (symbol: string) => request(`/api/v1/market/price/${symbol}`),
+  getAllPrices: () =>
+    request<Record<string, { symbol: string; ltp: number; bid: number; ask: number; volume: number; change: number; change_pct: number; timestamp: string }>>(`/api/v1/market/prices`),
+  refreshQuotes: () => request(`/api/v1/market/feed/refresh`, { method: "POST" }),
+  getOHLCV: (symbol: string, limit = 200) =>
+    request(`/api/v1/market/ohlcv/${symbol}?limit=${limit}`),
+  getMarketStatus: () => request(`/api/v1/market/status`),
+  searchSymbols: (query: string) =>
+    request<{ results: Array<{ symbol: string; display: string; strike: number; type: string; ltp: number; expiry: string }> }>(
+      `/api/v1/market/symbols/search?q=${encodeURIComponent(query)}`
+    ),
+  startDataFeed: () => request(`/api/v1/market/feed/start`, { method: "POST" }),
+  stopDataFeed: () => request(`/api/v1/market/feed/stop`, { method: "POST" }),
+  getFyersStatus: () => request(`/api/v1/auth/fyers/status`),
+
+  // Positions
+  getPositions: () => request(`/api/v1/positions`),
+  closePosition: (id: string, reason = "MANUAL") =>
+    request(`/api/v1/positions/${id}/close`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  updateSL: (id: string, stopLoss: number) =>
+    request(`/api/v1/positions/${id}/sl`, {
+      method: "PATCH",
+      body: JSON.stringify({ stop_loss: stopLoss }),
+    }),
+
+  // Trades
+  getTrades: (params?: { status?: string; limit?: number }) => {
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    if (params?.limit) query.set("limit", params.limit.toString());
+    return request(`/api/v1/trades?${query}`);
+  },
+  getTradeSummary: () => request(`/api/v1/trades/summary`),
+  closeTrade: (id: string, exitPrice?: number) =>
+    request(`/api/v1/trades/${id}/close`, {
+      method: "POST",
+      body: JSON.stringify({ exit_price: exitPrice, reason: "MANUAL" }),
+    }),
+
+  // Signals
+  getSignals: (params?: { status?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    return request(`/api/v1/signals?${query}`);
+  },
+  getActiveSignals: () => request(`/api/v1/signals/active`),
+  executeSignal: (id: string) =>
+    request(`/api/v1/signals/${id}/execute`, { method: "POST" }),
+  rejectSignal: (id: string) =>
+    request(`/api/v1/signals/${id}/reject`, { method: "POST" }),
+
+  // Risk
+  getRiskDashboard: () => request(`/api/v1/risk/dashboard`),
+
+  // Agent
+  getAgentStatus: () => request(`/api/v1/agent/status`),
+  startAgent: () => request(`/api/v1/agent/start`, { method: "POST" }),
+  stopAgent: () => request(`/api/v1/agent/stop`, { method: "POST" }),
+  getAgentLogs: (limit = 50) => request(`/api/v1/agent/logs?limit=${limit}`),
+  confirmAction: (logId: string, approved: boolean) =>
+    request(`/api/v1/agent/confirm/${logId}`, {
+      method: "POST",
+      body: JSON.stringify({ approved }),
+    }),
+  toggleYolo: (enabled: boolean) =>
+    request(`/api/v1/agent/yolo`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
+
+  // Strategies
+  getStrategies: () => request(`/api/v1/strategies`),
+  toggleStrategy: (name: string) =>
+    request(`/api/v1/strategies/${name}/toggle`, { method: "PATCH" }),
+
+  // Health
+  health: () => request(`/api/v1/health`),
+};
