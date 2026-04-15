@@ -1,11 +1,14 @@
 import logging
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select, desc
 
 logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings as cfg
+from app.core.constants import IST
 from app.core.database import get_db
 from app.core.redis import get_cached_price
 from app.core.utils import is_market_open, is_in_trading_window, is_in_dead_zone, time_to_market_close_minutes
@@ -19,7 +22,11 @@ router = APIRouter()
 
 @router.get("/prices")
 async def get_all_prices():
-    """Get all cached prices at once. Used by frontend on page load."""
+    """Get all cached prices at once. Used by frontend on page load.
+
+    If no prices are cached (first load or cache expired), automatically
+    fetches latest quotes from Fyers REST API to populate the cache.
+    """
     from app.core.constants import FYERS_SYMBOL_MAP
     from app.core.redis import get_redis
     import json
@@ -30,6 +37,19 @@ async def get_all_prices():
         data = await r.get(f"price:{symbol}")
         if data:
             prices[symbol] = json.loads(data)
+
+    # If cache is empty, try to fetch fresh quotes via REST API
+    if not prices:
+        try:
+            await fyers_ws_client.fetch_quotes_rest()
+            # Re-read from cache after refresh
+            for symbol in FYERS_SYMBOL_MAP:
+                data = await r.get(f"price:{symbol}")
+                if data:
+                    prices[symbol] = json.loads(data)
+        except Exception:
+            logger.warning("Auto-refresh of quotes failed on empty cache")
+
     return prices
 
 
@@ -86,88 +106,113 @@ async def refresh_quotes():
 
 @router.get("/symbols/search")
 async def search_symbols(q: str = Query(min_length=2, max_length=50)):
-    """Search for option contract symbols.
+    """Search for tradeable symbols — stocks, futures, and options.
 
-    Returns matching Fyers symbols for options contracts.
-    Query format examples: "NIFTY 24000", "BANKNIFTY 56000 CE"
+    Searches the local symbol master (refreshed daily from Fyers).
+    No Fyers API call is made; only local data is searched.
+
+    Query format examples:
+      - "TCS"              → TCS equity + futures + options
+      - "TCS FUT"          → TCS futures only
+      - "NIFTY 24000"      → NIFTY options near strike 24000
+      - "NIFTY 24000CE"    → NIFTY 24000 CE options
+      - "NIFTY 24000 CE"   → same as above
+      - "RELIANCE"         → RELIANCE equity + derivatives
+    """
+    from app.data_feed.symbol_master import symbol_master
+
+    if not symbol_master.is_loaded:
+        logger.warning("Symbol master not loaded, attempting load...")
+        try:
+            await symbol_master.load()
+        except Exception:
+            logger.exception("Failed to load symbol master")
+            return {"results": []}
+
+    matches = symbol_master.search(q, limit=20)
+
+    results = []
+    for m in matches:
+        results.append({
+            "symbol": m["s"],
+            "display": m["d"],
+            "short_name": m["n"],
+            "segment": m["g"],
+            "strike": m.get("k") or 0,
+            "type": m.get("t") or "",
+            "ltp": 0,  # Price fetched separately by frontend
+            "expiry": m.get("x") or "",
+            "lot_size": m.get("l") or 1,
+        })
+
+    return {"results": results}
+
+
+class BatchPriceRequest(BaseModel):
+    symbols: list[str] = Field(..., max_length=50)
+
+
+@router.post("/prices/batch")
+async def get_batch_prices(body: BatchPriceRequest):
+    """Fetch prices for a list of Fyers symbols (max 50).
+
+    Checks Redis cache first, then fetches missing prices from Fyers REST API.
+    Used by the watchlist to get prices for custom symbols.
     """
     from app.core.redis import get_redis
-    from app.config import settings as cfg
+    import json
+
+    if not body.symbols:
+        return {}
 
     r = get_redis()
-    token = await r.get("fyers:access_token")
-    if not token:
-        return {"results": []}
+    prices = {}
 
-    try:
-        from fyers_apiv3.fyersModel import FyersModel
+    # Check cache first
+    uncached = []
+    for sym in body.symbols:
+        data = await r.get(f"price:{sym}")
+        if data:
+            prices[sym] = json.loads(data)
+        else:
+            uncached.append(sym)
 
-        fyers = FyersModel(client_id=cfg.fyers_app_id, token=token)
+    # Fetch uncached from Fyers REST API
+    if uncached:
+        token = await r.get("fyers:access_token")
+        if token:
+            try:
+                from datetime import datetime
+                from fyers_apiv3.fyersModel import FyersModel
+                from app.core.redis import cache_price
 
-        # Parse the query to identify index and strike
-        parts = q.upper().split()
-        index = parts[0] if parts else ""
+                fyers = FyersModel(client_id=cfg.fyers_app_id, token=token)
+                # Fyers quotes() accepts max 50 symbols at a time
+                for i in range(0, len(uncached), 50):
+                    batch = uncached[i:i + 50]
+                    result = fyers.quotes({"symbols": ",".join(batch)})
+                    if result.get("s") == "ok":
+                        for item in result.get("d", []):
+                            v = item.get("v", {})
+                            fyers_symbol = item.get("n", "")
+                            if not fyers_symbol:
+                                continue
+                            price_data = {
+                                "symbol": fyers_symbol,
+                                "ltp": v.get("lp", 0),
+                                "bid": v.get("bid", v.get("lp", 0)),
+                                "ask": v.get("ask", v.get("lp", 0)),
+                                "volume": v.get("volume", 0),
+                                "change": v.get("ch", 0),
+                                "change_pct": v.get("chp", 0),
+                                "timestamp": datetime.now(IST).isoformat(),
+                            }
+                            await cache_price(fyers_symbol, price_data)
+                            prices[fyers_symbol] = price_data
+            except Exception:
+                logger.exception("Failed to fetch batch prices from Fyers")
 
-        # Map common names to Fyers format
-        index_map = {
-            "NIFTY": "NIFTY",
-            "BANKNIFTY": "BANKNIFTY",
-            "FINNIFTY": "FINNIFTY",
-            "SENSEX": "SENSEX",
-            "MIDCPNIFTY": "MIDCPNIFTY",
-        }
-
-        matched_index = index_map.get(index)
-        if not matched_index:
-            return {"results": []}
-
-        # Use option chain to get available strikes
-        exchange = "BSE" if matched_index == "SENSEX" else "NSE"
-        oc_symbol = f"{exchange}:{matched_index}-INDEX"
-        result = fyers.optionchain({"symbol": oc_symbol, "strikecount": 10})
-
-        if result.get("s") != "ok":
-            return {"results": []}
-
-        options = []
-        for opt in result.get("data", {}).get("optionsChain", []):
-            symbol = opt.get("symbol", "")
-            strike = opt.get("strikePrice", 0)
-            opt_type = opt.get("option_type", "")
-            type_label = "CE" if opt_type == "CE" else "PE"
-            ltp = opt.get("ltp", 0)
-            expiry = opt.get("expiryDate", "")
-
-            # Filter by strike if user specified one
-            if len(parts) > 1:
-                try:
-                    target_strike = float(parts[1])
-                    if abs(strike - target_strike) > 500:
-                        continue
-                except ValueError:
-                    pass
-
-            # Filter by option type if specified
-            if len(parts) > 2 and parts[2] in ("CE", "PE"):
-                if type_label != parts[2]:
-                    continue
-
-            options.append({
-                "symbol": symbol,
-                "display": f"{matched_index} {int(strike)} {type_label}",
-                "strike": strike,
-                "type": type_label,
-                "ltp": ltp,
-                "expiry": expiry,
-            })
-
-        # Sort by strike proximity to ATM
-        options.sort(key=lambda x: x["strike"])
-        return {"results": options[:20]}
-
-    except Exception as e:
-        logger.exception("Symbol search failed")
-        return {"results": []}
+    return prices
 
 
 @router.post("/feed/stop")

@@ -22,7 +22,7 @@ Lifespan startup: starts Fyers login scheduler, auto-starts data feed if token e
 
 ### `app/core/` - Foundation
 - `database.py` - Async SQLAlchemy engine + session factory (`get_db` dependency)
-- `redis.py` - Redis connection pool + pub/sub helpers (`get_redis`, `publish_event`)
+- `redis.py` - Redis connection pool + pub/sub helpers (`get_redis`, `publish_event`). Price cache uses 24h TTL (`price:{symbol}`)
 - `constants.py` - Market hours (9:15-15:30 IST), lot sizes (NIFTY=75, BANKNIFTY=30, FINNIFTY=25, SENSEX=10, MIDCPNIFTY=75), exchange codes, VWAP_PROXIMITY_PCT
 - `enums.py` - All enums: OptionType, OrderSide, TradeStatus, ExitReason, SignalStatus, SignalType, StrategyName, IndexSymbol, AgentAutonomyLevel, AgentActionType, ConfirmationStatus, DayBias, CPRType
 - `exceptions.py` - Custom exception hierarchy
@@ -49,7 +49,8 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 - `positions.py` - Active positions, close, update SL/target
 - `agent.py` - Agent start/stop/status, confirm actions, YOLO toggle (`PATCH /yolo`)
 - `risk.py` - Daily P&L, drawdown %, configured limits
-- `market_data.py` - `GET /prices` (all symbols), `POST /feed/start|stop|refresh`, `GET /symbols/search`
+- `market_data.py` - `GET /prices` (all symbols, auto-refreshes via REST if cache empty), `POST /prices/batch` (fetch prices for arbitrary Fyers symbols, used by watchlist), `POST /feed/start|stop|refresh`, `GET /symbols/search` (local symbol master, supports stocks/futures/options: "TCS", "NIFTY 24000CE", "RELIANCE FUT")
+- `watchlist.py` - `GET /watchlist`, `POST /watchlist`, `DELETE /watchlist/{symbol}` — Redis-backed watchlist (agent can add symbols programmatically)
 - `strategies.py` - List/update strategy configs
 - `auth.py` - Fyers OAuth flow (login redirect, callback, token storage)
 
@@ -79,6 +80,7 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 - `fyers_auto_login.py` - Headless auto-login: base64-encoded credentials, TOTP generation via pyotp
 - `fyers_client.py` - REST client: quotes, historical data, option chain, OI
 - `fyers_ws_client.py` - WebSocket client: `FyersDataSocket` (threaded SDK bridged to asyncio), auto-fetches prices on start
+- `symbol_master.py` - Downloads Fyers symbol master CSVs (NSE_CM/FO, BSE_CM/FO), parses ~127K symbols, stores gzip-compressed in Redis, provides in-memory search. Refreshed daily.
 - `feed_manager.py` - Aggregates ticks into candles, publishes to Redis, triggers `strategy_runner.on_candle_close()`
 
 ### `app/agent/` - AI Trading Agent
@@ -89,6 +91,7 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 
 ### `app/tasks/` - Scheduled Tasks
 - `fyers_login_task.py` - APScheduler job: auto-refreshes Fyers token via TOTP login
+- `symbol_master_task.py` - APScheduler job: refreshes symbol master daily at 8:00 AM IST
 
 ## Conventions
 - All async functions use `async def`

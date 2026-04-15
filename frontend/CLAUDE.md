@@ -34,7 +34,7 @@ All pages use `'use client'` directive.
 **dashboard/**
 - `PnLCard.tsx` - Daily/weekly/all-time P&L display
 - `QuickStats.tsx` - Snapshot cards: capital, drawdown %, win %, ratio
-- `Watchlist.tsx` - Symbol watchlist with debounced search (300ms), dropdown autocomplete from `/symbols/search`, shows expiry + LTP per option
+- `Watchlist.tsx` - Symbol watchlist with debounced search (300ms), dropdown autocomplete from `/symbols/search` (local symbol master). Custom items stored in backend Redis via `/api/v1/watchlist` (enables agent to add symbols). Supports stocks, futures, options with segment badges (EQ/FUT/OPT).
 - `SymbolSelector.tsx` - Index dropdown (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY)
 - `ScannerPanel.tsx` - Real-time signal scanner
 - `AgentFeed.tsx` - Agent action log (SL hits, profit confirmations, executions)

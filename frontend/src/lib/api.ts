@@ -24,8 +24,13 @@ export const api = {
     request(`/api/v1/market/ohlcv/${symbol}?limit=${limit}`),
   getMarketStatus: () => request(`/api/v1/market/status`),
   searchSymbols: (query: string) =>
-    request<{ results: Array<{ symbol: string; display: string; strike: number; type: string; ltp: number; expiry: string }> }>(
+    request<{ results: Array<{ symbol: string; display: string; short_name: string; segment: string; strike: number; type: string; ltp: number; expiry: string; lot_size: number }> }>(
       `/api/v1/market/symbols/search?q=${encodeURIComponent(query)}`
+    ),
+  fetchBatchPrices: (symbols: string[]) =>
+    request<Record<string, { symbol: string; ltp: number; bid: number; ask: number; volume: number; change: number; change_pct: number; timestamp: string }>>(
+      `/api/v1/market/prices/batch`,
+      { method: "POST", body: JSON.stringify({ symbols }) }
     ),
   startDataFeed: () => request(`/api/v1/market/feed/start`, { method: "POST" }),
   stopDataFeed: () => request(`/api/v1/market/feed/stop`, { method: "POST" }),
@@ -87,6 +92,21 @@ export const api = {
     request(`/api/v1/agent/yolo`, {
       method: "PATCH",
       body: JSON.stringify({ enabled }),
+    }),
+
+  // Watchlist
+  getWatchlist: () =>
+    request<{ items: Array<{ symbol: string; display: string; segment: string; strike: number | null; option_type: string | null; expiry: string }> }>(
+      `/api/v1/watchlist`
+    ),
+  addToWatchlist: (item: { symbol: string; display: string; segment?: string; strike?: number | null; option_type?: string | null; expiry?: string }) =>
+    request(`/api/v1/watchlist`, {
+      method: "POST",
+      body: JSON.stringify(item),
+    }),
+  removeFromWatchlist: (symbol: string) =>
+    request(`/api/v1/watchlist/${encodeURIComponent(symbol)}`, {
+      method: "DELETE",
     }),
 
   // Strategies

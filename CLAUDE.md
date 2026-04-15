@@ -35,17 +35,17 @@ stockTrading/
 ├── scripts/               # dev.sh, stop.sh, reset.sh
 ├── backend/               # Python FastAPI backend (see backend/CLAUDE.md)
 │   ├── app/
-│   │   ├── api/v1/        # REST endpoints (8 routers)
+│   │   ├── api/v1/        # REST endpoints (9 routers, incl. watchlist)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
 │   │   ├── models/        # SQLAlchemy ORM models (8 tables)
 │   │   ├── schemas/       # Pydantic request/response schemas
 │   │   ├── services/      # Business logic (strategy_runner)
 │   │   ├── strategies/    # Strategy engine (base + 3 strategies)
 │   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns)
-│   │   ├── data_feed/     # Fyers API (auth, REST, WebSocket, feed manager)
+│   │   ├── data_feed/     # Fyers API (auth, REST, WebSocket, feed manager, symbol master)
 │   │   ├── agent/         # AI trading agent (monitor, execute, notify)
 │   │   ├── core/          # Config, database, Redis, constants, enums, utils
-│   │   └── tasks/         # Scheduled tasks (Fyers auto-login)
+│   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh)
 │   ├── tests/             # pytest test suite
 │   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)

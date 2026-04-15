@@ -8,7 +8,9 @@
 │  (Market    │ WS  │                                                  │
 │   Data)     │     │  ┌──────────────┐  ┌─────────────────────────┐   │
 └─────────────┘     │  │ Feed Manager │─>│ Redis (:6380)            │   │
-                    │  │ (fyers_ws +  │  │ Price cache + pub/sub    │   │
+                    │  │ (fyers_ws +  │  │ Price cache (24h TTL)    │   │
+                    │  │ Symbol master (gzip)     │   │
+                    │  │ Watchlist items (hash)    │   │
                     │  │  REST polls) │  └──────────┬──────────────┘   │
                     │  └──────┬───────┘             │                  │
                     │         │                     v                  │
@@ -105,6 +107,43 @@ Every 2 seconds (agent_runner main loop):
 Option A (Manual): User visits /api/v1/auth/fyers/login → Fyers OAuth → callback → token stored in Redis
 Option B (Auto):   APScheduler job → fyers_auto_login.py → base64 credentials + TOTP → token stored in Redis
                    Runs on startup + periodic refresh
+```
+
+### 6. Symbol Master Flow
+```
+Startup (background task, non-blocking):
+  1. Check Redis for cached symbol master (gzip JSON at "symbols:master")
+  2. If fresh (< 24h old) → decompress + load into memory
+  3. If stale/missing → download 4 CSVs from Fyers public endpoint:
+     - https://public.fyers.in/sym_details/NSE_CM.csv  (~9K equities)
+     - https://public.fyers.in/sym_details/NSE_FO.csv  (~96K F&O)
+     - https://public.fyers.in/sym_details/BSE_CM.csv  (~12K equities)
+     - https://public.fyers.in/sym_details/BSE_FO.csv  (~9K F&O)
+  4. Parse CSVs → build in-memory index (by short name)
+  5. Store gzip-compressed JSON in Redis
+
+Daily refresh: APScheduler at 8:00 AM IST (before login at 8:55 AM)
+
+Search: GET /api/v1/market/symbols/search?q=TCS
+  → In-memory filter (no API call) → returns symbols with metadata
+```
+
+### 7. Watchlist Flow
+```
+Redis key: "watchlist:items" (hash: symbol → JSON metadata)
+
+Frontend:
+  Load: GET /api/v1/watchlist → fetch items → POST /prices/batch for prices
+  Add:  Search symbol → select → POST /api/v1/watchlist + fetch price
+  Remove: DELETE /api/v1/watchlist/{symbol}
+  Poll: Every 10s → POST /prices/batch for all watchlist symbols
+
+Backend (agent can also add):
+  POST /api/v1/watchlist {"symbol": "NSE:TCS-EQ", "display": "TCS LTD"}
+
+Price fetch for custom symbols:
+  POST /api/v1/market/prices/batch {"symbols": ["NSE:TCS-EQ", ...]}
+  → Check Redis cache → fetch uncached from Fyers REST quotes() → cache + return
 ```
 
 ## Key Design Decisions
