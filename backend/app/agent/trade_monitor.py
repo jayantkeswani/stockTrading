@@ -51,10 +51,15 @@ async def _check_position(
 ) -> dict | None:
     """Check a single position for exit conditions."""
 
-    # Get current price from Redis
-    price_data = await get_cached_price(pos.symbol)
+    # Get current option price from Redis (use option symbol if available, else index)
+    price_symbol = pos.fyers_option_symbol or pos.symbol
+    price_data = await get_cached_price(price_symbol)
     if not price_data:
-        return None
+        # Fallback: try Fyers REST for option premium
+        if pos.fyers_option_symbol:
+            price_data = await _fetch_option_price_rest(pos.fyers_option_symbol)
+        if not price_data:
+            return None
 
     current_price = Decimal(str(price_data.get("ltp", 0)))
     if current_price <= 0:
@@ -197,3 +202,16 @@ async def _request_profit_confirmation(
         "symbol": pos.symbol,
         "log_id": str(log.id),
     }
+
+
+async def _fetch_option_price_rest(fyers_symbol: str) -> dict | None:
+    """Fallback: fetch option LTP via Fyers REST when not in Redis cache."""
+    try:
+        from app.services.option_resolver import fetch_option_premium
+
+        premium = await fetch_option_premium(fyers_symbol)
+        if premium and premium > 0:
+            return {"ltp": premium}
+    except Exception:
+        logger.exception("Failed REST fallback for %s", fyers_symbol)
+    return None

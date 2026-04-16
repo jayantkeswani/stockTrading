@@ -12,7 +12,7 @@ See docs/strategies/strategy-2-vwap-pullback.md for full specification.
 import logging
 
 from app.core.constants import VWAP_PROXIMITY_PCT
-from app.core.enums import DayBias, SignalType, StrategyName
+from app.core.enums import DayBias, InstrumentType, SignalType, StrategyName
 from app.indicators.candle_patterns import (
     average_volume,
     is_bearish_reversal,
@@ -104,14 +104,14 @@ class VWAPPullbackStrategy(BaseStrategy):
         if ctx.india_vix and ctx.india_vix < 14:
             confidence += 5  # Cheap options
 
-        # Calculate entry, SL, target
-        entry_price = ctx.current_price  # Will be replaced with option premium
+        # SL/target params — actual values computed by option_resolver on the premium
         sl_pct = 0.30 if ctx.previous_day.bias == DayBias.BULLISH else 0.35
-        stop_loss = entry_price * (1 - sl_pct)
-        target_price = entry_price * (1 + sl_pct * 1.5)  # 1:1.5 R:R
+        rr_multiplier = 1.5
 
-        # Build indicator snapshot
+        # Build indicator snapshot (includes sl_pct/rr for option_resolver)
         indicators = self._build_indicator_snapshot(ctx, vwap, distance)
+        indicators["sl_pct"] = sl_pct
+        indicators["rr_multiplier"] = rr_multiplier
 
         reason = (
             f"VWAP pullback BUY CE: {ctx.symbol} at {ctx.current_price:.2f}. "
@@ -125,11 +125,12 @@ class VWAPPullbackStrategy(BaseStrategy):
             strategy_name=self.name,
             symbol=ctx.symbol,
             signal_type=SignalType.BUY_CE,
-            strike_price=0,  # Will be determined by strike selector
-            expiry_date=None,  # Will be set to nearest weekly expiry
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            target_price=target_price,
+            instrument_type=InstrumentType.OPTION,
+            strike_price=0,  # Resolved by option_resolver
+            expiry_date=None,  # Resolved by option_resolver
+            entry_price=ctx.current_price,  # Placeholder; replaced with premium
+            stop_loss=0,  # Resolved by option_resolver
+            target_price=None,  # Resolved by option_resolver
             confidence=min(confidence, 100),
             reason=reason,
             indicators=indicators,
@@ -171,12 +172,13 @@ class VWAPPullbackStrategy(BaseStrategy):
         if ctx.india_vix and ctx.india_vix < 14:
             confidence += 5
 
-        entry_price = ctx.current_price
+        # SL/target params — actual values computed by option_resolver on the premium
         sl_pct = 0.30 if ctx.previous_day.bias == DayBias.BEARISH else 0.35
-        stop_loss = entry_price * (1 + sl_pct)
-        target_price = entry_price * (1 - sl_pct * 1.5)
+        rr_multiplier = 1.5
 
         indicators = self._build_indicator_snapshot(ctx, vwap, distance)
+        indicators["sl_pct"] = sl_pct
+        indicators["rr_multiplier"] = rr_multiplier
 
         reason = (
             f"VWAP pullback BUY PE: {ctx.symbol} at {ctx.current_price:.2f}. "
@@ -190,11 +192,12 @@ class VWAPPullbackStrategy(BaseStrategy):
             strategy_name=self.name,
             symbol=ctx.symbol,
             signal_type=SignalType.BUY_PE,
-            strike_price=0,
-            expiry_date=None,
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            target_price=target_price,
+            instrument_type=InstrumentType.OPTION,
+            strike_price=0,  # Resolved by option_resolver
+            expiry_date=None,  # Resolved by option_resolver
+            entry_price=ctx.current_price,  # Placeholder; replaced with premium
+            stop_loss=0,  # Resolved by option_resolver
+            target_price=None,  # Resolved by option_resolver
             confidence=min(confidence, 100),
             reason=reason,
             indicators=indicators,

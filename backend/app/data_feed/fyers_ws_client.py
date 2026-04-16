@@ -128,9 +128,10 @@ class FyersWSClient:
                 reconnect_retry=10,
             )
 
-            # Subscribe and connect (runs in background thread)
-            self._ws.subscribe(symbols=self._symbols, data_type="SymbolUpdate")
+            # Connect first (validates token, starts WS thread), then subscribe.
+            # subscribe() requires __valid_token=True, which is set during connect().
             self._ws.connect()
+            self._ws.subscribe(symbols=self._symbols, data_type="SymbolUpdate")
 
             logger.info(
                 "Fyers WebSocket connecting for symbols: %s",

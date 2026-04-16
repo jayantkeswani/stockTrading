@@ -52,17 +52,24 @@ Combines previous day analysis for directional bias, VWAP pullbacks for entries,
 6. Highest Call OI strike is above current price (OI resistance holds)
 7. Volume on rally < average volume
 
-### Strike Selection:
+### Strike Selection (handled by `option_resolver.py`):
 - ATM or 1-strike ITM (Delta 0.45-0.60)
-- Premium should be Rs 150-400 range
-- Select the nearest weekly expiry (for NIFTY: Thursday)
+- Premium should be Rs 150-400 range (soft preference, not a hard blocker)
+- ATM tried first; if premium unavailable, falls back to ITM
+- Strike gaps: NIFTY=50, BANKNIFTY=100, FINNIFTY=50, SENSEX=100, MIDCPNIFTY=25
+
+### Expiry Selection (post-SEBI Nov 2024):
+- **NIFTY**: Nearest weekly Tuesday expiry
+- **SENSEX**: Nearest weekly Thursday expiry
+- **BANKNIFTY, FINNIFTY, MIDCPNIFTY**: Monthly only — last Tuesday of month (no weekly contracts)
+- If expiry day is a market holiday, shifts to previous trading day
 
 ## Exit Rules
-- **Stop Loss:** 30-35% of premium (e.g., buy at Rs 250, SL at Rs 170)
-- **Target 1:** Book 60% at 1:1.5 risk-reward
+- **Stop Loss:** 30-35% of option premium (e.g., buy at Rs 250, SL at Rs 175). Tighter SL (30%) when bias is strong, wider (35%) otherwise. Computed by `option_resolver.py` on actual option premium, not index price.
+- **Target 1:** Book 60% at 1:1.5 risk-reward (e.g., SL 30% → target 45% above premium)
 - **Target 2:** Trail remaining 40% with 9 EMA on 5-min as trailing stop
 - **Time Exit:** Close all positions by 3:15 PM IST
-- **Invalidation:** Close if price closes below VWAP (for calls) or above VWAP (for puts) on 5-min
+- **Invalidation:** Close if underlying index price closes below VWAP (for calls) or above VWAP (for puts) on 5-min
 
 ## Position Sizing
 - Base: 2% of capital per trade = Rs 20,000 risk

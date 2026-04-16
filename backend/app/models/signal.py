@@ -15,7 +15,8 @@ class Signal(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=generate_uuid)
     strategy_name: Mapped[str] = mapped_column(String(50), nullable=False)
     symbol: Mapped[str] = mapped_column(String(30), nullable=False)
-    signal_type: Mapped[str] = mapped_column(String(10), nullable=False)  # BUY_CE, BUY_PE
+    signal_type: Mapped[str] = mapped_column(String(10), nullable=False)  # BUY_CE, BUY_PE, BUY_FUT, SELL_FUT
+    instrument_type: Mapped[str] = mapped_column(String(10), nullable=False, default="OPTION")  # OPTION, FUTURE, EQUITY
     strike_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     expiry_date: Mapped[date] = mapped_column(Date, nullable=False)
     entry_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
@@ -27,6 +28,8 @@ class Signal(Base, TimestampMixin):
     indicators: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     executable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     blocked_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    index_entry_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    fyers_option_symbol: Mapped[str | None] = mapped_column(String(60), nullable=True)
     executed_trade_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

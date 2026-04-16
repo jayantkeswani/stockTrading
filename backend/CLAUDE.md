@@ -23,8 +23,8 @@ Lifespan startup: starts Fyers login scheduler, auto-starts data feed if token e
 ### `app/core/` - Foundation
 - `database.py` - Async SQLAlchemy engine + session factory (`get_db` dependency)
 - `redis.py` - Redis connection pool + pub/sub helpers (`get_redis`, `publish_event`). Price cache uses 24h TTL (`price:{symbol}`)
-- `constants.py` - Market hours (9:15-15:30 IST), lot sizes (NIFTY=75, BANKNIFTY=30, FINNIFTY=25, SENSEX=10, MIDCPNIFTY=75), exchange codes, VWAP_PROXIMITY_PCT
-- `enums.py` - All enums: OptionType, OrderSide, TradeStatus, ExitReason, SignalStatus, SignalType, StrategyName, IndexSymbol, AgentAutonomyLevel, AgentActionType, ConfirmationStatus, DayBias, CPRType
+- `constants.py` - Market hours (9:15-15:30 IST), lot sizes, strike gaps per index (`STRIKE_GAPS`), expiry schedule (`WEEKLY_EXPIRY_DAYS`, `MONTHLY_ONLY_INDICES`, `MONTHLY_EXPIRY_DOW`), option exchange mapping, premium range (150-400), exchange codes, VWAP_PROXIMITY_PCT
+- `enums.py` - All enums: OptionType, OrderSide, TradeStatus, ExitReason, SignalStatus, SignalType, StrategyName, IndexSymbol, InstrumentType (OPTION/FUTURE/EQUITY), AgentAutonomyLevel, AgentActionType, ConfirmationStatus, DayBias, CPRType
 - `exceptions.py` - Custom exception hierarchy
 - `utils.py` - IST timezone helpers (`now_ist()`, `is_market_open()`), market hour checks
 
@@ -58,13 +58,15 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 - `manager.py` - WebSocketManager: connect/disconnect/broadcast. Single `/ws` endpoint. Events: `price:update`, `signal:new`, `trade:open`, `trade:close`, `position:pnl`, `agent:action`, `market:status`
 
 ### `app/services/` - Business Logic
-- `strategy_runner.py` - On each candle close: evaluates all active strategies, persists signals to DB, broadcasts via WebSocket, triggers agent if YOLO mode
+- `strategy_runner.py` - On each candle close: evaluates all active strategies, resolves option details (for OPTION signals), persists signals to DB, broadcasts via WebSocket, triggers agent if YOLO mode
+- `option_resolver.py` - Resolves index-level signals to tradeable option contracts: strike selection (ATM/ITM), expiry selection (weekly for NIFTY/SENSEX, monthly for BANKNIFTY/FINNIFTY/MIDCPNIFTY), symbol master lookup, premium fetch (Redis → Fyers REST), SL/target on premium. Only runs for `instrument_type=OPTION` signals; FUTURE signals bypass it entirely.
+- `candle_backfill.py` - On startup, backfills candles from Fyers historical API into `MarketData1m`: (1) previous trading day — so strategies have PDH/PDL/PDC/CPR context, (2) today's elapsed candles — so a late start doesn't miss the 9:45 trading window. Uses ON CONFLICT DO NOTHING for idempotency.
 
 ### `app/strategies/` - Strategy Engine
-- `base.py` - `BaseStrategy` ABC with `evaluate(ctx) -> StrategySignal | None`, `should_exit()`, `get_position_size()`. Defines `MarketContext` (current price, candles, VWAP, PDH/PDL, CPR, OI, VIX)
+- `base.py` - `BaseStrategy` ABC with `evaluate(ctx) -> StrategySignal | None`, `should_exit()`, `get_position_size()`. Defines `MarketContext` (current price, candles, VWAP, PDH/PDL, CPR, OI, VIX). `StrategySignal` carries `instrument_type` (OPTION/FUTURE/EQUITY) to control post-processing.
 - `registry.py` - Discovers and instantiates active strategies from DB config
 - `strategy_1_orb.py` - Opening Range Breakout (STUB - not implemented)
-- `strategy_2_vwap_pullback.py` - VWAP Pullback + Previous Day Bias + OI (PRIMARY - fully implemented)
+- `strategy_2_vwap_pullback.py` - VWAP Pullback + Previous Day Bias + OI (PRIMARY - fully implemented). Sets `instrument_type=OPTION`, stores `sl_pct`/`rr_multiplier` in indicators for the option_resolver.
 - `strategy_3_gamma_scalping.py` - Expiry Day Gamma Scalping (STUB - not implemented)
 
 ### `app/indicators/` - Technical Indicators (pure functions, no side effects)
@@ -79,14 +81,14 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 - `fyers_auth.py` - OAuth flow using `SessionModel` from fyers_apiv3 SDK
 - `fyers_auto_login.py` - Headless auto-login: base64-encoded credentials, TOTP generation via pyotp
 - `fyers_client.py` - REST client: quotes, historical data, option chain, OI
-- `fyers_ws_client.py` - WebSocket client: `FyersDataSocket` (threaded SDK bridged to asyncio), auto-fetches prices on start
+- `fyers_ws_client.py` - WebSocket client: `FyersDataSocket` (threaded SDK bridged to asyncio), auto-fetches prices on start. **Important**: `connect()` must be called before `subscribe()` — the SDK's subscribe silently no-ops if the token hasn't been validated yet (which happens during connect).
 - `symbol_master.py` - Downloads Fyers symbol master CSVs (NSE_CM/FO, BSE_CM/FO), parses ~127K symbols, stores gzip-compressed in Redis, provides in-memory search. Refreshed daily.
-- `feed_manager.py` - Aggregates ticks into candles, publishes to Redis, triggers `strategy_runner.on_candle_close()`
+- `feed_manager.py` - Aggregates ticks into candles, persists completed 1m candles to `MarketData1m`, publishes to Redis, triggers `strategy_runner.on_candle_close()`
 
 ### `app/agent/` - AI Trading Agent
 - `agent_runner.py` - Main agent loop (2s interval). Singleton. Manages YOLO mode toggle, dispatches to monitor/executor
-- `trade_monitor.py` - Checks open positions: SL hit → auto-close, target hit → confirm (SEMI) or auto-book (YOLO), 3:15 PM time exit, 5% drawdown halt
-- `auto_executor.py` - Executes signals automatically in YOLO mode
+- `trade_monitor.py` - Checks open positions: fetches option premium via `fyers_option_symbol` (Redis cache → Fyers REST fallback). SL hit → auto-close, target hit → confirm (SEMI) or auto-book (YOLO), 3:15 PM time exit, 5% drawdown halt
+- `auto_executor.py` - Executes signals automatically in YOLO mode. Subscribes to option symbol on websocket feed when position is opened.
 - `notification.py` - Telegram Bot API: trade alerts, confirmation requests, P&L summaries
 
 ### `app/tasks/` - Scheduled Tasks

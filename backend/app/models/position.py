@@ -24,6 +24,7 @@ class Position(Base, TimestampMixin):
     stop_loss: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     target_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     unrealized_pnl: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    fyers_option_symbol: Mapped[str | None] = mapped_column(String(60), nullable=True)
     strategy_name: Mapped[str] = mapped_column(String(50), nullable=False)
     is_paper: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -29,11 +29,44 @@ LOT_SIZES = {
     "MIDCPNIFTY": 50,
 }
 
-# Expiry days (day of week: 0=Monday, 6=Sunday)
-WEEKLY_EXPIRY_DAYS = {
-    "NIFTY": 3,      # Thursday
-    "SENSEX": 4,      # Friday
+# Strike price gaps per index
+STRIKE_GAPS = {
+    "NIFTY": 50,
+    "BANKNIFTY": 100,
+    "FINNIFTY": 50,
+    "SENSEX": 100,
+    "MIDCPNIFTY": 25,
 }
+
+# Weekly expiry days (day of week: 0=Monday, 6=Sunday)
+# Post-SEBI Nov 2024: only NIFTY (NSE) and SENSEX (BSE) have weekly expiries.
+# BANKNIFTY, FINNIFTY, MIDCPNIFTY are monthly-only (last Tuesday of month).
+WEEKLY_EXPIRY_DAYS = {
+    "NIFTY": 1,       # Tuesday (changed from Thursday, effective Sep 2025)
+    "SENSEX": 3,      # Thursday
+}
+
+# Indices that only have monthly expiry (no weekly contracts)
+MONTHLY_ONLY_INDICES = {"BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"}
+
+# Monthly expiry day of week per exchange
+MONTHLY_EXPIRY_DOW = {
+    "NSE": 1,  # Last Tuesday of month
+    "BSE": 3,  # Last Thursday of month
+}
+
+# Exchange for each index (used for option symbol construction)
+OPTION_EXCHANGE = {
+    "NIFTY": "NSE",
+    "BANKNIFTY": "NSE",
+    "FINNIFTY": "NSE",
+    "SENSEX": "BSE",
+    "MIDCPNIFTY": "NSE",
+}
+
+# Preferred option premium range (INR)
+PREMIUM_RANGE_MIN = 150.0
+PREMIUM_RANGE_MAX = 400.0
 
 # Exchange codes
 EXCHANGE_NSE = "NSE"

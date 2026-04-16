@@ -110,6 +110,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             status=TradeStatus.OPEN.value,
             is_paper=settings.paper_trading,
             entry_time=now,
+            fyers_option_symbol=signal.fyers_option_symbol,
         )
         session.add(trade)
         await session.flush()  # Get trade.id
@@ -126,6 +127,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             entry_price=signal.entry_price,
             stop_loss=signal.stop_loss,
             target_price=signal.target_price,
+            fyers_option_symbol=signal.fyers_option_symbol,
             strategy_name=signal.strategy_name,
             is_paper=settings.paper_trading,
             opened_at=now,
@@ -157,6 +159,15 @@ async def auto_execute_signal(signal_id) -> dict | None:
         session.add(log)
 
         await session.commit()
+
+    # Subscribe to option symbol on websocket feed for live price tracking
+    if signal.fyers_option_symbol:
+        try:
+            from app.data_feed.fyers_ws_client import fyers_ws_client
+
+            await fyers_ws_client.subscribe_symbols([signal.fyers_option_symbol])
+        except Exception:
+            logger.warning("Could not subscribe to %s on websocket", signal.fyers_option_symbol)
 
     # Broadcast trade creation
     action = {

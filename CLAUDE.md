@@ -39,7 +39,7 @@ stockTrading/
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
 │   │   ├── models/        # SQLAlchemy ORM models (8 tables)
 │   │   ├── schemas/       # Pydantic request/response schemas
-│   │   ├── services/      # Business logic (strategy_runner)
+│   │   ├── services/      # Business logic (strategy_runner, option_resolver, candle_backfill)
 │   │   ├── strategies/    # Strategy engine (base + 3 strategies)
 │   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns)
 │   │   ├── data_feed/     # Fyers API (auth, REST, WebSocket, feed manager, symbol master)
@@ -62,8 +62,12 @@ stockTrading/
 - Max daily drawdown: 5% (Rs 50,000)
 - Risk per trade: 1.5-2% (Rs 15,000-20,000)
 - Max trades/day: 2-3
-- Lot sizes: NIFTY=75, BANKNIFTY=30, FINNIFTY=25, SENSEX=10, MIDCPNIFTY=75
-- Strike selection: ATM or 1-strike ITM (Delta 0.45-0.60)
+- Lot sizes: NIFTY=75, BANKNIFTY=30, FINNIFTY=25, SENSEX=10, MIDCPNIFTY=50
+- Strike selection: ATM or 1-strike ITM (Delta 0.45-0.60), resolved by `option_resolver.py`
+- Strike gaps: NIFTY=50, BANKNIFTY=100, FINNIFTY=50, SENSEX=100, MIDCPNIFTY=25
+- Preferred premium range: Rs 150-400
+- SL/target computed on option premium (not index price), 30-35% SL, 1:1.5 R:R
+- Expiry: NIFTY weekly Tuesday, SENSEX weekly Thursday, others monthly only (post-SEBI Nov 2024)
 
 ## Strategies
 1. **ORB (Opening Range Breakout)** - STUB - `backend/app/strategies/strategy_1_orb.py`
@@ -98,11 +102,11 @@ cp .env.example .env          # Then fill in Fyers API keys
 Tests live in `backend/tests/`. Currently covered:
 - `test_core/` - IST timezone utils, market hour checks
 - `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns (comprehensive)
-- `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring
+- `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type
+- `test_services/` - Option resolver: strike selection (ATM/ITM), expiry selection (weekly/monthly), SL/target on premium, fallback behavior
 
 Not yet covered (stubs only):
 - `test_api/` - API endpoint tests
-- `test_services/` - Strategy runner, trade service tests
 - `test_agent/` - Agent runner, trade monitor, auto-executor tests
 
 ## AI Documentation Protocol (MANDATORY)

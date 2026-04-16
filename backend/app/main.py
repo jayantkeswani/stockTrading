@@ -13,13 +13,29 @@ from app.websocket.manager import ws_manager
 
 
 async def _start_data_feed_if_authenticated():
-    """Start the Fyers live data feed if we have a valid token."""
+    """Start the Fyers live data feed if we have a valid token.
+
+    Also backfills previous trading day's candles so strategies have
+    previous-day context (PDH/PDL/PDC) available from the first candle.
+    """
     from app.core.redis import get_redis
+    from app.services.candle_backfill import backfill_previous_day, backfill_today
 
     r = get_redis()
     token = await r.get("fyers:access_token")
     if token:
-        print("Fyers token found in Redis, starting live data feed...")
+        print("Fyers token found in Redis, backfilling candles...")
+        try:
+            await backfill_previous_day()
+        except Exception as e:
+            print(f"Previous day backfill failed: {e}")
+
+        try:
+            await backfill_today()
+        except Exception as e:
+            print(f"Today's backfill failed: {e}")
+
+        print("Starting live data feed...")
         await fyers_ws_client.start()
     else:
         print("No Fyers token in Redis. Data feed will not start until auth completes.")

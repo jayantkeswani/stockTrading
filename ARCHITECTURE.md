@@ -43,7 +43,12 @@
 ```
 
 ## Symbols Tracked
-NIFTY (75), BANKNIFTY (30), FINNIFTY (25), SENSEX (10), MIDCPNIFTY (75) — lot sizes in parentheses.
+NIFTY (75), BANKNIFTY (30), FINNIFTY (25), SENSEX (10), MIDCPNIFTY (50) — lot sizes in parentheses.
+
+## Expiry Schedule (Post-SEBI Nov 2024)
+- **NIFTY**: Weekly Tuesday (NSE)
+- **SENSEX**: Weekly Thursday (BSE)
+- **BANKNIFTY, FINNIFTY, MIDCPNIFTY**: Monthly only — last Tuesday of month (NSE)
 
 ## Data Flow
 
@@ -61,10 +66,17 @@ Frontend also polls GET /api/v1/market/prices every 10s as fallback.
 
 ### 2. Strategy Signal Flow
 ```
-5m candle close event ──> strategy_runner.on_candle_close()
+1m candle close event ──> strategy_runner.on_candle_close()
                           ├── Build MarketContext (price, VWAP, PDH/PDL, CPR, OI, VIX)
                           ├── Evaluate all active strategies
                           └── If signal generated:
+                              ├── [OPTION signals only] option_resolver enriches:
+                              │   ├── Select ATM/ITM strike (STRIKE_GAPS per index)
+                              │   ├── Select nearest expiry (weekly NIFTY/SENSEX, monthly others)
+                              │   ├── Look up Fyers symbol via symbol master
+                              │   ├── Fetch option premium (Redis cache → Fyers REST fallback)
+                              │   └── Compute SL/target on premium (not index price)
+                              ├── [FUTURE signals] pass through as-is (SL/target on futures price)
                               ├── Save to signals table (with executable flag)
                               ├── Broadcast via WebSocket (signal:new)
                               ├── YOLO mode → auto_executor.execute()
@@ -91,7 +103,7 @@ Signal ──> Trade Created (OPEN) ──> Position Created
 ```
 Every 2 seconds (agent_runner main loop):
   For each open position:
-    1. Get current price from Redis
+    1. Get current price from Redis (option premium via fyers_option_symbol, index fallback)
     2. Check SL: price <= stop_loss → AUTO CLOSE (no confirmation needed)
     3. Check Target: price >= target
        - YOLO: auto-book profit

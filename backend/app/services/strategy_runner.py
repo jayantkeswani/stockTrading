@@ -28,7 +28,7 @@ from app.core.constants import (
     VIX_EXTREME,
 )
 from app.core.database import async_session_factory
-from app.core.enums import SignalStatus, StrategyName
+from app.core.enums import InstrumentType, SignalStatus, StrategyName
 from app.core.redis import get_cached_price, get_redis
 from app.core.utils import is_in_trading_window, is_past_close_deadline, now_ist
 from app.indicators.candle_patterns import Candle
@@ -548,6 +548,12 @@ class StrategyRunner:
                         signal.confidence,
                         executable,
                     )
+                    # Resolve option details for OPTION signals
+                    if signal.instrument_type == InstrumentType.OPTION:
+                        signal, executable, blocked_reason = await self._resolve_option(
+                            signal, ctx, executable, blocked_reason,
+                        )
+
                     await self._handle_signal(signal, executable, blocked_reason)
             except Exception:
                 logger.exception(
@@ -555,6 +561,72 @@ class StrategyRunner:
                     strategy.name,
                     symbol,
                 )
+
+    async def _resolve_option(
+        self,
+        signal: StrategySignal,
+        ctx: MarketContext,
+        executable: bool,
+        blocked_reason: str | None,
+    ) -> tuple[StrategySignal, bool, str | None]:
+        """Resolve option strike, expiry, and premium for an OPTION signal.
+
+        Enriches the signal with premium-based entry/SL/target. If resolution
+        fails, the signal is kept with index-level prices but marked non-executable.
+        """
+        from app.services.option_resolver import resolve_option_details
+
+        sl_pct = signal.indicators.get("sl_pct", 0.30)
+        rr_multiplier = signal.indicators.get("rr_multiplier", 1.5)
+
+        resolution = await resolve_option_details(
+            symbol=signal.symbol,
+            index_price=ctx.current_price,
+            signal_type=signal.signal_type,
+            sl_pct=sl_pct,
+            rr_multiplier=rr_multiplier,
+        )
+
+        if resolution is None:
+            logger.warning(
+                "Option resolution failed for %s %s — signal kept but non-executable",
+                signal.symbol, signal.signal_type,
+            )
+            # Keep the signal with index-level placeholder prices
+            signal.index_entry_price = ctx.current_price
+            return signal, False, blocked_reason or "Option premium unavailable"
+
+        # Enrich signal with resolved option details
+        signal.index_entry_price = ctx.current_price
+        signal.strike_price = resolution.strike_price
+        signal.expiry_date = resolution.expiry_date
+        signal.entry_price = resolution.option_premium
+        signal.stop_loss = resolution.sl_price
+        signal.target_price = resolution.target_price
+        signal.fyers_option_symbol = resolution.fyers_option_symbol
+        signal.option_resolved = True
+
+        # Append option details to the reason string
+        signal.reason += (
+            f" Option: {resolution.fyers_option_symbol}"
+            f" premium={resolution.option_premium:.2f},"
+            f" SL={resolution.sl_price:.2f},"
+            f" target={resolution.target_price:.2f}."
+        )
+
+        # Add to indicators snapshot
+        signal.indicators["option_strike"] = resolution.strike_price
+        signal.indicators["option_expiry"] = str(resolution.expiry_date)
+        signal.indicators["option_premium"] = resolution.option_premium
+        signal.indicators["option_symbol"] = resolution.fyers_option_symbol
+        signal.indicators["index_entry_price"] = ctx.current_price
+
+        logger.info(
+            "Option resolved: %s %s strike=%.0f expiry=%s premium=%.2f",
+            signal.symbol, signal.fyers_option_symbol,
+            resolution.strike_price, resolution.expiry_date, resolution.option_premium,
+        )
+        return signal, executable, blocked_reason
 
     async def _get_active_strategy_names(self) -> list[StrategyName]:
         """Load active strategy names from the strategy_configs table."""
@@ -622,6 +694,7 @@ class StrategyRunner:
                     strategy_name=signal.strategy_name.value,
                     symbol=signal.symbol,
                     signal_type=signal.signal_type.value,
+                    instrument_type=signal.instrument_type.value,
                     strike_price=Decimal(str(signal.strike_price)),
                     expiry_date=signal.expiry_date or now.date(),
                     entry_price=Decimal(str(signal.entry_price)),
@@ -639,6 +712,12 @@ class StrategyRunner:
                     blocked_reason=blocked_reason,
                     generated_at=now,
                     expires_at=now + timedelta(minutes=5),
+                    index_entry_price=(
+                        Decimal(str(signal.index_entry_price))
+                        if signal.index_entry_price is not None
+                        else None
+                    ),
+                    fyers_option_symbol=signal.fyers_option_symbol,
                 )
                 session.add(record)
                 await session.commit()

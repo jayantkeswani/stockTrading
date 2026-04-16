@@ -1,17 +1,22 @@
 """Live data feed manager.
 
 Manages Fyers WebSocket subscription for real-time price ticks.
-Aggregates ticks into candles and publishes to Redis.
-On candle close, triggers strategy evaluation via the strategy runner.
+Aggregates ticks into candles, persists them to MarketData1m, publishes
+to Redis, and triggers strategy evaluation via the strategy runner.
 """
 
 import asyncio
 import json
 import logging
 from datetime import datetime
+from decimal import Decimal
+
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.constants import IST
+from app.core.database import async_session_factory
 from app.core.redis import cache_price, publish_event
+from app.models.market_data import MarketData1m
 from app.services.strategy_runner import strategy_runner
 from app.websocket.manager import ws_manager
 
@@ -99,7 +104,7 @@ class FeedManager:
             candle["volume"] += volume
 
     async def _emit_candle(self, symbol: str, candle: dict):
-        """Emit a completed candle to Redis pub/sub, WebSocket, and strategy runner."""
+        """Emit a completed candle: persist to DB, publish to Redis/WS, trigger strategy."""
         event_data = {
             "symbol": symbol,
             "timeframe": "1m",
@@ -110,6 +115,13 @@ class FeedManager:
             "v": candle["volume"],
             "timestamp": candle["timestamp"],
         }
+
+        # Persist to MarketData1m (fire-and-forget, don't block tick processing)
+        asyncio.create_task(
+            self._persist_candle(symbol, candle),
+            name=f"persist_candle:{symbol}",
+        )
+
         await publish_event(f"candle:{symbol}", json.dumps(event_data))
         await ws_manager.broadcast("price:candle", event_data)
 
@@ -120,6 +132,34 @@ class FeedManager:
             self._run_strategy_evaluation(symbol, event_data),
             name=f"strategy_eval:{symbol}",
         )
+
+    async def _persist_candle(self, symbol: str, candle: dict):
+        """Save a completed 1m candle to the MarketData1m table.
+
+        Uses ON CONFLICT DO NOTHING to handle the case where today's
+        backfill already inserted a candle for this minute.
+        """
+        try:
+            ts = candle["timestamp"]
+            if isinstance(ts, str):
+                ts = datetime.fromisoformat(ts)
+
+            async with async_session_factory() as session:
+                stmt = pg_insert(MarketData1m).values(
+                    symbol=symbol,
+                    timestamp=ts,
+                    open=Decimal(str(candle["open"])),
+                    high=Decimal(str(candle["high"])),
+                    low=Decimal(str(candle["low"])),
+                    close=Decimal(str(candle["close"])),
+                    volume=int(candle["volume"]),
+                ).on_conflict_do_nothing(
+                    constraint="uq_market_data_symbol_time",
+                )
+                await session.execute(stmt)
+                await session.commit()
+        except Exception:
+            logger.exception("Failed to persist candle for %s", symbol)
 
     async def _run_strategy_evaluation(self, symbol: str, candle_data: dict):
         """Wrapper for strategy runner invocation with error isolation."""

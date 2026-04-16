@@ -35,9 +35,17 @@ class SignalStatus(StrEnum):
     REJECTED = "REJECTED"
 
 
+class InstrumentType(StrEnum):
+    OPTION = "OPTION"
+    FUTURE = "FUTURE"
+    EQUITY = "EQUITY"
+
+
 class SignalType(StrEnum):
     BUY_CE = "BUY_CE"
     BUY_PE = "BUY_PE"
+    BUY_FUT = "BUY_FUT"
+    SELL_FUT = "SELL_FUT"
 
 
 class StrategyName(StrEnum):
