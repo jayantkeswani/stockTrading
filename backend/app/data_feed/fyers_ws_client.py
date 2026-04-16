@@ -40,61 +40,88 @@ class FyersWSClient:
         r = get_redis()
         return await r.get(FYERS_TOKEN_KEY)
 
-    async def fetch_quotes_rest(self):
+    async def fetch_quotes_rest(self, extra_symbols: dict[str, str] | None = None):
         """Fetch latest quotes via Fyers SDK and push into feed manager.
 
         Works even when market is closed — returns last traded prices.
         Call this on startup and periodically to keep prices fresh.
+
+        Args:
+            extra_symbols: Additional {internal_name: fyers_symbol} pairs to fetch
+                           (e.g. strategy-configured stocks). Merged with FYERS_SYMBOL_MAP.
         """
         token = await self._get_access_token()
         if not token:
             return
 
+        # Build combined symbol map: defaults + extras
+        all_symbols = dict(FYERS_SYMBOL_MAP)
+        if extra_symbols:
+            all_symbols.update(extra_symbols)
+
+        # Build reverse map for looking up internal name from fyers symbol
+        reverse_map = {v: k for k, v in all_symbols.items()}
+
         try:
             from fyers_apiv3.fyersModel import FyersModel
 
             fyers = FyersModel(client_id=settings.fyers_app_id, token=token)
-            symbols = ",".join(FYERS_SYMBOL_MAP.values())
-            result = fyers.quotes({"symbols": symbols})
 
-            if result.get("s") != "ok":
-                logger.error("Fyers quotes error: %s", result.get("message"))
-                return
-
+            # Fyers quotes() accepts max 50 symbols at a time
+            fyers_symbols = list(all_symbols.values())
             from app.data_feed.feed_manager import feed_manager
 
-            for item in result.get("d", []):
-                v = item.get("v", {})
-                fyers_symbol = item.get("n", "")
-                internal_symbol = self._fyers_to_internal(fyers_symbol)
-                if not internal_symbol:
+            fetched = 0
+            for i in range(0, len(fyers_symbols), 50):
+                batch = fyers_symbols[i:i + 50]
+                result = fyers.quotes({"symbols": ",".join(batch)})
+
+                if result.get("s") != "ok":
+                    logger.error("Fyers quotes error: %s", result.get("message"))
                     continue
 
-                tick_data = {
-                    "ltp": v.get("lp", 0),
-                    "bid": v.get("bid", v.get("lp", 0)),
-                    "ask": v.get("ask", v.get("lp", 0)),
-                    "volume": v.get("volume", 0),
-                    "change": v.get("ch", 0),
-                    "change_pct": v.get("chp", 0),
-                    "high": v.get("high_price", 0),
-                    "low": v.get("low_price", 0),
-                    "open": v.get("open_price", 0),
-                    "prev_close": v.get("prev_close_price", 0),
-                }
+                for item in result.get("d", []):
+                    v = item.get("v", {})
+                    fyers_symbol = item.get("n", "")
+                    internal_symbol = reverse_map.get(fyers_symbol)
+                    if not internal_symbol:
+                        # Fallback to existing reverse lookup
+                        internal_symbol = self._fyers_to_internal(fyers_symbol)
+                    if not internal_symbol:
+                        continue
 
-                await feed_manager.process_tick(internal_symbol, tick_data)
+                    tick_data = {
+                        "ltp": v.get("lp", 0),
+                        "bid": v.get("bid", v.get("lp", 0)),
+                        "ask": v.get("ask", v.get("lp", 0)),
+                        "volume": v.get("volume", 0),
+                        "change": v.get("ch", 0),
+                        "change_pct": v.get("chp", 0),
+                        "high": v.get("high_price", 0),
+                        "low": v.get("low_price", 0),
+                        "open": v.get("open_price", 0),
+                        "prev_close": v.get("prev_close_price", 0),
+                    }
 
-            logger.info("REST quotes fetched for %d symbols", len(result.get("d", [])))
+                    await feed_manager.process_tick(internal_symbol, tick_data)
+                    fetched += 1
+
+            logger.info("REST quotes fetched for %d symbols", fetched)
         except Exception:
             logger.exception("Failed to fetch REST quotes")
 
-    async def start(self, symbols: list[str] | None = None):
+    async def start(
+        self,
+        symbols: list[str] | None = None,
+        extra_symbols: list[str] | None = None,
+    ):
         """Start the Fyers WebSocket connection.
 
         Args:
             symbols: List of Fyers-format symbols to subscribe to.
                      Defaults to all index symbols from FYERS_SYMBOL_MAP.
+            extra_symbols: Additional symbols to subscribe (e.g. watchlist items).
+                           Merged with the main symbols list, deduplicated.
         """
         # Get access token from Redis
         access_token = await self._get_access_token()
@@ -102,14 +129,17 @@ class FyersWSClient:
             logger.error("No Fyers access token in Redis. Cannot start data feed.")
             return
 
-        # Fetch initial quotes via REST immediately (works even after hours)
+        # Fetch initial quotes for default symbols via REST (works even after hours)
         await self.fetch_quotes_rest()
+        # Note: strategy-configured symbols are fetched separately in main.py
 
         # Build full token string: "app_id:access_token"
         full_token = f"{settings.fyers_app_id}:{access_token}"
 
-        # Default symbols: all index symbols
-        self._symbols = symbols or list(FYERS_SYMBOL_MAP.values())
+        # Default symbols: all index symbols + any extras (watchlist)
+        base = symbols or list(FYERS_SYMBOL_MAP.values())
+        all_symbols = list(dict.fromkeys(base + (extra_symbols or [])))
+        self._symbols = all_symbols
         self._loop = asyncio.get_running_loop()
 
         # Fyers SDK uses threading internally, so we need to import and create
@@ -222,7 +252,7 @@ class FyersWSClient:
                 self._broadcast_connection_status(True),
             )
 
-    def _on_close(self):
+    def _on_close(self, *args):
         """Called when Fyers WebSocket disconnects."""
         self._connected = False
         logger.warning("Fyers WebSocket disconnected")

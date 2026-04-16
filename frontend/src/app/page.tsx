@@ -1,18 +1,35 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ScannerPanel } from "@/components/dashboard/ScannerPanel";
+import { ScannerHeader } from "@/components/dashboard/ScannerHeader";
 import { ActivePositions } from "@/components/positions/ActivePositions";
 import { PnLCard } from "@/components/dashboard/PnLCard";
 import { Watchlist } from "@/components/dashboard/Watchlist";
+import { ScanFeed } from "@/components/dashboard/ScanFeed";
 import { AgentFeed } from "@/components/dashboard/AgentFeed";
 import { ChartModal } from "@/components/charts/ChartModal";
 import { useStore } from "@/store";
+import { api } from "@/lib/api";
+import type { Signal } from "@/lib/types";
 
 export default function DashboardPage() {
   const [chartOpen, setChartOpen] = useState(false);
   const [chartSymbol, setChartSymbol] = useState<string | undefined>(undefined);
-  const { setSelectedSymbol } = useStore();
+  const { setSelectedSymbol, setSignals } = useStore();
+
+  // Load pending signals from DB on mount so ScannerPanel isn't empty on refresh
+  useEffect(() => {
+    async function loadSignals() {
+      try {
+        const signals = (await api.getSignals({ status: "PENDING" })) as Signal[];
+        setSignals(signals);
+      } catch {
+        // API may not be running yet
+      }
+    }
+    loadSignals();
+  }, [setSignals]);
 
   const handleOpenChart = useCallback(
     (symbol?: string) => {
@@ -34,7 +51,10 @@ export default function DashboardPage() {
       <div className="grid grid-cols-10 gap-4 h-[calc(100vh-80px)]">
         {/* LEFT: Main content (70%) */}
         <div className="col-span-7 flex flex-col gap-4 overflow-y-auto pr-1 pb-4">
-          {/* Scanner Panel */}
+          {/* Scanner Header — manual strategy scan triggers */}
+          <ScannerHeader />
+
+          {/* Scanner Panel — pending signals */}
           <ScannerPanel />
 
           {/* Active Positions */}
@@ -59,6 +79,9 @@ export default function DashboardPage() {
         <div className="col-span-3 flex flex-col gap-4 overflow-y-auto pb-4">
           {/* Watchlist */}
           <Watchlist onOpenChart={handleOpenChart} />
+
+          {/* Manual Scan Feed */}
+          <ScanFeed />
 
           {/* Agent Feed */}
           <AgentFeed />

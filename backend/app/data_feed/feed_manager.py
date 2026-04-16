@@ -125,11 +125,11 @@ class FeedManager:
         await publish_event(f"candle:{symbol}", json.dumps(event_data))
         await ws_manager.broadcast("price:candle", event_data)
 
-        # Trigger strategy evaluation on candle close.
-        # Fire-and-forget via a task so that slow strategy evaluation
-        # does not block tick processing.
+        # Trigger auto-mode strategy evaluation on candle close.
+        # Only evaluates strategies that have auto_mode=True and include
+        # this symbol in their configured symbols list.
         asyncio.create_task(
-            self._run_strategy_evaluation(symbol, event_data),
+            self._run_auto_strategy_evaluation(symbol, event_data),
             name=f"strategy_eval:{symbol}",
         )
 
@@ -161,10 +161,16 @@ class FeedManager:
         except Exception:
             logger.exception("Failed to persist candle for %s", symbol)
 
-    async def _run_strategy_evaluation(self, symbol: str, candle_data: dict):
-        """Wrapper for strategy runner invocation with error isolation."""
+    async def _run_auto_strategy_evaluation(self, symbol: str, candle_data: dict):
+        """Trigger strategy evaluation only for auto-mode strategies that cover this symbol."""
         try:
-            await strategy_runner.on_candle_close(symbol, candle_data)
+            from app.services.strategy_runner import get_auto_strategies_for_symbol
+            auto_strategies = await get_auto_strategies_for_symbol(symbol)
+            if not auto_strategies:
+                return
+            await strategy_runner.on_candle_close(
+                symbol, candle_data, strategy_filter=auto_strategies,
+            )
         except Exception:
             logger.exception("Strategy evaluation failed for %s", symbol)
 

@@ -37,7 +37,7 @@ Lifespan startup: starts Fyers login scheduler, auto-starts data feed if token e
 - `oi_snapshot.py` - OISnapshot: open interest by strike price
 - `agent_log.py` - AgentLog: agent action audit trail
 - `daily_summary.py` - DailySummary: daily P&L, win/loss counts, drawdown
-- `strategy_config.py` - StrategyConfig: per-index strategy enable/disable + parameters
+- `strategy_config.py` - StrategyConfig: per-index strategy enable/disable + parameters + `auto_mode` (bool) + `symbols` (JSONB list)
 
 ### `app/schemas/` - Pydantic Schemas
 Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{Entity}Update`.
@@ -50,17 +50,17 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 - `agent.py` - Agent start/stop/status, confirm actions, YOLO toggle (`PATCH /yolo`)
 - `risk.py` - Daily P&L, drawdown %, configured limits
 - `market_data.py` - `GET /prices` (all symbols, auto-refreshes via REST if cache empty), `POST /prices/batch` (fetch prices for arbitrary Fyers symbols, used by watchlist), `POST /feed/start|stop|refresh`, `GET /symbols/search` (local symbol master, supports stocks/futures/options: "TCS", "NIFTY 24000CE", "RELIANCE FUT")
-- `watchlist.py` - `GET /watchlist`, `POST /watchlist`, `DELETE /watchlist/{symbol}` — Redis-backed watchlist (agent can add symbols programmatically)
-- `strategies.py` - List/update strategy configs
+- `watchlist.py` - `GET /watchlist`, `POST /watchlist`, `DELETE /watchlist/{symbol}` — Redis-backed watchlist (agent can add symbols programmatically). Adding a symbol also subscribes it on the Fyers WebSocket for live ticks.
+- `strategies.py` - List/update strategy configs, toggle `is_active`/`auto_mode`, `POST /evaluate` (manual single symbol), `POST /evaluate/batch` (manual all configured symbols). When symbols are added to a strategy via PUT, background task provisions them: REST quote fetch → Redis, candle backfill → PostgreSQL, WebSocket subscription.
 - `auth.py` - Fyers OAuth flow (login redirect, callback, token storage)
 
 ### `app/websocket/` - Real-Time Layer
 - `manager.py` - WebSocketManager: connect/disconnect/broadcast. Single `/ws` endpoint. Events: `price:update`, `signal:new`, `trade:open`, `trade:close`, `position:pnl`, `agent:action`, `market:status`
 
 ### `app/services/` - Business Logic
-- `strategy_runner.py` - On each candle close: evaluates all active strategies, resolves option details (for OPTION signals), persists signals to DB, broadcasts via WebSocket, triggers agent if YOLO mode
+- `strategy_runner.py` - Strategy evaluation engine. Two trigger paths: (1) **auto-mode**: FeedManager checks `strategy_configs` for `auto_mode=True` + symbol match on each candle close, (2) **manual**: `evaluate_manual()` called by the strategies API endpoint. Both paths share the same MarketContext builder, signal persistence, and broadcast pipeline. `get_auto_strategies_for_symbol()` queries which strategies should auto-evaluate for a given symbol.
 - `option_resolver.py` - Resolves index-level signals to tradeable option contracts: strike selection (ATM/ITM), expiry selection (weekly for NIFTY/SENSEX, monthly for BANKNIFTY/FINNIFTY/MIDCPNIFTY), symbol master lookup, premium fetch (Redis → Fyers REST), SL/target on premium. Only runs for `instrument_type=OPTION` signals; FUTURE signals bypass it entirely.
-- `candle_backfill.py` - On startup, backfills candles from Fyers historical API into `MarketData1m`: (1) previous trading day — so strategies have PDH/PDL/PDC/CPR context, (2) today's elapsed candles — so a late start doesn't miss the 9:45 trading window. Uses ON CONFLICT DO NOTHING for idempotency.
+- `candle_backfill.py` - On startup, backfills candles from Fyers historical API into `MarketData1m`: (1) previous trading day — so strategies have PDH/PDL/PDC/CPR context, (2) today's elapsed candles — so a late start doesn't miss the 9:45 trading window. Backfills for all symbols: FYERS_SYMBOL_MAP indices (minus VIX) + symbols from active strategy configs. Stock symbols resolve to `NSE:{SYM}-EQ`. Uses ON CONFLICT DO NOTHING for idempotency.
 
 ### `app/strategies/` - Strategy Engine
 - `base.py` - `BaseStrategy` ABC with `evaluate(ctx) -> StrategySignal | None`, `should_exit()`, `get_position_size()`. Defines `MarketContext` (current price, candles, VWAP, PDH/PDL, CPR, OI, VIX). `StrategySignal` carries `instrument_type` (OPTION/FUTURE/EQUITY) to control post-processing.
@@ -94,6 +94,7 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 ### `app/tasks/` - Scheduled Tasks
 - `fyers_login_task.py` - APScheduler job: auto-refreshes Fyers token via TOTP login
 - `symbol_master_task.py` - APScheduler job: refreshes symbol master daily at 8:00 AM IST
+- `oi_snapshot_task.py` - APScheduler job: fetches option chain OI data from Fyers every 3 minutes during market hours. Persists CE/PE OI per strike to `oi_snapshots` table. Only runs when market is open. Feeds `strategy_runner._get_oi_analysis()`.
 
 ## Conventions
 - All async functions use `async def`

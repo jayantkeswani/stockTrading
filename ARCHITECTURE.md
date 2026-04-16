@@ -44,6 +44,7 @@
 
 ## Symbols Tracked
 NIFTY (75), BANKNIFTY (30), FINNIFTY (25), SENSEX (10), MIDCPNIFTY (50) — lot sizes in parentheses.
+India VIX is also tracked for risk gating (no lot size — informational only).
 
 ## Expiry Schedule (Post-SEBI Nov 2024)
 - **NIFTY**: Weekly Tuesday (NSE)
@@ -59,28 +60,103 @@ Fyers WebSocket ──> fyers_ws_client.py (FyersDataSocket, threaded → asynci
                     ├── Redis PUBLISH "price:{symbol}" (real-time cache)
                     ├── Aggregate into 1m/5m candles
                     ├── Store completed candles in PostgreSQL (market_data_1m)
-                    └── WebSocket broadcast to frontend (price:update)
+                    ├── WebSocket broadcast to frontend (price:update)
+                    └── On candle close: check auto_mode strategies for this symbol
+                        └── If any match → trigger strategy_runner.on_candle_close()
+
+Subscribed symbols (all get live WebSocket ticks):
+  - FYERS_SYMBOL_MAP (5 indices + India VIX) — always subscribed
+  - Watchlist items from Redis — subscribed on startup and on add
 
 Frontend also polls GET /api/v1/market/prices every 10s as fallback.
 ```
 
 ### 2. Strategy Signal Flow
+
+Strategy evaluation is **decoupled** from the candle pipeline. Two trigger paths:
+
 ```
-1m candle close event ──> strategy_runner.on_candle_close()
-                          ├── Build MarketContext (price, VWAP, PDH/PDL, CPR, OI, VIX)
-                          ├── Evaluate all active strategies
-                          └── If signal generated:
-                              ├── [OPTION signals only] option_resolver enriches:
-                              │   ├── Select ATM/ITM strike (STRIKE_GAPS per index)
-                              │   ├── Select nearest expiry (weekly NIFTY/SENSEX, monthly others)
-                              │   ├── Look up Fyers symbol via symbol master
-                              │   ├── Fetch option premium (Redis cache → Fyers REST fallback)
-                              │   └── Compute SL/target on premium (not index price)
-                              ├── [FUTURE signals] pass through as-is (SL/target on futures price)
-                              ├── Save to signals table (with executable flag)
-                              ├── Broadcast via WebSocket (signal:new)
-                              ├── YOLO mode → auto_executor.execute()
-                              └── MANUAL/SEMI → Telegram alert, wait for user
+PATH A — Auto Mode (candle-driven):
+  1m candle close ──> feed_manager._run_auto_strategy_evaluation()
+                      ├── get_auto_strategies_for_symbol(symbol)
+                      │   queries strategy_configs WHERE auto_mode=True AND symbol IN symbols
+                      └── if matches → strategy_runner.on_candle_close(symbol, candle, strategy_filter=[...])
+
+PATH B — Manual Mode (API-driven):
+  POST /api/v1/strategies/evaluate/batch {strategy_name}
+      ├── Reads configured symbols for this strategy from strategy_configs
+      └── For each symbol → strategy_runner.evaluate_manual(symbol, strategy_name)
+          ├── Builds MarketContext from DB candles + Redis price cache
+          └── No candle close event needed — works anytime
+
+SHARED PIPELINE (both paths converge here):
+  strategy_runner evaluates strategy
+      ├── Build MarketContext (price, VWAP, PDH/PDL, CPR, OI, VIX)
+      ├── strategy.evaluate(ctx) → StrategySignal | None
+      └── If signal generated:
+          ├── [OPTION signals only] option_resolver enriches:
+          │   ├── Select ATM/ITM strike (STRIKE_GAPS per index)
+          │   ├── Select nearest expiry (weekly NIFTY/SENSEX, monthly others)
+          │   ├── Look up Fyers symbol via symbol master
+          │   ├── Fetch option premium (Redis cache → Fyers REST fallback)
+          │   └── Compute SL/target on premium (not index price)
+          ├── [FUTURE signals] pass through as-is (SL/target on futures price)
+          ├── Save to signals table (with executable flag)
+          ├── Broadcast via WebSocket (signal:new)
+          ├── YOLO mode → auto_executor.execute()
+          └── MANUAL/SEMI → Telegram alert, wait for user
+```
+
+### Strategy Configuration (strategy_configs table)
+```
+strategy_name | is_active | auto_mode | symbols              | parameters | risk_params
+--------------+-----------+-----------+----------------------+------------+------------
+vwap_pullback | true      | true      | ["NIFTY","BANKNIFTY"]| {...}      | {...}
+orb           | false     | false     | ["NIFTY"]            | {...}      | {...}
+gamma_scalping| false     | false     | ["NIFTY"]            | {...}      | {...}
+
+is_active = strategy is available for evaluation (manual or auto)
+auto_mode = strategy runs automatically on every candle close for its configured symbols
+symbols   = which symbols this strategy evaluates on (configurable via Settings page)
+
+When symbols are added via Settings:
+  PUT /api/v1/strategies/{name} → detects new symbols → background task:
+    1. Fetch REST quote → Redis price cache
+    2. Backfill previous day + today candles → PostgreSQL (MarketData1m)
+    3. Subscribe on Fyers WebSocket → live ticks going forward
+
+On startup:
+  All strategy-configured symbols get REST quotes fetched → Redis
+  + candle backfill → PostgreSQL
+  + WebSocket subscription (alongside watchlist + default indices)
+```
+
+### 2b. OI Data Flow
+```
+APScheduler (every 3 minutes during market hours):
+  oi_snapshot_task.fetch_oi_snapshots()
+    ├── For each index (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY):
+    │   ├── Fyers REST: GET /option-chain (20 strikes around ATM)
+    │   ├── Parse CE/PE OI per strike
+    │   └── INSERT into oi_snapshots (ON CONFLICT DO NOTHING)
+    │
+    └── Strategy runner reads latest snapshot on each evaluation:
+        strategy_runner._get_oi_analysis(symbol)
+          → SELECT from oi_snapshots WHERE symbol AND max(timestamp)
+          → analyze_option_chain() → OIAnalysis (PCR, max pain, sentiment)
+          → MarketContext.oi_analysis
+```
+
+### 2c. Candle Backfill (Startup)
+```
+Symbols backfilled: FYERS_SYMBOL_MAP (5 indices, no VIX) + strategy_configs symbols
+Stock symbols resolved to NSE:{SYMBOL}-EQ format.
+
+Phase 1: Previous Trading Day (for PDH/PDL/PDC context)
+  For each symbol: skip if DB already has candles, else fetch via Fyers SDK history()
+
+Phase 2: Today's Elapsed Candles (for late-start scenarios)
+  For each symbol: fetch 9:15–now via Fyers SDK history()
 ```
 
 ### 3. Trade Lifecycle
@@ -144,9 +220,14 @@ Search: GET /api/v1/market/symbols/search?q=TCS
 ```
 Redis key: "watchlist:items" (hash: symbol → JSON metadata)
 
+Startup:
+  main.py loads watchlist symbols from Redis → passes as extra_symbols to
+  fyers_ws_client.start() → subscribed on WebSocket alongside FYERS_SYMBOL_MAP
+
 Frontend:
   Load: GET /api/v1/watchlist → fetch items → POST /prices/batch for prices
   Add:  Search symbol → select → POST /api/v1/watchlist + fetch price
+        Backend also calls fyers_ws_client.subscribe_symbols() for live ticks
   Remove: DELETE /api/v1/watchlist/{symbol}
   Poll: Every 10s → POST /prices/batch for all watchlist symbols
 
@@ -156,6 +237,9 @@ Backend (agent can also add):
 Price fetch for custom symbols:
   POST /api/v1/market/prices/batch {"symbols": ["NSE:TCS-EQ", ...]}
   → Check Redis cache → fetch uncached from Fyers REST quotes() → cache + return
+
+Note: Watchlist symbols get live WebSocket ticks (prices auto-update via FeedManager),
+but the REST batch endpoint remains as fallback for symbols not yet subscribed.
 ```
 
 ## Key Design Decisions
@@ -167,3 +251,5 @@ Price fetch for custom symbols:
 - **No auth V1**: Single user, localhost only
 - **Non-default ports**: PostgreSQL 5433, Redis 6380 (avoid conflicts with local instances)
 - **Fyers SDK**: Uses `fyers-apiv3` package — WebSocket via threaded `FyersDataSocket` bridged to asyncio
+- **Decoupled strategy evaluation**: FeedManager only produces candles. Strategy evaluation is triggered by auto_mode config (per strategy + per symbol) or manual API call. Both paths share the same MarketContext builder and signal pipeline.
+- **Watchlist on WebSocket**: Watchlist symbols are subscribed on the Fyers WebSocket at startup and on add. Not just REST polling.

@@ -48,7 +48,7 @@ async def get_watchlist():
 
 @router.post("")
 async def add_to_watchlist(body: WatchlistAddRequest):
-    """Add a symbol to the watchlist."""
+    """Add a symbol to the watchlist and subscribe on live data feed."""
     meta = {
         "display": body.display,
         "segment": body.segment,
@@ -60,6 +60,12 @@ async def add_to_watchlist(body: WatchlistAddRequest):
     r = get_redis()
     await r.hset(WATCHLIST_KEY, body.symbol, json.dumps(meta))
     logger.info("Added to watchlist: %s (%s)", body.symbol, body.display)
+
+    # Subscribe on live data feed so watchlist gets real-time ticks
+    from app.data_feed.fyers_ws_client import fyers_ws_client
+    if fyers_ws_client.is_connected:
+        await fyers_ws_client.subscribe_symbols([body.symbol])
+
     return {"status": "added", "symbol": body.symbol}
 
 

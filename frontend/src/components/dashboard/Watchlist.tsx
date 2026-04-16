@@ -179,7 +179,7 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
         <h2 className="text-sm font-semibold text-text-primary">Watchlist</h2>
       </div>
 
-      <div className="divide-y divide-border/50">
+      <div className="divide-y divide-border/50 max-h-[320px] overflow-y-auto">
         {/* Default indices */}
         {SYMBOLS.map((symbol) => {
           const price = prices[symbol];

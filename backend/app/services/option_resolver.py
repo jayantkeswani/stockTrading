@@ -165,7 +165,7 @@ async def find_option_symbol(
     # Format expiry for comparison (symbol master stores "DD Mon YYYY", e.g. "15 Apr 2026")
     expiry_str = expiry.strftime("%d %b %Y")
     # Also try without leading zero for day
-    expiry_str_alt = expiry.lstrip("0") if isinstance(expiry_str, str) else expiry_str
+    expiry_str_alt = expiry_str.lstrip("0")
 
     for r in results:
         if (

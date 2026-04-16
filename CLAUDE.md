@@ -35,26 +35,26 @@ stockTrading/
 ├── scripts/               # dev.sh, stop.sh, reset.sh
 ├── backend/               # Python FastAPI backend (see backend/CLAUDE.md)
 │   ├── app/
-│   │   ├── api/v1/        # REST endpoints (9 routers, incl. watchlist)
+│   │   ├── api/v1/        # REST endpoints (9 routers, incl. watchlist, strategies)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
-│   │   ├── models/        # SQLAlchemy ORM models (8 tables)
+│   │   ├── models/        # SQLAlchemy ORM models (8 tables, strategy_configs has auto_mode)
 │   │   ├── schemas/       # Pydantic request/response schemas
 │   │   ├── services/      # Business logic (strategy_runner, option_resolver, candle_backfill)
-│   │   ├── strategies/    # Strategy engine (base + 3 strategies)
+│   │   ├── strategies/    # Strategy engine (base + 3 strategies, registry)
 │   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns)
 │   │   ├── data_feed/     # Fyers API (auth, REST, WebSocket, feed manager, symbol master)
 │   │   ├── agent/         # AI trading agent (monitor, execute, notify)
-│   │   ├── core/          # Config, database, Redis, constants, enums, utils
+│   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP incl. VIX), enums, utils
 │   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh)
 │   ├── tests/             # pytest test suite
 │   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
     └── src/
         ├── app/           # 6 pages (dashboard, trades, signals, settings, agent, chart)
-        ├── components/    # React components by domain (13 components)
+        ├── components/    # React components by domain (15 components incl. ScannerHeader, ScanFeed)
         ├── hooks/         # useWebSocket (auto-reconnect, event subscriptions)
         ├── lib/           # API client, types, formatters, constants
-        └── store/         # Zustand store (prices, positions, signals, risk, agent)
+        └── store/         # Zustand store (prices, positions, signals, scanLogs, risk, agent)
 ```
 
 ## Trading Parameters
@@ -73,6 +73,11 @@ stockTrading/
 1. **ORB (Opening Range Breakout)** - STUB - `backend/app/strategies/strategy_1_orb.py`
 2. **VWAP Pullback + PDH/PDL + OI** - PRIMARY/ACTIVE - `backend/app/strategies/strategy_2_vwap_pullback.py`
 3. **Expiry Day Gamma Scalping** - STUB - `backend/app/strategies/strategy_3_gamma_scalping.py`
+
+### Strategy Execution Modes
+- **Auto mode**: Strategy evaluates automatically on every 1m candle close for its configured symbols. Controlled by `auto_mode` flag in `strategy_configs` table.
+- **Manual mode**: User triggers evaluation via the Scanner header bar on the dashboard. Calls `POST /api/v1/strategies/evaluate/batch` which runs the strategy across its configured symbols on demand.
+- Strategy configuration (active/auto_mode/symbols) is managed via Settings page → Strategies section.
 
 ## Agent Autonomy Levels
 - **MANUAL**: Alerts only via Telegram, user executes manually
@@ -99,14 +104,14 @@ cp .env.example .env          # Then fill in Fyers API keys
 ```
 
 ## Test Coverage
-Tests live in `backend/tests/`. Currently covered:
+Tests live in `backend/tests/`. 246 tests, all passing. Currently covered:
 - `test_core/` - IST timezone utils, market hour checks
 - `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns (comprehensive)
 - `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type
-- `test_services/` - Option resolver: strike selection (ATM/ITM), expiry selection (weekly/monthly), SL/target on premium, fallback behavior
+- `test_services/` - Option resolver (strike/expiry/SL/target), strategy runner (auto filter, manual eval, strategy filter), FeedManager decoupling, OI snapshot parsing, candle backfill symbol resolution
+- `test_api/` - Strategy endpoints (evaluate, batch evaluate, auto-mode toggle)
 
 Not yet covered (stubs only):
-- `test_api/` - API endpoint tests
 - `test_agent/` - Agent runner, trade monitor, auto-executor tests
 
 ## AI Documentation Protocol (MANDATORY)

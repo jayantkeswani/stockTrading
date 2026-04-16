@@ -69,15 +69,22 @@ class StrategyRunner:
         self._signal_count_date: date | None = None
 
     # ------------------------------------------------------------------
-    # Public entry point — called by FeedManager on every candle close
+    # Public entry points
     # ------------------------------------------------------------------
 
-    async def on_candle_close(self, symbol: str, candle_data: dict) -> None:
+    async def on_candle_close(
+        self,
+        symbol: str,
+        candle_data: dict,
+        strategy_filter: list[StrategyName] | None = None,
+    ) -> None:
         """Handle a completed 1-minute candle.
 
         Args:
             symbol: The index symbol (e.g. "NIFTY")
             candle_data: Dict with keys: o, h, l, c, v, timestamp, timeframe
+            strategy_filter: If provided, only evaluate these strategies.
+                             Used by auto-mode (candle-driven) and manual scan.
         """
         try:
             await self._append_candle_to_buffer(symbol, candle_data)
@@ -94,10 +101,66 @@ class StrategyRunner:
                 logger.debug("Could not build MarketContext for %s — skipping evaluation", symbol)
                 return
 
-            await self._evaluate_strategies(symbol, ctx, executable, blocked_reason)
+            await self._evaluate_strategies(symbol, ctx, executable, blocked_reason, strategy_filter)
 
         except Exception:
             logger.exception("Error in strategy runner for %s", symbol)
+
+    async def evaluate_manual(
+        self, symbol: str, strategy_name: StrategyName,
+    ) -> StrategySignal | None:
+        """Run a single strategy evaluation on demand (manual scan).
+
+        Builds MarketContext from existing DB candles + Redis price cache.
+        Returns the signal if one was generated, None otherwise.
+        """
+        # Build a synthetic candle_data from the latest cached price
+        current_price = await self._get_current_price(symbol)
+        if current_price is None:
+            logger.warning("No price available for %s — cannot run manual evaluation", symbol)
+            return None
+
+        now = now_ist()
+        candle_data = {
+            "o": current_price,
+            "h": current_price,
+            "l": current_price,
+            "c": current_price,
+            "v": 0,
+            "timestamp": now.isoformat(),
+            "timeframe": "1m",
+        }
+
+        # Ensure candle buffer is loaded (don't append synthetic candle)
+        today = now.date()
+        if symbol not in self._candle_buffers or self._buffer_needs_reload(
+            self._candle_buffers.get(symbol, []), today
+        ):
+            self._candle_buffers[symbol] = await self._load_todays_candles(symbol, today)
+
+        executable, blocked_reason = await self._check_risk_limits(symbol)
+
+        ctx = await self._build_market_context(symbol, candle_data)
+        if ctx is None:
+            logger.debug("Could not build MarketContext for %s — skipping manual evaluation", symbol)
+            return None
+
+        # Evaluate single strategy
+        from app.strategies.registry import get_strategy
+        strategy = get_strategy(strategy_name)
+        if strategy is None:
+            logger.warning("Strategy %s not found in registry", strategy_name)
+            return None
+
+        signal = strategy.evaluate(ctx)
+        if signal is not None:
+            if signal.instrument_type == InstrumentType.OPTION:
+                signal, executable, blocked_reason = await self._resolve_option(
+                    signal, ctx, executable, blocked_reason,
+                )
+            await self._handle_signal(signal, executable, blocked_reason)
+
+        return signal
 
     # ------------------------------------------------------------------
     # Guardrails
@@ -527,14 +590,25 @@ class StrategyRunner:
         ctx: MarketContext,
         executable: bool,
         blocked_reason: str | None,
+        strategy_filter: list[StrategyName] | None = None,
     ) -> None:
-        """Run each active strategy and handle any signals produced."""
-        active_names = await self._get_active_strategy_names()
-        if not active_names:
-            logger.debug("No active strategies configured")
+        """Run each active strategy and handle any signals produced.
+
+        Args:
+            strategy_filter: If provided, only evaluate these specific strategies
+                             (used by auto-mode and manual scan). If None, evaluates
+                             all active strategies (legacy behavior).
+        """
+        if strategy_filter is not None:
+            names = strategy_filter
+        else:
+            names = await self._get_active_strategy_names()
+
+        if not names:
+            logger.debug("No strategies to evaluate for %s", symbol)
             return
 
-        strategies = get_active_strategies(active_names)
+        strategies = get_active_strategies(names)
 
         for strategy in strategies:
             try:
@@ -757,3 +831,28 @@ class StrategyRunner:
 
 # Module-level singleton — imported by feed_manager and other services
 strategy_runner = StrategyRunner()
+
+
+async def get_auto_strategies_for_symbol(symbol: str) -> list[StrategyName]:
+    """Return strategy names that have auto_mode=True and include this symbol."""
+    from app.models.strategy_config import StrategyConfig
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(StrategyConfig.strategy_name, StrategyConfig.symbols).where(
+                and_(
+                    StrategyConfig.is_active == True,  # noqa: E712
+                    StrategyConfig.auto_mode == True,  # noqa: E712
+                )
+            )
+        )
+        rows = result.all()
+
+    matched: list[StrategyName] = []
+    for name, symbols in rows:
+        if symbol in (symbols or []):
+            try:
+                matched.append(StrategyName(name))
+            except ValueError:
+                pass
+    return matched

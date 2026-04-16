@@ -17,3 +17,4 @@ class StrategyConfig(Base, TimestampMixin):
     risk_params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     symbols: Mapped[list] = mapped_column(JSONB, nullable=False, default=lambda: ["NIFTY"])
     timeframes: Mapped[list] = mapped_column(JSONB, nullable=False, default=lambda: ["5m"])
+    auto_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

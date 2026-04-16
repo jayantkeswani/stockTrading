@@ -26,6 +26,54 @@ logger = logging.getLogger(__name__)
 FYERS_TOKEN_KEY = "fyers:access_token"
 
 
+def _resolve_fyers_symbol(symbol: str) -> str:
+    """Resolve an internal symbol name to its Fyers-format symbol for history API.
+
+    Index symbols are looked up from FYERS_SYMBOL_MAP.
+    Stock symbols default to NSE:{SYMBOL}-EQ.
+    """
+    if symbol in FYERS_SYMBOL_MAP:
+        return FYERS_SYMBOL_MAP[symbol]
+    # Stock equity: NSE:TCS-EQ, NSE:RELIANCE-EQ etc.
+    return f"NSE:{symbol}-EQ"
+
+
+async def _get_all_backfill_symbols() -> dict[str, str]:
+    """Get all symbols that need backfilling: FYERS_SYMBOL_MAP + strategy-configured symbols.
+
+    Returns dict of {internal_symbol: fyers_symbol}.
+    """
+    from sqlalchemy import select
+    from app.models.strategy_config import StrategyConfig
+
+    # Start with default index symbols (skip INDIA VIX — no candle data)
+    symbols = {
+        k: v for k, v in FYERS_SYMBOL_MAP.items()
+        if k != "INDIA VIX"
+    }
+
+    # Add symbols from all active strategy configs
+    try:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(StrategyConfig.symbols).where(
+                    StrategyConfig.is_active == True  # noqa: E712
+                )
+            )
+            rows = result.scalars().all()
+
+        for symbol_list in rows:
+            if not symbol_list:
+                continue
+            for sym in symbol_list:
+                if sym not in symbols:
+                    symbols[sym] = _resolve_fyers_symbol(sym)
+    except Exception:
+        logger.exception("Failed to load strategy symbols for backfill")
+
+    return symbols
+
+
 def _previous_trading_day(ref_date: date) -> date:
     """Return the most recent weekday before ref_date (skips weekends)."""
     d = ref_date - timedelta(days=1)
@@ -145,8 +193,9 @@ async def _backfill_symbol(token: str, symbol: str, fyers_symbol: str, day: date
 
 
 async def backfill_previous_day():
-    """Backfill previous trading day's 1m candles for all index symbols.
+    """Backfill previous trading day's 1m candles for all tracked symbols.
 
+    Includes: FYERS_SYMBOL_MAP indices + symbols from active strategy configs.
     Skips symbols that already have data for that day.
     Called on app startup from main.py lifespan.
     """
@@ -158,10 +207,15 @@ async def backfill_previous_day():
 
     today = datetime.now(IST).date()
     prev_day = _previous_trading_day(today)
-    logger.info("Backfilling candles for previous trading day: %s", prev_day)
+
+    symbols = await _get_all_backfill_symbols()
+    logger.info(
+        "Backfilling candles for previous trading day %s (%d symbols)",
+        prev_day, len(symbols),
+    )
 
     total = 0
-    for symbol, fyers_symbol in FYERS_SYMBOL_MAP.items():
+    for symbol, fyers_symbol in symbols.items():
         if await _has_candles_for_day(symbol, prev_day):
             logger.info("Candles already exist for %s on %s — skipping", symbol, prev_day)
             continue
@@ -204,10 +258,14 @@ async def backfill_today():
         logger.warning("No Fyers token — cannot backfill today's candles")
         return
 
-    logger.info("Backfilling today's candles from %s to %s", MARKET_OPEN, now.strftime("%H:%M"))
+    symbols = await _get_all_backfill_symbols()
+    logger.info(
+        "Backfilling today's candles from %s to %s (%d symbols)",
+        MARKET_OPEN, now.strftime("%H:%M"), len(symbols),
+    )
 
     total = 0
-    for symbol, fyers_symbol in FYERS_SYMBOL_MAP.items():
+    for symbol, fyers_symbol in symbols.items():
         try:
             count = await _backfill_symbol(token, symbol, fyers_symbol, today)
             total += count

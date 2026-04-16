@@ -9,6 +9,15 @@ import type {
   Signal,
 } from "@/lib/types";
 
+export interface ScanLogEntry {
+  id: string;
+  type: "start" | "end";
+  strategy: string;
+  timestamp: string;
+  symbolsScanned?: number;
+  signalsGenerated?: number;
+}
+
 interface AppState {
   // Prices
   prices: Record<string, PriceData>;
@@ -24,6 +33,10 @@ interface AppState {
   signals: Signal[];
   setSignals: (signals: Signal[]) => void;
   addSignal: (signal: Signal) => void;
+
+  // Scan feed
+  scanLogs: ScanLogEntry[];
+  addScanLog: (entry: ScanLogEntry) => void;
 
   // Risk
   risk: RiskDashboard | null;
@@ -76,6 +89,11 @@ export const useStore = create<AppState>((set) => ({
   setSignals: (signals) => set({ signals }),
   addSignal: (signal) =>
     set((state) => ({ signals: [signal, ...state.signals] })),
+
+  // Scan feed
+  scanLogs: [],
+  addScanLog: (entry) =>
+    set((state) => ({ scanLogs: [entry, ...state.scanLogs].slice(0, 20) })),
 
   // Risk
   risk: null,

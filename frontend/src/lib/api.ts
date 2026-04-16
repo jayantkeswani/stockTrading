@@ -110,9 +110,30 @@ export const api = {
     }),
 
   // Strategies
-  getStrategies: () => request(`/api/v1/strategies`),
+  getStrategies: () => request<Array<{
+    id: string;
+    strategy_name: string;
+    is_active: boolean;
+    auto_mode: boolean;
+    parameters: Record<string, unknown>;
+    risk_params: Record<string, unknown>;
+    symbols: string[];
+    timeframes: string[];
+  }>>(`/api/v1/strategies`),
   toggleStrategy: (name: string) =>
-    request(`/api/v1/strategies/${name}/toggle`, { method: "PATCH" }),
+    request<{ strategy: string; is_active: boolean }>(`/api/v1/strategies/${name}/toggle`, { method: "PATCH" }),
+  toggleAutoMode: (name: string) =>
+    request<{ strategy: string; auto_mode: boolean }>(`/api/v1/strategies/${name}/auto-mode`, { method: "PATCH" }),
+  updateStrategy: (name: string, body: Record<string, unknown>) =>
+    request(`/api/v1/strategies/${name}`, { method: "PUT", body: JSON.stringify(body) }),
+  evaluateStrategy: (strategyName: string, symbol: string) =>
+    request<{ symbol: string; strategy: string; signal_generated: boolean; signal_type: string | null; confidence: number | null }>(
+      `/api/v1/strategies/evaluate`, { method: "POST", body: JSON.stringify({ strategy_name: strategyName, symbol }) }
+    ),
+  evaluateStrategyBatch: (strategyName: string) =>
+    request<{ strategy: string; symbols_scanned: number; signals_generated: number; results: Array<{ symbol: string; signal_generated: boolean; signal_type: string | null; confidence: number | null }> }>(
+      `/api/v1/strategies/evaluate/batch`, { method: "POST", body: JSON.stringify({ strategy_name: strategyName }) }
+    ),
 
   // Health
   health: () => request(`/api/v1/health`),

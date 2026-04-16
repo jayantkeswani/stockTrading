@@ -12,11 +12,11 @@
 
 ### `src/app/` - Pages (App Router)
 All pages use `'use client'` directive.
-- `page.tsx` - Dashboard: 7-col left (ScannerPanel, ActivePositions, PnLCard, chart button) + 3-col right (Watchlist, AgentFeed). ChartModal overlay.
+- `page.tsx` - Dashboard: 7-col left (ScannerHeader, ScannerPanel, ActivePositions, PnLCard, chart button) + 3-col right (Watchlist, ScanFeed, AgentFeed). Loads pending signals from DB on mount. ChartModal overlay.
 - `layout.tsx` - Root layout with AppShell wrapper
 - `trades/page.tsx` - Trade history table with filters (status, symbol, date)
 - `signals/page.tsx` - Signal history feed with status badges
-- `settings/page.tsx` - Strategy configuration, risk parameter sliders
+- `settings/page.tsx` - Strategy configuration (is_active, auto_mode, symbols per strategy with autocomplete + group presets), risk parameter sliders. Wired to backend `/api/v1/strategies` endpoints.
 - `agent/page.tsx` - Agent dashboard: YOLO toggle, autonomy level badge, 5-card status grid, action logs
 - `chart/page.tsx` - Full TradingView chart page with indicators overlay
 
@@ -34,9 +34,11 @@ All pages use `'use client'` directive.
 **dashboard/**
 - `PnLCard.tsx` - Daily/weekly/all-time P&L display
 - `QuickStats.tsx` - Snapshot cards: capital, drawdown %, win %, ratio
-- `Watchlist.tsx` - Symbol watchlist with debounced search (300ms), dropdown autocomplete from `/symbols/search` (local symbol master). Custom items stored in backend Redis via `/api/v1/watchlist` (enables agent to add symbols). Supports stocks, futures, options with segment badges (EQ/FUT/OPT).
+- `Watchlist.tsx` - Symbol watchlist with debounced search (300ms), dropdown autocomplete from `/symbols/search` (local symbol master). Custom items stored in backend Redis via `/api/v1/watchlist` (enables agent to add symbols). Supports stocks, futures, options with segment badges (EQ/FUT/OPT). Fixed height (max-h-[320px]) with scroll.
 - `SymbolSelector.tsx` - Index dropdown (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY)
-- `ScannerPanel.tsx` - Real-time signal scanner
+- `ScannerHeader.tsx` - Compact bar showing active strategies as pills with "Scan" button. Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end entries to ScanFeed.
+- `ScannerPanel.tsx` - Real-time signal scanner. Loads pending signals from DB on dashboard mount.
+- `ScanFeed.tsx` - Manual scan results feed (between Watchlist and AgentFeed). Shows scan start/end messages with stats (symbols scanned, signals found). Fixed height with scroll.
 - `AgentFeed.tsx` - Agent action log (SL hits, profit confirmations, executions)
 
 **positions/**
@@ -49,13 +51,13 @@ All pages use `'use client'` directive.
 - `useWebSocket.ts` - WebSocket connection to `ws://localhost:8080/ws`. Auto-reconnect. Subscribes to all 5 index symbols on connect. Exported `subscribeSymbols()` helper.
 
 ### `src/lib/` - Utilities
-- `api.ts` - REST client: trades, signals, positions, agent, risk, market data. Key functions: `getAllPrices()`, `refreshQuotes()`, `searchSymbols()`, `toggleYolo()`
+- `api.ts` - REST client: trades, signals, positions, agent, risk, market data, strategies. Key functions: `getAllPrices()`, `refreshQuotes()`, `searchSymbols()`, `toggleYolo()`, `evaluateStrategyBatch()`, `toggleAutoMode()`, `updateStrategy()`
 - `types.ts` - TypeScript interfaces for all entities (Trade, Signal, Position, AgentStatus with `yolo_mode` + `autonomy_level`)
 - `formatters.ts` - INR currency (Indian number system: lakhs/crores), percentages, IST datetime
 - `constants.ts` - `SYMBOLS` (5 indices), `STRATEGY_LABELS`, `STATUS_COLORS`, `WS_URL` (ws://localhost:8080/ws)
 
 ### `src/store/` - Zustand State
-- `index.ts` - Single store with slices: prices (per symbol), positions, signals, risk metrics, agent status, market status. `updatePrice()` action used by Header polling + WebSocket events.
+- `index.ts` - Single store with slices: prices (per symbol), positions, signals, scan logs, risk metrics, agent status, market status. `updatePrice()` action used by Header polling + WebSocket events. `ScanLogEntry` type for manual scan feed.
 
 ## Theme (Dark Only)
 ```
