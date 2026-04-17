@@ -182,11 +182,11 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
           onClick={() => onOpenChart(symbol)}
           className="flex items-center gap-1.5 text-left flex-1 min-w-0"
         >
-          <span className="text-[11px] font-medium text-text-primary truncate">
+          <span className="text-xs font-medium text-text-primary truncate">
             {displayName}
           </span>
           {segment && segment !== "EQ" && segment !== "INDEX" && (
-            <span className={`text-[8px] font-mono font-semibold px-0.5 rounded ${
+            <span className={`text-[10px] font-mono font-semibold px-0.5 rounded ${
               segment === "FUT" ? "text-warning" : "text-profit"
             }`}>
               {segment}
@@ -195,11 +195,11 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
         </button>
         <div className="flex items-center gap-2">
           <div className="text-right">
-            <div className="text-[11px] font-mono text-text-primary">
+            <div className="text-xs font-mono text-text-primary">
               {price ? formatINR(price.ltp) : "--"}
             </div>
             {price && (
-              <div className={`text-[9px] font-mono ${pnlColor(changePct)}`}>
+              <div className={`text-[10px] font-mono ${pnlColor(changePct)}`}>
                 {changePct > 0 ? "+" : ""}
                 {changePct.toFixed(2)}%
                 <span className="text-text-muted ml-0.5">
@@ -226,7 +226,7 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
   return (
     <div className="rounded border border-border bg-bg-secondary">
       <div className="px-3 py-1.5 border-b border-border">
-        <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider">
+        <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
           Watchlist
         </h2>
       </div>
@@ -252,10 +252,10 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
           onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
           placeholder="search symbols..."
-          className="w-full text-[10px] font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
+          className="w-full text-xs font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
         />
         {searching && (
-          <div className="absolute right-4 top-2.5 text-[9px] text-text-muted font-mono">...</div>
+          <div className="absolute right-4 top-2.5 text-[10px] text-text-muted font-mono">...</div>
         )}
 
         {/* Autocomplete dropdown */}
@@ -269,24 +269,24 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
                 className="w-full flex items-center justify-between px-2 py-1 hover:bg-bg-tertiary/80 transition-colors text-left border-b border-border/20 last:border-0"
               >
                 <div className="min-w-0 flex-1">
-                  <span className="text-[10px] font-mono font-medium text-text-primary truncate">
+                  <span className="text-xs font-mono font-medium text-text-primary truncate">
                     {s.display}
                   </span>
                   {s.segment && (
-                    <span className={`ml-1 text-[8px] font-mono ${
+                    <span className={`ml-1 text-[10px] font-mono ${
                       s.segment === "FUT" ? "text-warning" : s.segment === "OPT" ? "text-profit" : "text-text-muted"
                     }`}>
                       {s.segment}
                     </span>
                   )}
                   {s.expiry && (
-                    <span className="ml-1 text-[8px] text-text-muted font-mono">
+                    <span className="ml-1 text-[10px] text-text-muted font-mono">
                       {s.expiry}
                     </span>
                   )}
                 </div>
                 {s.type && (
-                  <span className={`text-[9px] font-mono font-medium ${
+                  <span className={`text-[10px] font-mono font-medium ${
                     s.type === "CE" ? "text-profit" : "text-loss"
                   }`}>
                     {s.type}

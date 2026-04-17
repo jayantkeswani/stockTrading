@@ -69,10 +69,10 @@ export function Header() {
   return (
     <header className="fixed top-0 left-12 right-0 z-30 h-9 border-b border-border bg-bg-secondary/90 backdrop-blur-sm flex items-center justify-between px-3">
       <div className="flex items-center gap-3">
-        <span className="text-text-muted font-mono text-[11px]">{time}</span>
+        <span className="text-text-muted font-mono text-xs">{time}</span>
         {marketStatus && (
           <span
-            className={`text-[10px] font-mono font-medium ${
+            className={`text-xs font-mono font-medium ${
               marketStatus.is_open ? "text-profit" : "text-text-muted"
             }`}
           >
@@ -80,14 +80,14 @@ export function Header() {
           </span>
         )}
         {marketStatus?.in_dead_zone && (
-          <span className="text-[10px] font-mono text-warning">DEAD ZONE</span>
+          <span className="text-xs font-mono text-warning">DEAD ZONE</span>
         )}
       </div>
 
       <div className="flex items-center gap-3">
         {/* VIX */}
         {marketStatus?.india_vix != null && (
-          <span className="text-[10px] font-mono">
+          <span className="text-xs font-mono">
             <span className="text-text-muted">VIX</span>{" "}
             <span className="text-text-secondary">{marketStatus.india_vix.toFixed(2)}</span>
           </span>
@@ -107,11 +107,11 @@ export function Header() {
             }`}
           />
           {marketStatus?.fyers_connected ? (
-            <span className="text-[10px] font-mono text-text-muted">FYERS</span>
+            <span className="text-xs font-mono text-text-muted">FYERS</span>
           ) : (
             <button
               onClick={handleStartFeed}
-              className="text-[10px] font-mono text-warning hover:text-warning/80 transition-colors"
+              className="text-xs font-mono text-warning hover:text-warning/80 transition-colors"
             >
               CONNECT
             </button>
@@ -128,7 +128,7 @@ export function Header() {
               wsConnected ? "bg-profit" : "bg-loss"
             }`}
           />
-          <span className="text-[10px] font-mono text-text-muted">
+          <span className="text-xs font-mono text-text-muted">
             {wsConnected ? "WS" : "WS OFF"}
           </span>
         </div>

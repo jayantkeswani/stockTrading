@@ -65,7 +65,7 @@ export function Sidebar() {
             }`}
           >
             {icons[item.icon]}
-            <span className="absolute left-11 bg-bg-elevated text-text-primary text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-border font-mono">
+            <span className="absolute left-11 bg-bg-elevated text-text-primary text-xs px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-border font-mono">
               {item.label}
             </span>
           </Link>
@@ -75,7 +75,7 @@ export function Sidebar() {
       {/* Paper Trading Indicator */}
       <div className="mt-auto mb-1">
         <div className="w-6 h-6 rounded bg-warning/15 flex items-center justify-center" title="Paper Trading">
-          <span className="text-warning text-[9px] font-bold font-mono">P</span>
+          <span className="text-warning text-[10px] font-bold font-mono">P</span>
         </div>
       </div>
     </aside>

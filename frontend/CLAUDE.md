@@ -77,7 +77,7 @@ Font:        Geist Sans + Geist Mono
 - **Density first** — tight padding (py-1.5, px-3), compact rows, minimal whitespace
 - **Monospace-forward** — all data, labels, prices, timestamps in `font-mono`
 - **Sharp corners** — `rounded` (4px) instead of `rounded-lg` (8px)
-- **Font sizes** — 9px labels, 10px data, 11px primary text (smaller than typical)
+- **Font sizes** — 10px labels/badges, 12px (text-xs) data and primary text, text-sm for key values
 - **Uppercase tracking** — section headers use `uppercase tracking-wider font-mono`
 - **Dividers over cards** — inline dividers (`w-px h-4 bg-border`) separate metrics
 - **Subtle depth** — noise texture overlay (`noise-bg`), glow utilities (`glow-profit`, `glow-loss`, `glow-accent`)
@@ -101,9 +101,9 @@ Font:        Geist Sans + Geist Mono
 - All 5 indices always referenced: NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY
 - Backend API base URL: `http://localhost:8080/api/v1`
 - WebSocket URL: `ws://localhost:8080/ws`
-- Strategy badges: `text-[9px] font-mono px-1 py-px rounded bg-accent/10 text-accent`
-- Section headers: `text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider`
-- Empty states: `text-[10px] font-mono text-text-muted` with lowercase text
+- Strategy badges: `text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent`
+- Section headers: `text-xs font-mono font-medium text-text-secondary uppercase tracking-wider`
+- Empty states: `text-xs font-mono text-text-muted` with lowercase text
 
 ## How-To Guides
 

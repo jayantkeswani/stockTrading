@@ -14,7 +14,7 @@ function SignalTypeBadge({ signalType }: { signalType: Signal["signal_type"] }) 
     SELL_FUT: { label: "\u25BC FUT", cls: "text-loss" },
   };
   const entry = map[signalType] || { label: signalType, cls: "text-text-muted" };
-  return <span className={`text-[11px] font-mono font-bold ${entry.cls}`}>{entry.label}</span>;
+  return <span className={`text-xs font-mono font-bold ${entry.cls}`}>{entry.label}</span>;
 }
 
 export default function SignalsPage() {
@@ -42,9 +42,9 @@ export default function SignalsPage() {
 
       <div className="rounded border border-border bg-bg-secondary overflow-hidden">
         {loading ? (
-          <div className="px-3 py-6 text-center text-text-muted text-[10px] font-mono">loading...</div>
+          <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
         ) : signals.length === 0 ? (
-          <div className="px-3 py-6 text-center text-text-muted text-[10px] font-mono">no signals generated yet</div>
+          <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">no signals generated yet</div>
         ) : (
           <div className="divide-y divide-border/30">
             {signals.map((signal) => (
@@ -52,31 +52,31 @@ export default function SignalsPage() {
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2">
                     <SignalTypeBadge signalType={signal.signal_type} />
-                    <span className="text-[11px] font-mono font-medium">{signal.symbol}</span>
+                    <span className="text-xs font-mono font-medium">{signal.symbol}</span>
                     {signal.instrument_type === "OPTION" && signal.executable && (
-                      <span className="text-[9px] font-mono text-text-muted">
+                      <span className="text-[10px] font-mono text-text-muted">
                         {signal.strike_price} | {signal.expiry_date}
                       </span>
                     )}
                     {signal.instrument_type === "FUTURE" && (
-                      <span className="text-[9px] font-mono text-text-muted">FUT | {signal.expiry_date}</span>
+                      <span className="text-[10px] font-mono text-text-muted">FUT | {signal.expiry_date}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
                     <span
-                      className={`text-[9px] font-mono px-1 py-px rounded ${
+                      className={`text-[10px] font-mono px-1 py-px rounded ${
                         STATUS_COLORS[signal.status] || ""
                       }`}
                     >
                       {signal.status}
                     </span>
-                    <span className="text-[9px] font-mono text-text-muted">
+                    <span className="text-[10px] font-mono text-text-muted">
                       {formatDate(signal.generated_at)} {formatTime(signal.generated_at)}
                     </span>
                   </div>
                 </div>
-                <p className="text-[10px] font-mono text-text-muted leading-relaxed">{signal.reason}</p>
-                <div className="mt-1 flex gap-3 text-[10px] font-mono text-text-muted flex-wrap">
+                <p className="text-xs font-mono text-text-muted leading-relaxed">{signal.reason}</p>
+                <div className="mt-1 flex gap-3 text-xs font-mono text-text-muted flex-wrap">
                   {signal.instrument_type === "OPTION" && !signal.executable ? (
                     <>
                       <span className="text-warning">Idx: {formatINR(signal.entry_price)}</span>

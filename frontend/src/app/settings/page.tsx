@@ -107,7 +107,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="space-y-3 max-w-4xl">
+    <div className="space-y-3">
       <h1 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
         Settings
       </h1>
@@ -116,13 +116,13 @@ export default function SettingsPage() {
       <div className="rounded border border-border bg-bg-secondary px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-[11px] font-mono font-medium text-text-primary">Paper Trading Mode</h2>
-            <p className="text-[10px] font-mono text-text-muted mt-0.5">
+            <h2 className="text-xs font-mono font-medium text-text-primary">Paper Trading Mode</h2>
+            <p className="text-xs font-mono text-text-muted mt-0.5">
               All trades simulated. No real money.
             </p>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="text-[9px] font-mono text-warning font-medium">PAPER</span>
+            <span className="text-[10px] font-mono text-warning font-medium">PAPER</span>
             <div className="w-8 h-4 bg-warning/25 rounded-full relative">
               <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-warning rounded-full" />
             </div>
@@ -132,48 +132,48 @@ export default function SettingsPage() {
 
       {/* Risk Parameters */}
       <div className="rounded border border-border bg-bg-secondary px-4 py-3">
-        <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
+        <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
           Risk Management
         </h2>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
+            <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">
               Capital (INR)
             </label>
             <input
               type="text"
               defaultValue="10,00,000"
-              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none"
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
             />
           </div>
           <div>
-            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
+            <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">
               Max Daily Drawdown (%)
             </label>
             <input
               type="number"
               defaultValue={5}
-              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none"
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
             />
           </div>
           <div>
-            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
+            <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">
               Risk Per Trade (%)
             </label>
             <input
               type="number"
               defaultValue={2}
-              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none"
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
             />
           </div>
           <div>
-            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
+            <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">
               Max Trades / Day
             </label>
             <input
               type="number"
               defaultValue={3}
-              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none"
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
             />
           </div>
         </div>
@@ -181,13 +181,13 @@ export default function SettingsPage() {
 
       {/* Strategy Config */}
       <div className="rounded border border-border bg-bg-secondary px-4 py-3">
-        <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
+        <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
           Strategies
         </h2>
         {loading ? (
-          <div className="text-[10px] font-mono text-text-muted">loading...</div>
+          <div className="text-xs font-mono text-text-muted">loading...</div>
         ) : strategies.length === 0 ? (
-          <div className="text-[10px] font-mono text-text-muted">no strategies configured</div>
+          <div className="text-xs font-mono text-text-muted">no strategies configured</div>
         ) : (
           <div className="space-y-1">
             {strategies.map((s) => {
@@ -208,16 +208,16 @@ export default function SettingsPage() {
                       >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>
-                      <span className="text-[11px] font-mono font-medium">{label}</span>
+                      <span className="text-xs font-mono font-medium">{label}</span>
                       {s.auto_mode && (
-                        <span className="text-[8px] font-mono font-semibold px-1 py-px rounded bg-accent/15 text-accent">
+                        <span className="text-[10px] font-mono font-semibold px-1 py-px rounded bg-accent/15 text-accent">
                           AUTO
                         </span>
                       )}
                     </button>
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1">
-                        <span className="text-[9px] font-mono text-text-muted">Auto</span>
+                        <span className="text-[10px] font-mono text-text-muted">Auto</span>
                         <ToggleSwitch
                           checked={s.auto_mode}
                           onChange={() => handleToggleAutoMode(s.strategy_name)}
@@ -226,7 +226,7 @@ export default function SettingsPage() {
                         />
                       </div>
                       <div className="flex items-center gap-1">
-                        <span className="text-[9px] font-mono text-text-muted">Active</span>
+                        <span className="text-[10px] font-mono text-text-muted">Active</span>
                         <ToggleSwitch
                           checked={s.is_active}
                           onChange={() => handleToggleActive(s.strategy_name)}
@@ -239,7 +239,7 @@ export default function SettingsPage() {
                   {/* Expanded: Symbol configuration */}
                   {isExpanded && (
                     <div className="px-3 py-2 border-t border-border/30 animate-fade-in">
-                      <label className="text-[9px] font-mono text-text-muted uppercase block mb-1.5">
+                      <label className="text-[10px] font-mono text-text-muted uppercase block mb-1.5">
                         Symbols to scan
                       </label>
                       <SymbolSelector
@@ -258,28 +258,28 @@ export default function SettingsPage() {
 
       {/* Notification Config */}
       <div className="rounded border border-border bg-bg-secondary px-4 py-3">
-        <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
+        <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
           Notifications
         </h2>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
+            <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">
               Telegram Bot Token
             </label>
             <input
               type="password"
               placeholder="bot token..."
-              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none placeholder:text-text-muted"
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none placeholder:text-text-muted"
             />
           </div>
           <div>
-            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
+            <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">
               Telegram Chat ID
             </label>
             <input
               type="text"
               placeholder="chat id..."
-              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none placeholder:text-text-muted"
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none placeholder:text-text-muted"
             />
           </div>
         </div>
@@ -414,7 +414,7 @@ function SymbolSelector({
         {selected.map((sym) => (
           <span
             key={sym}
-            className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-bg-tertiary border border-border text-[10px] font-mono text-text-secondary"
+            className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-bg-tertiary border border-border text-xs font-mono text-text-secondary"
           >
             {sym}
             <button
@@ -444,12 +444,12 @@ function SymbolSelector({
             }
           }}
           placeholder="search stocks, indices, futures..."
-          className="flex-1 text-[10px] font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
+          className="flex-1 text-xs font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
         />
         <div className="relative">
           <button
             onClick={() => setShowGroups(!showGroups)}
-            className="text-[10px] font-mono px-2 py-1 rounded border border-border bg-bg-tertiary text-text-muted hover:text-text-secondary hover:border-accent/30 transition-colors"
+            className="text-xs font-mono px-2 py-1 rounded border border-border bg-bg-tertiary text-text-muted hover:text-text-secondary hover:border-accent/30 transition-colors"
           >
             +Group
           </button>
@@ -460,7 +460,7 @@ function SymbolSelector({
                   key={name}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => addGroup(name)}
-                  className="w-full text-left px-2 py-1 text-[10px] font-mono text-text-secondary hover:bg-bg-tertiary/80 hover:text-text-primary transition-colors"
+                  className="w-full text-left px-2 py-1 text-xs font-mono text-text-secondary hover:bg-bg-tertiary/80 hover:text-text-primary transition-colors"
                 >
                   {name}
                   <span className="text-text-muted ml-1">({SYMBOL_GROUPS[name].length})</span>
@@ -480,8 +480,8 @@ function SymbolSelector({
                 onClick={() => addSymbol(s.short_name || s.display, s.symbol)}
                 className="w-full flex items-center gap-1.5 px-2 py-1 text-left hover:bg-bg-tertiary/80 transition-colors border-b border-border/20 last:border-0"
               >
-                <span className="text-[10px] font-mono font-medium text-text-primary">{s.display}</span>
-                <span className="text-[8px] font-mono text-text-muted">{s.segment}</span>
+                <span className="text-xs font-mono font-medium text-text-primary">{s.display}</span>
+                <span className="text-[10px] font-mono text-text-muted">{s.segment}</span>
               </button>
             ))}
           </div>
@@ -494,7 +494,7 @@ function SymbolSelector({
           <button
             key={sym}
             onClick={() => addSymbol(sym)}
-            className="text-[9px] font-mono px-1 py-px rounded border border-border/50 text-text-muted hover:text-accent hover:border-accent/30 transition-colors"
+            className="text-[10px] font-mono px-1 py-px rounded border border-border/50 text-text-muted hover:text-accent hover:border-accent/30 transition-colors"
           >
             +{sym}
           </button>

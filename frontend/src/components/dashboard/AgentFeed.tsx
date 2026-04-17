@@ -92,7 +92,7 @@ export function AgentFeed() {
     <div className="rounded border border-border bg-bg-secondary">
       <div className="px-3 py-1.5 border-b border-border">
         <div className="flex items-center justify-between mb-1.5">
-          <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider">
+          <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
             Agent Feed
           </h2>
         </div>
@@ -102,7 +102,7 @@ export function AgentFeed() {
           <select
             value={filterStrategy}
             onChange={(e) => setFilterStrategy(e.target.value)}
-            className="text-[10px] font-mono bg-bg-tertiary border border-border rounded px-1.5 py-0.5 text-text-secondary focus:outline-none focus:border-accent/50"
+            className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1.5 py-0.5 text-text-secondary focus:outline-none focus:border-accent/50"
           >
             <option value="ALL">All</option>
             {strategyNames.map((s) => (
@@ -114,7 +114,7 @@ export function AgentFeed() {
           <select
             value={filterAction}
             onChange={(e) => setFilterAction(e.target.value)}
-            className="text-[10px] font-mono bg-bg-tertiary border border-border rounded px-1.5 py-0.5 text-text-secondary focus:outline-none focus:border-accent/50"
+            className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1.5 py-0.5 text-text-secondary focus:outline-none focus:border-accent/50"
           >
             {ACTION_TYPE_OPTIONS.map((a) => (
               <option key={a} value={a}>
@@ -127,7 +127,7 @@ export function AgentFeed() {
 
       <div className="max-h-[300px] overflow-y-auto">
         {Object.keys(grouped).length === 0 ? (
-          <div className="px-3 py-4 text-center text-text-muted text-[10px] font-mono">
+          <div className="px-3 py-4 text-center text-text-muted text-xs font-mono">
             no activity
           </div>
         ) : (
@@ -145,14 +145,14 @@ export function AgentFeed() {
                   className="w-full flex items-center justify-between px-3 py-1 hover:bg-bg-tertiary/40 transition-colors text-left"
                 >
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[9px] text-text-muted font-mono">
+                    <span className="text-[10px] text-text-muted font-mono">
                       {isExpanded ? "\u25BE" : "\u25B8"}
                     </span>
-                    <span className="text-[11px] font-mono font-medium text-text-primary">
+                    <span className="text-xs font-mono font-medium text-text-primary">
                       {STRATEGY_LABELS[strategy] || strategy}
                     </span>
                   </div>
-                  <span className="text-[9px] text-text-muted font-mono">{totalLogs}</span>
+                  <span className="text-[10px] text-text-muted font-mono">{totalLogs}</span>
                 </button>
 
                 {isExpanded && (
@@ -160,7 +160,7 @@ export function AgentFeed() {
                     {Object.entries(symbols).map(([symbol, logs]) => (
                       <div key={symbol} className="ml-3">
                         {symbol !== "general" && (
-                          <div className="px-3 py-0.5 text-[10px] font-mono font-medium text-text-secondary">
+                          <div className="px-3 py-0.5 text-xs font-mono font-medium text-text-secondary">
                             {symbol}
                           </div>
                         )}
@@ -169,7 +169,7 @@ export function AgentFeed() {
                           return (
                             <div
                               key={log.id}
-                              className="flex items-center gap-1.5 px-3 py-0.5 text-[10px] font-mono"
+                              className="flex items-center gap-1.5 px-3 py-0.5 text-xs font-mono"
                             >
                               <span className="text-text-muted w-8 shrink-0">
                                 {formatLogTime(log.created_at)}

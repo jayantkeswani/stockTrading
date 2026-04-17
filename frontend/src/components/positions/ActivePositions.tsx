@@ -30,23 +30,23 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
   return (
     <div className="rounded border border-border bg-bg-secondary">
       <div className="px-3 py-1.5 border-b border-border flex items-center gap-2">
-        <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider">
+        <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
           Positions
         </h2>
         {positions.length > 0 && (
-          <span className="text-[10px] font-mono text-text-muted">({positions.length})</span>
+          <span className="text-xs font-mono text-text-muted">({positions.length})</span>
         )}
       </div>
 
       {positions.length === 0 ? (
-        <div className="px-3 py-4 text-center text-text-muted text-[10px] font-mono">
+        <div className="px-3 py-4 text-center text-text-muted text-xs font-mono">
           no open positions
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-[11px]">
+          <table className="w-full text-xs">
             <thead>
-              <tr className="text-[9px] text-text-muted uppercase font-mono tracking-wider">
+              <tr className="text-[10px] text-text-muted uppercase font-mono tracking-wider">
                 <th className="text-left px-3 py-1">Symbol</th>
                 {!compact && <th className="text-left px-3 py-1">Strike</th>}
                 <th className="text-right px-3 py-1">Entry</th>
@@ -80,14 +80,14 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                       <td className="px-3 py-1.5">
                         <span className="font-mono font-medium">{pos.symbol}</span>
                         <span
-                          className={`ml-1 text-[9px] font-mono ${
+                          className={`ml-1 text-[10px] font-mono ${
                             pos.option_type === "CE" ? "text-profit" : "text-loss"
                           }`}
                         >
                           {pos.option_type}
                         </span>
                         {compact && (
-                          <span className="ml-1 text-[9px] text-text-muted font-mono">
+                          <span className="ml-1 text-[10px] text-text-muted font-mono">
                             {pos.strike_price}
                           </span>
                         )}
@@ -105,11 +105,11 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                       </td>
                       <td className={`px-3 py-1.5 text-right font-mono font-medium ${pnlColor(pnl)}`}>
                         <div>{formatINR(pnl)}</div>
-                        <div className="text-[9px]">{formatPercent(pnlPct)}</div>
+                        <div className="text-[10px]">{formatPercent(pnlPct)}</div>
                       </td>
                       <td className="px-3 py-1.5 text-right">
                         <span
-                          className={`text-[10px] font-mono ${
+                          className={`text-xs font-mono ${
                             slDistance < 1 ? "text-loss font-bold" : slDistance < 3 ? "text-warning" : "text-text-muted"
                           }`}
                         >
@@ -118,7 +118,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                       </td>
                       {!compact && (
                         <td className="px-3 py-1.5">
-                          <span className="text-[9px] font-mono px-1 py-px rounded bg-accent/10 text-accent">
+                          <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent">
                             {STRATEGY_LABELS[pos.strategy_name] || pos.strategy_name}
                           </span>
                         </td>
@@ -129,7 +129,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                             e.stopPropagation();
                             handleClose(pos.id);
                           }}
-                          className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-loss/10 text-loss hover:bg-loss/20 transition-colors"
+                          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-loss/10 text-loss hover:bg-loss/20 transition-colors"
                         >
                           CLOSE
                         </button>
@@ -138,7 +138,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                     {isExpanded && (
                       <tr key={`${pos.id}-expanded`} className="bg-bg-tertiary/20">
                         <td colSpan={compact ? 6 : 8} className="px-3 py-2">
-                          <div className="grid grid-cols-4 gap-3 text-[10px] font-mono animate-fade-in">
+                          <div className="grid grid-cols-4 gap-3 text-xs font-mono animate-fade-in">
                             <div>
                               <span className="text-text-muted">Strategy</span>
                               <div className="text-text-primary mt-0.5">

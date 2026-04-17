@@ -23,7 +23,7 @@ export function ScanFeed() {
   return (
     <div className="rounded border border-border bg-bg-secondary">
       <div className="px-3 py-1.5 border-b border-border">
-        <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider">
+        <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
           Scan Log
         </h2>
       </div>
@@ -33,7 +33,7 @@ export function ScanFeed() {
             {entry.type === "start" ? (
               <>
                 <div className="w-1 h-1 rounded-full bg-accent animate-pulse shrink-0" />
-                <span className="text-[10px] font-mono text-text-muted">
+                <span className="text-xs font-mono text-text-muted">
                   <span className="text-accent">{entry.strategy}</span> scan started
                 </span>
               </>
@@ -42,7 +42,7 @@ export function ScanFeed() {
                 <div className={`w-1 h-1 rounded-full shrink-0 ${
                   (entry.signalsGenerated ?? 0) > 0 ? "bg-profit" : "bg-text-muted"
                 }`} />
-                <span className="text-[10px] font-mono text-text-muted">
+                <span className="text-xs font-mono text-text-muted">
                   <span className="text-text-secondary">{entry.strategy}</span>
                   {" "}&mdash; {entry.symbolsScanned} scanned,{" "}
                   <span className={(entry.signalsGenerated ?? 0) > 0 ? "text-profit" : ""}>
@@ -51,7 +51,7 @@ export function ScanFeed() {
                 </span>
               </>
             )}
-            <span className="text-[9px] text-text-muted ml-auto font-mono shrink-0">
+            <span className="text-[10px] text-text-muted ml-auto font-mono shrink-0">
               {formatTime(entry.timestamp)}
             </span>
           </div>

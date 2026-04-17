@@ -25,7 +25,7 @@ function ChartContent() {
           <button
             key={sym}
             onClick={() => setSelectedSymbol(sym)}
-            className={`px-2 py-0.5 text-[10px] font-mono font-medium rounded transition-colors ${
+            className={`px-2 py-0.5 text-xs font-mono font-medium rounded transition-colors ${
               selectedSymbol === sym
                 ? "bg-accent/15 text-accent border border-accent/30"
                 : "text-text-muted hover:text-text-secondary hover:bg-bg-tertiary border border-transparent"
@@ -49,7 +49,7 @@ export default function ChartPage() {
     <Suspense
       fallback={
         <div className="flex items-center justify-center h-[calc(100vh-52px)]">
-          <div className="text-text-muted text-[10px] font-mono">loading chart...</div>
+          <div className="text-text-muted text-xs font-mono">loading chart...</div>
         </div>
       }
     >

@@ -12,7 +12,7 @@ export function PnLCard() {
     <div className="flex items-center gap-6 px-3 py-1.5 rounded border border-border bg-bg-secondary">
       {/* Today's P&L */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-text-muted font-mono uppercase">P&L</span>
+        <span className="text-xs text-text-muted font-mono uppercase">P&L</span>
         <span className={`text-sm font-bold font-mono ${pnlColor(pnl)}`}>
           {formatINR(pnl)}
         </span>
@@ -22,7 +22,7 @@ export function PnLCard() {
 
       {/* Drawdown */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-text-muted font-mono uppercase">DD</span>
+        <span className="text-xs text-text-muted font-mono uppercase">DD</span>
         <span className={`text-xs font-mono font-medium ${drawdown > 3 ? "text-loss" : "text-text-secondary"}`}>
           {formatPercent(-drawdown)}
         </span>
@@ -40,11 +40,11 @@ export function PnLCard() {
 
       {/* Trades count */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-text-muted font-mono uppercase">TRADES</span>
+        <span className="text-xs text-text-muted font-mono uppercase">TRADES</span>
         <span className="text-xs font-mono text-text-primary">
           {risk?.trades_today ?? 0}/{risk?.max_trades_per_day ?? 3}
         </span>
-        <span className="text-[10px] text-text-muted font-mono">
+        <span className="text-xs text-text-muted font-mono">
           {positions.length} open
         </span>
       </div>
@@ -53,7 +53,7 @@ export function PnLCard() {
 
       {/* Capital at risk */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-text-muted font-mono uppercase">RISK</span>
+        <span className="text-xs text-text-muted font-mono uppercase">RISK</span>
         <span className="text-xs font-mono text-text-primary">
           {formatINR(risk?.capital_at_risk ?? 0)}
         </span>
@@ -62,7 +62,7 @@ export function PnLCard() {
       {risk?.is_halted && (
         <>
           <div className="w-px h-4 bg-border" />
-          <span className="text-[10px] font-mono font-bold text-loss glow-loss px-1.5 py-0.5 rounded bg-loss/10">
+          <span className="text-xs font-mono font-bold text-loss glow-loss px-1.5 py-0.5 rounded bg-loss/10">
             HALTED
           </span>
         </>

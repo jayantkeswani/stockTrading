@@ -33,24 +33,24 @@ export function ScannerPanel() {
     <div className="rounded border border-border bg-bg-secondary">
       <div className="px-3 py-1.5 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider">
+          <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
             Scanner
           </h2>
           {pendingSignals.length > 0 && (
-            <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/15 text-accent">
+            <span className="text-xs font-mono px-1 py-px rounded bg-accent/15 text-accent">
               {pendingSignals.length}
             </span>
           )}
         </div>
         <div className="flex items-center gap-1">
           <div className="w-1 h-1 rounded-full bg-profit animate-pulse" />
-          <span className="text-[9px] text-text-muted font-mono">LIVE</span>
+          <span className="text-[10px] text-text-muted font-mono">LIVE</span>
         </div>
       </div>
 
       {pendingSignals.length === 0 ? (
         <div className="px-3 py-6 text-center">
-          <p className="text-[11px] text-text-muted font-mono">waiting for signals...</p>
+          <p className="text-xs text-text-muted font-mono">waiting for signals...</p>
         </div>
       ) : (
         <div className="max-h-[340px] overflow-y-auto">
@@ -106,11 +106,11 @@ function SignalRow({
           className="flex-1 min-w-0 text-left"
         >
           <span className="text-xs font-medium text-text-primary">{symbolLabel}</span>
-          <span className="ml-1.5 text-[10px] text-text-muted font-mono">{signal.expiry_date}</span>
+          <span className="ml-1.5 text-xs text-text-muted font-mono">{signal.expiry_date}</span>
         </button>
 
         {/* Price levels */}
-        <div className="flex items-center gap-2 text-[10px] font-mono shrink-0">
+        <div className="flex items-center gap-2 text-xs font-mono shrink-0">
           {isUnresolvedOption ? (
             <span className="text-warning">{formatINR(signal.entry_price)}</span>
           ) : (
@@ -128,14 +128,14 @@ function SignalRow({
 
         {/* R:R */}
         {!isUnresolvedOption && (
-          <span className="text-[10px] font-mono text-text-muted w-8 text-right shrink-0">
+          <span className="text-xs font-mono text-text-muted w-8 text-right shrink-0">
             1:{rrRatio}
           </span>
         )}
 
         {/* Confidence */}
         {signal.confidence != null && (
-          <span className={`text-[10px] font-mono font-medium w-8 text-right shrink-0 ${
+          <span className={`text-xs font-mono font-medium w-8 text-right shrink-0 ${
             signal.confidence >= 70 ? "text-profit" : signal.confidence >= 50 ? "text-accent" : "text-loss"
           }`}>
             {signal.confidence}%
@@ -143,7 +143,7 @@ function SignalRow({
         )}
 
         {/* Strategy badge */}
-        <span className="text-[9px] font-mono px-1 py-px rounded bg-accent/10 text-accent shrink-0">
+        <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent shrink-0">
           {STRATEGY_LABELS[signal.strategy_name] || signal.strategy_name}
         </span>
 
@@ -151,13 +151,13 @@ function SignalRow({
         <div className="flex items-center gap-1 shrink-0 ml-1">
           <button
             onClick={(e) => { e.stopPropagation(); onExecute(signal.id); }}
-            className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-profit/15 text-profit hover:bg-profit/25 transition-colors"
+            className="text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-profit/15 text-profit hover:bg-profit/25 transition-colors"
           >
             EXEC
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onDismiss(signal.id); }}
-            className="text-[10px] font-mono px-1 py-0.5 rounded text-text-muted hover:text-loss hover:bg-loss/10 transition-colors"
+            className="text-xs font-mono px-1 py-0.5 rounded text-text-muted hover:text-loss hover:bg-loss/10 transition-colors"
           >
             ✕
           </button>
@@ -167,7 +167,7 @@ function SignalRow({
       {/* Expanded reason */}
       {expanded && signal.reason && (
         <div className="px-3 pb-2 pl-8 animate-fade-in">
-          <p className="text-[10px] text-text-secondary leading-relaxed font-mono">
+          <p className="text-xs text-text-secondary leading-relaxed font-mono">
             {signal.reason}
           </p>
         </div>

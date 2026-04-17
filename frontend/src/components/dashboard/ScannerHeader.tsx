@@ -82,7 +82,7 @@ export function ScannerHeader() {
             onClick={() => handleScan(s.strategy_name)}
             disabled={!!scanning}
             className={`
-              inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium
+              inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono font-medium
               transition-all duration-150
               ${isScanning
                 ? "bg-accent/20 text-accent border border-accent/30"
@@ -102,7 +102,7 @@ export function ScannerHeader() {
         );
       })}
       {scanning && (
-        <span className="text-[10px] text-accent ml-auto font-mono animate-pulse">
+        <span className="text-xs text-accent ml-auto font-mono animate-pulse">
           scanning...
         </span>
       )}

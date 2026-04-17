@@ -89,7 +89,7 @@ export default function AgentPage() {
           {/* YOLO Mode Toggle */}
           <button
             onClick={handleToggleYolo}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono font-medium transition-colors border ${
+            className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono font-medium transition-colors border ${
               agentStatus?.yolo_mode
                 ? "border-warning/40 bg-warning/10 text-warning"
                 : "border-border bg-bg-secondary text-text-muted hover:text-text-secondary"
@@ -112,7 +112,7 @@ export default function AgentPage() {
           </button>
 
           {/* Autonomy level badge */}
-          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded uppercase ${
+          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded uppercase ${
             agentStatus?.autonomy_level === "yolo"
               ? "bg-warning/15 text-warning"
               : agentStatus?.autonomy_level === "semi"
@@ -125,7 +125,7 @@ export default function AgentPage() {
           {/* Start/Stop button */}
           <button
             onClick={handleToggle}
-            className={`px-2.5 py-1 rounded text-[10px] font-mono font-medium transition-colors ${
+            className={`px-2.5 py-1 rounded text-xs font-mono font-medium transition-colors ${
               agentStatus?.running
                 ? "bg-loss/15 text-loss hover:bg-loss/25"
                 : "bg-profit/15 text-profit hover:bg-profit/25"
@@ -139,14 +139,14 @@ export default function AgentPage() {
       {/* Status Cards */}
       <div className="grid grid-cols-5 gap-2">
         <div className="rounded border border-border bg-bg-secondary px-3 py-2">
-          <div className="text-[9px] text-text-muted font-mono uppercase mb-1">Status</div>
+          <div className="text-[10px] text-text-muted font-mono uppercase mb-1">Status</div>
           <div className="flex items-center gap-1.5">
             <div
               className={`w-2 h-2 rounded-full ${
                 agentStatus?.running ? "bg-profit animate-pulse" : "bg-text-muted"
               }`}
             />
-            <span className="text-[11px] font-mono font-medium">
+            <span className="text-xs font-mono font-medium">
               {agentStatus?.running ? "RUNNING" : "STOPPED"}
             </span>
           </div>
@@ -154,7 +154,7 @@ export default function AgentPage() {
         <div className={`rounded border px-3 py-2 ${
           agentStatus?.yolo_mode ? "border-warning/30 bg-warning/5" : "border-border bg-bg-secondary"
         }`}>
-          <div className="text-[9px] text-text-muted font-mono uppercase mb-1">Mode</div>
+          <div className="text-[10px] text-text-muted font-mono uppercase mb-1">Mode</div>
           <div className={`text-sm font-mono font-bold ${
             agentStatus?.yolo_mode ? "text-warning" : "text-accent"
           }`}>
@@ -162,19 +162,19 @@ export default function AgentPage() {
           </div>
         </div>
         <div className="rounded border border-border bg-bg-secondary px-3 py-2">
-          <div className="text-[9px] text-text-muted font-mono uppercase mb-1">Pending</div>
+          <div className="text-[10px] text-text-muted font-mono uppercase mb-1">Pending</div>
           <div className="text-sm font-mono font-bold">
             {agentStatus?.pending_confirmations ?? 0}
           </div>
         </div>
         <div className="rounded border border-border bg-bg-secondary px-3 py-2">
-          <div className="text-[9px] text-text-muted font-mono uppercase mb-1">Monitored</div>
+          <div className="text-[10px] text-text-muted font-mono uppercase mb-1">Monitored</div>
           <div className="text-sm font-mono font-bold">
             {agentStatus?.positions_monitored ?? 0}
           </div>
         </div>
         <div className="rounded border border-border bg-bg-secondary px-3 py-2">
-          <div className="text-[9px] text-text-muted font-mono uppercase mb-1">Uptime</div>
+          <div className="text-[10px] text-text-muted font-mono uppercase mb-1">Uptime</div>
           <div className="text-sm font-mono font-bold">
             {agentStatus?.uptime_seconds
               ? `${Math.floor(agentStatus.uptime_seconds / 60)}m`
@@ -186,14 +186,14 @@ export default function AgentPage() {
       {/* Agent Logs */}
       <div className="rounded border border-border bg-bg-secondary">
         <div className="px-3 py-1.5 border-b border-border">
-          <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider">
+          <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
             Activity Log
           </h2>
         </div>
         {loading ? (
-          <div className="px-3 py-6 text-center text-text-muted text-[10px] font-mono">loading...</div>
+          <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
         ) : logs.length === 0 ? (
-          <div className="px-3 py-6 text-center text-text-muted text-[10px] font-mono">no activity yet</div>
+          <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">no activity yet</div>
         ) : (
           <div className="divide-y divide-border/30 max-h-[400px] overflow-y-auto">
             {logs.map((log) => (
@@ -201,22 +201,22 @@ export default function AgentPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`text-[10px] font-mono font-bold ${
+                      className={`text-xs font-mono font-bold ${
                         actionTypeColors[log.action_type] || "text-text-secondary"
                       }`}
                     >
                       {log.action_type}
                     </span>
                     {log.details?.symbol != null && (
-                      <span className="text-[11px] font-mono">{String(log.details.symbol)}</span>
+                      <span className="text-xs font-mono">{String(log.details.symbol)}</span>
                     )}
                   </div>
-                  <span className="text-[9px] text-text-muted font-mono">
+                  <span className="text-[10px] text-text-muted font-mono">
                     {formatTime(log.created_at)}
                   </span>
                 </div>
                 {log.details?.message != null && (
-                  <p className="text-[10px] font-mono text-text-muted mt-0.5">
+                  <p className="text-xs font-mono text-text-muted mt-0.5">
                     {String(log.details.message)}
                   </p>
                 )}
@@ -225,13 +225,13 @@ export default function AgentPage() {
                     <div className="mt-1 flex gap-1.5">
                       <button
                         onClick={() => handleConfirm(log.id, true)}
-                        className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-profit/15 text-profit hover:bg-profit/25"
+                        className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-profit/15 text-profit hover:bg-profit/25"
                       >
                         APPROVE
                       </button>
                       <button
                         onClick={() => handleConfirm(log.id, false)}
-                        className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-loss/15 text-loss hover:bg-loss/25"
+                        className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-loss/15 text-loss hover:bg-loss/25"
                       >
                         REJECT
                       </button>
@@ -239,7 +239,7 @@ export default function AgentPage() {
                   )}
                 {log.confirmation_status && log.confirmation_status !== "PENDING" && (
                   <span
-                    className={`text-[9px] font-mono mt-0.5 inline-block ${
+                    className={`text-[10px] font-mono mt-0.5 inline-block ${
                       log.confirmation_status === "APPROVED"
                         ? "text-profit"
                         : "text-loss"

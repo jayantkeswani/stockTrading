@@ -31,14 +31,14 @@ export default function TradesPage() {
 
       <div className="rounded border border-border bg-bg-secondary overflow-hidden">
         {loading ? (
-          <div className="px-3 py-6 text-center text-text-muted text-[10px] font-mono">loading...</div>
+          <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
         ) : trades.length === 0 ? (
-          <div className="px-3 py-6 text-center text-text-muted text-[10px] font-mono">no trades yet</div>
+          <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">no trades yet</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-[11px]">
+            <table className="w-full text-xs">
               <thead>
-                <tr className="text-[9px] text-text-muted uppercase font-mono tracking-wider bg-bg-tertiary/40">
+                <tr className="text-[10px] text-text-muted uppercase font-mono tracking-wider bg-bg-tertiary/40">
                   <th className="text-left px-3 py-1.5">Date</th>
                   <th className="text-left px-3 py-1.5">Symbol</th>
                   <th className="text-left px-3 py-1.5">Type</th>
@@ -56,7 +56,7 @@ export default function TradesPage() {
                     key={trade.id}
                     className="border-t border-border/30 hover:bg-bg-tertiary/30"
                   >
-                    <td className="px-3 py-1.5 text-text-muted text-[10px] font-mono">
+                    <td className="px-3 py-1.5 text-text-muted text-xs font-mono">
                       {formatDate(trade.entry_time)}
                       <br />
                       {formatTime(trade.entry_time)}
@@ -64,14 +64,14 @@ export default function TradesPage() {
                     <td className="px-3 py-1.5 font-mono">
                       <span className="font-medium">{trade.symbol}</span>
                       <span
-                        className={`ml-1 text-[9px] ${
+                        className={`ml-1 text-[10px] ${
                           trade.option_type === "CE" ? "text-profit" : "text-loss"
                         }`}
                       >
                         {trade.strike_price} {trade.option_type}
                       </span>
                     </td>
-                    <td className="px-3 py-1.5 text-[10px] font-mono text-text-secondary">{trade.side}</td>
+                    <td className="px-3 py-1.5 text-xs font-mono text-text-secondary">{trade.side}</td>
                     <td className="px-3 py-1.5 text-right font-mono">
                       {formatINR(trade.entry_price)}
                     </td>
@@ -86,7 +86,7 @@ export default function TradesPage() {
                       {trade.pnl != null ? (
                         <>
                           {formatINR(trade.pnl)}
-                          <div className="text-[9px]">
+                          <div className="text-[10px]">
                             {formatPercent(trade.pnl_percent ?? 0)}
                           </div>
                         </>
@@ -95,16 +95,16 @@ export default function TradesPage() {
                       )}
                     </td>
                     <td className="px-3 py-1.5">
-                      <span className="text-[9px] font-mono px-1 py-px rounded bg-accent/10 text-accent">
+                      <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent">
                         {STRATEGY_LABELS[trade.strategy_name] || trade.strategy_name}
                       </span>
                     </td>
-                    <td className="px-3 py-1.5 text-[10px] font-mono text-text-muted">
+                    <td className="px-3 py-1.5 text-xs font-mono text-text-muted">
                       {trade.exit_reason || "\u2014"}
                     </td>
                     <td className="px-3 py-1.5">
                       <span
-                        className={`text-[9px] font-mono px-1 py-px rounded ${
+                        className={`text-[10px] font-mono px-1 py-px rounded ${
                           STATUS_COLORS[trade.status] || ""
                         }`}
                       >
