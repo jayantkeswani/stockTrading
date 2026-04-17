@@ -39,7 +39,7 @@ All pages use `'use client'` directive.
 - `ScannerHeader.tsx` - Ultra-compact strategy pill bar. Monospace text-only buttons (no icons). Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end entries to ScanFeed.
 - `ScannerPanel.tsx` - Dense signal table. Signals rendered as compact rows (not cards) with inline direction arrow, symbol, price levels, R:R ratio, confidence, strategy badge, and EXEC/dismiss buttons. Shows execution error banner (auto-dismisses after 4s). Click row to expand reason text. Max-height 340px.
 - `ScanFeed.tsx` - Compact scan log. Shows scan start/end messages with stats. Max-height 160px.
-- `AgentFeed.tsx` - Agent action log grouped by strategy. Compact filter dropdowns. Max-height 300px.
+- `AgentFeed.tsx` - Agent action log as flat list (not nested). Filterable by strategy and action type via dropdowns. Each row: timestamp, action type, symbol, strategy chip badge, P&L. Max-height 300px.
 
 **positions/**
 - `ActivePositions.tsx` - Dense table of open positions with unrealized P&L, SL distance warnings, expandable detail rows. **Live P/L**: computes P/L reactively from `prices` store using `pos.fyers_option_symbol || pos.symbol` as price key. Subscribes position symbols on WebSocket for real-time ticks.

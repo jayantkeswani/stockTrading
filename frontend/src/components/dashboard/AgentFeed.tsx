@@ -7,73 +7,53 @@ import { formatINR } from "@/lib/formatters";
 
 const ACTION_COLORS: Record<string, string> = {
   SL_HIT: "text-loss",
+  SL_TRIGGERED: "text-loss",
   TARGET_HIT: "text-profit",
+  PROFIT_BOOKED: "text-profit",
   ENTRY: "text-accent",
+  AUTO_EXECUTED: "text-accent",
+  MANUAL_EXECUTED: "text-accent",
   EXIT: "text-warning",
+  TIME_EXIT: "text-warning",
   TRAIL_SL: "text-accent",
   SIGNAL_GENERATED: "text-text-secondary",
+  PROFIT_BOOK_REQUEST: "text-warning",
   CONFIRMATION_REQUEST: "text-warning",
+  DRAWDOWN_HALT: "text-loss",
 };
-
-const ACTION_TYPE_OPTIONS = [
-  "ALL",
-  "SL_HIT",
-  "TARGET_HIT",
-  "ENTRY",
-  "EXIT",
-  "TRAIL_SL",
-  "SIGNAL_GENERATED",
-] as const;
 
 export function AgentFeed() {
   const { agentLogs } = useStore();
-  const [expandedStrategies, setExpandedStrategies] = useState<Set<string>>(new Set());
   const [filterStrategy, setFilterStrategy] = useState<string>("ALL");
   const [filterAction, setFilterAction] = useState<string>("ALL");
-
-  const grouped = useMemo(() => {
-    let filtered = agentLogs;
-
-    if (filterAction !== "ALL") {
-      filtered = filtered.filter((log) => log.action_type === filterAction);
-    }
-
-    const groups: Record<string, Record<string, typeof agentLogs>> = {};
-
-    for (const log of filtered) {
-      const strategy = (log.details?.strategy_name as string) || "unknown";
-      const symbol = (log.details?.symbol as string) || "general";
-
-      if (filterStrategy !== "ALL" && strategy !== filterStrategy) continue;
-
-      if (!groups[strategy]) groups[strategy] = {};
-      if (!groups[strategy][symbol]) groups[strategy][symbol] = [];
-      groups[strategy][symbol].push(log);
-    }
-
-    return groups;
-  }, [agentLogs, filterStrategy, filterAction]);
 
   const strategyNames = useMemo(() => {
     const names = new Set<string>();
     for (const log of agentLogs) {
-      const s = (log.details?.strategy_name as string) || "unknown";
-      names.add(s);
+      const s = (log.details?.strategy_name as string) || "";
+      if (s) names.add(s);
     }
     return Array.from(names);
   }, [agentLogs]);
 
-  const toggleStrategy = (strategy: string) => {
-    setExpandedStrategies((prev) => {
-      const next = new Set(prev);
-      if (next.has(strategy)) {
-        next.delete(strategy);
-      } else {
-        next.add(strategy);
-      }
-      return next;
-    });
-  };
+  const actionTypes = useMemo(() => {
+    const types = new Set<string>();
+    for (const log of agentLogs) {
+      types.add(log.action_type);
+    }
+    return Array.from(types);
+  }, [agentLogs]);
+
+  const filtered = useMemo(() => {
+    let list = agentLogs;
+    if (filterStrategy !== "ALL") {
+      list = list.filter((log) => (log.details?.strategy_name as string) === filterStrategy);
+    }
+    if (filterAction !== "ALL") {
+      list = list.filter((log) => log.action_type === filterAction);
+    }
+    return list;
+  }, [agentLogs, filterStrategy, filterAction]);
 
   const formatLogTime = (ts: string) => {
     try {
@@ -116,9 +96,10 @@ export function AgentFeed() {
             onChange={(e) => setFilterAction(e.target.value)}
             className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1.5 py-0.5 text-text-secondary focus:outline-none focus:border-accent/50"
           >
-            {ACTION_TYPE_OPTIONS.map((a) => (
+            <option value="ALL">All</option>
+            {actionTypes.map((a) => (
               <option key={a} value={a}>
-                {a === "ALL" ? "All" : a.replace(/_/g, " ")}
+                {a.replace(/_/g, " ")}
               </option>
             ))}
           </select>
@@ -126,77 +107,51 @@ export function AgentFeed() {
       </div>
 
       <div className="max-h-[300px] overflow-y-auto">
-        {Object.keys(grouped).length === 0 ? (
+        {filtered.length === 0 ? (
           <div className="px-3 py-4 text-center text-text-muted text-xs font-mono">
             no activity
           </div>
         ) : (
-          Object.entries(grouped).map(([strategy, symbols]) => {
-            const isExpanded = expandedStrategies.has(strategy);
-            const totalLogs = Object.values(symbols).reduce(
-              (sum, logs) => sum + logs.length,
-              0
-            );
+          <div className="divide-y divide-border/30">
+            {filtered.map((log) => {
+              const pnl = log.details?.pnl as number | undefined;
+              const symbol = log.details?.symbol as string | undefined;
+              const strategyKey = (log.details?.strategy_name as string) || "";
+              const strategyLabel = STRATEGY_LABELS[strategyKey] || strategyKey;
 
-            return (
-              <div key={strategy} className="border-b border-border/30 last:border-b-0">
-                <button
-                  onClick={() => toggleStrategy(strategy)}
-                  className="w-full flex items-center justify-between px-3 py-1 hover:bg-bg-tertiary/40 transition-colors text-left"
+              return (
+                <div
+                  key={log.id}
+                  className="flex items-center gap-1.5 px-3 py-1 hover:bg-bg-tertiary/30 transition-colors"
                 >
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-text-muted font-mono">
-                      {isExpanded ? "\u25BE" : "\u25B8"}
+                  <span className="text-text-muted text-[10px] font-mono w-8 shrink-0">
+                    {formatLogTime(log.created_at)}
+                  </span>
+                  <span
+                    className={`text-xs font-mono font-medium shrink-0 ${ACTION_COLORS[log.action_type] || "text-text-secondary"}`}
+                  >
+                    {log.action_type.replace(/_/g, " ")}
+                  </span>
+                  {symbol && (
+                    <span className="text-xs font-mono text-text-primary">{symbol}</span>
+                  )}
+                  {strategyLabel && (
+                    <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent shrink-0">
+                      {strategyLabel}
                     </span>
-                    <span className="text-xs font-mono font-medium text-text-primary">
-                      {STRATEGY_LABELS[strategy] || strategy}
+                  )}
+                  {pnl != null && (
+                    <span
+                      className={`text-xs font-mono ml-auto shrink-0 ${Number(pnl) >= 0 ? "text-profit" : "text-loss"}`}
+                    >
+                      {Number(pnl) >= 0 ? "+" : ""}
+                      {formatINR(pnl)}
                     </span>
-                  </div>
-                  <span className="text-[10px] text-text-muted font-mono">{totalLogs}</span>
-                </button>
-
-                {isExpanded && (
-                  <div className="pb-1 animate-fade-in">
-                    {Object.entries(symbols).map(([symbol, logs]) => (
-                      <div key={symbol} className="ml-3">
-                        {symbol !== "general" && (
-                          <div className="px-3 py-0.5 text-xs font-mono font-medium text-text-secondary">
-                            {symbol}
-                          </div>
-                        )}
-                        {logs.map((log) => {
-                          const pnl = log.details?.pnl as number | undefined;
-                          return (
-                            <div
-                              key={log.id}
-                              className="flex items-center gap-1.5 px-3 py-0.5 text-xs font-mono"
-                            >
-                              <span className="text-text-muted w-8 shrink-0">
-                                {formatLogTime(log.created_at)}
-                              </span>
-                              <span
-                                className={`font-medium ${ACTION_COLORS[log.action_type] || "text-text-secondary"}`}
-                              >
-                                {log.action_type.replace(/_/g, " ")}
-                              </span>
-                              {pnl != null && (
-                                <span
-                                  className={`ml-auto ${pnl >= 0 ? "text-profit" : "text-loss"}`}
-                                >
-                                  {pnl >= 0 ? "+" : ""}
-                                  {formatINR(pnl)}
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
