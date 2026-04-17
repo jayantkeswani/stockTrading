@@ -36,26 +36,26 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
 
     const chart = createChart(container, {
       layout: {
-        background: { type: ColorType.Solid, color: "#111118" },
-        textColor: "#8888a0",
+        background: { type: ColorType.Solid, color: "#0b0b13" },
+        textColor: "#6a6a82",
         fontFamily: "var(--font-geist-mono), monospace",
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: "#1e1e2e" },
-        horzLines: { color: "#1e1e2e" },
+        vertLines: { color: "#1a1a2a" },
+        horzLines: { color: "#1a1a2a" },
       },
       crosshair: {
         mode: 0,
-        vertLine: { color: "#6366f1", width: 1, style: 2, labelBackgroundColor: "#6366f1" },
-        horzLine: { color: "#6366f1", width: 1, style: 2, labelBackgroundColor: "#6366f1" },
+        vertLine: { color: "#d4a843", width: 1, style: 2, labelBackgroundColor: "#d4a843" },
+        horzLine: { color: "#d4a843", width: 1, style: 2, labelBackgroundColor: "#d4a843" },
       },
       rightPriceScale: {
-        borderColor: "#1e1e2e",
+        borderColor: "#1a1a2a",
         scaleMargins: { top: 0.1, bottom: 0.2 },
       },
       timeScale: {
-        borderColor: "#1e1e2e",
+        borderColor: "#1a1a2a",
         timeVisible: activeTimeframe !== "1D",
         secondsVisible: false,
       },
@@ -63,16 +63,16 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#00ff88",
-      downColor: "#ff3366",
-      borderDownColor: "#ff3366",
-      borderUpColor: "#00ff88",
-      wickDownColor: "#ff3366",
-      wickUpColor: "#00ff88",
+      upColor: "#00e68a",
+      downColor: "#ff4060",
+      borderDownColor: "#ff4060",
+      borderUpColor: "#00e68a",
+      wickDownColor: "#ff4060",
+      wickUpColor: "#00e68a",
     });
 
     const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: "#6366f1",
+      color: "#d4a843",
       priceFormat: { type: "volume" },
       priceScaleId: "",
     });
@@ -105,7 +105,7 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
         const volumes = raw.map((c) => ({
           time: c.timestamp as UTCTimestamp,
           value: c.volume,
-          color: c.close >= c.open ? "rgba(0, 255, 136, 0.3)" : "rgba(255, 51, 102, 0.3)",
+          color: c.close >= c.open ? "rgba(0, 230, 138, 0.3)" : "rgba(255, 64, 96, 0.3)",
         }));
 
         candleSeries.setData(candles);
@@ -135,19 +135,19 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
   }, [selectedSymbol, activeTimeframe]);
 
   return (
-    <div className={`rounded-lg border border-border bg-bg-secondary overflow-hidden flex flex-col ${fullHeight ? "h-full" : ""}`}>
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
+    <div className={`rounded border border-border bg-bg-secondary overflow-hidden flex flex-col ${fullHeight ? "h-full" : ""}`}>
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0">
         <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold text-text-primary">{selectedSymbol}</h2>
-          <div className="flex gap-1">
+          <h2 className="text-xs font-mono font-medium text-text-primary">{selectedSymbol}</h2>
+          <div className="flex gap-0.5">
             {(["1m", "5m", "15m", "1h", "1D"] as Timeframe[]).map((tf) => (
               <button
                 key={tf}
                 onClick={() => handleTimeframeChange(tf)}
-                className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                className={`px-1.5 py-0.5 text-xs font-mono rounded transition-colors ${
                   activeTimeframe === tf
-                    ? "bg-accent/20 text-accent border border-accent/50"
-                    : "bg-bg-tertiary text-text-secondary hover:text-text-primary hover:bg-border border border-transparent"
+                    ? "bg-accent/15 text-accent border border-accent/30"
+                    : "text-text-muted hover:text-text-secondary hover:bg-bg-tertiary border border-transparent"
                 }`}
               >
                 {tf}
