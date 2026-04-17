@@ -78,7 +78,13 @@ async def auto_execute_signal(signal_id) -> dict | None:
             return None
 
         # Determine lot size and quantity
-        lot_size = LOT_SIZES.get(signal.symbol, 75)
+        is_futures = signal.instrument_type == "FUTURE"
+        if is_futures:
+            # For futures, lot size comes from the signal indicators (set by futures_resolver)
+            lot_size = (signal.indicators or {}).get("futures_lot_size", 1)
+        else:
+            lot_size = LOT_SIZES.get(signal.symbol, 75)
+
         lots = _calculate_lots(
             capital=settings.trading_capital,
             risk_per_trade_pct=settings.max_risk_per_trade_pct,
@@ -90,8 +96,23 @@ async def auto_execute_signal(signal_id) -> dict | None:
 
         now = now_ist()
 
-        # Derive option_type from signal_type (BUY_CE -> CE, BUY_PE -> PE)
-        option_type = signal.signal_type.replace("BUY_", "")
+        # Derive option_type and position_type based on instrument
+        if is_futures:
+            option_type = None
+            # Determine holding type from strategy
+            from app.strategies.registry import get_strategy
+            from app.core.enums import StrategyName
+            try:
+                strat = get_strategy(StrategyName(signal.strategy_name))
+                position_type = getattr(strat, "holding_type", "INTRADAY") if strat else "INTRADAY"
+            except (ValueError, KeyError):
+                position_type = "INTRADAY"
+        else:
+            option_type = signal.signal_type.replace("BUY_", "")
+            position_type = "INTRADAY"
+
+        # Use futures symbol if available, otherwise option symbol
+        trading_symbol = signal.fyers_futures_symbol or signal.fyers_option_symbol
 
         # Create Trade
         trade = Trade(
@@ -108,9 +129,10 @@ async def auto_execute_signal(signal_id) -> dict | None:
             stop_loss=signal.stop_loss,
             target_price=signal.target_price,
             status=TradeStatus.OPEN.value,
+            position_type=position_type,
             is_paper=settings.paper_trading,
             entry_time=now,
-            fyers_option_symbol=signal.fyers_option_symbol,
+            fyers_option_symbol=trading_symbol,
         )
         session.add(trade)
         await session.flush()  # Get trade.id
@@ -120,15 +142,16 @@ async def auto_execute_signal(signal_id) -> dict | None:
             trade_id=trade.id,
             symbol=signal.symbol,
             strike_price=signal.strike_price,
-            option_type=option_type,
+            option_type=option_type or "",
             expiry_date=signal.expiry_date,
             lots=lots,
             quantity=quantity,
             entry_price=signal.entry_price,
             stop_loss=signal.stop_loss,
             target_price=signal.target_price,
-            fyers_option_symbol=signal.fyers_option_symbol,
+            fyers_option_symbol=trading_symbol,
             strategy_name=signal.strategy_name,
+            position_type=position_type,
             is_paper=settings.paper_trading,
             opened_at=now,
         )
@@ -160,14 +183,15 @@ async def auto_execute_signal(signal_id) -> dict | None:
 
         await session.commit()
 
-    # Subscribe to option symbol on websocket feed for live price tracking
-    if signal.fyers_option_symbol:
+    # Subscribe to trading symbol on websocket feed for live price tracking
+    trading_symbol = signal.fyers_futures_symbol or signal.fyers_option_symbol
+    if trading_symbol:
         try:
             from app.data_feed.fyers_ws_client import fyers_ws_client
 
-            await fyers_ws_client.subscribe_symbols([signal.fyers_option_symbol])
+            await fyers_ws_client.subscribe_symbols([trading_symbol])
         except Exception:
-            logger.warning("Could not subscribe to %s on websocket", signal.fyers_option_symbol)
+            logger.warning("Could not subscribe to %s on websocket", trading_symbol)
 
     # Broadcast trade creation
     action = {

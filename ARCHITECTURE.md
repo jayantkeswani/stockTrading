@@ -69,6 +69,12 @@ Subscribed symbols (all get live WebSocket ticks):
   - Watchlist items from Redis — subscribed on startup and on add
 
 Frontend also polls GET /api/v1/market/prices every 10s as fallback.
+
+Chart data: GET /api/v1/market/ohlcv/{symbol}?resolution=5&days=15
+  → Backend proxies to Fyers history API (pre-aggregated candles)
+  → Paginated for large ranges, deduped, sorted ascending
+  → Falls back to PostgreSQL (MarketData1m) if Fyers unavailable
+  → Resolutions: "1" (1m), "5" (5m), "15" (15m), "60" (1h), "D" (daily)
 ```
 
 ### 2. Strategy Signal Flow
@@ -109,15 +115,16 @@ SHARED PIPELINE (both paths converge here):
 
 ### Strategy Configuration (strategy_configs table)
 ```
-strategy_name | is_active | auto_mode | symbols              | parameters | risk_params
---------------+-----------+-----------+----------------------+------------+------------
-vwap_pullback | true      | true      | ["NIFTY","BANKNIFTY"]| {...}      | {...}
-orb           | false     | false     | ["NIFTY"]            | {...}      | {...}
-gamma_scalping| false     | false     | ["NIFTY"]            | {...}      | {...}
+strategy_name | is_active | auto_mode | symbols              | symbol_map                          | parameters | risk_params
+--------------+-----------+-----------+----------------------+-------------------------------------+------------+------------
+vwap_pullback | true      | true      | ["NIFTY","BANKNIFTY"]| {"NIFTY":"NSE:NIFTY50-INDEX",...}   | {...}      | {...}
+orb           | false     | false     | ["NIFTY"]            | {...}                               | {...}      | {...}
+can_slim      | true      | true      | ["TCS","RELIANCE"]   | {"TCS":"NSE:TCS-EQ","RELIANCE":...} | {...}      | {...}
 
-is_active = strategy is available for evaluation (manual or auto)
-auto_mode = strategy runs automatically on every candle close for its configured symbols
-symbols   = which symbols this strategy evaluates on (configurable via Settings page)
+is_active   = strategy is available for evaluation (manual or auto)
+auto_mode   = strategy runs automatically on every candle close for its configured symbols
+symbols     = which symbols this strategy evaluates on (configurable via Settings page)
+symbol_map  = maps short_name → fyers_symbol, populated at insertion time from symbol master search results. Used by backfill, provisioning, and WS subscription — no Fyers symbol reconstruction needed.
 
 When symbols are added via Settings:
   PUT /api/v1/strategies/{name} → detects new symbols → background task:

@@ -80,46 +80,43 @@ export default function AgentPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">AI Agent</h1>
-        <div className="flex items-center gap-3">
+        <h1 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
+          AI Agent
+        </h1>
+        <div className="flex items-center gap-2">
           {/* YOLO Mode Toggle */}
           <button
             onClick={handleToggleYolo}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${
+            className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono font-medium transition-colors border ${
               agentStatus?.yolo_mode
-                ? "border-warning bg-warning/10 text-warning"
-                : "border-border bg-bg-secondary text-text-secondary hover:text-text-primary"
+                ? "border-warning/40 bg-warning/10 text-warning"
+                : "border-border bg-bg-secondary text-text-muted hover:text-text-secondary"
             }`}
           >
             <div
-              className={`w-8 h-4 rounded-full relative transition-colors ${
-                agentStatus?.yolo_mode ? "bg-warning/40" : "bg-bg-tertiary"
+              className={`w-6 h-3 rounded-full relative transition-colors ${
+                agentStatus?.yolo_mode ? "bg-warning/30" : "bg-bg-tertiary"
               }`}
             >
               <div
-                className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${
+                className={`absolute top-0.5 w-2 h-2 rounded-full transition-all ${
                   agentStatus?.yolo_mode
-                    ? "left-4.5 bg-warning"
+                    ? "left-3.5 bg-warning"
                     : "left-0.5 bg-text-muted"
                 }`}
               />
             </div>
             YOLO
-            {agentStatus?.yolo_mode && (
-              <span className="text-xs opacity-75">
-                (auto-execute + auto-profit)
-              </span>
-            )}
           </button>
 
           {/* Autonomy level badge */}
-          <span className={`text-xs px-2 py-1 rounded font-mono uppercase ${
+          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded uppercase ${
             agentStatus?.autonomy_level === "yolo"
-              ? "bg-warning/20 text-warning"
+              ? "bg-warning/15 text-warning"
               : agentStatus?.autonomy_level === "semi"
-                ? "bg-accent/20 text-accent"
+                ? "bg-accent/15 text-accent"
                 : "bg-bg-tertiary text-text-muted"
           }`}>
             {agentStatus?.autonomy_level ?? "semi"}
@@ -128,124 +125,121 @@ export default function AgentPage() {
           {/* Start/Stop button */}
           <button
             onClick={handleToggle}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`px-2.5 py-1 rounded text-[10px] font-mono font-medium transition-colors ${
               agentStatus?.running
-                ? "bg-loss/20 text-loss hover:bg-loss/30"
-                : "bg-profit/20 text-profit hover:bg-profit/30"
+                ? "bg-loss/15 text-loss hover:bg-loss/25"
+                : "bg-profit/15 text-profit hover:bg-profit/25"
             }`}
           >
-            {agentStatus?.running ? "Stop Agent" : "Start Agent"}
+            {agentStatus?.running ? "STOP" : "START"}
           </button>
         </div>
       </div>
 
       {/* Status Cards */}
-      <div className="grid grid-cols-5 gap-4">
-        <div className="rounded-lg border border-border bg-bg-secondary p-4">
-          <div className="text-xs text-text-muted mb-1">Status</div>
-          <div className="flex items-center gap-2">
+      <div className="grid grid-cols-5 gap-2">
+        <div className="rounded border border-border bg-bg-secondary px-3 py-2">
+          <div className="text-[9px] text-text-muted font-mono uppercase mb-1">Status</div>
+          <div className="flex items-center gap-1.5">
             <div
-              className={`w-3 h-3 rounded-full ${
+              className={`w-2 h-2 rounded-full ${
                 agentStatus?.running ? "bg-profit animate-pulse" : "bg-text-muted"
               }`}
             />
-            <span className="font-medium">
-              {agentStatus?.running ? "Running" : "Stopped"}
+            <span className="text-[11px] font-mono font-medium">
+              {agentStatus?.running ? "RUNNING" : "STOPPED"}
             </span>
           </div>
         </div>
-        <div className={`rounded-lg border p-4 ${
-          agentStatus?.yolo_mode ? "border-warning/50 bg-warning/5" : "border-border bg-bg-secondary"
+        <div className={`rounded border px-3 py-2 ${
+          agentStatus?.yolo_mode ? "border-warning/30 bg-warning/5" : "border-border bg-bg-secondary"
         }`}>
-          <div className="text-xs text-text-muted mb-1">Mode</div>
-          <div className={`text-lg font-bold ${
+          <div className="text-[9px] text-text-muted font-mono uppercase mb-1">Mode</div>
+          <div className={`text-sm font-mono font-bold ${
             agentStatus?.yolo_mode ? "text-warning" : "text-accent"
           }`}>
             {agentStatus?.yolo_mode ? "YOLO" : "SEMI"}
           </div>
-          <div className="text-xs text-text-muted mt-0.5">
-            {agentStatus?.yolo_mode
-              ? "Auto-execute all"
-              : "SL auto, profit confirm"}
-          </div>
         </div>
-        <div className="rounded-lg border border-border bg-bg-secondary p-4">
-          <div className="text-xs text-text-muted mb-1">Pending Confirmations</div>
-          <div className="text-xl font-bold font-mono">
+        <div className="rounded border border-border bg-bg-secondary px-3 py-2">
+          <div className="text-[9px] text-text-muted font-mono uppercase mb-1">Pending</div>
+          <div className="text-sm font-mono font-bold">
             {agentStatus?.pending_confirmations ?? 0}
           </div>
         </div>
-        <div className="rounded-lg border border-border bg-bg-secondary p-4">
-          <div className="text-xs text-text-muted mb-1">Positions Monitored</div>
-          <div className="text-xl font-bold font-mono">
+        <div className="rounded border border-border bg-bg-secondary px-3 py-2">
+          <div className="text-[9px] text-text-muted font-mono uppercase mb-1">Monitored</div>
+          <div className="text-sm font-mono font-bold">
             {agentStatus?.positions_monitored ?? 0}
           </div>
         </div>
-        <div className="rounded-lg border border-border bg-bg-secondary p-4">
-          <div className="text-xs text-text-muted mb-1">Uptime</div>
-          <div className="text-xl font-bold font-mono">
+        <div className="rounded border border-border bg-bg-secondary px-3 py-2">
+          <div className="text-[9px] text-text-muted font-mono uppercase mb-1">Uptime</div>
+          <div className="text-sm font-mono font-bold">
             {agentStatus?.uptime_seconds
               ? `${Math.floor(agentStatus.uptime_seconds / 60)}m`
-              : "—"}
+              : "\u2014"}
           </div>
         </div>
       </div>
 
       {/* Agent Logs */}
-      <div className="rounded-lg border border-border bg-bg-secondary">
-        <div className="px-4 py-3 border-b border-border">
-          <h2 className="text-sm font-semibold">Agent Activity Log</h2>
+      <div className="rounded border border-border bg-bg-secondary">
+        <div className="px-3 py-1.5 border-b border-border">
+          <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider">
+            Activity Log
+          </h2>
         </div>
         {loading ? (
-          <div className="p-8 text-center text-text-muted">Loading...</div>
+          <div className="px-3 py-6 text-center text-text-muted text-[10px] font-mono">loading...</div>
         ) : logs.length === 0 ? (
-          <div className="p-8 text-center text-text-muted">No agent activity yet</div>
+          <div className="px-3 py-6 text-center text-text-muted text-[10px] font-mono">no activity yet</div>
         ) : (
-          <div className="divide-y divide-border/50 max-h-[500px] overflow-y-auto">
+          <div className="divide-y divide-border/30 max-h-[400px] overflow-y-auto">
             {logs.map((log) => (
-              <div key={log.id} className="px-4 py-3 hover:bg-bg-tertiary/30">
+              <div key={log.id} className="px-3 py-1.5 hover:bg-bg-tertiary/30">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`text-xs font-mono font-bold ${
+                      className={`text-[10px] font-mono font-bold ${
                         actionTypeColors[log.action_type] || "text-text-secondary"
                       }`}
                     >
                       {log.action_type}
                     </span>
                     {log.details?.symbol != null && (
-                      <span className="text-sm">{String(log.details.symbol)}</span>
+                      <span className="text-[11px] font-mono">{String(log.details.symbol)}</span>
                     )}
                   </div>
-                  <span className="text-xs text-text-muted font-mono">
+                  <span className="text-[9px] text-text-muted font-mono">
                     {formatTime(log.created_at)}
                   </span>
                 </div>
                 {log.details?.message != null && (
-                  <p className="text-xs text-text-secondary mt-1">
+                  <p className="text-[10px] font-mono text-text-muted mt-0.5">
                     {String(log.details.message)}
                   </p>
                 )}
                 {log.requires_confirmation &&
                   log.confirmation_status === "PENDING" && (
-                    <div className="mt-2 flex gap-2">
+                    <div className="mt-1 flex gap-1.5">
                       <button
                         onClick={() => handleConfirm(log.id, true)}
-                        className="text-xs px-3 py-1 rounded bg-profit/20 text-profit hover:bg-profit/30"
+                        className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-profit/15 text-profit hover:bg-profit/25"
                       >
-                        Approve
+                        APPROVE
                       </button>
                       <button
                         onClick={() => handleConfirm(log.id, false)}
-                        className="text-xs px-3 py-1 rounded bg-loss/20 text-loss hover:bg-loss/30"
+                        className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-loss/15 text-loss hover:bg-loss/25"
                       >
-                        Reject
+                        REJECT
                       </button>
                     </div>
                   )}
                 {log.confirmation_status && log.confirmation_status !== "PENDING" && (
                   <span
-                    className={`text-xs mt-1 inline-block ${
+                    className={`text-[9px] font-mono mt-0.5 inline-block ${
                       log.confirmation_status === "APPROVED"
                         ? "text-profit"
                         : "text-loss"

@@ -255,6 +255,8 @@ async def resolve_option_details(
     signal_type: SignalType,
     sl_pct: float,
     rr_multiplier: float = 1.5,
+    index_sl: float | None = None,
+    index_target: float | None = None,
 ) -> OptionResolution | None:
     """Resolve an index-level signal into a specific option contract with premium-based SL/target.
 
@@ -262,8 +264,10 @@ async def resolve_option_details(
         symbol: Index name (e.g. "NIFTY")
         index_price: Current underlying index price
         signal_type: BUY_CE or BUY_PE
-        sl_pct: Stop-loss percentage on premium (e.g. 0.30 for 30%)
-        rr_multiplier: Risk-reward multiplier for target (e.g. 1.5 for 1:1.5)
+        sl_pct: Stop-loss percentage on premium (fallback if no index levels)
+        rr_multiplier: Risk-reward multiplier for target (fallback)
+        index_sl: Index-level stop-loss from market structure (e.g. VWAP lower band)
+        index_target: Index-level target from market structure (e.g. PDH)
 
     Returns:
         OptionResolution if successful, None if premium unavailable
@@ -283,13 +287,15 @@ async def resolve_option_details(
 
     # 3. Try ATM first, then ITM
     resolution = await _try_strike(
-        symbol, atm_strike, expiry, option_type, sl_pct, rr_multiplier, "ATM"
+        symbol, atm_strike, expiry, option_type, sl_pct, rr_multiplier, "ATM",
+        index_price=index_price, index_sl=index_sl, index_target=index_target,
     )
     if resolution is not None:
         return resolution
 
     resolution = await _try_strike(
-        symbol, itm_strike, expiry, option_type, sl_pct, rr_multiplier, "ITM"
+        symbol, itm_strike, expiry, option_type, sl_pct, rr_multiplier, "ITM",
+        index_price=index_price, index_sl=index_sl, index_target=index_target,
     )
     if resolution is not None:
         return resolution
@@ -309,6 +315,9 @@ async def _try_strike(
     sl_pct: float,
     rr_multiplier: float,
     label: str,
+    index_price: float = 0,
+    index_sl: float | None = None,
+    index_target: float | None = None,
 ) -> OptionResolution | None:
     """Attempt to resolve a single strike: find symbol, fetch premium, compute SL/target."""
     fyers_symbol = await find_option_symbol(symbol, strike, expiry, option_type)
@@ -327,15 +336,16 @@ async def _try_strike(
         )
 
     # Compute SL and target on the option premium
-    if option_type == "CE":
-        sl_price = premium * (1 - sl_pct)
-        target_price = premium * (1 + sl_pct * rr_multiplier)
-    else:
-        # For PEs: SL is premium going up (we bought the put, premium drops = profit)
-        # Actually for bought options, SL is always premium dropping:
-        # You buy a PE at 250, if it drops to 175, that's your SL.
-        sl_price = premium * (1 - sl_pct)
-        target_price = premium * (1 + sl_pct * rr_multiplier)
+    sl_price, target_price = _compute_premium_sl_target(
+        premium=premium,
+        option_type=option_type,
+        sl_pct=sl_pct,
+        rr_multiplier=rr_multiplier,
+        label=label,
+        index_price=index_price,
+        index_sl=index_sl,
+        index_target=index_target,
+    )
 
     return OptionResolution(
         strike_price=strike,
@@ -345,3 +355,54 @@ async def _try_strike(
         sl_price=round(sl_price, 2),
         target_price=round(target_price, 2),
     )
+
+
+def _compute_premium_sl_target(
+    premium: float,
+    option_type: str,
+    sl_pct: float,
+    rr_multiplier: float,
+    label: str,
+    index_price: float = 0,
+    index_sl: float | None = None,
+    index_target: float | None = None,
+) -> tuple[float, float]:
+    """Compute premium-level SL and target.
+
+    If index-level SL/target are provided, uses delta approximation to convert
+    index point movements into premium movements. Otherwise falls back to
+    fixed-percentage computation.
+
+    Delta approximation:
+        ATM options: delta ~0.50 (1 index point ≈ 0.50 premium point)
+        ITM options: delta ~0.60
+    """
+    if index_sl is not None and index_target is not None and index_price > 0:
+        delta = 0.50 if label == "ATM" else 0.60
+
+        if option_type == "CE":
+            sl_price = premium - delta * (index_price - index_sl)
+            target_price = premium + delta * (index_target - index_price)
+        else:  # PE
+            sl_price = premium - delta * (index_sl - index_price)
+            target_price = premium + delta * (index_price - index_target)
+
+        # Safety: if delta math produces invalid values, fall back to pct
+        if sl_price > 0 and sl_price < premium and target_price > premium:
+            logger.info(
+                "Delta-based SL/target: premium=%.2f SL=%.2f target=%.2f "
+                "(index SL=%.2f, index target=%.2f, delta=%.2f)",
+                premium, sl_price, target_price, index_sl, index_target, delta,
+            )
+            return sl_price, target_price
+
+        logger.info(
+            "Delta-based SL/target invalid (sl=%.2f, tgt=%.2f) — "
+            "falling back to fixed pct for %s",
+            sl_price, target_price, label,
+        )
+
+    # Fallback: fixed percentage on premium
+    sl_price = premium * (1 - sl_pct)
+    target_price = premium * (1 + sl_pct * rr_multiplier)
+    return sl_price, target_price

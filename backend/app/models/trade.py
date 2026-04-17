@@ -17,7 +17,7 @@ class Trade(Base, TimestampMixin):
     symbol: Mapped[str] = mapped_column(String(30), nullable=False)
     expiry_date: Mapped[date] = mapped_column(Date, nullable=False)
     strike_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
-    option_type: Mapped[str] = mapped_column(String(2), nullable=False)  # CE, PE
+    option_type: Mapped[str | None] = mapped_column(String(5), nullable=True)  # CE, PE, or None for futures
     side: Mapped[str] = mapped_column(String(4), nullable=False, default="BUY")
     quantity: Mapped[int] = mapped_column(nullable=False)
     lots: Mapped[int] = mapped_column(nullable=False)
@@ -32,6 +32,9 @@ class Trade(Base, TimestampMixin):
     pnl_percent: Mapped[Decimal | None] = mapped_column(Numeric(8, 4), nullable=True)
     entry_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     exit_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    position_type: Mapped[str] = mapped_column(
+        String(15), nullable=False, default="INTRADAY"
+    )  # INTRADAY or POSITIONAL
     fyers_option_symbol: Mapped[str | None] = mapped_column(String(60), nullable=True)
     broker_order_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

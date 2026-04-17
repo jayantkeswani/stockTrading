@@ -13,6 +13,7 @@ export const STRATEGY_LABELS: Record<string, string> = {
   orb: "ORB",
   vwap_pullback: "VWAP Pullback",
   gamma_scalping: "Gamma Scalp",
+  can_slim: "CAN SLIM",
 };
 
 export const STATUS_COLORS: Record<string, string> = {

@@ -31,7 +31,6 @@ export function AgentFeed() {
   const [filterStrategy, setFilterStrategy] = useState<string>("ALL");
   const [filterAction, setFilterAction] = useState<string>("ALL");
 
-  // Group logs by strategy, then by symbol/trade
   const grouped = useMemo(() => {
     let filtered = agentLogs;
 
@@ -90,18 +89,22 @@ export function AgentFeed() {
   };
 
   return (
-    <div className="rounded-lg border border-border bg-bg-secondary">
-      <div className="px-4 py-3 border-b border-border">
-        <h2 className="text-sm font-semibold text-text-primary mb-2">Agent Feed</h2>
+    <div className="rounded border border-border bg-bg-secondary">
+      <div className="px-3 py-1.5 border-b border-border">
+        <div className="flex items-center justify-between mb-1.5">
+          <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider">
+            Agent Feed
+          </h2>
+        </div>
 
         {/* Filter bar */}
-        <div className="flex gap-2">
+        <div className="flex gap-1.5">
           <select
             value={filterStrategy}
             onChange={(e) => setFilterStrategy(e.target.value)}
-            className="text-xs bg-bg-tertiary border border-border rounded px-2 py-1 text-text-secondary focus:outline-none focus:border-accent"
+            className="text-[10px] font-mono bg-bg-tertiary border border-border rounded px-1.5 py-0.5 text-text-secondary focus:outline-none focus:border-accent/50"
           >
-            <option value="ALL">All Strategies</option>
+            <option value="ALL">All</option>
             {strategyNames.map((s) => (
               <option key={s} value={s}>
                 {STRATEGY_LABELS[s] || s}
@@ -111,21 +114,21 @@ export function AgentFeed() {
           <select
             value={filterAction}
             onChange={(e) => setFilterAction(e.target.value)}
-            className="text-xs bg-bg-tertiary border border-border rounded px-2 py-1 text-text-secondary focus:outline-none focus:border-accent"
+            className="text-[10px] font-mono bg-bg-tertiary border border-border rounded px-1.5 py-0.5 text-text-secondary focus:outline-none focus:border-accent/50"
           >
             {ACTION_TYPE_OPTIONS.map((a) => (
               <option key={a} value={a}>
-                {a === "ALL" ? "All Actions" : a.replace(/_/g, " ")}
+                {a === "ALL" ? "All" : a.replace(/_/g, " ")}
               </option>
             ))}
           </select>
         </div>
       </div>
 
-      <div className="max-h-[400px] overflow-y-auto">
+      <div className="max-h-[300px] overflow-y-auto">
         {Object.keys(grouped).length === 0 ? (
-          <div className="p-6 text-center text-text-muted text-sm">
-            No agent activity
+          <div className="px-3 py-4 text-center text-text-muted text-[10px] font-mono">
+            no activity
           </div>
         ) : (
           Object.entries(grouped).map(([strategy, symbols]) => {
@@ -136,30 +139,28 @@ export function AgentFeed() {
             );
 
             return (
-              <div key={strategy} className="border-b border-border/50 last:border-b-0">
-                {/* Strategy header */}
+              <div key={strategy} className="border-b border-border/30 last:border-b-0">
                 <button
                   onClick={() => toggleStrategy(strategy)}
-                  className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-bg-tertiary/50 transition-colors text-left"
+                  className="w-full flex items-center justify-between px-3 py-1 hover:bg-bg-tertiary/40 transition-colors text-left"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-text-muted">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] text-text-muted font-mono">
                       {isExpanded ? "\u25BE" : "\u25B8"}
                     </span>
-                    <span className="text-sm font-medium text-text-primary">
+                    <span className="text-[11px] font-mono font-medium text-text-primary">
                       {STRATEGY_LABELS[strategy] || strategy}
                     </span>
                   </div>
-                  <span className="text-xs text-text-muted">{totalLogs}</span>
+                  <span className="text-[9px] text-text-muted font-mono">{totalLogs}</span>
                 </button>
 
-                {/* Expanded content */}
                 {isExpanded && (
-                  <div className="pb-2">
+                  <div className="pb-1 animate-fade-in">
                     {Object.entries(symbols).map(([symbol, logs]) => (
-                      <div key={symbol} className="ml-4">
+                      <div key={symbol} className="ml-3">
                         {symbol !== "general" && (
-                          <div className="px-4 py-1 text-xs font-medium text-text-secondary">
+                          <div className="px-3 py-0.5 text-[10px] font-mono font-medium text-text-secondary">
                             {symbol}
                           </div>
                         )}
@@ -168,9 +169,9 @@ export function AgentFeed() {
                           return (
                             <div
                               key={log.id}
-                              className="flex items-center gap-2 px-4 py-1 text-xs"
+                              className="flex items-center gap-1.5 px-3 py-0.5 text-[10px] font-mono"
                             >
-                              <span className="text-text-muted font-mono w-10 shrink-0">
+                              <span className="text-text-muted w-8 shrink-0">
                                 {formatLogTime(log.created_at)}
                               </span>
                               <span
@@ -180,7 +181,7 @@ export function AgentFeed() {
                               </span>
                               {pnl != null && (
                                 <span
-                                  className={`font-mono ml-auto ${pnl >= 0 ? "text-profit" : "text-loss"}`}
+                                  className={`ml-auto ${pnl >= 0 ? "text-profit" : "text-loss"}`}
                                 >
                                   {pnl >= 0 ? "+" : ""}
                                   {formatINR(pnl)}

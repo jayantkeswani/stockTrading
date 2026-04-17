@@ -5,12 +5,14 @@ from app.strategies.base import BaseStrategy
 from app.strategies.strategy_1_orb import ORBStrategy
 from app.strategies.strategy_2_vwap_pullback import VWAPPullbackStrategy
 from app.strategies.strategy_3_gamma_scalping import GammaScalpingStrategy
+from app.strategies.strategy_4_canslim import CANSLIMStrategy
 
 # All available strategies
 _STRATEGIES: dict[StrategyName, BaseStrategy] = {
     StrategyName.ORB: ORBStrategy(),
     StrategyName.VWAP_PULLBACK: VWAPPullbackStrategy(),
     StrategyName.GAMMA_SCALPING: GammaScalpingStrategy(),
+    StrategyName.CAN_SLIM: CANSLIMStrategy(),
 }
 
 

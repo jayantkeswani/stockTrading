@@ -73,8 +73,12 @@ class TestGetAllBackfillSymbols:
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [
-            ["NIFTY", "RELIANCE", "TCS"],  # One strategy config
+        # Query now returns (symbols, symbol_map) tuples
+        mock_result.all.return_value = [
+            (
+                ["NIFTY", "RELIANCE", "TCS"],
+                {"RELIANCE": "NSE:RELIANCE-EQ", "TCS": "NSE:TCS-EQ"},
+            ),
         ]
         mock_session.execute = AsyncMock(return_value=mock_result)
         mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -84,7 +88,7 @@ class TestGetAllBackfillSymbols:
 
         # Indices from map
         assert "NIFTY" in symbols
-        # Strategy additions
+        # Strategy additions — uses stored symbol_map
         assert "RELIANCE" in symbols
         assert symbols["RELIANCE"] == "NSE:RELIANCE-EQ"
         assert "TCS" in symbols
@@ -98,8 +102,8 @@ class TestGetAllBackfillSymbols:
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [
-            ["NIFTY", "BANKNIFTY"],  # Already in map
+        mock_result.all.return_value = [
+            (["NIFTY", "BANKNIFTY"], {}),  # Already in FYERS_SYMBOL_MAP
         ]
         mock_session.execute = AsyncMock(return_value=mock_result)
         mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)

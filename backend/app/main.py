@@ -5,9 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.config import settings
+from app.core.task_registry import TaskStatus, TaskType, task_registry
 from app.data_feed.fyers_ws_client import fyers_ws_client
 from app.data_feed.symbol_master import symbol_master
 from app.tasks.fyers_login_task import start_fyers_login_scheduler, stop_fyers_login_scheduler
+from app.tasks.fundamental_data_task import (
+    fetch_fundamentals,
+    start_fundamental_data_scheduler,
+    stop_fundamental_data_scheduler,
+)
 from app.tasks.oi_snapshot_task import start_oi_snapshot_scheduler, stop_oi_snapshot_scheduler
 from app.tasks.symbol_master_task import start_symbol_master_scheduler, stop_symbol_master_scheduler
 from app.websocket.manager import ws_manager
@@ -75,6 +81,35 @@ async def _get_watchlist_symbols() -> list[str]:
         return []
 
 
+async def _fetch_fundamentals_background():
+    """Fetch CAN SLIM fundamental data on startup (background, non-blocking)."""
+    import asyncio
+
+    # Wait for symbol master to load first (needed for RS calculation)
+    await asyncio.sleep(5)
+    try:
+        count = await fetch_fundamentals()
+        print(f"Fundamental data: updated {count} symbols")
+    except Exception as e:
+        print(f"Fundamental data fetch failed: {e}")
+
+
+async def _deep_backfill_background():
+    """Backfill extended candle history for CAN SLIM pattern detection (background).
+
+    Only fetches for symbols with < 50 days of data. Once populated, the daily
+    backfill keeps it current. Runs after normal backfill completes.
+    """
+    import asyncio
+
+    await asyncio.sleep(10)  # Wait for normal backfill to finish
+    try:
+        from app.services.candle_backfill import backfill_deep_history
+        await backfill_deep_history(days=120)
+    except Exception as e:
+        print(f"Deep backfill failed: {e}")
+
+
 async def _load_symbol_master_background():
     """Load symbol master in background so it doesn't block startup."""
     import asyncio
@@ -94,18 +129,53 @@ async def lifespan(app: FastAPI):
 
     # Startup
     print("Starting StockTrading backend...")
+
+    # --- Schedulers (periodic jobs) ---
     await start_fyers_login_scheduler()
-    # Load symbol master in background — don't block startup
-    asyncio.create_task(_load_symbol_master_background(), name="symbol_master_load")
+    task_registry.register("fyers_login_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 08:55 IST"})
+
     await start_symbol_master_scheduler()
+    task_registry.register("symbol_master_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 08:00 IST"})
+
     await start_oi_snapshot_scheduler()
+    task_registry.register("oi_snapshot_scheduler", TaskType.SCHEDULER, metadata={"schedule": "every 3m (market hours)"})
+
+    await start_fundamental_data_scheduler()
+    task_registry.register("fundamental_data_scheduler", TaskType.SCHEDULER, metadata={"schedule": "every 6h"})
+
+    # --- One-shot startup tasks (tracked via done callback) ---
+    t1 = asyncio.create_task(_load_symbol_master_background(), name="symbol_master_load")
+    task_registry.track_asyncio_task("symbol_master_load", t1, metadata={"description": "Load symbol master into memory"})
+
+    t2 = asyncio.create_task(_fetch_fundamentals_background(), name="fundamental_data_startup")
+    task_registry.track_asyncio_task("fundamental_data_startup", t2, metadata={"description": "Fetch CAN SLIM fundamentals"})
+
+    # --- Data feed (service) ---
     await _start_data_feed_if_authenticated()
+    task_registry.register("fyers_data_feed", TaskType.SERVICE, metadata={"description": "Fyers WebSocket live data feed"})
+
+    # --- Deep backfill (startup task) ---
+    t3 = asyncio.create_task(_deep_backfill_background(), name="deep_backfill")
+    task_registry.track_asyncio_task("deep_backfill", t3, metadata={"description": "Backfill 120d candle history for CAN SLIM"})
+
     yield
-    # Shutdown
+
+    # Shutdown — mark services/schedulers as stopped
     await fyers_ws_client.stop()
+    task_registry.update_status("fyers_data_feed", TaskStatus.STOPPED)
+
     await stop_fyers_login_scheduler()
+    task_registry.update_status("fyers_login_scheduler", TaskStatus.STOPPED)
+
     await stop_symbol_master_scheduler()
+    task_registry.update_status("symbol_master_scheduler", TaskStatus.STOPPED)
+
     await stop_oi_snapshot_scheduler()
+    task_registry.update_status("oi_snapshot_scheduler", TaskStatus.STOPPED)
+
+    await stop_fundamental_data_scheduler()
+    task_registry.update_status("fundamental_data_scheduler", TaskStatus.STOPPED)
+
     await ws_manager.disconnect_all()
     print("StockTrading backend stopped.")
 

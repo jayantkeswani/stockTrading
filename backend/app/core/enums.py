@@ -26,6 +26,9 @@ class ExitReason(StrEnum):
     TIME_EXIT = "TIME_EXIT"
     EOD = "EOD"
     DRAWDOWN_HALT = "DRAWDOWN_HALT"
+    TRAILING_SL = "TRAILING_SL"
+    EXPIRY_ROLL = "EXPIRY_ROLL"
+    MARKET_EXIT = "MARKET_EXIT"
 
 
 class SignalStatus(StrEnum):
@@ -52,6 +55,12 @@ class StrategyName(StrEnum):
     ORB = "orb"
     VWAP_PULLBACK = "vwap_pullback"
     GAMMA_SCALPING = "gamma_scalping"
+    CAN_SLIM = "can_slim"
+
+
+class PositionType(StrEnum):
+    INTRADAY = "INTRADAY"
+    POSITIONAL = "POSITIONAL"
 
 
 class IndexSymbol(StrEnum):

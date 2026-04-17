@@ -26,6 +26,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "psycopg2-binary>=2.9.0",
     "pyotp>=2.9.0",
+    "yfinance>=0.2.36",
 ]
 
 [project.optional-dependencies]

@@ -33,10 +33,16 @@ class StrategySignal:
     confidence: float  # 0-100
     reason: str  # Human-readable explanation
     indicators: dict  # Snapshot of indicator values at signal time
+    # Index-level SL/target from market structure (set by strategy, used by option_resolver)
+    index_sl: float | None = None
+    index_target: float | None = None
     # Set by option_resolver post-processing (options only)
     index_entry_price: float | None = None  # Underlying index price at signal time
     fyers_option_symbol: str | None = None  # Full Fyers symbol, e.g. "NSE:NIFTY26APR24000CE"
     option_resolved: bool = False  # True after option_resolver has enriched this signal
+    # Set by futures_resolver post-processing (futures only)
+    fyers_futures_symbol: str | None = None  # Full Fyers symbol, e.g. "NSE:TCS26APRFUT"
+    futures_resolved: bool = False
 
 
 @dataclass
@@ -58,12 +64,18 @@ class MarketContext:
     oi_analysis: OIAnalysis | None
     india_vix: float | None
     current_time_ist: str
+    # CAN SLIM extensions (None for non-CANSLIM strategies — backward compatible)
+    candles_daily: list[Candle] | None = None      # Last 90 days of daily bars
+    volume_avg_20d: int | None = None               # 20-day average daily volume
+    relative_strength: float | None = None           # RS rating 0-100
+    canslim_data: object | None = None               # StockFundamental row if available
 
 
 class BaseStrategy(ABC):
     """Abstract base for all trading strategies."""
 
     name: StrategyName
+    holding_type: str = "INTRADAY"  # Override to "POSITIONAL" for multi-day strategies
 
     @abstractmethod
     def evaluate(self, ctx: MarketContext) -> StrategySignal | None:

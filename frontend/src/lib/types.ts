@@ -67,16 +67,20 @@ export interface Signal {
   id: string;
   strategy_name: string;
   symbol: string;
-  signal_type: "BUY_CE" | "BUY_PE";
+  signal_type: "BUY_CE" | "BUY_PE" | "BUY_FUT" | "SELL_FUT";
+  instrument_type: "OPTION" | "FUTURE" | "EQUITY";
   strike_price: number;
   expiry_date: string;
   entry_price: number;
+  index_entry_price: number | null;
   stop_loss: number;
   target_price: number | null;
   confidence: number | null;
   status: "PENDING" | "EXECUTED" | "EXPIRED" | "REJECTED";
   reason: string;
   indicators: Record<string, unknown>;
+  executable: boolean;
+  blocked_reason: string | null;
   generated_at: string;
 }
 
@@ -122,6 +126,16 @@ export interface AgentLog {
   confirmation_status: string | null;
   confirmed_at: string | null;
   created_at: string;
+}
+
+export interface BackgroundTask {
+  name: string;
+  type: "scheduler" | "startup" | "service";
+  status: "pending" | "running" | "completed" | "failed" | "stopped";
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  metadata: Record<string, string>;
 }
 
 export interface WSMessage {

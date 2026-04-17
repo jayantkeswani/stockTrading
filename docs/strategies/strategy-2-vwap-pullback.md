@@ -64,9 +64,59 @@ Combines previous day analysis for directional bias, VWAP pullbacks for entries,
 - **BANKNIFTY, FINNIFTY, MIDCPNIFTY**: Monthly only — last Tuesday of month (no weekly contracts)
 - If expiry day is a market holiday, shifts to previous trading day
 
+## SL/Target: Index-Level Market Structure → Premium Conversion
+
+### How it works
+The strategy computes **index-level** SL and target from market structure, then the `option_resolver` converts them to **premium-level** prices using delta approximation.
+
+```
+Strategy:        "BUY CE NIFTY, index_sl=23980, index_target=24150"
+                          ↓
+Option Resolver:
+  1. Strike = 24000 (ATM)                    ← unchanged
+  2. Premium = ₹320 (LTP from Fyers)         ← unchanged
+  3. Delta = 0.50 (ATM) or 0.60 (ITM)
+  4. SL = ₹320 - 0.50 × (24050 - 23980) = ₹285
+  5. Target = ₹320 + 0.50 × (24150 - 24050) = ₹370
+```
+
+### Index-Level SL Selection (via `market_levels.py`)
+For **BUY CE** — picks the nearest valid **support** level below entry:
+1. VWAP lower band
+2. Recent 5m swing low (last 10 candles)
+3. CPR BC (Bottom Central)
+4. CPR S1
+5. PDL (Previous Day Low)
+6. Max PE OI strike (institutional support wall)
+
+For **BUY PE** — picks the nearest valid **resistance** level above entry (inverted).
+
+Filter: level must be at least 0.10% from entry (prevents SL that is too tight).
+Selection: picks the **nearest** valid level — tighter SL = better R:R.
+
+### Index-Level Target Selection
+For **BUY CE** — picks the nearest valid **resistance** level above entry:
+1. VWAP upper band
+2. CPR TC (Top Central)
+3. CPR R1
+4. PDH (Previous Day High)
+5. Max CE OI strike (institutional resistance wall)
+
+For **BUY PE** — picks the nearest valid **support** level below entry (inverted).
+
+Selection: picks the **nearest** valid level — most achievable target.
+
+### R:R Filter
+If reward/risk < 1:1 after computing index-level SL/target, the signal is **skipped entirely**. This prevents entering trades with poor risk-reward setups.
+
+### Fallback
+If no valid index-level SL/target can be found (e.g., insufficient market data), falls back to fixed-percentage computation:
+- SL: 30% of premium (bullish bias) or 35% (neutral bias)
+- Target: 1.5× risk-reward multiplier on premium
+
 ## Exit Rules
-- **Stop Loss:** 30-35% of option premium (e.g., buy at Rs 250, SL at Rs 175). Tighter SL (30%) when bias is strong, wider (35%) otherwise. Computed by `option_resolver.py` on actual option premium, not index price.
-- **Target 1:** Book 60% at 1:1.5 risk-reward (e.g., SL 30% → target 45% above premium)
+- **Stop Loss:** Premium-based SL derived from index-level support/resistance (see above). If market structure unavailable, falls back to 30-35% of premium.
+- **Target 1:** Book 60% at premium-based target derived from index-level resistance/support.
 - **Target 2:** Trail remaining 40% with 9 EMA on 5-min as trailing stop
 - **Time Exit:** Close all positions by 3:15 PM IST
 - **Invalidation:** Close if underlying index price closes below VWAP (for calls) or above VWAP (for puts) on 5-min
@@ -83,3 +133,9 @@ Combines previous day analysis for directional bias, VWAP pullbacks for entries,
 - Market is in first 15 minutes (9:15-9:30) → too volatile
 - VIX > 22 → extreme conditions, sit out
 - 3 consecutive losses today → stop for the day
+
+## Key Files
+- `backend/app/strategies/strategy_2_vwap_pullback.py` — strategy logic, entry/exit rules
+- `backend/app/indicators/market_levels.py` — index-level SL/target selection from market structure
+- `backend/app/services/option_resolver.py` — strike selection, premium fetch, delta-based SL/target conversion
+- `backend/app/services/strategy_runner.py` — orchestrates strategy → option_resolver → persist/broadcast

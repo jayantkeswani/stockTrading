@@ -4,9 +4,11 @@ import { useEffect, useState, useCallback } from "react";
 import { useStore } from "@/store";
 import { api } from "@/lib/api";
 import type { MarketStatus } from "@/lib/types";
+import { AgentPopup } from "./AgentPopup";
+import { TasksPopup } from "./TasksPopup";
 
 export function Header() {
-  const { wsConnected, marketStatus, setMarketStatus, agentStatus, setAgentStatus, updatePrice } = useStore();
+  const { wsConnected, marketStatus, setMarketStatus, setAgentStatus, updatePrice } = useStore();
   const [time, setTime] = useState("");
 
   // Clock
@@ -38,7 +40,6 @@ export function Header() {
         ]);
         setMarketStatus(market);
         setAgentStatus(agent as never);
-        // Load all prices into store
         if (prices) {
           for (const [symbol, data] of Object.entries(prices)) {
             updatePrice(symbol, data as never);
@@ -56,7 +57,6 @@ export function Header() {
   const handleStartFeed = useCallback(async () => {
     try {
       await api.startDataFeed();
-      // Refresh status after a moment
       setTimeout(async () => {
         const status = await api.getMarketStatus() as MarketStatus;
         setMarketStatus(status);
@@ -67,82 +67,69 @@ export function Header() {
   }, [setMarketStatus]);
 
   return (
-    <header className="fixed top-0 left-16 right-0 z-30 h-12 border-b border-border bg-bg-secondary/80 backdrop-blur-sm flex items-center justify-between px-4">
-      <div className="flex items-center gap-4">
-        <span className="text-text-secondary font-mono text-sm">{time} IST</span>
+    <header className="fixed top-0 left-12 right-0 z-30 h-9 border-b border-border bg-bg-secondary/90 backdrop-blur-sm flex items-center justify-between px-3">
+      <div className="flex items-center gap-3">
+        <span className="text-text-muted font-mono text-[11px]">{time}</span>
         {marketStatus && (
           <span
-            className={`text-xs px-2 py-0.5 rounded ${
-              marketStatus.is_open
-                ? "bg-profit/20 text-profit"
-                : "bg-text-muted/20 text-text-muted"
+            className={`text-[10px] font-mono font-medium ${
+              marketStatus.is_open ? "text-profit" : "text-text-muted"
             }`}
           >
-            {marketStatus.is_open ? "MARKET OPEN" : "MARKET CLOSED"}
+            {marketStatus.is_open ? "MKT OPEN" : "MKT CLOSED"}
           </span>
         )}
         {marketStatus?.in_dead_zone && (
-          <span className="text-xs px-2 py-0.5 rounded bg-warning/20 text-warning">
-            DEAD ZONE
-          </span>
+          <span className="text-[10px] font-mono text-warning">DEAD ZONE</span>
         )}
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         {/* VIX */}
         {marketStatus?.india_vix != null && (
-          <div className="text-xs">
-            <span className="text-text-muted">VIX </span>
-            <span className="text-text-primary font-mono">
-              {marketStatus.india_vix.toFixed(2)}
-            </span>
-          </div>
+          <span className="text-[10px] font-mono">
+            <span className="text-text-muted">VIX</span>{" "}
+            <span className="text-text-secondary">{marketStatus.india_vix.toFixed(2)}</span>
+          </span>
         )}
 
+        {/* Divider */}
+        <div className="w-px h-3 bg-border" />
+
+        {/* Background Tasks */}
+        <TasksPopup />
+
         {/* Fyers Data Feed */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           <div
-            className={`w-2 h-2 rounded-full ${
+            className={`w-1.5 h-1.5 rounded-full ${
               marketStatus?.fyers_connected ? "bg-profit" : "bg-warning"
             }`}
           />
           {marketStatus?.fyers_connected ? (
-            <span className="text-xs text-text-secondary">Fyers Live</span>
+            <span className="text-[10px] font-mono text-text-muted">FYERS</span>
           ) : (
             <button
               onClick={handleStartFeed}
-              className="text-xs text-warning hover:text-warning/80 transition-colors"
+              className="text-[10px] font-mono text-warning hover:text-warning/80 transition-colors"
             >
-              Connect Fyers
+              CONNECT
             </button>
           )}
         </div>
 
         {/* Agent Status */}
-        <div className="flex items-center gap-1.5">
-          <div
-            className={`w-2 h-2 rounded-full ${
-              agentStatus?.running ? "bg-profit animate-pulse" : "bg-text-muted"
-            }`}
-          />
-          <span className="text-xs text-text-secondary">
-            {agentStatus?.running
-              ? agentStatus.yolo_mode
-                ? "YOLO"
-                : "Agent On"
-              : "Agent Off"}
-          </span>
-        </div>
+        <AgentPopup />
 
         {/* WebSocket Connection */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           <div
-            className={`w-2 h-2 rounded-full ${
+            className={`w-1.5 h-1.5 rounded-full ${
               wsConnected ? "bg-profit" : "bg-loss"
             }`}
           />
-          <span className="text-xs text-text-secondary">
-            {wsConnected ? "WS" : "Disconnected"}
+          <span className="text-[10px] font-mono text-text-muted">
+            {wsConnected ? "WS" : "WS OFF"}
           </span>
         </div>
       </div>

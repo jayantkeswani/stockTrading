@@ -20,8 +20,14 @@ export const api = {
   getAllPrices: () =>
     request<Record<string, { symbol: string; ltp: number; bid: number; ask: number; volume: number; change: number; change_pct: number; timestamp: string }>>(`/api/v1/market/prices`),
   refreshQuotes: () => request(`/api/v1/market/feed/refresh`, { method: "POST" }),
-  getOHLCV: (symbol: string, limit = 200) =>
-    request(`/api/v1/market/ohlcv/${symbol}?limit=${limit}`),
+  getOHLCV: (symbol: string, { resolution, days }: { resolution?: string; days?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (resolution) params.set("resolution", resolution);
+    if (days) params.set("days", days.toString());
+    return request<Array<{ timestamp: number; open: number; high: number; low: number; close: number; volume: number }>>(
+      `/api/v1/market/ohlcv/${symbol}?${params}`
+    );
+  },
   getMarketStatus: () => request(`/api/v1/market/status`),
   searchSymbols: (query: string) =>
     request<{ results: Array<{ symbol: string; display: string; short_name: string; segment: string; strike: number; type: string; ltp: number; expiry: string; lot_size: number }> }>(
@@ -134,6 +140,9 @@ export const api = {
     request<{ strategy: string; symbols_scanned: number; signals_generated: number; results: Array<{ symbol: string; signal_generated: boolean; signal_type: string | null; confidence: number | null }> }>(
       `/api/v1/strategies/evaluate/batch`, { method: "POST", body: JSON.stringify({ strategy_name: strategyName }) }
     ),
+
+  // Tasks
+  getTasks: () => request<{ tasks: import("./types").BackgroundTask[] }>(`/api/v1/tasks`),
 
   // Health
   health: () => request(`/api/v1/health`),

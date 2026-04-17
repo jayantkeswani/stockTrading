@@ -30,6 +30,7 @@ class Signal(Base, TimestampMixin):
     blocked_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
     index_entry_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     fyers_option_symbol: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    fyers_futures_symbol: Mapped[str | None] = mapped_column(String(60), nullable=True)
     executed_trade_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

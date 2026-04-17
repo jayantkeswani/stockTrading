@@ -18,3 +18,6 @@ class StrategyConfig(Base, TimestampMixin):
     symbols: Mapped[list] = mapped_column(JSONB, nullable=False, default=lambda: ["NIFTY"])
     timeframes: Mapped[list] = mapped_column(JSONB, nullable=False, default=lambda: ["5m"])
     auto_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    symbol_map: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )  # Maps short_name → fyers_symbol, e.g. {"TCS": "NSE:TCS-EQ"}

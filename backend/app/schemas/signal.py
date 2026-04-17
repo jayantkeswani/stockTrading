@@ -10,9 +10,11 @@ class SignalResponse(BaseModel):
     strategy_name: str
     symbol: str
     signal_type: str
+    instrument_type: str = "OPTION"
     strike_price: Decimal
     expiry_date: date
     entry_price: Decimal
+    index_entry_price: Decimal | None = None
     stop_loss: Decimal
     target_price: Decimal | None = None
     confidence: Decimal | None = None

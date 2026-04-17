@@ -102,3 +102,41 @@ VWAP_PROXIMITY_PCT = 0.15
 TIMEFRAME_1M = 1
 TIMEFRAME_5M = 5
 TIMEFRAME_15M = 15
+
+# ---------------------------------------------------------------------------
+# CAN SLIM Strategy Constants
+# ---------------------------------------------------------------------------
+
+# Fundamental thresholds (India-adapted from O'Neil's original criteria)
+CANSLIM_MIN_MARKET_CAP_CR = 1000       # Rs 1000 crore minimum
+CANSLIM_MIN_EPS_GROWTH_PCT = 20.0      # Quarterly EPS growth YoY
+CANSLIM_MIN_ROE_PCT = 15.0
+CANSLIM_MIN_OPERATING_MARGIN_PCT = 10.0
+CANSLIM_MAX_DEBT_TO_EQUITY = 1.0
+CANSLIM_MIN_RS_RATING = 80             # Relative Strength >= 80 percentile
+CANSLIM_MAX_PCT_FROM_52W_HIGH = 15.0   # Stock within 15% of 52-week high
+CANSLIM_MAX_VIX = 20.0                 # Market direction: VIX ceiling
+
+# Entry/exit parameters
+CANSLIM_SL_PCT = 8.0                   # 8% stop loss below entry
+CANSLIM_TARGET_PCT = 20.0              # 20% profit target
+CANSLIM_BREAKOUT_VOLUME_MULTIPLIER = 1.5  # Volume > 1.5x 20-day avg
+CANSLIM_TRAILING_SL_ACTIVATION_PCT = 10.0  # Move SL to breakeven after 10% gain
+CANSLIM_MAX_POSITIONAL_LOTS = 2        # Cap lots for futures positions
+
+# Scoring weights (total = 1.0)
+CANSLIM_SCORE_WEIGHTS = {
+    "C": 0.20,  # Current quarterly earnings
+    "A": 0.20,  # Annual earnings growth
+    "N": 0.10,  # New highs / proximity to 52w high
+    "S": 0.10,  # Supply/demand (float, volume, D/E)
+    "L": 0.15,  # Leader (Relative Strength)
+    "I": 0.10,  # Institutional sponsorship (FII/MF)
+    "M": 0.15,  # Market direction
+}
+CANSLIM_MIN_TOTAL_SCORE = 60.0  # Minimum composite score to qualify
+
+# Stock futures
+STOCK_FUTURES_EXPIRY_DOW = 3     # Thursday (last Thursday of month for NSE stock futures)
+FUTURES_MARGIN_PCT = 0.18        # ~18% of contract value (SPAN + exposure)
+FUTURES_EXPIRY_ROLL_DAYS = 3     # Alert 3 days before futures expiry

@@ -98,8 +98,33 @@ async def _check_position(
             # SEMI: request confirmation from user
             return await _request_profit_confirmation(db, pos, current_price)
 
-    # 3. Check time — AUTO CLOSE at 3:15 PM
-    if is_past_close_deadline():
+    # 3. Trailing stop for POSITIONAL positions — move SL to breakeven after 10% gain
+    if getattr(pos, "position_type", "INTRADAY") == "POSITIONAL":
+        from app.core.constants import CANSLIM_TRAILING_SL_ACTIVATION_PCT
+        gain_pct = float((current_price - pos.entry_price) / pos.entry_price * 100)
+        if gain_pct >= CANSLIM_TRAILING_SL_ACTIVATION_PCT and pos.stop_loss < pos.entry_price:
+            pos.stop_loss = pos.entry_price
+            logger.info(
+                "Trailing stop activated for %s: SL moved to breakeven %.2f",
+                pos.symbol, float(pos.entry_price),
+            )
+
+    # 4. Expiry check for POSITIONAL positions — alert 3 days before futures expiry
+    if getattr(pos, "position_type", "INTRADAY") == "POSITIONAL" and pos.expiry_date:
+        from app.core.constants import FUTURES_EXPIRY_ROLL_DAYS
+        days_to_expiry = (pos.expiry_date - now_ist().date()).days
+        if days_to_expiry <= FUTURES_EXPIRY_ROLL_DAYS:
+            if yolo_mode:
+                return await _close_position(
+                    db, pos, current_price, ExitReason.EXPIRY_ROLL,
+                    AgentActionType.TIME_EXIT, requires_confirmation=False,
+                )
+            else:
+                # SEMI: alert user to roll or close
+                return await _request_profit_confirmation(db, pos, current_price)
+
+    # 5. Check time — AUTO CLOSE at 3:15 PM (INTRADAY only)
+    if getattr(pos, "position_type", "INTRADAY") == "INTRADAY" and is_past_close_deadline():
         return await _close_position(
             db, pos, current_price, ExitReason.TIME_EXIT,
             AgentActionType.TIME_EXIT, requires_confirmation=False,

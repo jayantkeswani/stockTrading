@@ -1,18 +1,19 @@
 @import "tailwindcss";
 
 :root {
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #111118;
-  --bg-tertiary: #1a1a24;
-  --border: #1e1e2e;
-  --border-hover: #2e2e42;
-  --text-primary: #e2e2e8;
-  --text-secondary: #8888a0;
-  --text-muted: #555570;
-  --profit: #00ff88;
-  --loss: #ff3366;
-  --accent: #6366f1;
-  --accent-hover: #818cf8;
+  --bg-primary: #06060b;
+  --bg-secondary: #0b0b13;
+  --bg-tertiary: #12121c;
+  --bg-elevated: #181825;
+  --border: #1a1a2a;
+  --border-hover: #28283e;
+  --text-primary: #c8c8d4;
+  --text-secondary: #6a6a82;
+  --text-muted: #3c3c54;
+  --profit: #00e68a;
+  --loss: #ff4060;
+  --accent: #d4a843;
+  --accent-hover: #e0bc5f;
   --warning: #f59e0b;
   --background: var(--bg-primary);
   --foreground: var(--text-primary);
@@ -24,6 +25,7 @@
   --color-bg-primary: var(--bg-primary);
   --color-bg-secondary: var(--bg-secondary);
   --color-bg-tertiary: var(--bg-tertiary);
+  --color-bg-elevated: var(--bg-elevated);
   --color-border: var(--border);
   --color-border-hover: var(--border-hover);
   --color-text-primary: var(--text-primary);
@@ -44,26 +46,66 @@ body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
-/* Scrollbar styling */
+/* Scrollbar — razor thin */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-primary);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 3px;
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--border-hover);
 }
 
-/* Number formatting */
+/* Tabular numbers for data alignment */
 .font-tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* Subtle noise texture for depth */
+.noise-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.015;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Glow effects for key indicators */
+.glow-profit {
+  box-shadow: 0 0 6px rgba(0, 230, 138, 0.15);
+}
+
+.glow-loss {
+  box-shadow: 0 0 6px rgba(255, 64, 96, 0.15);
+}
+
+.glow-accent {
+  box-shadow: 0 0 6px rgba(212, 168, 67, 0.15);
+}
+
+/* Terminal-style selection */
+::selection {
+  background: rgba(212, 168, 67, 0.25);
+  color: var(--text-primary);
+}
+
+/* Fade-in animation for panels */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
 }

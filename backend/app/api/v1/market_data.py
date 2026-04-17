@@ -61,20 +61,180 @@ async def get_price(symbol: str):
     return PriceResponse(**price_data)
 
 
-@router.get("/ohlcv/{symbol}", response_model=list[CandleResponse])
+@router.get("/ohlcv/{symbol}")
 async def get_ohlcv(
     symbol: str,
-    limit: int = Query(default=200, le=1000),
-    db: AsyncSession = Depends(get_db),
+    resolution: str = Query(default="5", regex="^(1|5|15|60|D)$"),
+    days: int = Query(default=5, le=365),
 ):
-    result = await db.execute(
-        select(MarketData1m)
-        .where(MarketData1m.symbol == symbol)
-        .order_by(desc(MarketData1m.timestamp))
-        .limit(limit)
-    )
-    candles = result.scalars().all()
-    return list(reversed(candles))
+    """Fetch OHLCV candles for a symbol via Fyers history API.
+
+    Args:
+        symbol: Internal symbol name (e.g. "NIFTY", "TCS")
+        resolution: Candle timeframe — "1" (1m), "5" (5m), "15" (15m), "60" (1h), "D" (daily)
+        days: Number of calendar days of history (default 5, max 365)
+
+    Returns candles directly from Fyers (pre-aggregated, no client-side work needed).
+    Falls back to PostgreSQL if Fyers is unavailable.
+    """
+    import asyncio
+    from datetime import datetime, date, timedelta
+    from app.core.redis import get_redis
+    from app.services.candle_backfill import _resolve_fyers_symbol
+    from app.core.constants import FYERS_SYMBOL_MAP
+
+    # Resolve to Fyers symbol
+    # Check strategy_configs symbol_map first
+    fyers_symbol = await _resolve_symbol_for_chart(symbol)
+
+    r = get_redis()
+    token = await r.get("fyers:access_token")
+    if not token:
+        logger.warning("No Fyers token — falling back to DB for chart data")
+        return await _fallback_ohlcv_from_db(symbol, days)
+
+    today = date.today()
+    from_date = today - timedelta(days=days)
+
+    try:
+        candles = await asyncio.to_thread(
+            _fetch_chart_history, token, fyers_symbol, resolution, from_date, today,
+        )
+        if candles:
+            return candles
+    except Exception:
+        logger.exception("Fyers history failed for %s, falling back to DB", symbol)
+
+    return await _fallback_ohlcv_from_db(symbol, days)
+
+
+def _fetch_chart_history(
+    token: str, fyers_symbol: str, resolution: str, from_date, to_date,
+) -> list[dict]:
+    """Fetch OHLCV from Fyers SDK history API (synchronous).
+
+    Fyers limits the date range per request depending on resolution.
+    For longer ranges, we paginate with sequential chunks.
+    """
+    from fyers_apiv3.fyersModel import FyersModel
+    from datetime import timedelta
+    import time as _time
+
+    # Max days per request by resolution (empirically determined)
+    max_chunk_days = {
+        "1": 7, "5": 30, "15": 60, "60": 100, "D": 365,
+    }
+    chunk_size = timedelta(days=max_chunk_days.get(resolution, 30))
+
+    fyers = FyersModel(client_id=cfg.fyers_app_id, token=token)
+    all_candles: list[dict] = []
+    seen: set[int] = set()
+
+    chunk_start = from_date
+    while chunk_start <= to_date:
+        chunk_end = min(chunk_start + chunk_size, to_date)
+
+        result = fyers.history({
+            "symbol": fyers_symbol,
+            "resolution": resolution,
+            "date_format": "1",
+            "range_from": str(chunk_start),
+            "range_to": str(chunk_end),
+            "cont_flag": "1",
+        })
+
+        if result.get("s") == "ok":
+            for c in result.get("candles", []):
+                ts = c[0]
+                if ts not in seen:
+                    seen.add(ts)
+                    all_candles.append({
+                        "timestamp": ts,
+                        "open": c[1],
+                        "high": c[2],
+                        "low": c[3],
+                        "close": c[4],
+                        "volume": c[5],
+                    })
+
+        chunk_start = chunk_end + timedelta(days=1)
+        if chunk_start <= to_date:
+            _time.sleep(0.3)  # Rate limit between chunks
+
+    all_candles.sort(key=lambda x: x["timestamp"])
+    return all_candles
+
+
+async def _resolve_symbol_for_chart(symbol: str) -> str:
+    """Resolve an internal symbol to its Fyers symbol for chart data.
+
+    Checks: FYERS_SYMBOL_MAP → strategy_configs.symbol_map → fallback.
+    """
+    from app.core.constants import FYERS_SYMBOL_MAP
+
+    if symbol in FYERS_SYMBOL_MAP:
+        return FYERS_SYMBOL_MAP[symbol]
+
+    # Check strategy_configs symbol_map
+    from app.core.database import async_session_factory
+    from app.models.strategy_config import StrategyConfig
+    from sqlalchemy import select as sa_select
+
+    try:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                sa_select(StrategyConfig.symbol_map).where(
+                    StrategyConfig.is_active == True  # noqa: E712
+                )
+            )
+            for (sym_map,) in result.all():
+                if sym_map and symbol in sym_map:
+                    return sym_map[symbol]
+    except Exception:
+        pass
+
+    return f"NSE:{symbol}-EQ"
+
+
+async def _fallback_ohlcv_from_db(symbol: str, days: int) -> list[dict]:
+    """Fallback: fetch 1m candles from PostgreSQL when Fyers is unavailable."""
+    from datetime import datetime, timedelta
+    from sqlalchemy import and_
+    from app.core.constants import MARKET_OPEN
+    from app.core.database import async_session_factory
+
+    today = datetime.now(IST).date()
+    start_date = today - timedelta(days=int(days * 1.5))
+    start_ts = datetime.combine(start_date, MARKET_OPEN, tzinfo=IST)
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(MarketData1m)
+            .where(and_(
+                MarketData1m.symbol == symbol,
+                MarketData1m.timestamp >= start_ts,
+            ))
+            .order_by(MarketData1m.timestamp)
+        )
+        candles = result.scalars().all()
+
+    # Deduplicate and sort ascending
+    seen = set()
+    result_list = []
+    for c in candles:
+        ts = int(c.timestamp.timestamp())
+        if ts not in seen:
+            seen.add(ts)
+            result_list.append({
+                "timestamp": ts,
+                "open": float(c.open),
+                "high": float(c.high),
+                "low": float(c.low),
+                "close": float(c.close),
+                "volume": int(c.volume),
+            })
+    result_list.sort(key=lambda x: x["timestamp"])
+    return result_list
 
 
 @router.get("/status", response_model=MarketStatusResponse)

@@ -18,6 +18,7 @@ from app.indicators.candle_patterns import (
     is_bearish_reversal,
     is_bullish_reversal,
 )
+from app.indicators.market_levels import select_index_sl_target
 from app.indicators.open_interest import is_oi_supporting_direction
 from app.indicators.vwap import is_pullback_to_vwap, price_distance_from_vwap
 from app.strategies.base import (
@@ -104,14 +105,28 @@ class VWAPPullbackStrategy(BaseStrategy):
         if ctx.india_vix and ctx.india_vix < 14:
             confidence += 5  # Cheap options
 
-        # SL/target params — actual values computed by option_resolver on the premium
-        sl_pct = 0.30 if ctx.previous_day.bias == DayBias.BULLISH else 0.35
-        rr_multiplier = 1.5
+        # Compute index-level SL/target from market structure
+        index_sl, index_target = select_index_sl_target(
+            entry_price=ctx.current_price,
+            signal_type=SignalType.BUY_CE,
+            vwap=ctx.vwap,
+            previous_day=ctx.previous_day,
+            cpr=ctx.cpr,
+            oi_analysis=ctx.oi_analysis,
+            candles_5m=ctx.candles_5m,
+        )
 
-        # Build indicator snapshot (includes sl_pct/rr for option_resolver)
+        # Build indicator snapshot
         indicators = self._build_indicator_snapshot(ctx, vwap, distance)
-        indicators["sl_pct"] = sl_pct
-        indicators["rr_multiplier"] = rr_multiplier
+
+        if index_sl is not None and index_target is not None:
+            indicators["index_sl"] = index_sl
+            indicators["index_target"] = index_target
+        else:
+            # Fallback to fixed percentages when market structure is insufficient
+            sl_pct = 0.30 if ctx.previous_day.bias == DayBias.BULLISH else 0.35
+            indicators["sl_pct"] = sl_pct
+            indicators["rr_multiplier"] = 1.5
 
         reason = (
             f"VWAP pullback BUY CE: {ctx.symbol} at {ctx.current_price:.2f}. "
@@ -134,6 +149,8 @@ class VWAPPullbackStrategy(BaseStrategy):
             confidence=min(confidence, 100),
             reason=reason,
             indicators=indicators,
+            index_sl=index_sl,
+            index_target=index_target,
         )
 
     def _evaluate_put(
@@ -172,13 +189,27 @@ class VWAPPullbackStrategy(BaseStrategy):
         if ctx.india_vix and ctx.india_vix < 14:
             confidence += 5
 
-        # SL/target params — actual values computed by option_resolver on the premium
-        sl_pct = 0.30 if ctx.previous_day.bias == DayBias.BEARISH else 0.35
-        rr_multiplier = 1.5
+        # Compute index-level SL/target from market structure
+        index_sl, index_target = select_index_sl_target(
+            entry_price=ctx.current_price,
+            signal_type=SignalType.BUY_PE,
+            vwap=ctx.vwap,
+            previous_day=ctx.previous_day,
+            cpr=ctx.cpr,
+            oi_analysis=ctx.oi_analysis,
+            candles_5m=ctx.candles_5m,
+        )
 
         indicators = self._build_indicator_snapshot(ctx, vwap, distance)
-        indicators["sl_pct"] = sl_pct
-        indicators["rr_multiplier"] = rr_multiplier
+
+        if index_sl is not None and index_target is not None:
+            indicators["index_sl"] = index_sl
+            indicators["index_target"] = index_target
+        else:
+            # Fallback to fixed percentages when market structure is insufficient
+            sl_pct = 0.30 if ctx.previous_day.bias == DayBias.BEARISH else 0.35
+            indicators["sl_pct"] = sl_pct
+            indicators["rr_multiplier"] = 1.5
 
         reason = (
             f"VWAP pullback BUY PE: {ctx.symbol} at {ctx.current_price:.2f}. "
@@ -201,6 +232,8 @@ class VWAPPullbackStrategy(BaseStrategy):
             confidence=min(confidence, 100),
             reason=reason,
             indicators=indicators,
+            index_sl=index_sl,
+            index_target=index_target,
         )
 
     def should_exit(

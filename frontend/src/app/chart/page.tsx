@@ -18,17 +18,17 @@ function ChartContent() {
   }, [symbol, setSelectedSymbol]);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)]">
+    <div className="flex flex-col h-[calc(100vh-52px)]">
       {/* Symbol tabs */}
-      <div className="flex items-center gap-1 px-4 py-2 border-b border-border shrink-0">
+      <div className="flex items-center gap-0.5 px-3 py-1 border-b border-border shrink-0">
         {SYMBOLS.map((sym) => (
           <button
             key={sym}
             onClick={() => setSelectedSymbol(sym)}
-            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+            className={`px-2 py-0.5 text-[10px] font-mono font-medium rounded transition-colors ${
               selectedSymbol === sym
-                ? "bg-accent/20 text-accent border border-accent/50"
-                : "text-text-secondary hover:text-text-primary hover:bg-bg-tertiary border border-transparent"
+                ? "bg-accent/15 text-accent border border-accent/30"
+                : "text-text-muted hover:text-text-secondary hover:bg-bg-tertiary border border-transparent"
             }`}
           >
             {sym}
@@ -48,8 +48,8 @@ export default function ChartPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
-          <div className="text-text-muted text-sm">Loading chart...</div>
+        <div className="flex items-center justify-center h-[calc(100vh-52px)]">
+          <div className="text-text-muted text-[10px] font-mono">loading chart...</div>
         </div>
       }
     >

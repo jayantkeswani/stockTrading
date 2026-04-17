@@ -73,6 +73,9 @@ export function useWebSocket() {
         case "signal:new":
           addSignal(msg.data as never);
           break;
+        case "signal:updated":
+          addSignal(msg.data as never); // addSignal deduplicates by id
+          break;
         case "risk:update":
           setRisk(msg.data as never);
           break;

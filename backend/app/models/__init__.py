@@ -7,6 +7,7 @@ from app.models.market_data import MarketData1m
 from app.models.daily_summary import DailySummary
 from app.models.agent_log import AgentLog
 from app.models.oi_snapshot import OISnapshot
+from app.models.fundamental_data import FundamentalHistory, StockFundamental
 
 __all__ = [
     "Base",
@@ -18,4 +19,6 @@ __all__ = [
     "DailySummary",
     "AgentLog",
     "OISnapshot",
+    "StockFundamental",
+    "FundamentalHistory",
 ]

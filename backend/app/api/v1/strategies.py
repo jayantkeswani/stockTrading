@@ -49,12 +49,26 @@ async def update_strategy(name: str, body: dict, db: AsyncSession = Depends(get_
         config.risk_params = body["risk_params"]
     if "symbols" in body:
         config.symbols = body["symbols"]
+    if "symbol_map" in body:
+        # Merge incoming map into existing (don't lose entries for unchanged symbols)
+        merged_map = {**(config.symbol_map or {}), **body["symbol_map"]}
+        # Remove entries for symbols no longer in the list
+        current_symbols = set(body.get("symbols", config.symbols or []))
+        config.symbol_map = {k: v for k, v in merged_map.items() if k in current_symbols}
     if "timeframes" in body:
         config.timeframes = body["timeframes"]
     if "is_active" in body:
         config.is_active = body["is_active"]
     if "auto_mode" in body:
         config.auto_mode = body["auto_mode"]
+
+    # Auto-resolve any symbols missing from symbol_map using the symbol master
+    if config.symbols:
+        current_map = config.symbol_map or {}
+        missing = [s for s in config.symbols if s not in current_map]
+        if missing:
+            resolved = _resolve_symbols_via_master(missing)
+            config.symbol_map = {**current_map, **resolved}
 
     await db.commit()
     await db.refresh(config)
@@ -64,8 +78,9 @@ async def update_strategy(name: str, body: dict, db: AsyncSession = Depends(get_
         new_symbols = set(body["symbols"]) - old_symbols
         if new_symbols:
             import asyncio
+            # Pass the symbol_map so provisioning uses correct Fyers symbols
             asyncio.create_task(
-                _provision_new_symbols(list(new_symbols)),
+                _provision_new_symbols(list(new_symbols), config.symbol_map or {}),
                 name="provision_strategy_symbols",
             )
 
@@ -184,12 +199,60 @@ async def evaluate_strategy_batch(body: BatchEvaluateRequest):
 # ------------------------------------------------------------------
 
 
-async def _provision_new_symbols(symbols: list[str]):
+def _resolve_symbols_via_master(symbols: list[str]) -> dict[str, str]:
+    """Resolve short names to Fyers symbols using the loaded symbol master.
+
+    Called server-side when the frontend doesn't provide symbol_map entries
+    (e.g. group-add, manual type-in, or legacy data).
+
+    Returns dict of {short_name: fyers_symbol} for symbols that were resolved.
+    """
+    from app.core.constants import FYERS_SYMBOL_MAP
+
+    resolved: dict[str, str] = {}
+    try:
+        from app.data_feed.symbol_master import symbol_master
+
+        if not symbol_master.is_loaded:
+            # Symbol master not loaded — fall back to construction
+            for sym in symbols:
+                if sym in FYERS_SYMBOL_MAP:
+                    resolved[sym] = FYERS_SYMBOL_MAP[sym]
+                else:
+                    resolved[sym] = f"NSE:{sym}-EQ"
+            return resolved
+
+        for sym in symbols:
+            if sym in FYERS_SYMBOL_MAP:
+                resolved[sym] = FYERS_SYMBOL_MAP[sym]
+                continue
+
+            results = symbol_master.search(sym, limit=10)
+            matched = False
+            for entry in results:
+                if entry.get("g") == "EQ" and entry.get("n", "").upper() == sym.upper():
+                    resolved[sym] = entry["s"]
+                    matched = True
+                    break
+            if not matched:
+                # Fallback
+                resolved[sym] = f"NSE:{sym}-EQ"
+    except Exception:
+        logger.exception("Error resolving symbols via master")
+        for sym in symbols:
+            if sym not in resolved:
+                resolved[sym] = FYERS_SYMBOL_MAP.get(sym, f"NSE:{sym}-EQ")
+
+    return resolved
+
+
+async def _provision_new_symbols(symbols: list[str], symbol_map: dict[str, str] | None = None):
     """Provision newly added strategy symbols: fetch price, backfill candles, subscribe WS.
 
     Runs as a fire-and-forget background task so the API response isn't blocked.
+    Uses symbol_map (stored at insertion time) for correct Fyers symbols.
     """
-    from app.services.candle_backfill import _resolve_fyers_symbol, _backfill_symbol
+    from app.services.candle_backfill import _backfill_symbol
     from app.data_feed.fyers_ws_client import fyers_ws_client
     from app.core.redis import get_redis
     from datetime import datetime
@@ -204,11 +267,20 @@ async def _provision_new_symbols(symbols: list[str]):
         logger.warning("No Fyers token — cannot provision new symbols")
         return
 
-    symbol_map = {sym: _resolve_fyers_symbol(sym) for sym in symbols}
+    # Use stored symbol_map for Fyers symbols — no reconstruction
+    sym_map = symbol_map or {}
+    fyers_map = {}
+    for sym in symbols:
+        if sym in sym_map:
+            fyers_map[sym] = sym_map[sym]
+        else:
+            # Resolve any missing entries (shouldn't happen if frontend sends them)
+            resolved = _resolve_symbols_via_master([sym])
+            fyers_map[sym] = resolved.get(sym, f"NSE:{sym}-EQ")
 
     # 1. Fetch REST quotes → Redis price cache
     try:
-        await fyers_ws_client.fetch_quotes_rest(extra_symbols=symbol_map)
+        await fyers_ws_client.fetch_quotes_rest(extra_symbols=fyers_map)
     except Exception:
         logger.exception("Failed to fetch quotes for new symbols")
 
@@ -216,7 +288,7 @@ async def _provision_new_symbols(symbols: list[str]):
     today = datetime.now(IST).date()
     prev_day = _previous_trading_day(today)
 
-    for sym, fyers_sym in symbol_map.items():
+    for sym, fyers_sym in fyers_map.items():
         try:
             await _backfill_symbol(token, sym, fyers_sym, prev_day)
             await _backfill_symbol(token, sym, fyers_sym, today)
@@ -225,7 +297,7 @@ async def _provision_new_symbols(symbols: list[str]):
 
     # 3. Subscribe on WebSocket for live ticks
     if fyers_ws_client.is_connected:
-        fyers_symbols = list(symbol_map.values())
+        fyers_symbols = list(fyers_map.values())
         await fyers_ws_client.subscribe_symbols(fyers_symbols)
 
     logger.info("Provisioning complete for %s", symbols)

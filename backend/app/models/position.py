@@ -27,6 +27,9 @@ class Position(Base, TimestampMixin):
     fyers_option_symbol: Mapped[str | None] = mapped_column(String(60), nullable=True)
     strategy_name: Mapped[str] = mapped_column(String(50), nullable=False)
     is_paper: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    position_type: Mapped[str] = mapped_column(
+        String(15), nullable=False, default="INTRADAY"
+    )  # INTRADAY or POSITIONAL
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (Index("idx_positions_symbol", "symbol"),)

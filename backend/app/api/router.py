@@ -1,6 +1,6 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.api.v1 import agent, auth, market_data, positions, risk, signals, strategies, trades, watchlist
+from app.api.v1 import agent, auth, market_data, positions, risk, signals, strategies, tasks, trades, watchlist
 from app.websocket.manager import ws_manager
 
 api_router = APIRouter()
@@ -15,6 +15,7 @@ api_router.include_router(risk.router, prefix="/api/v1/risk", tags=["risk"])
 api_router.include_router(agent.router, prefix="/api/v1/agent", tags=["agent"])
 api_router.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 api_router.include_router(watchlist.router, prefix="/api/v1/watchlist", tags=["watchlist"])
+api_router.include_router(tasks.router, prefix="/api/v1/tasks", tags=["tasks"])
 
 
 @api_router.get("/api/v1/health")

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import type {
   AgentLog,
   AgentStatus,
@@ -33,6 +34,8 @@ interface AppState {
   signals: Signal[];
   setSignals: (signals: Signal[]) => void;
   addSignal: (signal: Signal) => void;
+  updateSignal: (id: string, updates: Partial<Signal>) => void;
+  removeSignal: (id: string) => void;
 
   // Scan feed
   scanLogs: ScanLogEntry[];
@@ -62,60 +65,81 @@ interface AppState {
   setSelectedSymbol: (symbol: string) => void;
 }
 
-export const useStore = create<AppState>((set) => ({
-  // Prices
-  prices: {},
-  updatePrice: (symbol, data) =>
-    set((state) => ({
-      prices: { ...state.prices, [symbol]: data },
-    })),
+export const useStore = create<AppState>()(
+  persist(
+    (set) => ({
+      // Prices
+      prices: {},
+      updatePrice: (symbol, data) =>
+        set((state) => ({
+          prices: { ...state.prices, [symbol]: data },
+        })),
 
-  // Positions
-  positions: [],
-  setPositions: (positions) => set({ positions }),
-  updatePosition: (id, updates) =>
-    set((state) => ({
-      positions: state.positions.map((p) =>
-        p.id === id ? { ...p, ...updates } : p
-      ),
-    })),
-  removePosition: (id) =>
-    set((state) => ({
-      positions: state.positions.filter((p) => p.id !== id),
-    })),
+      // Positions
+      positions: [],
+      setPositions: (positions) => set({ positions }),
+      updatePosition: (id, updates) =>
+        set((state) => ({
+          positions: state.positions.map((p) =>
+            p.id === id ? { ...p, ...updates } : p
+          ),
+        })),
+      removePosition: (id) =>
+        set((state) => ({
+          positions: state.positions.filter((p) => p.id !== id),
+        })),
 
-  // Signals
-  signals: [],
-  setSignals: (signals) => set({ signals }),
-  addSignal: (signal) =>
-    set((state) => ({ signals: [signal, ...state.signals] })),
+      // Signals
+      signals: [],
+      setSignals: (signals) => set({ signals }),
+      addSignal: (signal) =>
+        set((state) => ({
+          signals: [signal, ...state.signals.filter((s) => s.id !== signal.id)],
+        })),
+      updateSignal: (id, updates) =>
+        set((state) => ({
+          signals: state.signals.map((s) =>
+            s.id === id ? { ...s, ...updates } : s
+          ),
+        })),
+      removeSignal: (id) =>
+        set((state) => ({
+          signals: state.signals.filter((s) => s.id !== id),
+        })),
 
-  // Scan feed
-  scanLogs: [],
-  addScanLog: (entry) =>
-    set((state) => ({ scanLogs: [entry, ...state.scanLogs].slice(0, 20) })),
+      // Scan feed
+      scanLogs: [],
+      addScanLog: (entry) =>
+        set((state) => ({ scanLogs: [entry, ...state.scanLogs].slice(0, 20) })),
 
-  // Risk
-  risk: null,
-  setRisk: (risk) => set({ risk }),
+      // Risk
+      risk: null,
+      setRisk: (risk) => set({ risk }),
 
-  // Market
-  marketStatus: null,
-  setMarketStatus: (status) => set({ marketStatus: status }),
+      // Market
+      marketStatus: null,
+      setMarketStatus: (status) => set({ marketStatus: status }),
 
-  // Agent
-  agentStatus: null,
-  setAgentStatus: (status) => set({ agentStatus: status }),
-  agentLogs: [],
-  setAgentLogs: (logs) => set({ agentLogs: logs }),
-  addAgentLog: (log) =>
-    set((state) => ({ agentLogs: [log, ...state.agentLogs] })),
+      // Agent
+      agentStatus: null,
+      setAgentStatus: (status) => set({ agentStatus: status }),
+      agentLogs: [],
+      setAgentLogs: (logs) => set({ agentLogs: logs }),
+      addAgentLog: (log) =>
+        set((state) => ({ agentLogs: [log, ...state.agentLogs] })),
 
-  // WebSocket
-  wsConnected: false,
-  setWsConnected: (connected) => set({ wsConnected: connected }),
+      // WebSocket
+      wsConnected: false,
+      setWsConnected: (connected) => set({ wsConnected: connected }),
 
-  // UI
-  selectedSymbol: "NIFTY",
-  setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
-}));
+      // UI
+      selectedSymbol: "NIFTY",
+      setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
+    }),
+    {
+      name: "scan-logs-storage",
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({ scanLogs: state.scanLogs }),
+    }
+  )
+);

@@ -29,22 +29,22 @@ stockTrading/
 ├── docker-compose.yml     # PostgreSQL (5433) + Redis (6380)
 ├── .env.example           # Environment template
 ├── .vscode/               # VS Code launch configs, tasks, settings
-├── .claude/skills/        # Claude Code skill definitions (test-runner, review-code, etc.)
+├── .claude/skills/        # Claude Code skill definitions (test-runner, review-code, build-strategy, etc.)
 ├── docs/
 │   └── strategies/        # One MD per strategy with full trading rules
 ├── scripts/               # dev.sh, stop.sh, reset.sh
 ├── backend/               # Python FastAPI backend (see backend/CLAUDE.md)
 │   ├── app/
-│   │   ├── api/v1/        # REST endpoints (9 routers, incl. watchlist, strategies)
+│   │   ├── api/v1/        # REST endpoints (10 routers, incl. watchlist, strategies, tasks)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
-│   │   ├── models/        # SQLAlchemy ORM models (8 tables, strategy_configs has auto_mode)
+│   │   ├── models/        # SQLAlchemy ORM models (10 tables incl. stock_fundamentals, fundamental_history; strategy_configs has symbol_map)
 │   │   ├── schemas/       # Pydantic request/response schemas
-│   │   ├── services/      # Business logic (strategy_runner, option_resolver, candle_backfill)
-│   │   ├── strategies/    # Strategy engine (base + 3 strategies, registry)
-│   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns)
+│   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill)
+│   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
+│   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels)
 │   │   ├── data_feed/     # Fyers API (auth, REST, WebSocket, feed manager, symbol master)
 │   │   ├── agent/         # AI trading agent (monitor, execute, notify)
-│   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP incl. VIX), enums, utils
+│   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP incl. VIX), enums, utils, task_registry
 │   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh)
 │   ├── tests/             # pytest test suite
 │   └── alembic/           # Database migrations
@@ -73,6 +73,7 @@ stockTrading/
 1. **ORB (Opening Range Breakout)** - STUB - `backend/app/strategies/strategy_1_orb.py`
 2. **VWAP Pullback + PDH/PDL + OI** - PRIMARY/ACTIVE - `backend/app/strategies/strategy_2_vwap_pullback.py`
 3. **Expiry Day Gamma Scalping** - STUB - `backend/app/strategies/strategy_3_gamma_scalping.py`
+4. **CAN SLIM Growth Breakout** - ACTIVE - `backend/app/strategies/strategy_4_canslim.py` — Stock futures, positional (multi-day), fundamental screening + chart pattern breakout
 
 ### Strategy Execution Modes
 - **Auto mode**: Strategy evaluates automatically on every 1m candle close for its configured symbols. Controlled by `auto_mode` flag in `strategy_configs` table.
@@ -104,11 +105,11 @@ cp .env.example .env          # Then fill in Fyers API keys
 ```
 
 ## Test Coverage
-Tests live in `backend/tests/`. 246 tests, all passing. Currently covered:
+Tests live in `backend/tests/`. 378 tests, all passing. Currently covered:
 - `test_core/` - IST timezone utils, market hour checks
-- `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns (comprehensive)
-- `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type
-- `test_services/` - Option resolver (strike/expiry/SL/target), strategy runner (auto filter, manual eval, strategy filter), FeedManager decoupling, OI snapshot parsing, candle backfill symbol resolution
+- `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns, relative strength (raw score + percentile ranking), volume analysis, market levels (swing detection, index SL/target selection)
+- `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type; CAN SLIM scoring, base pattern detection, strategy evaluate/exit/sizing
+- `test_services/` - Option resolver (strike/expiry/SL/target), futures resolver (expiry calculation), strategy runner (auto filter, manual eval, strategy filter, signal dedup), FeedManager decoupling, OI snapshot parsing, candle backfill symbol resolution
 - `test_api/` - Strategy endpoints (evaluate, batch evaluate, auto-mode toggle)
 
 Not yet covered (stubs only):

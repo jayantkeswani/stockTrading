@@ -31,10 +31,14 @@ def _resolve_fyers_symbol(symbol: str) -> str:
 
     Index symbols are looked up from FYERS_SYMBOL_MAP.
     Stock symbols default to NSE:{SYMBOL}-EQ.
+
+    NOTE: This is a last-resort fallback. The primary path uses the symbol_map
+    stored on strategy_configs (populated at symbol insertion time from the
+    symbol master search results). This function is only called for symbols
+    that are missing from symbol_map (e.g. legacy data before symbol_map existed).
     """
     if symbol in FYERS_SYMBOL_MAP:
         return FYERS_SYMBOL_MAP[symbol]
-    # Stock equity: NSE:TCS-EQ, NSE:RELIANCE-EQ etc.
     return f"NSE:{symbol}-EQ"
 
 
@@ -42,6 +46,7 @@ async def _get_all_backfill_symbols() -> dict[str, str]:
     """Get all symbols that need backfilling: FYERS_SYMBOL_MAP + strategy-configured symbols.
 
     Returns dict of {internal_symbol: fyers_symbol}.
+    Uses symbol_map from strategy_configs for accurate Fyers symbols (stored at insertion time).
     """
     from sqlalchemy import select
     from app.models.strategy_config import StrategyConfig
@@ -52,22 +57,24 @@ async def _get_all_backfill_symbols() -> dict[str, str]:
         if k != "INDIA VIX"
     }
 
-    # Add symbols from all active strategy configs
+    # Add symbols from all active strategy configs, using stored symbol_map
     try:
         async with async_session_factory() as session:
             result = await session.execute(
-                select(StrategyConfig.symbols).where(
+                select(StrategyConfig.symbols, StrategyConfig.symbol_map).where(
                     StrategyConfig.is_active == True  # noqa: E712
                 )
             )
-            rows = result.scalars().all()
+            rows = result.all()
 
-        for symbol_list in rows:
+        for symbol_list, symbol_map in rows:
             if not symbol_list:
                 continue
+            sym_map = symbol_map or {}
             for sym in symbol_list:
                 if sym not in symbols:
-                    symbols[sym] = _resolve_fyers_symbol(sym)
+                    # Use stored Fyers symbol if available, fall back to reconstruction
+                    symbols[sym] = sym_map.get(sym) or _resolve_fyers_symbol(sym)
     except Exception:
         logger.exception("Failed to load strategy symbols for backfill")
 
@@ -273,3 +280,150 @@ async def backfill_today():
             logger.exception("Failed to backfill today's candles for %s", symbol)
 
     logger.info("Today's backfill complete: %d total candles inserted", total)
+
+
+async def backfill_deep_history(days: int = 120) -> None:
+    """Backfill extended history for CAN SLIM symbols that need daily pattern detection.
+
+    Fetches ~120 calendar days of 1m candles in weekly chunks (to stay within
+    Fyers API limits). Only runs for symbols that have fewer than 50 trading days
+    of data — once history is populated, the daily backfill keeps it current.
+
+    Called on startup as a background task. Non-blocking.
+    """
+    from app.models.strategy_config import StrategyConfig
+
+    r = get_redis()
+    token = await r.get(FYERS_TOKEN_KEY)
+    if not token:
+        logger.warning("No Fyers token — cannot run deep backfill")
+        return
+
+    # Find CAN SLIM symbols that need history
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(StrategyConfig.symbols, StrategyConfig.symbol_map).where(
+                StrategyConfig.strategy_name == "can_slim"
+            )
+        )
+        row = result.one_or_none()
+
+    if not row or not row[0]:
+        return
+
+    symbols_list, sym_map = row
+    sym_map = sym_map or {}
+
+    today = datetime.now(IST).date()
+    start_date = today - timedelta(days=days)
+
+    symbols_needing_backfill = []
+    for sym in symbols_list:
+        # Check how many trading days of data we have
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(func.count(func.distinct(func.date(MarketData1m.timestamp)))).where(
+                    MarketData1m.symbol == sym,
+                )
+            )
+            day_count = result.scalar_one()
+
+        if day_count < 50:
+            fyers_sym = sym_map.get(sym, f"NSE:{sym}-EQ")
+            symbols_needing_backfill.append((sym, fyers_sym))
+
+    if not symbols_needing_backfill:
+        logger.info("Deep backfill: all CAN SLIM symbols have sufficient history")
+        return
+
+    logger.info(
+        "Deep backfill: %d symbols need history (%d days from %s)",
+        len(symbols_needing_backfill), days, start_date,
+    )
+
+    import asyncio
+
+    for sym, fyers_sym in symbols_needing_backfill:
+        total_candles = 0
+        # Fetch in 7-day chunks to avoid API limits
+        chunk_start = start_date
+        while chunk_start < today:
+            chunk_end = min(chunk_start + timedelta(days=6), today - timedelta(days=1))
+            try:
+                candles = await asyncio.to_thread(
+                    _fetch_history_range_via_sdk, token, fyers_sym, chunk_start, chunk_end,
+                )
+                if candles:
+                    count = await _persist_candles(sym, candles)
+                    total_candles += count
+            except Exception:
+                logger.debug("Deep backfill chunk failed for %s (%s to %s)", sym, chunk_start, chunk_end)
+
+            chunk_start = chunk_end + timedelta(days=1)
+            await asyncio.sleep(0.5)  # Rate limit between chunks
+
+        logger.info("Deep backfill: %s — %d candles inserted", sym, total_candles)
+
+    logger.info("Deep backfill complete")
+
+
+def _fetch_history_range_via_sdk(
+    token: str, fyers_symbol: str, from_date: date, to_date: date
+) -> list[dict]:
+    """Fetch 1m candles for a date range using the Fyers SDK."""
+    from fyers_apiv3.fyersModel import FyersModel
+
+    fyers = FyersModel(client_id=settings.fyers_app_id, token=token)
+    result = fyers.history({
+        "symbol": fyers_symbol,
+        "resolution": "1",
+        "date_format": "1",
+        "range_from": str(from_date),
+        "range_to": str(to_date),
+        "cont_flag": "1",
+    })
+
+    if result.get("s") != "ok":
+        return []
+
+    return [
+        {
+            "timestamp": c[0],
+            "open": c[1],
+            "high": c[2],
+            "low": c[3],
+            "close": c[4],
+            "volume": c[5],
+        }
+        for c in result.get("candles", [])
+    ]
+
+
+async def _persist_candles(symbol: str, candles: list[dict]) -> int:
+    """Persist a list of candle dicts to MarketData1m. Returns count inserted."""
+    rows = []
+    for c in candles:
+        ts = datetime.fromtimestamp(c["timestamp"], tz=IST)
+        # Filter to market hours
+        if ts.time() < MARKET_OPEN or ts.time() > MARKET_CLOSE:
+            continue
+        rows.append({
+            "symbol": symbol,
+            "timestamp": ts,
+            "open": Decimal(str(c["open"])),
+            "high": Decimal(str(c["high"])),
+            "low": Decimal(str(c["low"])),
+            "close": Decimal(str(c["close"])),
+            "volume": int(c["volume"]),
+        })
+
+    if not rows:
+        return 0
+
+    async with async_session_factory() as session:
+        stmt = pg_insert(MarketData1m).values(rows)
+        stmt = stmt.on_conflict_do_nothing(constraint="uq_market_data_symbol_time")
+        await session.execute(stmt)
+        await session.commit()
+
+    return len(rows)

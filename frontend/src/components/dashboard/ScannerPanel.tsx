@@ -5,14 +5,16 @@ import { useStore } from "@/store";
 import { formatINR } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
+import type { Signal } from "@/lib/types";
 
 export function ScannerPanel() {
-  const { signals } = useStore();
+  const { signals, updateSignal, removeSignal } = useStore();
   const pendingSignals = signals.filter((s) => s.status === "PENDING");
 
   const handleExecute = async (signalId: string) => {
     try {
       await api.executeSignal(signalId);
+      updateSignal(signalId, { status: "EXECUTED" });
     } catch (err) {
       console.error("Failed to execute signal:", err);
     }
@@ -21,44 +23,39 @@ export function ScannerPanel() {
   const handleReject = async (signalId: string) => {
     try {
       await api.rejectSignal(signalId);
+      removeSignal(signalId);
     } catch (err) {
       console.error("Failed to reject signal:", err);
     }
   };
 
   return (
-    <div className="rounded-lg border border-border bg-bg-secondary">
-      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-          Scanner
+    <div className="rounded border border-border bg-bg-secondary">
+      <div className="px-3 py-1.5 border-b border-border flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider">
+            Scanner
+          </h2>
           {pendingSignals.length > 0 && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full bg-accent/20 text-accent">
+            <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/15 text-accent">
               {pendingSignals.length}
             </span>
           )}
-        </h2>
-        <div className="flex items-center gap-1.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-profit animate-pulse" />
-          <span className="text-xs text-text-muted">Active</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-1 h-1 rounded-full bg-profit animate-pulse" />
+          <span className="text-[9px] text-text-muted font-mono">LIVE</span>
         </div>
       </div>
 
       {pendingSignals.length === 0 ? (
-        <div className="p-10 text-center">
-          <div className="relative inline-flex items-center justify-center mb-3">
-            <div className="w-10 h-10 rounded-full border border-border flex items-center justify-center">
-              <svg className="w-5 h-5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-            <div className="absolute inset-0 rounded-full border border-accent/30 animate-ping" style={{ animationDuration: "3s" }} />
-          </div>
-          <p className="text-sm text-text-muted">Scanner active — waiting for signals</p>
+        <div className="px-3 py-6 text-center">
+          <p className="text-[11px] text-text-muted font-mono">waiting for signals...</p>
         </div>
       ) : (
-        <div className="p-3 grid gap-3 max-h-[400px] overflow-y-auto">
+        <div className="max-h-[340px] overflow-y-auto">
           {pendingSignals.map((signal) => (
-            <SignalCard
+            <SignalRow
               key={signal.id}
               signal={signal}
               onExecute={handleExecute}
@@ -71,134 +68,110 @@ export function ScannerPanel() {
   );
 }
 
-function SignalCard({
+function SignalRow({
   signal,
   onExecute,
   onDismiss,
 }: {
-  signal: {
-    id: string;
-    signal_type: "BUY_CE" | "BUY_PE";
-    symbol: string;
-    strike_price: number;
-    expiry_date: string;
-    entry_price: number;
-    stop_loss: number;
-    target_price: number | null;
-    confidence: number | null;
-    strategy_name: string;
-    reason: string;
-  };
+  signal: Signal;
   onExecute: (id: string) => void;
   onDismiss: (id: string) => void;
 }) {
-  const [reasonExpanded, setReasonExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const isFuture = signal.instrument_type === "FUTURE";
   const isCE = signal.signal_type === "BUY_CE";
+  const isUnresolvedOption = signal.instrument_type === "OPTION" && !signal.executable;
+
   const risk = signal.entry_price - signal.stop_loss;
   const reward = signal.target_price ? signal.target_price - signal.entry_price : 0;
-  const totalRange = risk + reward;
-  const riskPercent = totalRange > 0 ? (risk / totalRange) * 100 : 50;
+  const rrRatio = risk > 0 && reward > 0 ? (reward / risk).toFixed(1) : "?";
 
-  const confidenceColor =
-    (signal.confidence ?? 0) >= 70
-      ? "bg-profit/20 text-profit"
-      : (signal.confidence ?? 0) >= 50
-        ? "bg-warning/20 text-warning"
-        : "bg-loss/20 text-loss";
+  const directionColor = isCE || isFuture ? "text-profit" : "text-loss";
+  const directionArrow = isCE || isFuture ? "\u25B2" : "\u25BC";
+
+  const symbolLabel = isFuture
+    ? `${signal.symbol} FUT`
+    : `${signal.symbol} ${signal.strike_price > 0 ? signal.strike_price : ""} ${isCE ? "CE" : "PE"}`;
 
   return (
-    <div className="rounded-lg border border-border bg-bg-tertiary/50 p-3">
-      {/* Top row: direction + symbol + confidence */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <span className={`text-lg font-bold ${isCE ? "text-profit" : "text-loss"}`}>
-            {isCE ? "\u25B2" : "\u25BC"}
-          </span>
-          <div>
-            <span className="text-sm font-semibold text-text-primary">
-              {signal.symbol} {signal.strike_price} {isCE ? "CE" : "PE"}
-            </span>
-            <span className="ml-2 text-xs text-text-muted">{signal.expiry_date}</span>
-          </div>
+    <div className="border-b border-border/50 last:border-b-0">
+      {/* Main row */}
+      <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-tertiary/40 transition-colors">
+        {/* Direction + Symbol */}
+        <span className={`text-xs font-bold ${directionColor} w-3 shrink-0`}>
+          {directionArrow}
+        </span>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex-1 min-w-0 text-left"
+        >
+          <span className="text-xs font-medium text-text-primary">{symbolLabel}</span>
+          <span className="ml-1.5 text-[10px] text-text-muted font-mono">{signal.expiry_date}</span>
+        </button>
+
+        {/* Price levels */}
+        <div className="flex items-center gap-2 text-[10px] font-mono shrink-0">
+          {isUnresolvedOption ? (
+            <span className="text-warning">{formatINR(signal.entry_price)}</span>
+          ) : (
+            <>
+              <span className="text-text-secondary">{formatINR(signal.entry_price)}</span>
+              {signal.stop_loss > 0 && (
+                <span className="text-loss">{formatINR(signal.stop_loss)}</span>
+              )}
+              {signal.target_price && signal.target_price > 0 && (
+                <span className="text-profit">{formatINR(signal.target_price)}</span>
+              )}
+            </>
+          )}
         </div>
+
+        {/* R:R */}
+        {!isUnresolvedOption && (
+          <span className="text-[10px] font-mono text-text-muted w-8 text-right shrink-0">
+            1:{rrRatio}
+          </span>
+        )}
+
+        {/* Confidence */}
         {signal.confidence != null && (
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${confidenceColor}`}>
+          <span className={`text-[10px] font-mono font-medium w-8 text-right shrink-0 ${
+            signal.confidence >= 70 ? "text-profit" : signal.confidence >= 50 ? "text-accent" : "text-loss"
+          }`}>
             {signal.confidence}%
           </span>
         )}
-      </div>
 
-      {/* Price levels */}
-      <div className="flex items-center gap-3 text-xs font-mono mb-2">
-        <span className="text-text-secondary">
-          Entry <span className="text-text-primary">{formatINR(signal.entry_price)}</span>
-        </span>
-        <span className="text-loss">
-          SL {formatINR(signal.stop_loss)}
-        </span>
-        {signal.target_price && (
-          <span className="text-profit">
-            Tgt {formatINR(signal.target_price)}
-          </span>
-        )}
-      </div>
-
-      {/* Risk:Reward visual bar */}
-      {totalRange > 0 && (
-        <div className="flex h-1.5 rounded-full overflow-hidden mb-2">
-          <div
-            className="bg-loss/60 rounded-l-full"
-            style={{ width: `${riskPercent}%` }}
-          />
-          <div
-            className="bg-profit/60 rounded-r-full"
-            style={{ width: `${100 - riskPercent}%` }}
-          />
-        </div>
-      )}
-
-      {/* Strategy badge */}
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs px-1.5 py-0.5 rounded bg-accent/20 text-accent">
+        {/* Strategy badge */}
+        <span className="text-[9px] font-mono px-1 py-px rounded bg-accent/10 text-accent shrink-0">
           {STRATEGY_LABELS[signal.strategy_name] || signal.strategy_name}
         </span>
-        {totalRange > 0 && (
-          <span className="text-xs text-text-muted font-mono">
-            R:R 1:{reward > 0 ? (reward / risk).toFixed(1) : "?"}
-          </span>
-        )}
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-1 shrink-0 ml-1">
+          <button
+            onClick={(e) => { e.stopPropagation(); onExecute(signal.id); }}
+            className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-profit/15 text-profit hover:bg-profit/25 transition-colors"
+          >
+            EXEC
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDismiss(signal.id); }}
+            className="text-[10px] font-mono px-1 py-0.5 rounded text-text-muted hover:text-loss hover:bg-loss/10 transition-colors"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
-      {/* Reason text (collapsible) */}
-      {signal.reason && (
-        <button
-          onClick={() => setReasonExpanded(!reasonExpanded)}
-          className="text-xs text-text-secondary hover:text-text-primary transition-colors text-left w-full mb-3"
-        >
-          <span className={reasonExpanded ? "" : "line-clamp-2"}>
+      {/* Expanded reason */}
+      {expanded && signal.reason && (
+        <div className="px-3 pb-2 pl-8 animate-fade-in">
+          <p className="text-[10px] text-text-secondary leading-relaxed font-mono">
             {signal.reason}
-          </span>
-          {!reasonExpanded && signal.reason.length > 100 && (
-            <span className="text-accent ml-1">more</span>
-          )}
-        </button>
+          </p>
+        </div>
       )}
-
-      {/* Action buttons */}
-      <div className="flex gap-2">
-        <button
-          onClick={() => onExecute(signal.id)}
-          className="flex-1 text-sm font-semibold py-1.5 rounded bg-profit/20 text-profit hover:bg-profit/30 transition-colors"
-        >
-          Execute
-        </button>
-        <button
-          onClick={() => onDismiss(signal.id)}
-          className="px-3 py-1.5 text-sm rounded bg-bg-tertiary text-text-muted hover:text-text-secondary hover:bg-border transition-colors"
-        >
-          Dismiss
-        </button>
-      </div>
     </div>
   );
 }

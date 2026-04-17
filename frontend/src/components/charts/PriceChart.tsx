@@ -3,14 +3,17 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { createChart, CandlestickSeries, HistogramSeries, ColorType, type UTCTimestamp } from "lightweight-charts";
 import { useStore } from "@/store";
+import { api } from "@/lib/api";
 
-type Timeframe = "1m" | "5m" | "15m" | "1h";
+type Timeframe = "1m" | "5m" | "15m" | "1h" | "1D";
 
-const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
-  "1m": 60,
-  "5m": 300,
-  "15m": 900,
-  "1h": 3600,
+// Maps UI timeframe → Fyers resolution param + days of history
+const TIMEFRAME_CONFIG: Record<Timeframe, { resolution: string; days: number }> = {
+  "1m": { resolution: "1", days: 5 },
+  "5m": { resolution: "5", days: 15 },
+  "15m": { resolution: "15", days: 30 },
+  "1h": { resolution: "60", days: 90 },
+  "1D": { resolution: "D", days: 365 },
 };
 
 interface PriceChartProps {
@@ -21,6 +24,7 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const { selectedSymbol } = useStore();
   const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("5m");
+  const [loading, setLoading] = useState(false);
 
   const handleTimeframeChange = useCallback((tf: Timeframe) => {
     setActiveTimeframe(tf);
@@ -28,8 +32,9 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
+    const container = chartContainerRef.current;
 
-    const chart = createChart(chartContainerRef.current, {
+    const chart = createChart(container, {
       layout: {
         background: { type: ColorType.Solid, color: "#111118" },
         textColor: "#8888a0",
@@ -51,7 +56,7 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
       },
       timeScale: {
         borderColor: "#1e1e2e",
-        timeVisible: true,
+        timeVisible: activeTimeframe !== "1D",
         secondsVisible: false,
       },
       handleScroll: { vertTouchDrag: false },
@@ -76,26 +81,54 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
       scaleMargins: { top: 0.8, bottom: 0 },
     });
 
-    // Generate data based on selected timeframe
-    const intervalSeconds = TIMEFRAME_SECONDS[activeTimeframe];
-    const demoData = generateDemoData(intervalSeconds);
-    candleSeries.setData(demoData.candles);
-    volumeSeries.setData(demoData.volumes);
+    // Fetch pre-aggregated candles from backend (proxied from Fyers)
+    let cancelled = false;
+    setLoading(true);
+
+    const config = TIMEFRAME_CONFIG[activeTimeframe];
+    api
+      .getOHLCV(selectedSymbol, { resolution: config.resolution, days: config.days })
+      .then((raw) => {
+        if (cancelled || !raw || raw.length === 0) {
+          setLoading(false);
+          return;
+        }
+
+        const candles = raw.map((c) => ({
+          time: c.timestamp as UTCTimestamp,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+        }));
+
+        const volumes = raw.map((c) => ({
+          time: c.timestamp as UTCTimestamp,
+          value: c.volume,
+          color: c.close >= c.open ? "rgba(0, 255, 136, 0.3)" : "rgba(255, 51, 102, 0.3)",
+        }));
+
+        candleSeries.setData(candles);
+        volumeSeries.setData(volumes);
+        setLoading(false);
+        chart.timeScale().fitContent();
+      })
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
 
     const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight,
-        });
-      }
+      chart.applyOptions({
+        width: container.clientWidth,
+        height: container.clientHeight,
+      });
     };
 
     window.addEventListener("resize", handleResize);
     handleResize();
-    chart.timeScale().fitContent();
 
     return () => {
+      cancelled = true;
       window.removeEventListener("resize", handleResize);
       chart.remove();
     };
@@ -107,7 +140,7 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold text-text-primary">{selectedSymbol}</h2>
           <div className="flex gap-1">
-            {(["1m", "5m", "15m", "1h"] as Timeframe[]).map((tf) => (
+            {(["1m", "5m", "15m", "1h", "1D"] as Timeframe[]).map((tf) => (
               <button
                 key={tf}
                 onClick={() => handleTimeframeChange(tf)}
@@ -121,6 +154,9 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
               </button>
             ))}
           </div>
+          {loading && (
+            <div className="w-3 h-3 border border-accent/50 border-t-accent rounded-full animate-spin" />
+          )}
         </div>
       </div>
       <div
@@ -129,34 +165,4 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
       />
     </div>
   );
-}
-
-function generateDemoData(intervalSeconds: number) {
-  const candles: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
-  const volumes: { time: UTCTimestamp; value: number; color: string }[] = [];
-  let price = 24800;
-
-  const barCount = Math.min(400, Math.floor(86400 / intervalSeconds));
-  const baseTime = Math.floor(Date.now() / 1000) - barCount * intervalSeconds;
-
-  for (let i = 0; i < barCount; i++) {
-    const time = (baseTime + i * intervalSeconds) as UTCTimestamp;
-    const volatility = intervalSeconds >= 3600 ? 80 : intervalSeconds >= 900 ? 50 : intervalSeconds >= 300 ? 30 : 15;
-    const change = (Math.random() - 0.48) * volatility;
-    const open = price;
-    const close = price + change;
-    const high = Math.max(open, close) + Math.random() * (volatility * 0.6);
-    const low = Math.min(open, close) - Math.random() * (volatility * 0.6);
-    const volume = Math.floor(Math.random() * 50000) + 10000;
-
-    candles.push({ time, open, high, low, close });
-    volumes.push({
-      time,
-      value: volume,
-      color: close >= open ? "rgba(0, 255, 136, 0.3)" : "rgba(255, 51, 102, 0.3)",
-    });
-    price = close;
-  }
-
-  return { candles, volumes };
 }

@@ -1,0 +1,224 @@
+"""Tests for signal deduplication in strategy_runner."""
+
+import pytest
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from app.core.enums import InstrumentType, SignalStatus, SignalType, StrategyName
+from app.strategies.base import StrategySignal
+
+
+def _make_signal(**overrides) -> StrategySignal:
+    defaults = dict(
+        strategy_name=StrategyName.VWAP_PULLBACK,
+        symbol="NIFTY",
+        signal_type=SignalType.BUY_CE,
+        instrument_type=InstrumentType.OPTION,
+        strike_price=24000.0,
+        expiry_date=date(2026, 4, 22),
+        entry_price=250.0,
+        stop_loss=175.0,
+        target_price=362.5,
+        confidence=75.0,
+        reason="Test signal",
+        indicators={"sl_pct": 0.30},
+    )
+    defaults.update(overrides)
+    return StrategySignal(**defaults)
+
+
+def _make_db_signal(**overrides) -> MagicMock:
+    """Create a mock Signal DB row."""
+    defaults = dict(
+        id="existing-uuid",
+        strategy_name="vwap_pullback",
+        symbol="NIFTY",
+        signal_type="BUY_CE",
+        status="PENDING",
+        entry_price=Decimal("250.0"),
+        stop_loss=Decimal("175.0"),
+        target_price=Decimal("362.5"),
+        confidence=Decimal("75.0"),
+        generated_at=datetime(2026, 4, 17, 10, 0),
+    )
+    defaults.update(overrides)
+    mock = MagicMock()
+    for k, v in defaults.items():
+        setattr(mock, k, v)
+    return mock
+
+
+class TestDedupSignal:
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.async_session_factory")
+    async def test_skip_identical_pending_signal(self, mock_sf):
+        """If an identical PENDING signal exists, return 'skip'."""
+        from app.services.strategy_runner import strategy_runner
+
+        existing = _make_db_signal()
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = existing
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        signal = _make_signal()  # Same values as existing
+        now = datetime(2026, 4, 17, 10, 5)
+
+        result = await strategy_runner._dedup_signal(signal, now, True, None)
+        assert result == "skip"
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.async_session_factory")
+    async def test_update_when_values_changed(self, mock_sf):
+        """If a PENDING signal exists but entry/SL/target changed, update it."""
+        from app.services.strategy_runner import strategy_runner
+
+        existing = _make_db_signal()
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = existing
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.commit = AsyncMock()
+        mock_session.refresh = AsyncMock()
+        mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Signal with different entry price
+        signal = _make_signal(entry_price=260.0, stop_loss=182.0, target_price=375.0)
+        now = datetime(2026, 4, 17, 10, 5)
+
+        result = await strategy_runner._dedup_signal(signal, now, True, None)
+
+        # Should return the updated Signal object, not "skip"
+        assert result is not None
+        assert result != "skip"
+        # Verify the existing record was updated
+        assert existing.entry_price == Decimal("260.0")
+        assert existing.stop_loss == Decimal("182.0")
+        assert existing.target_price == Decimal("375.0")
+        mock_session.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.async_session_factory")
+    async def test_new_signal_when_no_pending_exists(self, mock_sf):
+        """If no PENDING signal exists, return None (caller creates new)."""
+        from app.services.strategy_runner import strategy_runner
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        signal = _make_signal()
+        now = datetime(2026, 4, 17, 10, 5)
+
+        result = await strategy_runner._dedup_signal(signal, now, True, None)
+        assert result is None
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.async_session_factory")
+    async def test_update_on_confidence_change(self, mock_sf):
+        """If only confidence changed, update the signal."""
+        from app.services.strategy_runner import strategy_runner
+
+        existing = _make_db_signal()
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = existing
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_session.commit = AsyncMock()
+        mock_session.refresh = AsyncMock()
+        mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        signal = _make_signal(confidence=85.0)  # Same prices, different confidence
+        now = datetime(2026, 4, 17, 10, 5)
+
+        result = await strategy_runner._dedup_signal(signal, now, True, None)
+        assert result is not None
+        assert result != "skip"
+        assert existing.confidence == Decimal("85.0")
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.async_session_factory")
+    async def test_different_strategy_creates_new(self, mock_sf):
+        """Signals from different strategies are not deduplicated."""
+        from app.services.strategy_runner import strategy_runner
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        # Query for CAN_SLIM finds no match (existing is VWAP_PULLBACK)
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(return_value=mock_result)
+        mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        signal = _make_signal(strategy_name=StrategyName.CAN_SLIM)
+        now = datetime(2026, 4, 17, 10, 5)
+
+        result = await strategy_runner._dedup_signal(signal, now, True, None)
+        assert result is None  # No match → create new
+
+
+class TestHandleSignalDedup:
+    """Integration test: _handle_signal should use dedup before persisting."""
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.strategy_runner._broadcast_signal", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._persist_signal", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._dedup_signal", new_callable=AsyncMock)
+    async def test_skips_when_dedup_returns_skip(self, mock_dedup, mock_persist, mock_broadcast):
+        """When dedup says skip, neither persist nor broadcast should be called."""
+        from app.services.strategy_runner import strategy_runner
+
+        mock_dedup.return_value = "skip"
+
+        signal = _make_signal()
+        await strategy_runner._handle_signal(signal, True, None)
+
+        mock_persist.assert_not_called()
+        mock_broadcast.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.strategy_runner._broadcast_signal", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._persist_signal", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._dedup_signal", new_callable=AsyncMock)
+    async def test_broadcasts_update_when_dedup_returns_signal(self, mock_dedup, mock_persist, mock_broadcast):
+        """When dedup updates an existing signal, broadcast as signal:updated."""
+        from app.services.strategy_runner import strategy_runner
+        from app.models.signal import Signal
+
+        updated_record = MagicMock(spec=Signal)
+        updated_record.id = "existing-uuid"
+        mock_dedup.return_value = updated_record
+
+        signal = _make_signal()
+        await strategy_runner._handle_signal(signal, True, None)
+
+        mock_persist.assert_not_called()  # Should NOT create new
+        mock_broadcast.assert_called_once()
+        # Check it was called with event="signal:updated"
+        call_kwargs = mock_broadcast.call_args
+        assert call_kwargs.kwargs.get("event") == "signal:updated"
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.strategy_runner._broadcast_signal", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._persist_signal", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._dedup_signal", new_callable=AsyncMock)
+    async def test_creates_new_when_dedup_returns_none(self, mock_dedup, mock_persist, mock_broadcast):
+        """When dedup finds no match, create a new signal normally."""
+        from app.services.strategy_runner import strategy_runner
+
+        mock_dedup.return_value = None
+        mock_persist.return_value = _make_db_signal()
+
+        signal = _make_signal()
+        await strategy_runner._handle_signal(signal, True, None)
+
+        mock_persist.assert_called_once()
+        mock_broadcast.assert_called_once()

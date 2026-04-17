@@ -28,12 +28,6 @@ interface WatchlistItem {
   segment: string;
 }
 
-const SEGMENT_BADGE: Record<string, { label: string; color: string }> = {
-  EQ: { label: "EQ", color: "text-accent" },
-  FUT: { label: "FUT", color: "text-warning" },
-  OPT: { label: "OPT", color: "text-profit" },
-};
-
 export function Watchlist({ onOpenChart }: WatchlistProps) {
   const { prices, updatePrice } = useStore();
   const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([]);
@@ -57,7 +51,7 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
           }
         }
       } catch {
-        // API error — prices will show as "--"
+        // API error
       }
     },
     [updatePrice]
@@ -74,7 +68,6 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
           segment: item.segment || "EQ",
         }));
         setWatchlistItems(items);
-        // Fetch prices for loaded items
         await fetchWatchlistPrices(items);
       } catch {
         // Backend not available
@@ -132,7 +125,6 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
         segment: result.segment,
       };
 
-      // Add to backend watchlist
       try {
         await api.addToWatchlist({
           symbol: result.symbol,
@@ -143,14 +135,11 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
           expiry: result.expiry,
         });
       } catch {
-        // API error — still add locally for responsiveness
+        // API error — still add locally
       }
 
       setWatchlistItems((prev) => [...prev, newItem]);
-
-      // Fetch price immediately for the newly added item
       fetchWatchlistPrices([newItem]);
-
       setInputValue("");
       setSuggestions([]);
       setShowSuggestions(false);
@@ -163,7 +152,7 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
     try {
       await api.removeFromWatchlist(symbol);
     } catch {
-      // Ignore — already removed from UI
+      // Ignore
     }
   }, []);
 
@@ -173,114 +162,87 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
     }
   }, []);
 
-  return (
-    <div className="rounded-lg border border-border bg-bg-secondary">
-      <div className="px-4 py-3 border-b border-border">
-        <h2 className="text-sm font-semibold text-text-primary">Watchlist</h2>
-      </div>
+  // Render a single watchlist row — unified for indices and custom items
+  const renderRow = (
+    symbol: string,
+    displayName: string,
+    segment?: string,
+    removable?: boolean
+  ) => {
+    const price = prices[symbol];
+    const changePct = price?.change_pct ?? 0;
+    const change = price?.change ?? 0;
 
-      <div className="divide-y divide-border/50 max-h-[320px] overflow-y-auto">
-        {/* Default indices */}
-        {SYMBOLS.map((symbol) => {
-          const price = prices[symbol];
-          const changePct = price?.change_pct ?? 0;
-          const change = price?.change ?? 0;
-
-          return (
-            <button
-              key={symbol}
-              onClick={() => onOpenChart(symbol)}
-              className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-bg-tertiary/50 transition-colors text-left"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-text-primary">
-                  {symbol}
-                </span>
-              </div>
-              <div className="text-right">
-                <div className="text-sm font-mono text-text-primary">
-                  {price ? formatINR(price.ltp) : "--"}
-                </div>
-                {price && (
-                  <div className={`text-xs font-mono ${pnlColor(changePct)}`}>
-                    {changePct > 0 ? "\u25B2" : changePct < 0 ? "\u25BC" : ""}{" "}
-                    {changePct > 0 ? "+" : ""}
-                    {changePct.toFixed(2)}%
-                    <span className="text-text-muted ml-1">
-                      ({change != null && change > 0 ? "+" : ""}
-                      {change?.toFixed(2) ?? "0"})
-                    </span>
-                  </div>
-                )}
-              </div>
-            </button>
-          );
-        })}
-
-        {/* Custom watchlist items from backend */}
-        {watchlistItems.map((item) => {
-          const price = prices[item.symbol];
-          const changePct = price?.change_pct ?? 0;
-          const badge = SEGMENT_BADGE[item.segment];
-
-          return (
-            <div
-              key={item.symbol}
-              className="flex items-center justify-between px-4 py-2.5 hover:bg-bg-tertiary/50 transition-colors group"
-            >
-              <button
-                onClick={() => onOpenChart(item.symbol)}
-                className="flex items-center gap-2 text-left flex-1 min-w-0"
-              >
-                <span className="text-sm font-medium text-text-primary truncate">
-                  {item.display}
-                </span>
-                {badge && (
-                  <span
-                    className={`text-[9px] font-semibold px-1 py-0.5 rounded ${badge.color} bg-current/10 shrink-0`}
-                  >
-                    {badge.label}
-                  </span>
-                )}
-              </button>
-              <div className="flex items-center gap-2">
-                <div className="text-right">
-                  <div className="text-sm font-mono text-text-primary">
-                    {price ? formatINR(price.ltp) : "--"}
-                  </div>
-                  {price && (
-                    <div className={`text-xs font-mono ${pnlColor(changePct)}`}>
-                      {changePct > 0 ? "+" : ""}
-                      {changePct.toFixed(2)}%
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleRemoveItem(item.symbol)}
-                  className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-loss transition-all w-5 h-5 flex items-center justify-center rounded hover:bg-loss/20"
-                >
-                  <svg
-                    className="w-3 h-3"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                </button>
-              </div>
+    return (
+      <div
+        key={symbol}
+        className="flex items-center justify-between px-3 py-1.5 hover:bg-bg-tertiary/40 transition-colors group"
+      >
+        <button
+          onClick={() => onOpenChart(symbol)}
+          className="flex items-center gap-1.5 text-left flex-1 min-w-0"
+        >
+          <span className="text-[11px] font-medium text-text-primary truncate">
+            {displayName}
+          </span>
+          {segment && segment !== "EQ" && segment !== "INDEX" && (
+            <span className={`text-[8px] font-mono font-semibold px-0.5 rounded ${
+              segment === "FUT" ? "text-warning" : "text-profit"
+            }`}>
+              {segment}
+            </span>
+          )}
+        </button>
+        <div className="flex items-center gap-2">
+          <div className="text-right">
+            <div className="text-[11px] font-mono text-text-primary">
+              {price ? formatINR(price.ltp) : "--"}
             </div>
-          );
-        })}
+            {price && (
+              <div className={`text-[9px] font-mono ${pnlColor(changePct)}`}>
+                {changePct > 0 ? "+" : ""}
+                {changePct.toFixed(2)}%
+                <span className="text-text-muted ml-0.5">
+                  ({change > 0 ? "+" : ""}{change?.toFixed(2) ?? "0"})
+                </span>
+              </div>
+            )}
+          </div>
+          {removable && (
+            <button
+              onClick={() => handleRemoveItem(symbol)}
+              className="opacity-0 group-hover:opacity-100 text-text-muted hover:text-loss transition-all w-4 h-4 flex items-center justify-center"
+            >
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="rounded border border-border bg-bg-secondary">
+      <div className="px-3 py-1.5 border-b border-border">
+        <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider">
+          Watchlist
+        </h2>
       </div>
 
-      {/* Search input with autocomplete */}
-      <div className="px-3 py-2 border-t border-border relative">
+      <div className="max-h-[300px] overflow-y-auto divide-y divide-border/30">
+        {/* Default indices */}
+        {SYMBOLS.map((symbol) => renderRow(symbol, symbol))}
+
+        {/* Custom watchlist items */}
+        {watchlistItems.map((item) =>
+          renderRow(item.symbol, item.display, item.segment, true)
+        )}
+      </div>
+
+      {/* Search input */}
+      <div className="px-2 py-1.5 border-t border-border relative">
         <input
           ref={inputRef}
           type="text"
@@ -289,61 +251,49 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
           onKeyDown={handleKeyDown}
           onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-          placeholder="Search: TCS, NIFTY 24000 CE..."
-          className="w-full text-xs bg-bg-tertiary border border-border rounded px-2 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors"
+          placeholder="search symbols..."
+          className="w-full text-[10px] font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
         />
         {searching && (
-          <div className="absolute right-5 top-3.5 text-xs text-text-muted">
-            ...
-          </div>
+          <div className="absolute right-4 top-2.5 text-[9px] text-text-muted font-mono">...</div>
         )}
 
         {/* Autocomplete dropdown */}
         {showSuggestions && suggestions.length > 0 && (
-          <div className="absolute left-3 right-3 bottom-full mb-1 bg-bg-secondary border border-border rounded-lg shadow-lg max-h-[250px] overflow-y-auto z-50">
-            {suggestions.map((s) => {
-              const badge = SEGMENT_BADGE[s.segment];
-              return (
-                <button
-                  key={s.symbol}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => handleSelectSuggestion(s)}
-                  className="w-full flex items-center justify-between px-3 py-2 hover:bg-bg-tertiary/80 transition-colors text-left border-b border-border/30 last:border-0"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-medium text-text-primary truncate">
-                        {s.display}
-                      </span>
-                      {badge && (
-                        <span
-                          className={`text-[9px] font-semibold px-1 py-0.5 rounded ${badge.color} shrink-0`}
-                        >
-                          {badge.label}
-                        </span>
-                      )}
-                    </div>
-                    {s.expiry && (
-                      <div className="text-[10px] text-text-muted">
-                        Exp: {s.expiry}
-                        {s.lot_size > 1 && ` · Lot: ${s.lot_size}`}
-                      </div>
-                    )}
-                  </div>
-                  {s.type && (
-                    <div className="text-right shrink-0 ml-2">
-                      <div
-                        className={`text-[10px] font-semibold ${
-                          s.type === "CE" ? "text-profit" : "text-loss"
-                        }`}
-                      >
-                        {s.type}
-                      </div>
-                    </div>
+          <div className="absolute left-2 right-2 bottom-full mb-1 bg-bg-secondary border border-border rounded shadow-lg max-h-[200px] overflow-y-auto z-50">
+            {suggestions.map((s) => (
+              <button
+                key={s.symbol}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => handleSelectSuggestion(s)}
+                className="w-full flex items-center justify-between px-2 py-1 hover:bg-bg-tertiary/80 transition-colors text-left border-b border-border/20 last:border-0"
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-mono font-medium text-text-primary truncate">
+                    {s.display}
+                  </span>
+                  {s.segment && (
+                    <span className={`ml-1 text-[8px] font-mono ${
+                      s.segment === "FUT" ? "text-warning" : s.segment === "OPT" ? "text-profit" : "text-text-muted"
+                    }`}>
+                      {s.segment}
+                    </span>
                   )}
-                </button>
-              );
-            })}
+                  {s.expiry && (
+                    <span className="ml-1 text-[8px] text-text-muted font-mono">
+                      {s.expiry}
+                    </span>
+                  )}
+                </div>
+                {s.type && (
+                  <span className={`text-[9px] font-mono font-medium ${
+                    s.type === "CE" ? "text-profit" : "text-loss"
+                  }`}>
+                    {s.type}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
         )}
       </div>

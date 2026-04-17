@@ -279,6 +279,22 @@ class StrategyRunner:
         # India VIX
         india_vix = await self._get_india_vix()
 
+        # CAN SLIM extensions (populated only if CAN SLIM strategy is active for this symbol)
+        candles_daily = None
+        volume_avg_20d = None
+        relative_strength = None
+        canslim_data = None
+
+        if await self._is_canslim_symbol(symbol):
+            canslim_data = await self._get_canslim_fundamentals(symbol)
+            candles_daily = await self._get_daily_candles(symbol)
+            if candles_daily:
+                from app.indicators.volume_analysis import compute_avg_volume
+                daily_volumes = [c.volume for c in candles_daily]
+                volume_avg_20d = compute_avg_volume(daily_volumes, period=20)
+            if canslim_data and canslim_data.relative_strength_rating is not None:
+                relative_strength = float(canslim_data.relative_strength_rating)
+
         return MarketContext(
             symbol=symbol,
             current_price=current_price,
@@ -289,6 +305,10 @@ class StrategyRunner:
             oi_analysis=oi_analysis,
             india_vix=india_vix,
             current_time_ist=now_ist().isoformat(),
+            candles_daily=candles_daily,
+            volume_avg_20d=volume_avg_20d,
+            relative_strength=relative_strength,
+            canslim_data=canslim_data,
         )
 
     # ------------------------------------------------------------------
@@ -316,6 +336,104 @@ class StrategyRunner:
         if cached:
             return float(cached["ltp"])
         return None
+
+    async def _is_canslim_symbol(self, symbol: str) -> bool:
+        """Check if this symbol is configured for the CAN SLIM strategy."""
+        from app.models.strategy_config import StrategyConfig
+
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(StrategyConfig.symbols).where(
+                    and_(
+                        StrategyConfig.strategy_name == "can_slim",
+                        StrategyConfig.is_active == True,  # noqa: E712
+                    )
+                )
+            )
+            symbols = result.scalar_one_or_none()
+
+        return symbol in (symbols or [])
+
+    async def _get_canslim_fundamentals(self, symbol: str):
+        """Fetch CAN SLIM fundamental data from stock_fundamentals table."""
+        from app.models.fundamental_data import StockFundamental
+
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(StockFundamental).where(StockFundamental.symbol == symbol)
+            )
+            return result.scalar_one_or_none()
+
+    async def _get_daily_candles(self, symbol: str) -> list[Candle] | None:
+        """Get last 90 days of daily bars from MarketData1m (aggregated).
+
+        Fetches raw 1m candles and aggregates to daily bars in Python
+        (avoids mixing window functions with GROUP BY in SQL).
+        """
+        today = now_ist().date()
+        start_date = today - timedelta(days=120)
+        start_ts = datetime.combine(start_date, MARKET_OPEN, tzinfo=IST)
+
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(
+                    MarketData1m.open,
+                    MarketData1m.high,
+                    MarketData1m.low,
+                    MarketData1m.close,
+                    MarketData1m.volume,
+                    MarketData1m.timestamp,
+                )
+                .where(
+                    and_(
+                        MarketData1m.symbol == symbol,
+                        MarketData1m.timestamp >= start_ts,
+                    )
+                )
+                .order_by(MarketData1m.timestamp)
+            )
+            rows = result.all()
+
+        if not rows:
+            return None
+
+        # Aggregate 1m candles into daily bars
+        from collections import defaultdict
+        daily: dict[date, dict] = {}
+        for row in rows:
+            day = row.timestamp.date()
+            if day not in daily:
+                daily[day] = {
+                    "open": float(row.open),
+                    "high": float(row.high),
+                    "low": float(row.low),
+                    "close": float(row.close),
+                    "volume": int(row.volume or 0),
+                }
+            else:
+                d = daily[day]
+                d["high"] = max(d["high"], float(row.high))
+                d["low"] = min(d["low"], float(row.low))
+                d["close"] = float(row.close)  # Last candle's close
+                d["volume"] += int(row.volume or 0)
+
+        if len(daily) < 10:
+            return None
+
+        daily_candles: list[Candle] = []
+        for day_key in sorted(daily.keys()):
+            d = daily[day_key]
+            daily_candles.append(
+                Candle(
+                    open=d["open"],
+                    high=d["high"],
+                    low=d["low"],
+                    close=d["close"],
+                    volume=d["volume"],
+                )
+            )
+
+        return daily_candles[-90:]
 
     async def _get_previous_day_levels(self, symbol: str) -> PreviousDayLevels | None:
         """Get previous trading day's OHLC and compute directional bias.
@@ -622,9 +740,13 @@ class StrategyRunner:
                         signal.confidence,
                         executable,
                     )
-                    # Resolve option details for OPTION signals
+                    # Resolve instrument-specific details
                     if signal.instrument_type == InstrumentType.OPTION:
                         signal, executable, blocked_reason = await self._resolve_option(
+                            signal, ctx, executable, blocked_reason,
+                        )
+                    elif signal.instrument_type == InstrumentType.FUTURE:
+                        signal, executable, blocked_reason = await self._resolve_futures(
                             signal, ctx, executable, blocked_reason,
                         )
 
@@ -659,6 +781,8 @@ class StrategyRunner:
             signal_type=signal.signal_type,
             sl_pct=sl_pct,
             rr_multiplier=rr_multiplier,
+            index_sl=signal.index_sl,
+            index_target=signal.index_target,
         )
 
         if resolution is None:
@@ -694,11 +818,80 @@ class StrategyRunner:
         signal.indicators["option_premium"] = resolution.option_premium
         signal.indicators["option_symbol"] = resolution.fyers_option_symbol
         signal.indicators["index_entry_price"] = ctx.current_price
+        if signal.index_sl is not None:
+            signal.indicators["index_sl"] = signal.index_sl
+        if signal.index_target is not None:
+            signal.indicators["index_target"] = signal.index_target
 
         logger.info(
             "Option resolved: %s %s strike=%.0f expiry=%s premium=%.2f",
             signal.symbol, signal.fyers_option_symbol,
             resolution.strike_price, resolution.expiry_date, resolution.option_premium,
+        )
+        return signal, executable, blocked_reason
+
+    async def _resolve_futures(
+        self,
+        signal: StrategySignal,
+        ctx: MarketContext,
+        executable: bool,
+        blocked_reason: str | None,
+    ) -> tuple[StrategySignal, bool, str | None]:
+        """Resolve futures contract details for a FUTURE signal.
+
+        Enriches the signal with the Fyers futures symbol, expiry, lot size, and LTP.
+        If resolution fails, the signal is kept but marked non-executable.
+        """
+        from app.services.futures_resolver import resolve_futures_contract
+
+        resolution = await resolve_futures_contract(
+            symbol=signal.symbol,
+            entry_price=signal.entry_price,
+        )
+
+        if resolution is None:
+            logger.warning(
+                "Futures resolution failed for %s — signal kept but non-executable",
+                signal.symbol,
+            )
+            return signal, False, blocked_reason or "Futures contract unavailable"
+
+        # Enrich signal with resolved futures details
+        signal.expiry_date = resolution.expiry_date
+        signal.entry_price = resolution.ltp
+        signal.fyers_futures_symbol = resolution.fyers_symbol
+        signal.futures_resolved = True
+
+        # Adjust SL/target proportionally for futures LTP vs spot price
+        # This preserves pattern-based SL/target distances from the strategy
+        if signal.entry_price > 0 and signal.stop_loss > 0:
+            sl_pct = (signal.entry_price - signal.stop_loss) / signal.entry_price
+            target_pct = (signal.target_price - signal.entry_price) / signal.entry_price
+            signal.stop_loss = resolution.ltp * (1 - sl_pct)
+            signal.target_price = resolution.ltp * (1 + target_pct)
+        else:
+            from app.core.constants import CANSLIM_SL_PCT, CANSLIM_TARGET_PCT
+            signal.stop_loss = resolution.ltp * (1 - CANSLIM_SL_PCT / 100)
+            signal.target_price = resolution.ltp * (1 + CANSLIM_TARGET_PCT / 100)
+
+        # Append futures details to reason
+        signal.reason += (
+            f" Futures: {resolution.fyers_symbol}"
+            f" LTP={resolution.ltp:.2f},"
+            f" lot={resolution.lot_size},"
+            f" margin={resolution.margin_required:.0f}."
+        )
+
+        signal.indicators["futures_symbol"] = resolution.fyers_symbol
+        signal.indicators["futures_ltp"] = resolution.ltp
+        signal.indicators["futures_lot_size"] = resolution.lot_size
+        signal.indicators["futures_expiry"] = str(resolution.expiry_date)
+        signal.indicators["futures_margin"] = resolution.margin_required
+
+        logger.info(
+            "Futures resolved: %s → %s expiry=%s ltp=%.2f lot=%d",
+            signal.symbol, resolution.fyers_symbol,
+            resolution.expiry_date, resolution.ltp, resolution.lot_size,
         )
         return signal, executable, blocked_reason
 
@@ -732,8 +925,34 @@ class StrategyRunner:
         executable: bool,
         blocked_reason: str | None,
     ) -> None:
-        """Persist the signal to DB, increment daily count, and broadcast via WebSocket."""
+        """Deduplicate, persist, and broadcast a signal.
+
+        Dedup rules (applies to ALL strategies):
+        - If an identical PENDING signal exists (same strategy, symbol, signal_type,
+          entry, SL, target) → skip entirely (true duplicate)
+        - If a PENDING signal exists but values changed → update it in place
+        - If the prior signal was EXECUTED → create a new signal
+        - Otherwise → create a new signal
+        """
         now = now_ist()
+
+        # Check for existing PENDING signal for same strategy + symbol + direction
+        dedup_result = await self._dedup_signal(signal, now, executable, blocked_reason)
+        if dedup_result == "skip":
+            logger.debug(
+                "Duplicate signal skipped: %s %s %s (identical PENDING exists)",
+                signal.strategy_name, signal.symbol, signal.signal_type,
+            )
+            return
+        if isinstance(dedup_result, Signal):
+            # Updated existing signal — broadcast as update (not new)
+            await self._broadcast_signal(
+                signal, dedup_result.id, now, executable, blocked_reason,
+                event="signal:updated",
+            )
+            return
+
+        # No existing PENDING signal or prior was EXECUTED — create new
         signal_record = await self._persist_signal(signal, now, executable, blocked_reason)
         if signal_record is None:
             return
@@ -753,6 +972,89 @@ class StrategyRunner:
                 await agent_runner.on_new_signal(signal_record.id)
             except Exception:
                 logger.exception("Error notifying agent runner of new signal")
+
+    async def _dedup_signal(
+        self,
+        signal: StrategySignal,
+        now: datetime,
+        executable: bool,
+        blocked_reason: str | None,
+    ) -> str | Signal | None:
+        """Check for duplicate PENDING signals and handle accordingly.
+
+        Returns:
+            "skip"  — identical PENDING signal exists, do nothing
+            Signal  — existing signal was updated with new values
+            None    — no match, caller should create a new signal
+        """
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(Signal).where(
+                        and_(
+                            Signal.strategy_name == signal.strategy_name.value,
+                            Signal.symbol == signal.symbol,
+                            Signal.signal_type == signal.signal_type.value,
+                            Signal.status == SignalStatus.PENDING.value,
+                        )
+                    )
+                    .order_by(Signal.generated_at.desc())
+                    .limit(1)
+                )
+                existing = result.scalar_one_or_none()
+
+                if existing is None:
+                    return None
+
+                # Compare key values to determine if anything changed
+                new_entry = Decimal(str(signal.entry_price))
+                new_sl = Decimal(str(signal.stop_loss))
+                new_target = (
+                    Decimal(str(signal.target_price))
+                    if signal.target_price is not None
+                    else None
+                )
+
+                entry_same = existing.entry_price == new_entry
+                sl_same = existing.stop_loss == new_sl
+                target_same = existing.target_price == new_target
+                confidence_same = existing.confidence == Decimal(str(signal.confidence))
+
+                if entry_same and sl_same and target_same and confidence_same:
+                    # Identical — skip
+                    return "skip"
+
+                # Values changed — update the existing PENDING signal
+                existing.entry_price = new_entry
+                existing.stop_loss = new_sl
+                existing.target_price = new_target
+                existing.confidence = Decimal(str(signal.confidence))
+                existing.reason = signal.reason
+                existing.indicators = signal.indicators
+                existing.executable = executable
+                existing.blocked_reason = blocked_reason
+                existing.generated_at = now
+                existing.expires_at = now + timedelta(minutes=5)
+                if signal.index_entry_price is not None:
+                    existing.index_entry_price = Decimal(str(signal.index_entry_price))
+                if signal.fyers_option_symbol:
+                    existing.fyers_option_symbol = signal.fyers_option_symbol
+                if signal.fyers_futures_symbol:
+                    existing.fyers_futures_symbol = signal.fyers_futures_symbol
+
+                await session.commit()
+                await session.refresh(existing)
+
+                logger.info(
+                    "Signal updated (dedup): %s %s %s — entry=%.2f→%.2f",
+                    signal.strategy_name, signal.symbol, signal.signal_type,
+                    float(existing.entry_price), float(new_entry),
+                )
+                return existing
+
+        except Exception:
+            logger.exception("Error during signal dedup for %s", signal.symbol)
+            return None
 
     async def _persist_signal(
         self,
@@ -792,6 +1094,7 @@ class StrategyRunner:
                         else None
                     ),
                     fyers_option_symbol=signal.fyers_option_symbol,
+                    fyers_futures_symbol=signal.fyers_futures_symbol,
                 )
                 session.add(record)
                 await session.commit()
@@ -809,24 +1112,33 @@ class StrategyRunner:
         generated_at: datetime,
         executable: bool,
         blocked_reason: str | None,
+        event: str = "signal:new",
     ) -> None:
-        """Broadcast the new signal to all WebSocket clients."""
+        """Broadcast a signal to all WebSocket clients.
+
+        Args:
+            event: "signal:new" for new signals, "signal:updated" for dedup updates.
+        """
         payload = {
             "id": str(signal_id),
             "strategy_name": signal.strategy_name.value,
             "symbol": signal.symbol,
             "signal_type": signal.signal_type.value,
+            "instrument_type": signal.instrument_type.value,
             "strike_price": signal.strike_price,
+            "expiry_date": signal.expiry_date.isoformat() if signal.expiry_date else None,
             "entry_price": signal.entry_price,
+            "index_entry_price": signal.index_entry_price,
             "stop_loss": signal.stop_loss,
             "target_price": signal.target_price,
             "confidence": signal.confidence,
             "reason": signal.reason,
+            "status": "PENDING",
             "executable": executable,
             "blocked_reason": blocked_reason,
             "generated_at": generated_at.isoformat(),
         }
-        await ws_manager.broadcast("signal:new", payload)
+        await ws_manager.broadcast(event, payload)
 
 
 # Module-level singleton — imported by feed_manager and other services

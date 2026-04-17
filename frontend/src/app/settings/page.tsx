@@ -12,6 +12,7 @@ interface StrategyConfig {
   parameters: Record<string, unknown>;
   risk_params: Record<string, unknown>;
   symbols: string[];
+  symbol_map?: Record<string, string>;
   timeframes: string[];
 }
 
@@ -22,7 +23,6 @@ interface SymbolSuggestion {
   segment: string;
 }
 
-// Predefined symbol groups for convenience
 const SYMBOL_GROUPS: Record<string, string[]> = {
   "NIFTY 50 Stocks": [
     "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "HINDUNILVR",
@@ -89,12 +89,16 @@ export default function SettingsPage() {
     }
   };
 
-  const handleUpdateSymbols = async (name: string, symbols: string[]) => {
+  const handleUpdateSymbols = async (
+    name: string,
+    symbols: string[],
+    symbolMap: Record<string, string>,
+  ) => {
     try {
-      await api.updateStrategy(name, { symbols });
+      await api.updateStrategy(name, { symbols, symbol_map: symbolMap });
       setStrategies((prev) =>
         prev.map((s) =>
-          s.strategy_name === name ? { ...s, symbols } : s
+          s.strategy_name === name ? { ...s, symbols, symbol_map: { ...(s.symbol_map || {}), ...symbolMap } } : s
         )
       );
     } catch {
@@ -103,112 +107,117 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-lg font-semibold">Settings</h1>
+    <div className="space-y-3 max-w-4xl">
+      <h1 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
+        Settings
+      </h1>
 
       {/* Paper Trading Toggle */}
-      <div className="rounded-lg border border-border bg-bg-secondary p-6">
+      <div className="rounded border border-border bg-bg-secondary px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="font-medium">Paper Trading Mode</h2>
-            <p className="text-sm text-text-secondary mt-1">
-              When enabled, all trades are simulated. No real money is used.
+            <h2 className="text-[11px] font-mono font-medium text-text-primary">Paper Trading Mode</h2>
+            <p className="text-[10px] font-mono text-text-muted mt-0.5">
+              All trades simulated. No real money.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-warning font-medium">PAPER</span>
-            <div className="w-10 h-5 bg-warning/30 rounded-full relative">
-              <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-warning rounded-full" />
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] font-mono text-warning font-medium">PAPER</span>
+            <div className="w-8 h-4 bg-warning/25 rounded-full relative">
+              <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-warning rounded-full" />
             </div>
           </div>
         </div>
       </div>
 
       {/* Risk Parameters */}
-      <div className="rounded-lg border border-border bg-bg-secondary p-6">
-        <h2 className="font-medium mb-4">Risk Management</h2>
-        <div className="grid grid-cols-2 gap-4">
+      <div className="rounded border border-border bg-bg-secondary px-4 py-3">
+        <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
+          Risk Management
+        </h2>
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs text-text-muted block mb-1">
-              Trading Capital (INR)
+            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
+              Capital (INR)
             </label>
             <input
               type="text"
               defaultValue="10,00,000"
-              className="w-full bg-bg-tertiary border border-border rounded px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none"
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none"
             />
           </div>
           <div>
-            <label className="text-xs text-text-muted block mb-1">
+            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
               Max Daily Drawdown (%)
             </label>
             <input
               type="number"
               defaultValue={5}
-              className="w-full bg-bg-tertiary border border-border rounded px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none"
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none"
             />
           </div>
           <div>
-            <label className="text-xs text-text-muted block mb-1">
+            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
               Risk Per Trade (%)
             </label>
             <input
               type="number"
               defaultValue={2}
-              className="w-full bg-bg-tertiary border border-border rounded px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none"
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none"
             />
           </div>
           <div>
-            <label className="text-xs text-text-muted block mb-1">
-              Max Trades Per Day
+            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
+              Max Trades / Day
             </label>
             <input
               type="number"
               defaultValue={3}
-              className="w-full bg-bg-tertiary border border-border rounded px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none"
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none"
             />
           </div>
         </div>
       </div>
 
       {/* Strategy Config */}
-      <div className="rounded-lg border border-border bg-bg-secondary p-6">
-        <h2 className="font-medium mb-4">Strategies</h2>
+      <div className="rounded border border-border bg-bg-secondary px-4 py-3">
+        <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
+          Strategies
+        </h2>
         {loading ? (
-          <div className="text-sm text-text-muted">Loading...</div>
+          <div className="text-[10px] font-mono text-text-muted">loading...</div>
         ) : strategies.length === 0 ? (
-          <div className="text-sm text-text-muted">No strategies configured in database.</div>
+          <div className="text-[10px] font-mono text-text-muted">no strategies configured</div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1">
             {strategies.map((s) => {
               const label = STRATEGY_LABELS[s.strategy_name] || s.strategy_name;
               const isExpanded = expandedStrategy === s.strategy_name;
 
               return (
-                <div key={s.strategy_name} className="border border-border/60 rounded-lg overflow-hidden">
+                <div key={s.strategy_name} className="border border-border/50 rounded overflow-hidden">
                   {/* Strategy header row */}
-                  <div className="flex items-center justify-between px-4 py-3 bg-bg-tertiary/30">
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-bg-tertiary/20">
                     <button
                       onClick={() => setExpandedStrategy(isExpanded ? null : s.strategy_name)}
-                      className="flex items-center gap-2 text-left flex-1"
+                      className="flex items-center gap-1.5 text-left flex-1"
                     >
                       <svg
-                        className={`w-3.5 h-3.5 text-text-muted transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                        className={`w-3 h-3 text-text-muted transition-transform ${isExpanded ? "rotate-90" : ""}`}
                         fill="none" viewBox="0 0 24 24" stroke="currentColor"
                       >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>
-                      <span className="text-sm font-medium">{label}</span>
+                      <span className="text-[11px] font-mono font-medium">{label}</span>
                       {s.auto_mode && (
-                        <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-accent/20 text-accent">
+                        <span className="text-[8px] font-mono font-semibold px-1 py-px rounded bg-accent/15 text-accent">
                           AUTO
                         </span>
                       )}
                     </button>
-                    <div className="flex items-center gap-3">
-                      {/* Auto Mode toggle */}
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-text-muted">Auto</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-mono text-text-muted">Auto</span>
                         <ToggleSwitch
                           checked={s.auto_mode}
                           onChange={() => handleToggleAutoMode(s.strategy_name)}
@@ -216,9 +225,8 @@ export default function SettingsPage() {
                           disabled={!s.is_active}
                         />
                       </div>
-                      {/* Active toggle */}
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-text-muted">Active</span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-mono text-text-muted">Active</span>
                         <ToggleSwitch
                           checked={s.is_active}
                           onChange={() => handleToggleActive(s.strategy_name)}
@@ -230,16 +238,15 @@ export default function SettingsPage() {
 
                   {/* Expanded: Symbol configuration */}
                   {isExpanded && (
-                    <div className="px-4 py-3 border-t border-border/40 space-y-3">
-                      <div>
-                        <label className="text-xs text-text-muted block mb-2">
-                          Symbols to scan
-                        </label>
-                        <SymbolSelector
-                          selected={s.symbols}
-                          onChange={(symbols) => handleUpdateSymbols(s.strategy_name, symbols)}
-                        />
-                      </div>
+                    <div className="px-3 py-2 border-t border-border/30 animate-fade-in">
+                      <label className="text-[9px] font-mono text-text-muted uppercase block mb-1.5">
+                        Symbols to scan
+                      </label>
+                      <SymbolSelector
+                        selected={s.symbols}
+                        symbolMap={s.symbol_map || {}}
+                        onChange={(symbols, symbolMap) => handleUpdateSymbols(s.strategy_name, symbols, symbolMap)}
+                      />
                     </div>
                   )}
                 </div>
@@ -250,27 +257,29 @@ export default function SettingsPage() {
       </div>
 
       {/* Notification Config */}
-      <div className="rounded-lg border border-border bg-bg-secondary p-6">
-        <h2 className="font-medium mb-4">Notifications</h2>
-        <div className="grid grid-cols-2 gap-4">
+      <div className="rounded border border-border bg-bg-secondary px-4 py-3">
+        <h2 className="text-[11px] font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
+          Notifications
+        </h2>
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs text-text-muted block mb-1">
+            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
               Telegram Bot Token
             </label>
             <input
               type="password"
-              placeholder="Enter bot token..."
-              className="w-full bg-bg-tertiary border border-border rounded px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none"
+              placeholder="bot token..."
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none placeholder:text-text-muted"
             />
           </div>
           <div>
-            <label className="text-xs text-text-muted block mb-1">
+            <label className="text-[9px] font-mono text-text-muted uppercase block mb-1">
               Telegram Chat ID
             </label>
             <input
               type="text"
-              placeholder="Enter chat ID..."
-              className="w-full bg-bg-tertiary border border-border rounded px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none"
+              placeholder="chat id..."
+              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-[11px] font-mono focus:border-accent/50 focus:outline-none placeholder:text-text-muted"
             />
           </div>
         </div>
@@ -295,9 +304,9 @@ function ToggleSwitch({
   disabled?: boolean;
 }) {
   const colorMap = {
-    profit: { bg: "bg-profit/30", dot: "bg-profit" },
-    accent: { bg: "bg-accent/30", dot: "bg-accent" },
-    warning: { bg: "bg-warning/30", dot: "bg-warning" },
+    profit: { bg: "bg-profit/25", dot: "bg-profit" },
+    accent: { bg: "bg-accent/25", dot: "bg-accent" },
+    warning: { bg: "bg-warning/25", dot: "bg-warning" },
   };
   const c = colorMap[color];
 
@@ -305,12 +314,12 @@ function ToggleSwitch({
     <button
       onClick={onChange}
       disabled={disabled}
-      className={`w-8 h-4 rounded-full relative transition-colors ${
-        disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
+      className={`w-7 h-3.5 rounded-full relative transition-colors ${
+        disabled ? "opacity-30 cursor-not-allowed" : "cursor-pointer"
       } ${checked ? c.bg : "bg-bg-tertiary"}`}
     >
       <div
-        className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${
+        className={`absolute top-0.5 w-2.5 h-2.5 rounded-full transition-all ${
           checked ? `right-0.5 ${c.dot}` : "left-0.5 bg-text-muted"
         }`}
       />
@@ -324,10 +333,12 @@ function ToggleSwitch({
 
 function SymbolSelector({
   selected,
+  symbolMap,
   onChange,
 }: {
   selected: string[];
-  onChange: (symbols: string[]) => void;
+  symbolMap: Record<string, string>;
+  onChange: (symbols: string[], symbolMap: Record<string, string>) => void;
 }) {
   const [input, setInput] = useState("");
   const [suggestions, setSuggestions] = useState<SymbolSuggestion[]>([]);
@@ -335,7 +346,6 @@ function SymbolSelector({
   const [showGroups, setShowGroups] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  // Debounced search — indices, stocks, and stock futures only
   useEffect(() => {
     if (input.trim().length < 2) {
       setSuggestions([]);
@@ -347,7 +357,6 @@ function SymbolSelector({
     debounceRef.current = setTimeout(async () => {
       try {
         const result = await api.searchSymbols(input.trim());
-        // Filter to only indices, equities, and futures (no options)
         const filtered = result.results.filter(
           (r) => r.segment === "EQ" || r.segment === "FUT" || r.segment === "INDEX"
             || INDEX_SYMBOLS.includes(r.short_name)
@@ -363,49 +372,56 @@ function SymbolSelector({
   }, [input]);
 
   const addSymbol = useCallback(
-    (sym: string) => {
-      if (!selected.includes(sym)) {
-        onChange([...selected, sym]);
+    (shortName: string, fyersSymbol?: string) => {
+      if (!selected.includes(shortName)) {
+        const newMap = { ...symbolMap };
+        if (fyersSymbol) {
+          newMap[shortName] = fyersSymbol;
+        }
+        onChange([...selected, shortName], newMap);
       }
       setInput("");
       setSuggestions([]);
       setShowSuggestions(false);
     },
-    [selected, onChange]
+    [selected, symbolMap, onChange]
   );
 
   const removeSymbol = useCallback(
     (sym: string) => {
-      onChange(selected.filter((s) => s !== sym));
+      const newSymbols = selected.filter((s) => s !== sym);
+      const newMap = { ...symbolMap };
+      delete newMap[sym];
+      onChange(newSymbols, newMap);
     },
-    [selected, onChange]
+    [selected, symbolMap, onChange]
   );
 
   const addGroup = useCallback(
     (groupName: string) => {
       const groupSymbols = SYMBOL_GROUPS[groupName] || [];
       const merged = [...new Set([...selected, ...groupSymbols])];
-      onChange(merged);
+      onChange(merged, symbolMap);
       setShowGroups(false);
     },
-    [selected, onChange]
+    [selected, symbolMap, onChange]
   );
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       {/* Selected symbols as chips */}
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-1">
         {selected.map((sym) => (
           <span
             key={sym}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-bg-tertiary border border-border text-xs text-text-secondary"
+            className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-bg-tertiary border border-border text-[10px] font-mono text-text-secondary"
           >
             {sym}
             <button
               onClick={() => removeSymbol(sym)}
               className="text-text-muted hover:text-loss transition-colors"
             >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
@@ -414,7 +430,7 @@ function SymbolSelector({
       </div>
 
       {/* Input + groups button */}
-      <div className="flex gap-2 relative">
+      <div className="flex gap-1.5 relative">
         <input
           type="text"
           value={input}
@@ -427,24 +443,24 @@ function SymbolSelector({
               addSymbol(input.trim().toUpperCase());
             }
           }}
-          placeholder="Type to search stocks, indices, futures..."
-          className="flex-1 text-xs bg-bg-tertiary border border-border rounded px-2.5 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors"
+          placeholder="search stocks, indices, futures..."
+          className="flex-1 text-[10px] font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
         />
         <div className="relative">
           <button
             onClick={() => setShowGroups(!showGroups)}
-            className="text-xs px-2.5 py-1.5 rounded border border-border bg-bg-tertiary text-text-secondary hover:text-text-primary hover:border-accent/40 transition-colors"
+            className="text-[10px] font-mono px-2 py-1 rounded border border-border bg-bg-tertiary text-text-muted hover:text-text-secondary hover:border-accent/30 transition-colors"
           >
-            + Group
+            +Group
           </button>
           {showGroups && (
-            <div className="absolute right-0 top-full mt-1 bg-bg-secondary border border-border rounded-lg shadow-lg z-50 min-w-[180px]">
+            <div className="absolute right-0 top-full mt-1 bg-bg-secondary border border-border rounded shadow-lg z-50 min-w-[160px]">
               {Object.keys(SYMBOL_GROUPS).map((name) => (
                 <button
                   key={name}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => addGroup(name)}
-                  className="w-full text-left px-3 py-2 text-xs text-text-secondary hover:bg-bg-tertiary/80 hover:text-text-primary transition-colors"
+                  className="w-full text-left px-2 py-1 text-[10px] font-mono text-text-secondary hover:bg-bg-tertiary/80 hover:text-text-primary transition-colors"
                 >
                   {name}
                   <span className="text-text-muted ml-1">({SYMBOL_GROUPS[name].length})</span>
@@ -456,16 +472,16 @@ function SymbolSelector({
 
         {/* Autocomplete dropdown */}
         {showSuggestions && suggestions.length > 0 && (
-          <div className="absolute left-0 right-12 top-full mt-1 bg-bg-secondary border border-border rounded-lg shadow-lg max-h-[200px] overflow-y-auto z-50">
+          <div className="absolute left-0 right-16 top-full mt-1 bg-bg-secondary border border-border rounded shadow-lg max-h-[180px] overflow-y-auto z-50">
             {suggestions.map((s) => (
               <button
                 key={s.symbol}
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => addSymbol(s.short_name || s.display)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-bg-tertiary/80 transition-colors border-b border-border/20 last:border-0"
+                onClick={() => addSymbol(s.short_name || s.display, s.symbol)}
+                className="w-full flex items-center gap-1.5 px-2 py-1 text-left hover:bg-bg-tertiary/80 transition-colors border-b border-border/20 last:border-0"
               >
-                <span className="text-xs font-medium text-text-primary">{s.display}</span>
-                <span className="text-[9px] text-text-muted">{s.segment}</span>
+                <span className="text-[10px] font-mono font-medium text-text-primary">{s.display}</span>
+                <span className="text-[8px] font-mono text-text-muted">{s.segment}</span>
               </button>
             ))}
           </div>
@@ -473,14 +489,14 @@ function SymbolSelector({
       </div>
 
       {/* Quick-add index buttons */}
-      <div className="flex gap-1.5 flex-wrap">
+      <div className="flex gap-1 flex-wrap">
         {INDEX_SYMBOLS.filter((s) => !selected.includes(s)).map((sym) => (
           <button
             key={sym}
             onClick={() => addSymbol(sym)}
-            className="text-[10px] px-1.5 py-0.5 rounded border border-border/60 text-text-muted hover:text-accent hover:border-accent/40 transition-colors"
+            className="text-[9px] font-mono px-1 py-px rounded border border-border/50 text-text-muted hover:text-accent hover:border-accent/30 transition-colors"
           >
-            + {sym}
+            +{sym}
           </button>
         ))}
       </div>
