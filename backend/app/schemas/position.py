@@ -19,8 +19,10 @@ class PositionResponse(BaseModel):
     stop_loss: Decimal
     target_price: Decimal | None = None
     unrealized_pnl: Decimal | None = None
+    fyers_option_symbol: str | None = None
     strategy_name: str
     is_paper: bool
+    position_type: str = "INTRADAY"
     opened_at: datetime
 
     model_config = {"from_attributes": True}

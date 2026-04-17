@@ -32,8 +32,10 @@ export interface Position {
   stop_loss: number;
   target_price: number | null;
   unrealized_pnl: number | null;
+  fyers_option_symbol: string | null;
   strategy_name: string;
   is_paper: boolean;
+  position_type: string;
   opened_at: string;
 }
 

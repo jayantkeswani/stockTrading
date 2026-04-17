@@ -139,25 +139,20 @@ class TestOISnapshotParsing:
         data = {
             "s": "ok",
             "data": {
-                "expiryData": [{"date": "2026-04-22"}],
+                "expiryData": [{"date": "22-04-2026"}],
                 "optionsChain": [
-                    {
-                        "strike_price": 24000,
-                        "call_options": {"oi": 500000, "chng_oi": 10000, "volume": 50000},
-                        "put_options": {"oi": 600000, "chng_oi": -5000, "volume": 40000},
-                    },
-                    {
-                        "strike_price": 24050,
-                        "call_options": {"oi": 300000, "chng_oi": 8000, "volume": 30000},
-                        "put_options": {"oi": 400000, "chng_oi": -2000, "volume": 25000},
-                    },
+                    {"strike_price": -1, "option_type": "", "symbol": "NSE:NIFTY50-INDEX"},
+                    {"strike_price": 24000, "option_type": "CE", "oi": 500000, "oich": 10000, "volume": 50000},
+                    {"strike_price": 24000, "option_type": "PE", "oi": 600000, "oich": -5000, "volume": 40000},
+                    {"strike_price": 24050, "option_type": "CE", "oi": 300000, "oich": 8000, "volume": 30000},
+                    {"strike_price": 24050, "option_type": "PE", "oi": 400000, "oich": -2000, "volume": 25000},
                 ],
             },
         }
 
         count = await _parse_and_store("NIFTY", data)
 
-        # 2 strikes × 2 option types = 4 rows
+        # 2 strikes × 2 option types = 4 rows (underlying row skipped)
         assert count == 4
         mock_session.execute.assert_called_once()
         mock_session.commit.assert_called_once()
@@ -188,7 +183,7 @@ class TestOISnapshotParsing:
             "data": {
                 "expiryData": [],
                 "optionsChain": [
-                    {"strike_price": 24000, "call_options": {"oi": 100}, "put_options": {"oi": 200}},
+                    {"strike_price": 24000, "option_type": "CE", "oi": 100},
                 ],
             },
         }
@@ -211,13 +206,10 @@ class TestOISnapshotParsing:
         data = {
             "s": "ok",
             "data": {
-                "expiryData": [{"date": "2026-04-22"}],
+                "expiryData": [{"date": "22-04-2026"}],
                 "optionsChain": [
-                    {
-                        "strike_price": 24000,
-                        "call_options": {"oi": 500000, "chng_oi": 10000, "volume": 50000},
-                        "put_options": {"oi": 0, "chng_oi": 0, "volume": 0},
-                    },
+                    {"strike_price": 24000, "option_type": "CE", "oi": 500000, "oich": 10000, "volume": 50000},
+                    {"strike_price": 24000, "option_type": "PE", "oi": 0, "oich": 0, "volume": 0},
                 ],
             },
         }

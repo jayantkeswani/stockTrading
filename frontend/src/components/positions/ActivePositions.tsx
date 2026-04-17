@@ -1,18 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState, useEffect } from "react";
 import { useStore } from "@/store";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
+import { subscribeSymbols } from "@/hooks/useWebSocket";
 
 interface ActivePositionsProps {
   compact?: boolean;
 }
 
 export function ActivePositions({ compact }: ActivePositionsProps) {
-  const { positions } = useStore();
+  const { positions, prices } = useStore();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Subscribe position price symbols on the frontend WebSocket for live ticks
+  useEffect(() => {
+    const symbols = positions
+      .map((p) => p.fyers_option_symbol || p.symbol)
+      .filter(Boolean);
+    if (symbols.length > 0) {
+      subscribeSymbols(symbols);
+    }
+  }, [positions]);
 
   const handleClose = async (positionId: string) => {
     if (!confirm("Close this position?")) return;
@@ -59,21 +70,27 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
             </thead>
             <tbody>
               {positions.map((pos) => {
-                const pnl = pos.unrealized_pnl ?? 0;
+                // Use live price from store if available, else fall back to DB value
+                const priceKey = pos.fyers_option_symbol || pos.symbol;
+                const livePrice = prices[priceKey]?.ltp;
+                const currentPrice = livePrice ?? pos.current_price;
+
+                const pnl = currentPrice && pos.entry_price > 0
+                  ? (currentPrice - pos.entry_price) * pos.quantity
+                  : (pos.unrealized_pnl ?? 0);
                 const pnlPct =
-                  pos.entry_price > 0 && pos.current_price
-                    ? ((pos.current_price - pos.entry_price) / pos.entry_price) * 100
+                  pos.entry_price > 0 && currentPrice
+                    ? ((currentPrice - pos.entry_price) / pos.entry_price) * 100
                     : 0;
                 const slDistance =
-                  pos.current_price && pos.stop_loss
-                    ? ((pos.current_price - pos.stop_loss) / pos.current_price) * 100
+                  currentPrice && pos.stop_loss
+                    ? ((currentPrice - pos.stop_loss) / currentPrice) * 100
                     : 0;
                 const isExpanded = expandedId === pos.id;
 
                 return (
-                  <>
+                  <Fragment key={pos.id}>
                     <tr
-                      key={pos.id}
                       className="border-t border-border/30 hover:bg-bg-tertiary/40 transition-colors cursor-pointer"
                       onClick={() => toggleExpand(pos.id)}
                     >
@@ -101,7 +118,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                         {formatINR(pos.entry_price)}
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono">
-                        {pos.current_price ? formatINR(pos.current_price) : "\u2014"}
+                        {currentPrice ? formatINR(currentPrice) : "\u2014"}
                       </td>
                       <td className={`px-3 py-1.5 text-right font-mono font-medium ${pnlColor(pnl)}`}>
                         <div>{formatINR(pnl)}</div>
@@ -168,14 +185,14 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                             <div>
                               <span className="text-text-muted">Type</span>
                               <div className="text-text-primary mt-0.5">
-                                {pos.is_paper ? "PAPER" : "LIVE"}
+                                {pos.is_paper ? "PAPER" : "LIVE"} / {pos.position_type}
                               </div>
                             </div>
                           </div>
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

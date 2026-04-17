@@ -42,7 +42,7 @@ stockTrading/
 │   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill)
 │   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
 │   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels)
-│   │   ├── data_feed/     # Fyers API (auth, REST, WebSocket, feed manager, symbol master)
+│   │   ├── data_feed/     # Fyers API (auth, REST via API_URL/DATA_URL, WebSocket, feed manager, symbol master)
 │   │   ├── agent/         # AI trading agent (monitor, execute, notify)
 │   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP incl. VIX), enums, utils, task_registry
 │   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh)

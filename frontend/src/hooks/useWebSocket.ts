@@ -4,12 +4,16 @@ import { useEffect, useRef, useCallback } from "react";
 import { WS_URL, SYMBOLS } from "@/lib/constants";
 import { useStore } from "@/store";
 
+// Module-level ref so subscribeSymbols() can be called from any component
+let sharedWs: WebSocket | null = null;
+
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const {
     setWsConnected,
     updatePrice,
+    addPosition,
     updatePosition,
     removePosition,
     addSignal,
@@ -23,6 +27,7 @@ export function useWebSocket() {
 
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
+    sharedWs = ws;
 
     ws.onopen = () => {
       setWsConnected(true);
@@ -46,6 +51,7 @@ export function useWebSocket() {
 
     ws.onclose = () => {
       setWsConnected(false);
+      sharedWs = null;
       // Reconnect after 3 seconds
       reconnectTimerRef.current = setTimeout(connect, 3000);
     };
@@ -60,6 +66,9 @@ export function useWebSocket() {
       switch (msg.event) {
         case "price:update":
           updatePrice(msg.data.symbol as string, msg.data as never);
+          break;
+        case "trade:open":
+          addPosition(msg.data as never);
           break;
         case "position:update":
           updatePosition(msg.data.position_id as string, {
@@ -90,6 +99,7 @@ export function useWebSocket() {
     },
     [
       updatePrice,
+      addPosition,
       updatePosition,
       removePosition,
       addSignal,
@@ -104,6 +114,7 @@ export function useWebSocket() {
     return () => {
       clearTimeout(reconnectTimerRef.current);
       wsRef.current?.close();
+      sharedWs = null;
     };
   }, [connect]);
 
@@ -111,15 +122,12 @@ export function useWebSocket() {
 }
 
 /**
- * Subscribe to additional symbols on an existing WebSocket connection.
+ * Subscribe to additional symbols on the shared WebSocket connection.
  * Call this when custom contracts are added to the watchlist.
  */
-export function subscribeSymbols(
-  wsRef: React.RefObject<WebSocket | null>,
-  symbols: string[]
-) {
-  if (wsRef.current?.readyState === WebSocket.OPEN && symbols.length > 0) {
-    wsRef.current.send(
+export function subscribeSymbols(symbols: string[]) {
+  if (sharedWs?.readyState === WebSocket.OPEN && symbols.length > 0) {
+    sharedWs.send(
       JSON.stringify({
         event: "subscribe:symbol",
         data: { symbols },

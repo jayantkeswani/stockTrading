@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -6,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.enums import ExitReason, TradeStatus
+from app.core.redis import get_cached_price
 from app.core.utils import now_ist
 from app.models.position import Position
 from app.models.trade import Trade
@@ -17,7 +19,19 @@ router = APIRouter()
 @router.get("", response_model=list[PositionResponse])
 async def list_positions(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Position).order_by(Position.opened_at.desc()))
-    return result.scalars().all()
+    positions = result.scalars().all()
+
+    # Enrich positions with live prices from Redis cache
+    for pos in positions:
+        price_symbol = pos.fyers_option_symbol or pos.symbol
+        price_data = await get_cached_price(price_symbol)
+        if price_data:
+            ltp = Decimal(str(price_data.get("ltp", 0)))
+            if ltp > 0:
+                pos.current_price = ltp
+                pos.unrealized_pnl = (ltp - pos.entry_price) * pos.quantity
+
+    return positions
 
 
 @router.get("/{position_id}", response_model=PositionResponse)

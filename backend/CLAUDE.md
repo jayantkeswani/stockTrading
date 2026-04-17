@@ -48,10 +48,10 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 ### `app/api/v1/` - REST API (8 routers, all under `/api/v1/`)
 - `trades.py` - CRUD for trades (create from signal, close, list, history)
 - `signals.py` - List/filter signals by strategy, status, date
-- `positions.py` - Active positions, close, update SL/target
+- `positions.py` - Active positions, close, update SL/target. `GET /positions` enriches positions with live prices from Redis cache (computes `current_price` and `unrealized_pnl` at query time).
 - `agent.py` - Agent start/stop/status, confirm actions, YOLO toggle (`PATCH /yolo`)
 - `risk.py` - Daily P&L, drawdown %, configured limits
-- `market_data.py` - `GET /prices` (all symbols, auto-refreshes via REST if cache empty), `POST /prices/batch` (fetch prices for arbitrary Fyers symbols, used by watchlist), `GET /ohlcv/{symbol}?resolution=5&days=15` (chart data — proxies to Fyers history API with pagination for large ranges, deduped + sorted ascending; resolutions: "1"/"5"/"15"/"60"/"D"; falls back to PostgreSQL if Fyers unavailable; resolves symbol via symbol_map), `POST /feed/start|stop|refresh`, `GET /symbols/search` (local symbol master, supports stocks/futures/options: "TCS", "NIFTY 24000CE", "RELIANCE FUT")
+- `market_data.py` - `GET /prices` (all symbols incl. watchlist items, auto-refreshes via REST if cache empty), `POST /prices/batch` (fetch prices for arbitrary Fyers symbols, used by watchlist), `GET /ohlcv/{symbol}?resolution=5&days=15` (chart data — proxies to Fyers history API with pagination for large ranges, deduped + sorted ascending; resolutions: "1"/"5"/"15"/"60"/"D"; falls back to PostgreSQL if Fyers unavailable; `_resolve_symbol_for_chart` handles short names, Fyers symbols, and strategy symbol_map), `POST /feed/start|stop|refresh`, `GET /symbols/search` (local symbol master, supports stocks/futures/options: "TCS", "NIFTY 24000CE", "RELIANCE FUT")
 - `watchlist.py` - `GET /watchlist`, `POST /watchlist`, `DELETE /watchlist/{symbol}` — Redis-backed watchlist (agent can add symbols programmatically). Adding a symbol also subscribes it on the Fyers WebSocket for live ticks.
 - `strategies.py` - List/update strategy configs, toggle `is_active`/`auto_mode`, `POST /evaluate` (manual single symbol), `POST /evaluate/batch` (manual all configured symbols). When symbols are added to a strategy via PUT, the `symbol_map` (short_name → fyers_symbol) is stored alongside; any symbols missing from the map are auto-resolved server-side via the symbol master. Background task provisions new symbols: REST quote fetch → Redis, candle backfill → PostgreSQL, WebSocket subscription — using the stored Fyers symbols (no reconstruction).
 - `tasks.py` - `GET /tasks` — lists all registered background tasks with type, status, timestamps, errors, metadata
@@ -91,7 +91,7 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 ### `app/data_feed/` - Fyers API Integration
 - `fyers_auth.py` - OAuth flow using `SessionModel` from fyers_apiv3 SDK
 - `fyers_auto_login.py` - Headless auto-login: base64-encoded credentials, TOTP generation via pyotp
-- `fyers_client.py` - REST client: quotes, historical data, option chain, OI
+- `fyers_client.py` - REST client: quotes, historical data, option chain (v3 endpoint), OI. Uses separate `API_URL` and `DATA_URL` base URLs. `get_option_chain()` resolves short names via `FYERS_SYMBOL_MAP`.
 - `fyers_ws_client.py` - WebSocket client: `FyersDataSocket` (threaded SDK bridged to asyncio), auto-fetches prices on start. **Important**: `connect()` must be called before `subscribe()` — the SDK's subscribe silently no-ops if the token hasn't been validated yet (which happens during connect).
 - `symbol_master.py` - Downloads Fyers symbol master CSVs (NSE_CM/FO, BSE_CM/FO), parses ~127K symbols, stores gzip-compressed in Redis, provides in-memory search. Refreshed daily.
 - `feed_manager.py` - Aggregates ticks into candles, persists completed 1m candles to `MarketData1m`, publishes to Redis, triggers `strategy_runner.on_candle_close()`
@@ -105,7 +105,7 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 ### `app/tasks/` - Scheduled Tasks
 - `fyers_login_task.py` - APScheduler job: auto-refreshes Fyers token via TOTP login
 - `symbol_master_task.py` - APScheduler job: refreshes symbol master daily at 8:00 AM IST
-- `oi_snapshot_task.py` - APScheduler job: fetches option chain OI data from Fyers every 3 minutes during market hours. Persists CE/PE OI per strike to `oi_snapshots` table. Only runs when market is open. Feeds `strategy_runner._get_oi_analysis()`.
+- `oi_snapshot_task.py` - APScheduler job: fetches option chain OI data from Fyers v3 API every 3 minutes during market hours. Parses flat option chain format (per-row `option_type`/`oi`/`oich` fields, DD-MM-YYYY expiry dates). Persists CE/PE OI per strike to `oi_snapshots` table. Only runs when market is open. Feeds `strategy_runner._get_oi_analysis()`.
 - `fundamental_data_task.py` - APScheduler job: fetches CAN SLIM fundamental data (yfinance + NSE) every 6 hours for all CAN SLIM-configured symbols. Computes individual factor scores and composite CAN SLIM score. Post-processing: percentile-ranks RS ratings across the full stock universe, fetches F&O lot sizes from NSE. Persists to `stock_fundamentals` table. Also runs on startup. Feeds `strategy_runner._get_canslim_fundamentals()`.
 
 ### `app/data_sources/` - External Data Sources for Fundamentals

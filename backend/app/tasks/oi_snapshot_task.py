@@ -90,29 +90,22 @@ async def _parse_and_store(symbol: str, data: dict) -> int:
         "s": "ok",
         "data": {
             "expiryData": [
-                {
-                    "date": "2026-04-22",
-                    "expiry": 1745330999,
-                    ...
-                }
+                {"date": "21-04-2026", "expiry": "1776765600", "expiry_flag": "W"}
             ],
             "optionsChain": [
                 {
-                    "strike_price": 24000,
-                    "call_options": {
-                        "ltp": 250.0,
-                        "oi": 1234567,
-                        "volume": 98765,
-                        "chng_oi": 5000,
-                        ...
-                    },
-                    "put_options": {
-                        "ltp": 180.0,
-                        "oi": 2345678,
-                        "volume": 87654,
-                        "chng_oi": -3000,
-                        ...
-                    }
+                    "strike_price": -1, "option_type": "", "symbol": "NSE:NIFTY50-INDEX",
+                    ...  (underlying row, skip)
+                },
+                {
+                    "strike_price": 24000, "option_type": "CE", "oi": 1234567,
+                    "oich": 5000, "volume": 98765, "ltp": 250.0,
+                    "symbol": "NSE:NIFTY2642124000CE", ...
+                },
+                {
+                    "strike_price": 24000, "option_type": "PE", "oi": 2345678,
+                    "oich": -3000, "volume": 87654, "ltp": 180.0,
+                    "symbol": "NSE:NIFTY2642124000PE", ...
                 },
                 ...
             ]
@@ -135,16 +128,18 @@ async def _parse_and_store(symbol: str, data: dict) -> int:
         logger.debug("Empty option chain for %s", symbol)
         return 0
 
-    # Get expiry date from the response
+    # Get expiry date from the response (format: "DD-MM-YYYY")
     expiry_data = chain_data.get("expiryData", [])
     expiry_date = None
     if expiry_data:
         expiry_str = expiry_data[0].get("date", "")
         if expiry_str:
-            try:
-                expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").date()
-            except ValueError:
-                pass
+            for fmt in ("%d-%m-%Y", "%Y-%m-%d"):
+                try:
+                    expiry_date = datetime.strptime(expiry_str, fmt).date()
+                    break
+                except ValueError:
+                    continue
 
     if expiry_date is None:
         logger.warning("Could not determine expiry date for %s OI snapshot", symbol)
@@ -156,32 +151,24 @@ async def _parse_and_store(symbol: str, data: dict) -> int:
         if strike_price <= 0:
             continue
 
-        call = strike_data.get("call_options", {})
-        put = strike_data.get("put_options", {})
+        option_type = strike_data.get("option_type", "")
+        if option_type not in ("CE", "PE"):
+            continue
 
-        if call and call.get("oi", 0) > 0:
-            rows.append({
-                "symbol": symbol,
-                "expiry_date": expiry_date,
-                "strike_price": Decimal(str(strike_price)),
-                "option_type": "CE",
-                "open_interest": int(call.get("oi", 0)),
-                "oi_change": int(call.get("chng_oi", 0)),
-                "volume": int(call.get("volume", 0)),
-                "timestamp": now,
-            })
+        oi = int(strike_data.get("oi", 0))
+        if oi <= 0:
+            continue
 
-        if put and put.get("oi", 0) > 0:
-            rows.append({
-                "symbol": symbol,
-                "expiry_date": expiry_date,
-                "strike_price": Decimal(str(strike_price)),
-                "option_type": "PE",
-                "open_interest": int(put.get("oi", 0)),
-                "oi_change": int(put.get("chng_oi", 0)),
-                "volume": int(put.get("volume", 0)),
-                "timestamp": now,
-            })
+        rows.append({
+            "symbol": symbol,
+            "expiry_date": expiry_date,
+            "strike_price": Decimal(str(strike_price)),
+            "option_type": option_type,
+            "open_interest": oi,
+            "oi_change": int(strike_data.get("oich", 0)),
+            "volume": int(strike_data.get("volume", 0)),
+            "timestamp": now,
+        })
 
     if not rows:
         return 0

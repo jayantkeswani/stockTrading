@@ -30,26 +30,26 @@ All pages use `'use client'` directive.
 - `Sidebar.tsx` - Narrow icon rail (48px): page links with hover tooltips, paper trading indicator
 
 **charts/**
-- `PriceChart.tsx` - TradingView candlestick chart with real data from Fyers (via backend proxy `GET /ohlcv`). Supports 1m/5m/15m/1h/1D timeframes. Loading spinner during fetch.
+- `PriceChart.tsx` - TradingView candlestick chart with real data from Fyers (via backend proxy `GET /ohlcv`). Supports 1m/5m/15m/1h/1D timeframes. Loading spinner during fetch. **Live updates**: watches `prices[selectedSymbol]` from the store and updates the current candle's close/high/low on each tick via `series.update()`. Creates new candles when time bucket advances (IST-aligned).
 - `ChartModal.tsx` - Modal wrapper for detailed chart view
 
 **dashboard/**
 - `PnLCard.tsx` - Single-line horizontal strip: P&L, drawdown (with thin bar), trades count, capital at risk — all inline with dividers. Halted badge inline.
-- `Watchlist.tsx` - Uniform symbol list (no visual distinction between default indices and custom items). Debounced search (300ms), dropdown autocomplete from `/symbols/search` (local symbol master). Custom items stored in backend Redis via `/api/v1/watchlist`. Supports stocks, futures, options with segment badges (FUT/OPT). Max-height 300px with scroll.
+- `Watchlist.tsx` - Uniform symbol list (no visual distinction between default indices and custom items). Debounced search (300ms), dropdown autocomplete from `/symbols/search` (local symbol master). Custom items stored in backend Redis via `/api/v1/watchlist`. Supports stocks, futures, options with segment badges (FUT/OPT). Max-height 300px with scroll. Subscribes custom symbols on WebSocket (on mount + when adding) for real-time price ticks.
 - `ScannerHeader.tsx` - Ultra-compact strategy pill bar. Monospace text-only buttons (no icons). Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end entries to ScanFeed.
 - `ScannerPanel.tsx` - Dense signal table. Signals rendered as compact rows (not cards) with inline direction arrow, symbol, price levels, R:R ratio, confidence, strategy badge, and EXEC/dismiss buttons. Click row to expand reason text. Max-height 340px.
 - `ScanFeed.tsx` - Compact scan log. Shows scan start/end messages with stats. Max-height 160px.
 - `AgentFeed.tsx` - Agent action log grouped by strategy. Compact filter dropdowns. Max-height 300px.
 
 **positions/**
-- `ActivePositions.tsx` - Dense table of open positions with unrealized P&L, SL distance warnings, expandable detail rows
+- `ActivePositions.tsx` - Dense table of open positions with unrealized P&L, SL distance warnings, expandable detail rows. **Live P/L**: computes P/L reactively from `prices` store using `pos.fyers_option_symbol || pos.symbol` as price key. Subscribes position symbols on WebSocket for real-time ticks.
 
 ### `src/hooks/` - Custom Hooks
-- `useWebSocket.ts` - WebSocket connection to `ws://localhost:8080/ws`. Auto-reconnect. Subscribes to all 5 index symbols on connect. Handles `signal:new` and `signal:updated` (dedup updates). Exported `subscribeSymbols()` helper.
+- `useWebSocket.ts` - WebSocket connection to `ws://localhost:8080/ws`. Auto-reconnect. Subscribes to all 5 index symbols on connect. Handles `signal:new` and `signal:updated` (dedup updates). Exported `subscribeSymbols(symbols)` helper — uses module-level shared WS ref, callable from any component without needing the wsRef. Used by Watchlist and ActivePositions to subscribe custom symbols.
 
 ### `src/lib/` - Utilities
 - `api.ts` - REST client: trades, signals, positions, agent, risk, market data, strategies. Key functions: `getAllPrices()`, `refreshQuotes()`, `searchSymbols()`, `toggleYolo()`, `evaluateStrategyBatch()`, `toggleAutoMode()`, `updateStrategy()`
-- `types.ts` - TypeScript interfaces for all entities (Trade, Signal, Position, AgentStatus with `yolo_mode` + `autonomy_level`)
+- `types.ts` - TypeScript interfaces for all entities (Trade, Signal, Position with `fyers_option_symbol` + `position_type`, AgentStatus with `yolo_mode` + `autonomy_level`)
 - `formatters.ts` - INR currency (Indian number system: lakhs/crores), percentages, IST datetime
 - `constants.ts` - `SYMBOLS` (5 indices), `STRATEGY_LABELS`, `STATUS_COLORS`, `WS_URL` (ws://localhost:8080/ws)
 

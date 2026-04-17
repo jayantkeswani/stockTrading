@@ -27,6 +27,7 @@ interface AppState {
   // Positions
   positions: Position[];
   setPositions: (positions: Position[]) => void;
+  addPosition: (position: Position) => void;
   updatePosition: (id: string, updates: Partial<Position>) => void;
   removePosition: (id: string) => void;
 
@@ -78,6 +79,10 @@ export const useStore = create<AppState>()(
       // Positions
       positions: [],
       setPositions: (positions) => set({ positions }),
+      addPosition: (position) =>
+        set((state) => ({
+          positions: [position, ...state.positions.filter((p) => p.id !== position.id)],
+        })),
       updatePosition: (id, updates) =>
         set((state) => ({
           positions: state.positions.map((p) =>

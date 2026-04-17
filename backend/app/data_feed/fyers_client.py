@@ -16,7 +16,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://api-t1.fyers.in/api/v3"
+API_URL = "https://api-t1.fyers.in/api/v3"
+DATA_URL = "https://api-t1.fyers.in/data"
 
 
 class FyersClient:
@@ -33,7 +34,7 @@ class FyersClient:
         """Get real-time quotes for symbols."""
         try:
             response = await self._client.get(
-                f"{BASE_URL}/quotes/",
+                f"{DATA_URL}/quotes",
                 params={"symbols": ",".join(symbols)},
                 headers=self._headers,
             )
@@ -61,7 +62,7 @@ class FyersClient:
                 "cont_flag": "1",
             }
             response = await self._client.get(
-                f"{BASE_URL}/history/",
+                f"{DATA_URL}/history",
                 params=params,
                 headers=self._headers,
             )
@@ -84,13 +85,24 @@ class FyersClient:
             return []
 
     async def get_option_chain(self, symbol: str, expiry_date: str | None = None) -> dict:
-        """Fetch option chain data for a symbol."""
+        """Fetch option chain data for a symbol.
+
+        Args:
+            symbol: Fyers symbol (e.g. "NSE:NIFTY50-INDEX"). If a short name
+                    like "NIFTY" is passed, it is resolved via FYERS_SYMBOL_MAP.
+            expiry_date: Optional expiry timestamp.
+        """
+        from app.core.constants import FYERS_SYMBOL_MAP
+
+        # Resolve short names to full Fyers symbols
+        fyers_symbol = FYERS_SYMBOL_MAP.get(symbol, symbol)
+
         try:
-            params = {"symbol": f"NSE:{symbol}-INDEX", "strikecount": 20}
+            params: dict = {"symbol": fyers_symbol, "strikecount": 20}
             if expiry_date:
                 params["timestamp"] = expiry_date
             response = await self._client.get(
-                f"{BASE_URL}/option-chain",
+                f"{DATA_URL}/options-chain-v3",
                 params=params,
                 headers=self._headers,
             )
@@ -104,7 +116,7 @@ class FyersClient:
         """Fetch market depth (Level 2) data."""
         try:
             response = await self._client.get(
-                f"{BASE_URL}/depth/",
+                f"{DATA_URL}/depth",
                 params={"symbol": symbol, "ohlcv_flag": "1"},
                 headers=self._headers,
             )

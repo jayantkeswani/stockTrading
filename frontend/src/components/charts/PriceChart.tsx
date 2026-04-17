@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { createChart, CandlestickSeries, HistogramSeries, ColorType, type UTCTimestamp } from "lightweight-charts";
+import {
+  createChart,
+  CandlestickSeries,
+  HistogramSeries,
+  ColorType,
+  type UTCTimestamp,
+  type ISeriesApi,
+  type CandlestickData,
+} from "lightweight-charts";
 import { useStore } from "@/store";
 import { api } from "@/lib/api";
 
@@ -16,13 +24,37 @@ const TIMEFRAME_CONFIG: Record<Timeframe, { resolution: string; days: number }> 
   "1D": { resolution: "D", days: 365 },
 };
 
+// Seconds per candle for each timeframe
+const BUCKET_SECONDS: Record<Timeframe, number> = {
+  "1m": 60,
+  "5m": 300,
+  "15m": 900,
+  "1h": 3600,
+  "1D": 86400,
+};
+
+const IST_OFFSET = 19800; // 5h 30m in seconds
+
+/** Compute the start-of-bucket UTC timestamp for the current moment. */
+function currentBucketTime(tf: Timeframe): number {
+  const nowUtc = Math.floor(Date.now() / 1000);
+  const bucket = BUCKET_SECONDS[tf];
+  // Align to IST then convert back to UTC epoch
+  const nowIst = nowUtc + IST_OFFSET;
+  const bucketIst = Math.floor(nowIst / bucket) * bucket;
+  return bucketIst - IST_OFFSET;
+}
+
 interface PriceChartProps {
   fullHeight?: boolean;
 }
 
 export function PriceChart({ fullHeight }: PriceChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const { selectedSymbol } = useStore();
+  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const lastCandleRef = useRef<CandlestickData<UTCTimestamp> | null>(null);
+  const { selectedSymbol, prices } = useStore();
   const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("5m");
   const [loading, setLoading] = useState(false);
 
@@ -30,6 +62,7 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
     setActiveTimeframe(tf);
   }, []);
 
+  // Create chart and load historical data
   useEffect(() => {
     if (!chartContainerRef.current) return;
     const container = chartContainerRef.current;
@@ -81,6 +114,9 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
       scaleMargins: { top: 0.8, bottom: 0 },
     });
 
+    candleSeriesRef.current = candleSeries;
+    volumeSeriesRef.current = volumeSeries;
+
     // Fetch pre-aggregated candles from backend (proxied from Fyers)
     let cancelled = false;
     setLoading(true);
@@ -110,6 +146,7 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
 
         candleSeries.setData(candles);
         volumeSeries.setData(volumes);
+        lastCandleRef.current = candles[candles.length - 1];
         setLoading(false);
         chart.timeScale().fitContent();
       })
@@ -129,10 +166,55 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
 
     return () => {
       cancelled = true;
+      candleSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+      lastCandleRef.current = null;
       window.removeEventListener("resize", handleResize);
       chart.remove();
     };
   }, [selectedSymbol, activeTimeframe]);
+
+  // Update chart on live price ticks
+  const priceData = prices[selectedSymbol];
+  useEffect(() => {
+    const series = candleSeriesRef.current;
+    const last = lastCandleRef.current;
+    if (!series || !last || !priceData?.ltp) return;
+
+    const ltp = priceData.ltp;
+    const bucketTime = currentBucketTime(activeTimeframe) as UTCTimestamp;
+
+    if (bucketTime === last.time) {
+      // Same candle — update close/high/low
+      const updated: CandlestickData<UTCTimestamp> = {
+        time: last.time,
+        open: last.open,
+        high: Math.max(last.high, ltp),
+        low: Math.min(last.low, ltp),
+        close: ltp,
+      };
+      series.update(updated);
+      lastCandleRef.current = updated;
+    } else if (bucketTime > last.time) {
+      // New candle
+      const newCandle: CandlestickData<UTCTimestamp> = {
+        time: bucketTime,
+        open: ltp,
+        high: ltp,
+        low: ltp,
+        close: ltp,
+      };
+      series.update(newCandle);
+      lastCandleRef.current = newCandle;
+
+      // Also add volume bar for new candle
+      volumeSeriesRef.current?.update({
+        time: bucketTime,
+        value: 0,
+        color: "rgba(0, 230, 138, 0.3)",
+      });
+    }
+  }, [priceData?.ltp, activeTimeframe]);
 
   return (
     <div className={`rounded border border-border bg-bg-secondary overflow-hidden flex flex-col ${fullHeight ? "h-full" : ""}`}>

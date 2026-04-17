@@ -11,25 +11,29 @@ import { AgentFeed } from "@/components/dashboard/AgentFeed";
 import { ChartModal } from "@/components/charts/ChartModal";
 import { useStore } from "@/store";
 import { api } from "@/lib/api";
-import type { Signal } from "@/lib/types";
+import type { Position, Signal } from "@/lib/types";
 
 export default function DashboardPage() {
   const [chartOpen, setChartOpen] = useState(false);
   const [chartSymbol, setChartSymbol] = useState<string | undefined>(undefined);
-  const { setSelectedSymbol, setSignals } = useStore();
+  const { setSelectedSymbol, setSignals, setPositions } = useStore();
 
-  // Load pending signals from DB on mount so ScannerPanel isn't empty on refresh
+  // Load pending signals and open positions from DB on mount
   useEffect(() => {
-    async function loadSignals() {
+    async function loadData() {
       try {
-        const signals = (await api.getSignals({ status: "PENDING" })) as Signal[];
+        const [signals, positions] = await Promise.all([
+          api.getSignals({ status: "PENDING" }) as Promise<Signal[]>,
+          api.getPositions() as Promise<Position[]>,
+        ]);
         setSignals(signals);
+        setPositions(positions);
       } catch {
         // API may not be running yet
       }
     }
-    loadSignals();
-  }, [setSignals]);
+    loadData();
+  }, [setSignals, setPositions]);
 
   const handleOpenChart = useCallback(
     (symbol?: string) => {

@@ -24,6 +24,7 @@ router = APIRouter()
 async def get_all_prices():
     """Get all cached prices at once. Used by frontend on page load.
 
+    Returns prices for default indices AND any custom watchlist symbols.
     If no prices are cached (first load or cache expired), automatically
     fetches latest quotes from Fyers REST API to populate the cache.
     """
@@ -33,6 +34,8 @@ async def get_all_prices():
 
     r = get_redis()
     prices = {}
+
+    # Default index symbols
     for symbol in FYERS_SYMBOL_MAP:
         data = await r.get(f"price:{symbol}")
         if data:
@@ -49,6 +52,14 @@ async def get_all_prices():
                     prices[symbol] = json.loads(data)
         except Exception:
             logger.warning("Auto-refresh of quotes failed on empty cache")
+
+    # Include watchlist symbols
+    watchlist_items = await r.hgetall("watchlist:items")
+    for fyers_symbol in watchlist_items:
+        if fyers_symbol not in prices:
+            data = await r.get(f"price:{fyers_symbol}")
+            if data:
+                prices[fyers_symbol] = json.loads(data)
 
     return prices
 
@@ -168,9 +179,13 @@ def _fetch_chart_history(
 async def _resolve_symbol_for_chart(symbol: str) -> str:
     """Resolve an internal symbol to its Fyers symbol for chart data.
 
-    Checks: FYERS_SYMBOL_MAP → strategy_configs.symbol_map → fallback.
+    Checks: already Fyers format → FYERS_SYMBOL_MAP → strategy_configs.symbol_map → fallback.
     """
     from app.core.constants import FYERS_SYMBOL_MAP
+
+    # Already a fully-qualified Fyers symbol (e.g. "NSE:ADANIPORTS-EQ")
+    if ":" in symbol:
+        return symbol
 
     if symbol in FYERS_SYMBOL_MAP:
         return FYERS_SYMBOL_MAP[symbol]

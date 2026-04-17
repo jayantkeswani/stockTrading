@@ -5,6 +5,7 @@ import { useStore } from "@/store";
 import { SYMBOLS } from "@/lib/constants";
 import { formatINR, pnlColor } from "@/lib/formatters";
 import { api } from "@/lib/api";
+import { subscribeSymbols } from "@/hooks/useWebSocket";
 
 interface WatchlistProps {
   onOpenChart: (symbol: string) => void;
@@ -69,6 +70,11 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
         }));
         setWatchlistItems(items);
         await fetchWatchlistPrices(items);
+        // Subscribe custom symbols on WebSocket for real-time ticks
+        const customSymbols = items.map((i) => i.symbol);
+        if (customSymbols.length > 0) {
+          subscribeSymbols(customSymbols);
+        }
       } catch {
         // Backend not available
       }
@@ -140,6 +146,7 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
 
       setWatchlistItems((prev) => [...prev, newItem]);
       fetchWatchlistPrices([newItem]);
+      subscribeSymbols([newItem.symbol]);
       setInputValue("");
       setSuggestions([]);
       setShowSuggestions(false);
