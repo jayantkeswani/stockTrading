@@ -160,6 +160,7 @@ async def _close_position(
         trade_id=pos.trade_id,
         details={
             "symbol": pos.symbol,
+            "strategy_name": pos.strategy_name,
             "entry_price": float(pos.entry_price),
             "exit_price": float(exit_price),
             "pnl": float(trade.pnl) if trade and trade.pnl else 0,
@@ -201,6 +202,7 @@ async def _request_profit_confirmation(
         trade_id=pos.trade_id,
         details={
             "symbol": pos.symbol,
+            "strategy_name": pos.strategy_name,
             "entry_price": float(pos.entry_price),
             "current_price": float(current_price),
             "unrealized_pnl": float(pos.unrealized_pnl) if pos.unrealized_pnl else 0,

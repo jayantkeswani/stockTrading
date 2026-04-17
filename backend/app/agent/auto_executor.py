@@ -178,6 +178,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             details={
                 "signal_id": str(signal.id),
                 "symbol": signal.symbol,
+                "strategy_name": signal.strategy_name,
                 "signal_type": signal.signal_type,
                 "strike_price": float(signal.strike_price),
                 "entry_price": float(signal.entry_price),
