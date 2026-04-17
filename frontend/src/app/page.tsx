@@ -11,29 +11,42 @@ import { AgentFeed } from "@/components/dashboard/AgentFeed";
 import { ChartModal } from "@/components/charts/ChartModal";
 import { useStore } from "@/store";
 import { api } from "@/lib/api";
-import type { Position, Signal } from "@/lib/types";
+import type { Position, Signal, RiskDashboard } from "@/lib/types";
 
 export default function DashboardPage() {
   const [chartOpen, setChartOpen] = useState(false);
   const [chartSymbol, setChartSymbol] = useState<string | undefined>(undefined);
-  const { setSelectedSymbol, setSignals, setPositions } = useStore();
+  const { setSelectedSymbol, setSignals, setPositions, setRisk } = useStore();
 
-  // Load pending signals and open positions from DB on mount
+  // Load pending signals, open positions, and risk dashboard from DB on mount
   useEffect(() => {
     async function loadData() {
       try {
-        const [signals, positions] = await Promise.all([
+        const [signals, positions, risk] = await Promise.all([
           api.getSignals({ status: "PENDING" }) as Promise<Signal[]>,
           api.getPositions() as Promise<Position[]>,
+          api.getRiskDashboard() as Promise<RiskDashboard>,
         ]);
         setSignals(signals);
         setPositions(positions);
+        setRisk(risk);
       } catch {
         // API may not be running yet
       }
     }
     loadData();
-  }, [setSignals, setPositions]);
+
+    // Refresh risk dashboard every 30s for closed trade P&L updates
+    const interval = setInterval(async () => {
+      try {
+        const riskData = (await api.getRiskDashboard()) as RiskDashboard;
+        setRisk(riskData);
+      } catch {
+        // ignore
+      }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [setSignals, setPositions, setRisk]);
 
   const handleOpenChart = useCallback(
     (symbol?: string) => {

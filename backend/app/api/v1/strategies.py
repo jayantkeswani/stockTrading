@@ -295,9 +295,9 @@ async def _provision_new_symbols(symbols: list[str], symbol_map: dict[str, str] 
         except Exception:
             logger.exception("Failed to backfill candles for %s", sym)
 
-    # 3. Subscribe on WebSocket for live ticks
+    # 3. Subscribe on WebSocket for live ticks (pass symbol_map for reverse lookup)
     if fyers_ws_client.is_connected:
         fyers_symbols = list(fyers_map.values())
-        await fyers_ws_client.subscribe_symbols(fyers_symbols)
+        await fyers_ws_client.subscribe_symbols(fyers_symbols, symbol_map=fyers_map)
 
     logger.info("Provisioning complete for %s", symbols)

@@ -56,16 +56,27 @@ India VIX is also tracked for risk gating (no lot size — informational only).
 ### 1. Price Data Pipeline
 ```
 Fyers WebSocket ──> fyers_ws_client.py (FyersDataSocket, threaded → asyncio bridge)
-                ──> feed_manager.py
-                    ├── Redis PUBLISH "price:{symbol}" (real-time cache)
-                    ├── Aggregate into 1m/5m candles
+                    ├── _fyers_to_internal() converts Fyers symbols to short names
+                    │   (e.g. "NSE:TCS-EQ" → "TCS") via _reverse_map
+                    │   Option/futures contracts pass through as-is
+                ──> feed_manager.py (receives internal short name + optional fyers_alias)
+                    ├── Redis cache "price:{short_name}" (primary, for strategies)
+                    ├── Redis cache "price:{fyers_alias}" (alias, for watchlist/positions)
+                    ├── Aggregate into 1m candles (under short name only → DB consistency)
                     ├── Store completed candles in PostgreSQL (market_data_1m)
-                    ├── WebSocket broadcast to frontend (price:update)
+                    ├── WebSocket broadcast to frontend under both names (price:update)
                     └── On candle close: check auto_mode strategies for this symbol
                         └── If any match → trigger strategy_runner.on_candle_close()
 
+Symbol naming convention:
+  - Internal/DB/strategies: short names ("TCS", "NIFTY", "ADANIPORTS")
+  - Fyers API calls: qualified names ("NSE:TCS-EQ", "NSE:NIFTY50-INDEX")
+  - Redis price cache: dual — both "price:TCS" and "price:NSE:TCS-EQ"
+  - strategy_configs.symbol_map stores the short→Fyers mapping
+
 Subscribed symbols (all get live WebSocket ticks):
   - FYERS_SYMBOL_MAP (5 indices + India VIX) — always subscribed
+  - Strategy-configured symbols — subscribed on startup with symbol_map for reverse lookup
   - Watchlist items from Redis — subscribed on startup and on add
 
 Frontend also polls GET /api/v1/market/prices every 10s as fallback.
@@ -235,6 +246,7 @@ Frontend:
   Load: GET /api/v1/watchlist → fetch items → POST /prices/batch for prices
   Add:  Search symbol → select → POST /api/v1/watchlist + fetch price
         Backend also calls fyers_ws_client.subscribe_symbols() for live ticks
+          (watchlist symbols use Fyers names; prices cached under Fyers alias)
   Remove: DELETE /api/v1/watchlist/{symbol}
   Poll: Every 10s → POST /prices/batch for all watchlist symbols
 

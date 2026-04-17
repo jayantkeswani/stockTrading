@@ -68,6 +68,16 @@ async def auto_execute_signal(signal_id) -> dict | None:
             )
             return None
 
+        # Check for existing open position on the same symbol + direction
+        direction = signal.signal_type.replace("BUY_", "") if signal.instrument_type == "OPTION" else None
+        pos_query = select(Position).where(Position.symbol == signal.symbol)
+        if direction:
+            pos_query = pos_query.where(Position.option_type == direction)
+        existing_pos = (await session.execute(pos_query)).scalar_one_or_none()
+        if existing_pos:
+            logger.info("Auto-execute: open position already exists for %s %s, skipping", signal.symbol, direction or "FUT")
+            return None
+
         # Final risk check before execution
         is_safe, reason = await _final_risk_check(session, signal.symbol)
         if not is_safe:

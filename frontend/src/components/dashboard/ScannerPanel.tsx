@@ -11,12 +11,17 @@ export function ScannerPanel() {
   const { signals, updateSignal, removeSignal } = useStore();
   const pendingSignals = signals.filter((s) => s.status === "PENDING");
 
+  const [execError, setExecError] = useState<string | null>(null);
+
   const handleExecute = async (signalId: string) => {
+    setExecError(null);
     try {
       await api.executeSignal(signalId);
       updateSignal(signalId, { status: "EXECUTED" });
     } catch (err) {
-      console.error("Failed to execute signal:", err);
+      const msg = err instanceof Error ? err.message : "Failed to execute signal";
+      setExecError(msg);
+      setTimeout(() => setExecError(null), 4000);
     }
   };
 
@@ -47,6 +52,12 @@ export function ScannerPanel() {
           <span className="text-[10px] text-text-muted font-mono">LIVE</span>
         </div>
       </div>
+
+      {execError && (
+        <div className="px-3 py-1.5 bg-loss/10 border-b border-loss/20">
+          <p className="text-xs font-mono text-loss">{execError}</p>
+        </div>
+      )}
 
       {pendingSignals.length === 0 ? (
         <div className="px-3 py-6 text-center">

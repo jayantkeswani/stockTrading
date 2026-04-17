@@ -12,7 +12,7 @@
 
 ### `src/app/` - Pages (App Router)
 All pages use `'use client'` directive.
-- `page.tsx` - Dashboard: full-width PnL strip at top, then 8-col left (ScannerHeader, ScannerPanel, ActivePositions) + 4-col right (Watchlist, ScanFeed, AgentFeed). Loads pending signals from DB on mount. ChartModal overlay.
+- `page.tsx` - Dashboard: full-width PnL strip at top, then 8-col left (ScannerHeader, ScannerPanel, ActivePositions) + 4-col right (Watchlist, ScanFeed, AgentFeed). Loads pending signals and open positions from DB on mount. ChartModal overlay.
 - `layout.tsx` - Root layout with AppShell wrapper
 - `trades/page.tsx` - Trade history table with compact monospace rows
 - `signals/page.tsx` - Signal history feed with status badges
@@ -34,10 +34,10 @@ All pages use `'use client'` directive.
 - `ChartModal.tsx` - Modal wrapper for detailed chart view
 
 **dashboard/**
-- `PnLCard.tsx` - Single-line horizontal strip: P&L, drawdown (with thin bar), trades count, capital at risk — all inline with dividers. Halted badge inline.
+- `PnLCard.tsx` - Single-line horizontal strip: P&L, drawdown (with thin bar), trades count, capital at risk — all inline with dividers. Halted badge inline. **Live P&L**: computes unrealized P&L reactively from `positions` + `prices` store (same logic as ActivePositions), combines with `closed_pnl` from risk endpoint. Fetched on mount + polled every 30s.
 - `Watchlist.tsx` - Uniform symbol list (no visual distinction between default indices and custom items). Debounced search (300ms), dropdown autocomplete from `/symbols/search` (local symbol master). Custom items stored in backend Redis via `/api/v1/watchlist`. Supports stocks, futures, options with segment badges (FUT/OPT). Max-height 300px with scroll. Subscribes custom symbols on WebSocket (on mount + when adding) for real-time price ticks.
 - `ScannerHeader.tsx` - Ultra-compact strategy pill bar. Monospace text-only buttons (no icons). Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end entries to ScanFeed.
-- `ScannerPanel.tsx` - Dense signal table. Signals rendered as compact rows (not cards) with inline direction arrow, symbol, price levels, R:R ratio, confidence, strategy badge, and EXEC/dismiss buttons. Click row to expand reason text. Max-height 340px.
+- `ScannerPanel.tsx` - Dense signal table. Signals rendered as compact rows (not cards) with inline direction arrow, symbol, price levels, R:R ratio, confidence, strategy badge, and EXEC/dismiss buttons. Shows execution error banner (auto-dismisses after 4s). Click row to expand reason text. Max-height 340px.
 - `ScanFeed.tsx` - Compact scan log. Shows scan start/end messages with stats. Max-height 160px.
 - `AgentFeed.tsx` - Agent action log grouped by strategy. Compact filter dropdowns. Max-height 300px.
 
@@ -45,16 +45,16 @@ All pages use `'use client'` directive.
 - `ActivePositions.tsx` - Dense table of open positions with unrealized P&L, SL distance warnings, expandable detail rows. **Live P/L**: computes P/L reactively from `prices` store using `pos.fyers_option_symbol || pos.symbol` as price key. Subscribes position symbols on WebSocket for real-time ticks.
 
 ### `src/hooks/` - Custom Hooks
-- `useWebSocket.ts` - WebSocket connection to `ws://localhost:8080/ws`. Auto-reconnect. Subscribes to all 5 index symbols on connect. Handles `signal:new` and `signal:updated` (dedup updates). Exported `subscribeSymbols(symbols)` helper — uses module-level shared WS ref, callable from any component without needing the wsRef. Used by Watchlist and ActivePositions to subscribe custom symbols.
+- `useWebSocket.ts` - WebSocket connection to `ws://localhost:8080/ws`. Auto-reconnect. Subscribes to all 5 index symbols on connect. Handles `signal:new`, `signal:updated` (dedup updates), and `trade:open` (adds new position to store). Exported `subscribeSymbols(symbols)` helper — uses module-level shared WS ref, callable from any component without needing the wsRef. Used by Watchlist and ActivePositions to subscribe custom symbols.
 
 ### `src/lib/` - Utilities
-- `api.ts` - REST client: trades, signals, positions, agent, risk, market data, strategies. Key functions: `getAllPrices()`, `refreshQuotes()`, `searchSymbols()`, `toggleYolo()`, `evaluateStrategyBatch()`, `toggleAutoMode()`, `updateStrategy()`
+- `api.ts` - REST client: trades, signals, positions, agent, risk, market data, strategies. Error responses parse backend `detail` field for user-facing messages. Key functions: `getAllPrices()`, `refreshQuotes()`, `searchSymbols()`, `toggleYolo()`, `evaluateStrategyBatch()`, `toggleAutoMode()`, `updateStrategy()`
 - `types.ts` - TypeScript interfaces for all entities (Trade, Signal, Position with `fyers_option_symbol` + `position_type`, AgentStatus with `yolo_mode` + `autonomy_level`)
-- `formatters.ts` - INR currency (Indian number system: lakhs/crores), percentages, IST datetime
+- `formatters.ts` - INR currency (Indian number system: lakhs/crores), percentages, IST datetime. All formatters coerce inputs via `Number()` to handle string Decimals from the backend.
 - `constants.ts` - `SYMBOLS` (5 indices), `STRATEGY_LABELS`, `STATUS_COLORS`, `WS_URL` (ws://localhost:8080/ws)
 
 ### `src/store/` - Zustand State
-- `index.ts` - Single store with slices: prices (per symbol), positions, signals, scan logs, risk metrics, agent status, market status. `updatePrice()` action used by Header polling + WebSocket events. Signal actions: `addSignal()` (dedupes by id), `updateSignal()`, `removeSignal()`. `ScanLogEntry` type for manual scan feed.
+- `index.ts` - Single store with slices: prices (per symbol), positions, signals, scan logs, risk metrics, agent status, market status. `updatePrice()` action used by Header polling + WebSocket events. Signal actions: `addSignal()` (dedupes by id), `updateSignal()`, `removeSignal()`. Position actions: `addPosition()` (dedupes by id) for `trade:open` WebSocket events. `ScanLogEntry` type for manual scan feed.
 
 ## Theme — Institutional Terminal (Dark Only)
 

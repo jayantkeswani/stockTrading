@@ -3,8 +3,9 @@
  * Uses Indian number system (lakhs, crores).
  */
 export function formatINR(value: number): string {
-  const absValue = Math.abs(value);
-  const sign = value < 0 ? "-" : "";
+  const num = Number(value) || 0;
+  const absValue = Math.abs(num);
+  const sign = num < 0 ? "-" : "";
   return `${sign}₹${absValue.toLocaleString("en-IN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -33,8 +34,9 @@ export function formatINRCompact(value: number): string {
  * Format a percentage with sign.
  */
 export function formatPercent(value: number): string {
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(2)}%`;
+  const num = Number(value) || 0;
+  const sign = num > 0 ? "+" : "";
+  return `${sign}${num.toFixed(2)}%`;
 }
 
 /**
@@ -66,7 +68,8 @@ export function formatDate(timestamp: string): string {
  * Get the P&L color class.
  */
 export function pnlColor(value: number): string {
-  if (value > 0) return "text-profit";
-  if (value < 0) return "text-loss";
+  const num = Number(value) || 0;
+  if (num > 0) return "text-profit";
+  if (num < 0) return "text-loss";
   return "text-text-secondary";
 }

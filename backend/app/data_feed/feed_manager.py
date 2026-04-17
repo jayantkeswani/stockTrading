@@ -44,10 +44,21 @@ class FeedManager:
             self._task.cancel()
         logger.info("Feed manager stopped")
 
-    async def process_tick(self, symbol: str, tick_data: dict):
+    async def process_tick(
+        self, symbol: str, tick_data: dict, fyers_alias: str | None = None,
+    ):
         """Process an incoming price tick.
 
         Updates Redis cache and broadcasts to WebSocket clients.
+
+        Args:
+            symbol: Internal short name (e.g. "TCS", "NIFTY"). Used for DB
+                    persistence, candle aggregation, and strategy evaluation.
+            tick_data: Tick fields (ltp, bid, ask, volume, change, change_pct).
+            fyers_alias: Optional Fyers-qualified name (e.g. "NSE:TCS-EQ").
+                         When provided, the price is ALSO cached and broadcast
+                         under this name so that watchlist/positions (which use
+                         Fyers symbols) can look up prices.
         """
         ltp = tick_data.get("ltp", 0)
         timestamp = datetime.now(IST).isoformat()
@@ -63,13 +74,21 @@ class FeedManager:
             "timestamp": timestamp,
         }
 
-        # Cache in Redis
+        # Cache in Redis under internal name
         await cache_price(symbol, price_data)
 
-        # Broadcast to WebSocket clients
-        await ws_manager.broadcast_price(symbol, price_data)
+        # Also cache under Fyers alias (for watchlist/positions that use Fyers symbols)
+        if fyers_alias:
+            alias_data = {**price_data, "symbol": fyers_alias}
+            await cache_price(fyers_alias, alias_data)
 
-        # Aggregate into candles
+        # Broadcast to WebSocket clients under internal name
+        await ws_manager.broadcast_price(symbol, price_data)
+        # Also broadcast under Fyers alias so watchlist subscribers get updates
+        if fyers_alias:
+            await ws_manager.broadcast_price(fyers_alias, alias_data)
+
+        # Aggregate into candles (always under internal name for DB consistency)
         await self._aggregate_candle(symbol, ltp, tick_data.get("volume", 0))
 
     async def _aggregate_candle(self, symbol: str, price: float, volume: int):

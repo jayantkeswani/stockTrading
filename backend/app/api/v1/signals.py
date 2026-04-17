@@ -58,6 +58,19 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
     if signal.status != SignalStatus.PENDING:
         raise HTTPException(status_code=400, detail="Signal is not pending")
 
+    # Check for existing open position on the same symbol + direction
+    direction = signal.signal_type.replace("BUY_", "") if signal.instrument_type == "OPTION" else None
+    pos_query = select(Position).where(Position.symbol == signal.symbol)
+    if direction:
+        pos_query = pos_query.where(Position.option_type == direction)
+    existing_pos = await db.execute(pos_query)
+    if existing_pos.scalar_one_or_none():
+        label = f"{signal.symbol} {direction}" if direction else f"{signal.symbol} FUT"
+        raise HTTPException(
+            status_code=409,
+            detail=f"Open position already exists for {label}",
+        )
+
     # Determine lot size and quantity
     is_futures = signal.instrument_type == "FUTURE"
     if is_futures:

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class RiskDashboardResponse(BaseModel):
     capital: Decimal
     daily_pnl: Decimal
+    closed_pnl: Decimal
     daily_drawdown_pct: float
     max_daily_drawdown_pct: float
     trades_today: int

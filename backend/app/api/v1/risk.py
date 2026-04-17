@@ -58,6 +58,7 @@ async def risk_dashboard(db: AsyncSession = Depends(get_db)):
     return RiskDashboardResponse(
         capital=capital,
         daily_pnl=total_daily_pnl,
+        closed_pnl=daily_pnl,
         daily_drawdown_pct=drawdown_pct,
         max_daily_drawdown_pct=settings.max_daily_drawdown_pct,
         trades_today=trades_today,

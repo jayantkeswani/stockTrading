@@ -158,6 +158,10 @@ class StrategyRunner:
                 signal, executable, blocked_reason = await self._resolve_option(
                     signal, ctx, executable, blocked_reason,
                 )
+            elif signal.instrument_type == InstrumentType.FUTURE:
+                signal, executable, blocked_reason = await self._resolve_futures(
+                    signal, ctx, executable, blocked_reason,
+                )
             await self._handle_signal(signal, executable, blocked_reason)
 
         return signal
@@ -936,6 +940,14 @@ class StrategyRunner:
         """
         now = now_ist()
 
+        # Skip if there's already an open position for this symbol + direction
+        if await self._has_open_position(signal):
+            logger.debug(
+                "Signal skipped: open position exists for %s %s",
+                signal.symbol, signal.signal_type,
+            )
+            return
+
         # Check for existing PENDING signal for same strategy + symbol + direction
         dedup_result = await self._dedup_signal(signal, now, executable, blocked_reason)
         if dedup_result == "skip":
@@ -972,6 +984,22 @@ class StrategyRunner:
                 await agent_runner.on_new_signal(signal_record.id)
             except Exception:
                 logger.exception("Error notifying agent runner of new signal")
+
+    async def _has_open_position(self, signal: StrategySignal) -> bool:
+        """Check if there's already an open position for the same symbol + direction."""
+        try:
+            async with async_session_factory() as session:
+                from app.models.position import Position
+
+                direction = signal.signal_type.value.replace("BUY_", "") if signal.instrument_type.value == "OPTION" else None
+                query = select(Position.id).where(Position.symbol == signal.symbol)
+                if direction:
+                    query = query.where(Position.option_type == direction)
+                result = await session.execute(query.limit(1))
+                return result.scalar_one_or_none() is not None
+        except Exception:
+            logger.exception("Error checking open position for %s", signal.symbol)
+            return False
 
     async def _dedup_signal(
         self,

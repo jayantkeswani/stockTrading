@@ -30,6 +30,10 @@ class FyersWSClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._connected = False
         self._symbols: list[str] = []
+        # Reverse map: Fyers symbol → internal short name.
+        # Seeded from FYERS_SYMBOL_MAP (indices), extended when stock symbols
+        # are subscribed via register_symbol_map().
+        self._reverse_map: dict[str, str] = {v: k for k, v in FYERS_SYMBOL_MAP.items()}
 
     @property
     def is_connected(self) -> bool:
@@ -103,7 +107,10 @@ class FyersWSClient:
                         "prev_close": v.get("prev_close_price", 0),
                     }
 
-                    await feed_manager.process_tick(internal_symbol, tick_data)
+                    fyers_alias = fyers_symbol if fyers_symbol != internal_symbol else None
+                    await feed_manager.process_tick(
+                        internal_symbol, tick_data, fyers_alias=fyers_alias,
+                    )
                     fetched += 1
 
             logger.info("REST quotes fetched for %d symbols", fetched)
@@ -181,8 +188,33 @@ class FyersWSClient:
         self._ws = None
         logger.info("Fyers WebSocket stopped")
 
-    async def subscribe_symbols(self, symbols: list[str]):
-        """Subscribe to additional symbols on an existing connection."""
+    def register_symbol_map(self, symbol_map: dict[str, str]):
+        """Register internal→Fyers symbol mappings for reverse lookup.
+
+        Call this whenever new stock symbols are added to strategies or watchlist
+        so that _fyers_to_internal can convert them back to short names.
+
+        Args:
+            symbol_map: {internal_name: fyers_symbol} e.g. {"TCS": "NSE:TCS-EQ"}
+        """
+        for internal, fyers in symbol_map.items():
+            self._reverse_map[fyers] = internal
+
+    async def subscribe_symbols(
+        self,
+        symbols: list[str],
+        symbol_map: dict[str, str] | None = None,
+    ):
+        """Subscribe to additional symbols on an existing connection.
+
+        Args:
+            symbols: Fyers-format symbols to subscribe (e.g. ["NSE:TCS-EQ"])
+            symbol_map: Optional {internal_name: fyers_symbol} for reverse lookup.
+                        If provided, registers the mapping so ticks are correctly
+                        converted to internal short names.
+        """
+        if symbol_map:
+            self.register_symbol_map(symbol_map)
         if self._ws and self._connected:
             try:
                 self._ws.subscribe(symbols=symbols, data_type="SymbolUpdate")
@@ -226,19 +258,26 @@ class FyersWSClient:
                     "prev_close": tick.get("prev_close_price", 0),
                 }
 
+                # Pass fyers_alias so feed_manager can cache under both names.
+                # This is needed when internal != fyers (e.g. "TCS" vs "NSE:TCS-EQ")
+                # so that watchlist (which uses Fyers symbols) can still find prices.
+                fyers_alias = fyers_symbol if fyers_symbol != internal_symbol else None
+
                 # Schedule async processing in the main event loop
                 self._loop.call_soon_threadsafe(
                     asyncio.ensure_future,
-                    self._process_tick_async(internal_symbol, tick_data),
+                    self._process_tick_async(internal_symbol, tick_data, fyers_alias),
                 )
         except Exception:
             logger.exception("Error processing Fyers tick message")
 
-    async def _process_tick_async(self, symbol: str, tick_data: dict):
+    async def _process_tick_async(
+        self, symbol: str, tick_data: dict, fyers_alias: str | None = None,
+    ):
         """Async handler that feeds the tick into FeedManager."""
         from app.data_feed.feed_manager import feed_manager
 
-        await feed_manager.process_tick(symbol, tick_data)
+        await feed_manager.process_tick(symbol, tick_data, fyers_alias=fyers_alias)
 
     def _on_connect(self):
         """Called when Fyers WebSocket connects."""
@@ -276,18 +315,22 @@ class FyersWSClient:
             "source": "fyers",
         })
 
-    @staticmethod
-    def _fyers_to_internal(fyers_symbol: str) -> str | None:
+    def _fyers_to_internal(self, fyers_symbol: str) -> str | None:
         """Convert Fyers symbol format to our internal symbol name.
 
-        E.g., "NSE:NIFTY50-INDEX" -> "NIFTY"
-        """
-        # Reverse lookup from FYERS_SYMBOL_MAP
-        for internal, fyers in FYERS_SYMBOL_MAP.items():
-            if fyers == fyers_symbol:
-                return internal
+        E.g., "NSE:NIFTY50-INDEX" -> "NIFTY", "NSE:TCS-EQ" -> "TCS"
 
-        # For option contracts, pass through as-is
+        Uses the instance _reverse_map which is seeded from FYERS_SYMBOL_MAP
+        (indices) and extended via register_symbol_map() when stock symbols
+        are subscribed.
+        """
+        # Fast O(1) lookup in the reverse map (indices + registered stocks)
+        internal = self._reverse_map.get(fyers_symbol)
+        if internal:
+            return internal
+
+        # For option/futures contracts (not registered), pass through as-is
+        # e.g. "NSE:NIFTY2642124000CE", "NSE:TCS25AprFUT"
         if ":" in fyers_symbol:
             return fyers_symbol
 

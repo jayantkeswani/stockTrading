@@ -55,7 +55,17 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full text-xs" style={{ tableLayout: "fixed" }}>
+            <colgroup>
+              <col />
+              {!compact && <col style={{ width: "80px" }} />}
+              <col style={{ width: "100px" }} />
+              <col style={{ width: "100px" }} />
+              <col style={{ width: "120px" }} />
+              <col style={{ width: "70px" }} />
+              {!compact && <col style={{ width: "100px" }} />}
+              <col style={{ width: "60px" }} />
+            </colgroup>
             <thead>
               <tr className="text-[10px] text-text-muted uppercase font-mono tracking-wider">
                 <th className="text-left px-3 py-1">Symbol</th>

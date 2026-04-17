@@ -9,7 +9,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     },
   });
   if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
+    let detail = response.statusText;
+    try {
+      const body = await response.json();
+      if (body.detail) detail = body.detail;
+    } catch { /* no json body */ }
+    throw new Error(detail);
   }
   return response.json();
 }

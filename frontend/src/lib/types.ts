@@ -89,6 +89,7 @@ export interface Signal {
 export interface RiskDashboard {
   capital: number;
   daily_pnl: number;
+  closed_pnl: number;
   daily_drawdown_pct: number;
   max_daily_drawdown_pct: number;
   trades_today: number;

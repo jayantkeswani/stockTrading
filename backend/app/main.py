@@ -53,6 +53,10 @@ async def _start_data_feed_if_authenticated():
             watchlist_symbols + list(strategy_symbols.values())
         ))
 
+        # Register strategy symbol mappings so ticks are converted to short names
+        # (strategy_symbols is {short_name: fyers_symbol}, e.g. {"TCS": "NSE:TCS-EQ"})
+        fyers_ws_client.register_symbol_map(strategy_symbols)
+
         print("Starting live data feed...")
         await fyers_ws_client.start(extra_symbols=extra_ws_symbols)
 

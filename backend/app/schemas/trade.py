@@ -12,7 +12,7 @@ class TradeResponse(BaseModel):
     symbol: str
     expiry_date: date
     strike_price: Decimal
-    option_type: str
+    option_type: str | None = None
     side: str
     quantity: int
     lots: int
