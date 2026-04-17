@@ -96,7 +96,7 @@ function SignalRow({
   return (
     <div className="border-b border-border/50 last:border-b-0">
       {/* Main row */}
-      <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-bg-tertiary/40 transition-colors">
+      <div className="flex items-center gap-3 px-3 py-1.5 hover:bg-bg-tertiary/40 transition-colors">
         {/* Direction + Symbol */}
         <span className={`text-xs font-bold ${directionColor} w-3 shrink-0`}>
           {directionArrow}
@@ -110,7 +110,7 @@ function SignalRow({
         </button>
 
         {/* Price levels */}
-        <div className="flex items-center gap-2 text-xs font-mono shrink-0">
+        <div className="flex items-center gap-3 text-xs font-mono shrink-0">
           {isUnresolvedOption ? (
             <span className="text-warning">{formatINR(signal.entry_price)}</span>
           ) : (
@@ -128,14 +128,14 @@ function SignalRow({
 
         {/* R:R */}
         {!isUnresolvedOption && (
-          <span className="text-xs font-mono text-text-muted w-8 text-right shrink-0">
+          <span className="text-xs font-mono text-text-muted shrink-0">
             1:{rrRatio}
           </span>
         )}
 
         {/* Confidence */}
         {signal.confidence != null && (
-          <span className={`text-xs font-mono font-medium w-8 text-right shrink-0 ${
+          <span className={`text-xs font-mono font-medium shrink-0 ${
             signal.confidence >= 70 ? "text-profit" : signal.confidence >= 50 ? "text-accent" : "text-loss"
           }`}>
             {signal.confidence}%
@@ -143,15 +143,15 @@ function SignalRow({
         )}
 
         {/* Strategy badge */}
-        <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent shrink-0">
+        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-accent/10 text-accent shrink-0">
           {STRATEGY_LABELS[signal.strategy_name] || signal.strategy_name}
         </span>
 
         {/* Action buttons */}
-        <div className="flex items-center gap-1 shrink-0 ml-1">
+        <div className="flex items-center gap-1.5 shrink-0 ml-1">
           <button
             onClick={(e) => { e.stopPropagation(); onExecute(signal.id); }}
-            className="text-xs font-mono font-medium px-1.5 py-0.5 rounded bg-profit/15 text-profit hover:bg-profit/25 transition-colors"
+            className="text-xs font-mono font-medium px-2 py-0.5 rounded bg-profit/15 text-profit hover:bg-profit/25 transition-colors"
           >
             EXEC
           </button>
