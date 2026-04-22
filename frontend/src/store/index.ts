@@ -6,6 +6,8 @@ import type {
   MarketStatus,
   Position,
   PriceData,
+  ResearchAgentStatus,
+  ResearchReportListItem,
   RiskDashboard,
   Signal,
 } from "@/lib/types";
@@ -60,6 +62,21 @@ interface AppState {
   // WebSocket
   wsConnected: boolean;
   setWsConnected: (connected: boolean) => void;
+
+  // Research
+  activeResearches: Record<string, {
+    reportId: string;
+    symbol: string;
+    status: "in_progress" | "completed" | "failed";
+    agentStatuses: ResearchAgentStatus[];
+  }>;
+  selectedResearchId: string | null;
+  researchReports: ResearchReportListItem[];
+  startResearchSession: (reportId: string, symbol: string, agentsTotal: number) => void;
+  updateResearchAgent: (reportId: string, agentName: string, update: Partial<ResearchAgentStatus>) => void;
+  completeResearch: (reportId: string, status: "completed" | "failed") => void;
+  setSelectedResearchId: (id: string | null) => void;
+  setResearchReports: (reports: ResearchReportListItem[]) => void;
 
   // UI
   selectedSymbol: string;
@@ -136,6 +153,58 @@ export const useStore = create<AppState>()(
       // WebSocket
       wsConnected: false,
       setWsConnected: (connected) => set({ wsConnected: connected }),
+
+      // Research
+      activeResearches: {},
+      selectedResearchId: null,
+      researchReports: [],
+      startResearchSession: (reportId, symbol, agentsTotal) =>
+        set((state) => {
+          const agents: ResearchAgentStatus[] = [
+            { name: "fundamental", description: "Analyzing earnings and growth", status: "pending" },
+            { name: "technical", description: "Analyzing price trends and patterns", status: "pending" },
+            { name: "oi_derivatives", description: "Analyzing open interest data", status: "pending" },
+            { name: "institutional", description: "Analyzing FII/DII/MF holdings", status: "pending" },
+            { name: "news_sentiment", description: "Searching for news and sentiment", status: "pending" },
+            { name: "valuation", description: "Analyzing valuation metrics", status: "pending" },
+          ];
+          return {
+            activeResearches: {
+              ...state.activeResearches,
+              [reportId]: { reportId, symbol, status: "in_progress", agentStatuses: agents },
+            },
+            selectedResearchId: reportId,
+          };
+        }),
+      updateResearchAgent: (reportId, agentName, update) =>
+        set((state) => {
+          const research = state.activeResearches[reportId];
+          if (!research) return state;
+          return {
+            activeResearches: {
+              ...state.activeResearches,
+              [reportId]: {
+                ...research,
+                agentStatuses: research.agentStatuses.map((a) =>
+                  a.name === agentName ? { ...a, ...update } : a
+                ),
+              },
+            },
+          };
+        }),
+      completeResearch: (reportId, status) =>
+        set((state) => {
+          const research = state.activeResearches[reportId];
+          if (!research) return state;
+          return {
+            activeResearches: {
+              ...state.activeResearches,
+              [reportId]: { ...research, status },
+            },
+          };
+        }),
+      setSelectedResearchId: (id) => set({ selectedResearchId: id }),
+      setResearchReports: (reports) => set({ researchReports: reports }),
 
       // UI
       selectedSymbol: "NIFTY",

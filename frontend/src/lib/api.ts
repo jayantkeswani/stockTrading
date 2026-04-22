@@ -149,6 +149,23 @@ export const api = {
   // Tasks
   getTasks: () => request<{ tasks: import("./types").BackgroundTask[] }>(`/api/v1/tasks`),
 
+  // Research
+  startResearch: (symbol: string) =>
+    request<{ report_id: string; symbol: string; display_name: string; status: string; agents_total: number }>(
+      `/api/v1/research/start`,
+      { method: "POST", body: JSON.stringify({ symbol }) }
+    ),
+  getResearchReports: (params?: { symbol?: string; limit?: number }) => {
+    const query = new URLSearchParams();
+    if (params?.symbol) query.set("symbol", params.symbol);
+    if (params?.limit) query.set("limit", params.limit.toString());
+    return request<import("./types").ResearchReportListItem[]>(`/api/v1/research/reports?${query}`);
+  },
+  getResearchReport: (id: string) =>
+    request<import("./types").ResearchReport>(`/api/v1/research/reports/${id}`),
+  deleteResearchReport: (id: string) =>
+    request(`/api/v1/research/reports/${id}`, { method: "DELETE" }),
+
   // Health
   health: () => request(`/api/v1/health`),
 };

@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # Agent
     yolo_mode: bool = False
 
+    # AI Research
+    google_api_key: str = ""
+    research_llm_provider: str = "gemini"
+    research_llm_model: str = "gemini-2.5-flash"
+    research_agent_timeout_seconds: int = 90
+    research_max_concurrent: int = 3
+
     # App
     backend_host: str = "0.0.0.0"
     backend_port: int = 8080

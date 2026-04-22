@@ -8,6 +8,7 @@ from app.models.daily_summary import DailySummary
 from app.models.agent_log import AgentLog
 from app.models.oi_snapshot import OISnapshot
 from app.models.fundamental_data import FundamentalHistory, StockFundamental
+from app.models.research_report import ResearchAgentRun, ResearchReport
 
 __all__ = [
     "Base",
@@ -21,4 +22,6 @@ __all__ = [
     "OISnapshot",
     "StockFundamental",
     "FundamentalHistory",
+    "ResearchReport",
+    "ResearchAgentRun",
 ]

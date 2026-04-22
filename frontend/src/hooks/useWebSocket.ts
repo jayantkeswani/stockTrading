@@ -20,6 +20,9 @@ export function useWebSocket() {
     setRisk,
     addAgentLog,
     setAgentStatus,
+    startResearchSession,
+    updateResearchAgent,
+    completeResearch,
   } = useStore();
 
   const connect = useCallback(() => {
@@ -95,6 +98,49 @@ export function useWebSocket() {
         case "agent:status":
           setAgentStatus(msg.data as never);
           break;
+
+        // Research events
+        case "research:started":
+          startResearchSession(
+            msg.data.report_id as string,
+            msg.data.symbol as string,
+            msg.data.agents_total as number
+          );
+          break;
+        case "research:agent_started":
+          updateResearchAgent(
+            msg.data.report_id as string,
+            msg.data.agent_name as string,
+            { status: "running", description: msg.data.description as string }
+          );
+          break;
+        case "research:agent_completed":
+          updateResearchAgent(
+            msg.data.report_id as string,
+            msg.data.agent_name as string,
+            {
+              status: "completed",
+              summary: msg.data.summary as string,
+              duration: msg.data.duration_seconds as number,
+            }
+          );
+          break;
+        case "research:agent_failed":
+          updateResearchAgent(
+            msg.data.report_id as string,
+            msg.data.agent_name as string,
+            { status: "failed", error: msg.data.error as string }
+          );
+          break;
+        case "research:synthesis_started":
+          // Could show a synthesis indicator
+          break;
+        case "research:completed":
+          completeResearch(msg.data.report_id as string, "completed");
+          break;
+        case "research:failed":
+          completeResearch(msg.data.report_id as string, "failed");
+          break;
       }
     },
     [
@@ -106,6 +152,9 @@ export function useWebSocket() {
       setRisk,
       addAgentLog,
       setAgentStatus,
+      startResearchSession,
+      updateResearchAgent,
+      completeResearch,
     ]
   );
 

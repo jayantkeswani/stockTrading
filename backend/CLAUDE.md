@@ -15,7 +15,7 @@
 ## Module Map
 
 ### `app/config.py` - Application Settings
-Pydantic Settings loading from `.env`. Key settings: database URLs, Redis URL, Fyers credentials, trading capital, risk limits, agent mode, ports.
+Pydantic Settings loading from `.env`. Key settings: database URLs, Redis URL, Fyers credentials, trading capital, risk limits, agent mode, ports. AI Research: `google_api_key`, `research_llm_provider` (default "gemini"), `research_llm_model` (default "gemini-2.5-flash"), `research_agent_timeout_seconds` (90), `research_max_concurrent` (3).
 
 ### `app/main.py` - FastAPI Application
 Lifespan startup: starts Fyers login scheduler, auto-starts data feed if token exists in Redis. CORS enabled for frontend (localhost:3000).
@@ -40,6 +40,7 @@ Lifespan startup: starts Fyers login scheduler, auto-starts data feed if token e
 - `daily_summary.py` - DailySummary: daily P&L, win/loss counts, drawdown
 - `strategy_config.py` - StrategyConfig: per-index strategy enable/disable + parameters + `auto_mode` (bool) + `symbols` (JSONB list) + `symbol_map` (JSONB dict: short_name → fyers_symbol, populated at insertion time from symbol master search results)
 - `fundamental_data.py` - StockFundamental (CAN SLIM scores + raw fundamentals per stock, updated by periodic task) + FundamentalHistory (quarterly snapshots for trend analysis)
+- `research_report.py` - ResearchReport (persisted AI research report: recommendation, confidence, report_json/markdown, agent tracking) + ResearchAgentRun (individual sub-agent run: findings_json, summary, duration, data sources). FK cascade delete.
 
 ### `app/schemas/` - Pydantic Schemas
 Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{Entity}Update`.
@@ -56,6 +57,7 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 - `strategies.py` - List/update strategy configs, toggle `is_active`/`auto_mode`, `POST /evaluate` (manual single symbol), `POST /evaluate/batch` (manual all configured symbols). When symbols are added to a strategy via PUT, the `symbol_map` (short_name → fyers_symbol) is stored alongside; any symbols missing from the map are auto-resolved server-side via the symbol master. Background task provisions new symbols: REST quote fetch → Redis, candle backfill → PostgreSQL, WebSocket subscription — using the stored Fyers symbols (no reconstruction).
 - `tasks.py` - `GET /tasks` — lists all registered background tasks with type, status, timestamps, errors, metadata
 - `auth.py` - Fyers OAuth flow (login redirect, callback, token storage)
+- `research.py` - `POST /start` (validate symbol, create report, launch orchestrator task), `GET /reports` (list past reports, ?symbol filter), `GET /reports/{id}` (full report with agent runs), `DELETE /reports/{id}`. Returns 429 if max concurrent sessions reached.
 
 ### `app/websocket/` - Real-Time Layer
 - `manager.py` - WebSocketManager: connect/disconnect/broadcast. Single `/ws` endpoint. Events: `price:update`, `signal:new`, `signal:updated` (dedup update), `trade:open`, `trade:close`, `position:pnl`, `agent:action`, `market:status`
@@ -95,6 +97,21 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 - `fyers_ws_client.py` - WebSocket client: `FyersDataSocket` (threaded SDK bridged to asyncio), auto-fetches prices on start. Maintains `_reverse_map` (Fyers symbol → internal short name) seeded from `FYERS_SYMBOL_MAP` (indices) and extended via `register_symbol_map()` when stock symbols are subscribed. `_fyers_to_internal()` converts all incoming ticks to short names (O(1) lookup). `subscribe_symbols()` accepts optional `symbol_map` for reverse lookup registration. **Important**: `connect()` must be called before `subscribe()` — the SDK's subscribe silently no-ops if the token hasn't been validated yet (which happens during connect).
 - `symbol_master.py` - Downloads Fyers symbol master CSVs (NSE_CM/FO, BSE_CM/FO), parses ~127K symbols, stores gzip-compressed in Redis, provides in-memory search. Refreshed daily.
 - `feed_manager.py` - Aggregates ticks into candles, persists completed 1m candles to `MarketData1m`, publishes to Redis, triggers `strategy_runner.on_candle_close()`. `process_tick()` accepts optional `fyers_alias` — when provided, caches and broadcasts the price under **both** the internal short name and the Fyers-qualified name (dual-name publishing). This ensures DB/strategies use short names while watchlist/positions can look up prices by Fyers symbol.
+
+### `app/research/` - AI Research Agent System
+Multi-agent stock research system. User searches for any stock → orchestrator spawns 6 specialized agents in parallel → synthesis agent combines findings → report persisted to DB.
+- `orchestrator.py` - Coordinates research: creates `asyncio.Task`, launches agents via `asyncio.gather(return_exceptions=True)`, broadcasts progress via WebSocket, persists to `ResearchReport`/`ResearchAgentRun` tables. Supports up to 3 concurrent sessions. Registered in `TaskRegistry`. Persist phase wrapped in try/except with fallback minimal persist. `_sanitize_for_jsonb()` cleans NaN/Infinity/Decimal/datetime before JSONB storage (yfinance returns NaN for missing ratios, PostgreSQL JSONB rejects NaN).
+- `llm_client.py` - Provider-agnostic LLM wrapper. `LLMClient` ABC with `generate()` and `generate_with_search()`. Default impl: `GeminiClient` (google-generativeai SDK). `generate_with_search()` uses Gemini's Google Search grounding for real-time news. Factory: `create_llm_client()` from config.
+- `data_gatherer.py` - Pre-fetches shared context (stock info, 1Y price history, existing fundamentals) into `ResearchContext` dataclass. Runs once before agents to avoid redundant API calls. **On-demand fundamental fetch**: if `stock_fundamentals` row is missing or stale (>24h), calls `_fetch_and_store_symbol()` from `fundamental_data_task` to populate it — so research works for any stock, not just CAN SLIM-configured ones.
+- `report_builder.py` - Template-based fallback report if LLM synthesis fails.
+- `agents/base.py` - `BaseResearchAgent` ABC, `AgentResult` dataclass, `ResearchContext` dataclass. Each agent: fetch data → LLM interpret → return structured findings + summary.
+- `agents/fundamental.py` - Quarterly earnings, annual financials, CAN SLIM scores (reuses `canslim/scoring.py`)
+- `agents/technical.py` - Trend (50/200 DMA), RS rating, RSI, chart patterns (reuses `indicators/` + `base_patterns.py`), support/resistance
+- `agents/oi_derivatives.py` - PCR, max pain, OI buildup. Only runs for F&O-eligible stocks (graceful skip otherwise).
+- `agents/institutional.py` - FII/DII/MF shareholding from NSE API, QoQ trend analysis
+- `agents/news_sentiment.py` - Uses Gemini grounded search for real-time Indian stock news. Returns articles with URLs + sentiment scores.
+- `agents/valuation.py` - PE/PB/PEG ratios, dividend yield, sector comparison from yfinance
+- `agents/synthesis.py` - Combines all agent findings via LLM → executive summary, BUY/HOLD/SELL recommendation, confidence score, actionable entry/SL/target levels
 
 ### `app/agent/` - AI Trading Agent
 - `agent_runner.py` - Main agent loop (2s interval). Singleton. Manages YOLO mode toggle, dispatches to monitor/executor

@@ -146,3 +146,60 @@ export interface WSMessage {
   data: Record<string, unknown>;
   timestamp: string;
 }
+
+// ── Research ──
+
+export interface ResearchReport {
+  id: string;
+  symbol: string;
+  display_name: string;
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "PARTIAL" | "FAILED";
+  recommendation: "BUY" | "HOLD" | "SELL" | "AVOID" | null;
+  confidence_score: number | null;
+  executive_summary: string | null;
+  report_json: Record<string, unknown> | null;
+  report_markdown: string | null;
+  agents_completed: number;
+  agents_total: number;
+  price_at_research: number | null;
+  market_cap_cr: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_seconds: number | null;
+  agent_runs: ResearchAgentRun[];
+  created_at: string;
+}
+
+export interface ResearchAgentRun {
+  agent_name: string;
+  status: string;
+  summary_text: string | null;
+  findings_json: Record<string, unknown> | null;
+  duration_seconds: number | null;
+  error_message: string | null;
+  data_sources_used: string[] | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface ResearchReportListItem {
+  id: string;
+  symbol: string;
+  display_name: string;
+  status: string;
+  recommendation: string | null;
+  confidence_score: number | null;
+  executive_summary: string | null;
+  price_at_research: number | null;
+  duration_seconds: number | null;
+  created_at: string;
+}
+
+export interface ResearchAgentStatus {
+  name: string;
+  description: string;
+  status: "pending" | "running" | "completed" | "failed";
+  summary?: string;
+  duration?: number;
+  error?: string;
+}

@@ -17,6 +17,7 @@ All pages use `'use client'` directive.
 - `trades/page.tsx` - Trade history table with compact monospace rows
 - `signals/page.tsx` - Signal history feed with status badges
 - `settings/page.tsx` - Strategy configuration (is_active, auto_mode, symbols per strategy with autocomplete + group presets), risk parameters. Wired to backend `/api/v1/strategies` endpoints. When a symbol is added via autocomplete, the full Fyers symbol is sent alongside (`symbol_map`) so the backend never needs to reconstruct it. Group-add symbols are auto-resolved server-side via the symbol master.
+- `research/page.tsx` - AI Research: symbol search, real-time agent progress, full report with expandable cards, past reports history
 - `agent/page.tsx` - Agent dashboard: YOLO toggle, autonomy level badge, 5-card status grid, action logs
 - `chart/page.tsx` - Full TradingView chart page with symbol tabs
 
@@ -41,11 +42,19 @@ All pages use `'use client'` directive.
 - `ScanFeed.tsx` - Compact scan log. Shows scan start/end messages with stats. Max-height 160px.
 - `AgentFeed.tsx` - Agent action log as flat list (not nested). Filterable by strategy and action type via dropdowns. Each row: timestamp, action type, symbol, strategy chip badge, P&L. Max-height 300px.
 
+**research/**
+- `ResearchSearch.tsx` - Symbol autocomplete (reuses `searchSymbols` API, filters to EQ), debounced 300ms, "Analyze" button. Dropdown shows equity matches.
+- `ResearchProgress.tsx` - Live agent status tracker: 6 agents shown as dots (pending/running/done/failed) with labels and durations. Updates in real-time from WebSocket `research:*` events.
+- `ResearchReport.tsx` - Full report display: header with recommendation badge + confidence meter, executive summary, ActionableLevels card, risks/catalysts, expandable section cards (Fundamental, Technical, OI, Institutional, News, Valuation). News section shows articles with source URLs.
+- `ReportHistory.tsx` - Past reports list with symbol, recommendation badge, confidence, and relative time.
+- `ActionableLevels.tsx` - Visual card showing entry zone, SL, T1/T2, R:R ratio, timeframe, long-term suitability.
+- `RecommendationBadge.tsx` - BUY/HOLD/SELL badge (color-coded) + confidence percentage bar.
+
 **positions/**
 - `ActivePositions.tsx` - Dense table of open positions with unrealized P&L, SL distance warnings, expandable detail rows. **Live P/L**: computes P/L reactively from `prices` store using `pos.fyers_option_symbol || pos.symbol` as price key. Subscribes position symbols on WebSocket for real-time ticks.
 
 ### `src/hooks/` - Custom Hooks
-- `useWebSocket.ts` - WebSocket connection to `ws://localhost:8080/ws`. Auto-reconnect. Subscribes to all 5 index symbols on connect. Handles `signal:new`, `signal:updated` (dedup updates), and `trade:open` (adds new position to store). Exported `subscribeSymbols(symbols)` helper — uses module-level shared WS ref, callable from any component without needing the wsRef. Used by Watchlist and ActivePositions to subscribe custom symbols.
+- `useWebSocket.ts` - WebSocket connection to `ws://localhost:8080/ws`. Auto-reconnect. Subscribes to all 5 index symbols on connect. Handles `signal:new`, `signal:updated` (dedup updates), `trade:open` (adds new position to store), and `research:*` events (started, agent_started, agent_completed, agent_failed, completed, failed → updates Zustand research slice). Exported `subscribeSymbols(symbols)` helper — uses module-level shared WS ref, callable from any component without needing the wsRef.
 
 ### `src/lib/` - Utilities
 - `api.ts` - REST client: trades, signals, positions, agent, risk, market data, strategies. Error responses parse backend `detail` field for user-facing messages. Key functions: `getAllPrices()`, `refreshQuotes()`, `searchSymbols()`, `toggleYolo()`, `evaluateStrategyBatch()`, `toggleAutoMode()`, `updateStrategy()`

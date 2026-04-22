@@ -35,14 +35,15 @@ stockTrading/
 ├── scripts/               # dev.sh, stop.sh, reset.sh
 ├── backend/               # Python FastAPI backend (see backend/CLAUDE.md)
 │   ├── app/
-│   │   ├── api/v1/        # REST endpoints (10 routers, incl. watchlist, strategies, tasks)
+│   │   ├── api/v1/        # REST endpoints (11 routers, incl. watchlist, strategies, tasks, research)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
-│   │   ├── models/        # SQLAlchemy ORM models (10 tables incl. stock_fundamentals, fundamental_history; strategy_configs has symbol_map)
+│   │   ├── models/        # SQLAlchemy ORM models (12 tables incl. research_reports, research_agent_runs)
 │   │   ├── schemas/       # Pydantic request/response schemas
 │   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill)
 │   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
 │   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels)
 │   │   ├── data_feed/     # Fyers API (auth, REST via API_URL/DATA_URL, WebSocket, feed manager, symbol master)
+│   │   ├── research/      # AI research agent system (orchestrator, 6 sub-agents, LLM client, data gatherer)
 │   │   ├── agent/         # AI trading agent (monitor, execute, notify)
 │   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP incl. VIX), enums, utils, task_registry
 │   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh)
@@ -50,11 +51,11 @@ stockTrading/
 │   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
     └── src/
-        ├── app/           # 6 pages (dashboard, trades, signals, settings, agent, chart)
-        ├── components/    # React components by domain (15 components incl. ScannerHeader, ScanFeed)
-        ├── hooks/         # useWebSocket (auto-reconnect, event subscriptions)
+        ├── app/           # 7 pages (dashboard, trades, signals, research, settings, agent, chart)
+        ├── components/    # React components by domain (21 components incl. research/ResearchSearch, ResearchProgress, ResearchReport)
+        ├── hooks/         # useWebSocket (auto-reconnect, event subscriptions, research events)
         ├── lib/           # API client, types, formatters, constants
-        └── store/         # Zustand store (prices, positions, signals, scanLogs, risk, agent)
+        └── store/         # Zustand store (prices, positions, signals, scanLogs, risk, agent, research)
 ```
 
 ## Trading Parameters
