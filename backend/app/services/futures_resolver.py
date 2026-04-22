@@ -148,42 +148,28 @@ async def _find_futures_symbol(symbol: str, expiry: date) -> str | None:
             results = symbol_master.search(symbol, limit=20)
 
         for entry in results:
-            sym_name = entry.get("symbol", "")
-            seg = entry.get("segment", "")
+            fyers_sym = entry.get("s", "")  # Fyers symbol, e.g. "NSE:ADANIPORTS26APRFUT"
+            seg = entry.get("g", "")        # Segment: EQ/FUT/OPT
 
             # Check it's a futures contract
-            if "FUT" not in sym_name.upper() and seg != "FUT":
+            if seg != "FUT" and "FUT" not in fyers_sym.upper():
                 continue
 
-            # Check expiry matches
-            entry_expiry = entry.get("expiry")
-            if entry_expiry:
-                if isinstance(entry_expiry, str):
-                    from datetime import datetime as _dt
-                    try:
-                        # Symbol master stores expiry as "DD Mon YYYY" or epoch
-                        for fmt in ("%d %b %Y", "%Y-%m-%d"):
-                            try:
-                                entry_expiry_date = _dt.strptime(entry_expiry, fmt).date()
-                                break
-                            except ValueError:
-                                continue
-                        else:
-                            continue
-                    except ValueError:
-                        continue
-                elif isinstance(entry_expiry, (int, float)):
-                    from datetime import datetime as _dt
-                    entry_expiry_date = _dt.fromtimestamp(entry_expiry).date()
-                else:
-                    entry_expiry_date = entry_expiry
+            # Check expiry matches — symbol master stores expiry as "DD Mon YYYY"
+            entry_expiry_str = entry.get("x", "")
+            if entry_expiry_str:
+                from datetime import datetime as _dt
+                try:
+                    entry_expiry_date = _dt.strptime(entry_expiry_str, "%d %b %Y").date()
+                except ValueError:
+                    continue
 
                 if entry_expiry_date == expiry:
-                    return sym_name
+                    return fyers_sym
 
-            # If no expiry match, try matching by symbol pattern
-            if symbol.upper() in sym_name.upper() and "FUT" in sym_name.upper():
-                return sym_name
+            # If no expiry in data, try matching by symbol pattern
+            if symbol.upper() in fyers_sym.upper() and "FUT" in fyers_sym.upper():
+                return fyers_sym
 
     except Exception:
         logger.exception("Error searching symbol master for %s FUT", symbol)
@@ -246,7 +232,7 @@ async def _get_lot_size(symbol: str, fyers_symbol: str) -> int:
         if symbol_master.is_loaded:
             results = symbol_master.search(fyers_symbol, limit=5)
             for entry in results:
-                lot = entry.get("lot_size") or entry.get("minimum_lot_size")
+                lot = entry.get("l")  # lot size in symbol master
                 if lot and int(lot) > 0:
                     return int(lot)
     except Exception:

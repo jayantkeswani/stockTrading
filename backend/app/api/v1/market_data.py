@@ -75,7 +75,7 @@ async def get_price(symbol: str):
 @router.get("/ohlcv/{symbol}")
 async def get_ohlcv(
     symbol: str,
-    resolution: str = Query(default="5", regex="^(1|5|15|60|D)$"),
+    resolution: str = Query(default="5", pattern="^(1|5|15|60|D)$"),
     days: int = Query(default=5, le=365),
 ):
     """Fetch OHLCV candles for a symbol via Fyers history API.

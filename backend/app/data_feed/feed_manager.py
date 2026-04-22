@@ -24,11 +24,22 @@ logger = logging.getLogger(__name__)
 
 
 class FeedManager:
+    # Limit concurrent DB-heavy operations (candle persist + strategy eval)
+    # to avoid exhausting the connection pool when many symbols close candles
+    # at the same minute boundary.
+    _db_semaphore: asyncio.Semaphore | None = None
+
     def __init__(self):
         self._running = False
         self._subscribed_symbols: set[str] = set()
         self._current_candles: dict[str, dict] = {}  # symbol -> candle being built
         self._task: asyncio.Task | None = None
+
+    @property
+    def db_semaphore(self) -> asyncio.Semaphore:
+        if self._db_semaphore is None:
+            self._db_semaphore = asyncio.Semaphore(10)
+        return self._db_semaphore
 
     async def start(self, symbols: list[str]):
         """Start receiving price data for given symbols."""
@@ -163,20 +174,21 @@ class FeedManager:
             if isinstance(ts, str):
                 ts = datetime.fromisoformat(ts)
 
-            async with async_session_factory() as session:
-                stmt = pg_insert(MarketData1m).values(
-                    symbol=symbol,
-                    timestamp=ts,
-                    open=Decimal(str(candle["open"])),
-                    high=Decimal(str(candle["high"])),
-                    low=Decimal(str(candle["low"])),
-                    close=Decimal(str(candle["close"])),
-                    volume=int(candle["volume"]),
-                ).on_conflict_do_nothing(
-                    constraint="uq_market_data_symbol_time",
-                )
-                await session.execute(stmt)
-                await session.commit()
+            async with self.db_semaphore:
+                async with async_session_factory() as session:
+                    stmt = pg_insert(MarketData1m).values(
+                        symbol=symbol,
+                        timestamp=ts,
+                        open=Decimal(str(candle["open"])),
+                        high=Decimal(str(candle["high"])),
+                        low=Decimal(str(candle["low"])),
+                        close=Decimal(str(candle["close"])),
+                        volume=int(candle["volume"]),
+                    ).on_conflict_do_nothing(
+                        constraint="uq_market_data_symbol_time",
+                    )
+                    await session.execute(stmt)
+                    await session.commit()
         except Exception:
             logger.exception("Failed to persist candle for %s", symbol)
 
@@ -184,7 +196,9 @@ class FeedManager:
         """Trigger strategy evaluation only for auto-mode strategies that cover this symbol."""
         try:
             from app.services.strategy_runner import get_auto_strategies_for_symbol
-            auto_strategies = await get_auto_strategies_for_symbol(symbol)
+
+            async with self.db_semaphore:
+                auto_strategies = await get_auto_strategies_for_symbol(symbol)
             if not auto_strategies:
                 return
             await strategy_runner.on_candle_close(

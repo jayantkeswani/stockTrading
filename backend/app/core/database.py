@@ -7,8 +7,10 @@ from app.config import settings
 engine = create_async_engine(
     settings.database_url,
     echo=False,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=20,
+    max_overflow=40,
+    pool_timeout=60,
+    pool_recycle=1800,
 )
 
 async_session_factory = async_sessionmaker(
