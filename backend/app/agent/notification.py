@@ -8,6 +8,7 @@ import logging
 
 import httpx
 
+from app.config import settings
 from app.core.retry import async_retry
 
 logger = logging.getLogger(__name__)

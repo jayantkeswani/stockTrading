@@ -22,10 +22,10 @@ from app.core.constants import (
     MARKET_OPEN,
 )
 from app.services.position_sizing import calculate_lots
+from app.services.live_price import get_live_price
 from app.services.trading_config import get_trading_config
 from app.core.database import async_session_factory
 from app.core.enums import AgentActionType, SignalStatus, TradeStatus
-from app.core.redis import get_cached_price
 from app.core.utils import now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
@@ -90,19 +90,22 @@ async def auto_execute_signal(signal_id) -> dict | None:
         # Determine lot size and quantity
         is_futures = signal.instrument_type == "FUTURE"
         if is_futures:
-            # For futures, lot size comes from the signal indicators (set by futures_resolver)
-            lot_size = (signal.indicators or {}).get("futures_lot_size", 1)
+            lot_size = int((signal.indicators or {}).get("futures_lot_size", 1))
         else:
             lot_size = LOT_SIZES.get(signal.symbol, 75)
 
         cfg = await get_trading_config()
-        lots = calculate_lots(
-            capital=cfg.capital,
-            risk_per_trade_pct=cfg.max_risk_per_trade_pct,
-            entry_price=float(signal.entry_price),
-            stop_loss=float(signal.stop_loss),
-            lot_size=lot_size,
-        )
+        # Use snapshotted lots (frozen at signal generation) or fall back to compute
+        if signal.lots is not None:
+            lots = signal.lots
+        else:
+            lots = calculate_lots(
+                capital=cfg.capital,
+                risk_per_trade_pct=cfg.max_risk_per_trade_pct,
+                entry_price=float(signal.entry_price),
+                stop_loss=float(signal.stop_loss),
+                lot_size=lot_size,
+            )
         quantity = lots * lot_size
 
         now = now_ist()
@@ -125,6 +128,18 @@ async def auto_execute_signal(signal_id) -> dict | None:
         # Use futures symbol if available, otherwise option symbol
         trading_symbol = signal.fyers_futures_symbol or signal.fyers_option_symbol
 
+        # Fetch live price — YOLO executes at current market price, not stale premium
+        if trading_symbol:
+            try:
+                live_entry = await get_live_price(trading_symbol)
+            except Exception:
+                logger.warning(
+                    "Live price unavailable for %s, falling back to signal premium", trading_symbol
+                )
+                live_entry = float(signal.entry_price)
+        else:
+            live_entry = float(signal.entry_price)
+
         # Create Trade
         trade = Trade(
             signal_id=signal.id,
@@ -136,7 +151,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             side="BUY",
             quantity=quantity,
             lots=lots,
-            entry_price=signal.entry_price,
+            entry_price=live_entry,
             stop_loss=signal.stop_loss,
             target_price=signal.target_price,
             status=TradeStatus.OPEN.value,
@@ -157,7 +172,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             expiry_date=signal.expiry_date,
             lots=lots,
             quantity=quantity,
-            entry_price=signal.entry_price,
+            entry_price=live_entry,
             stop_loss=signal.stop_loss,
             target_price=signal.target_price,
             fyers_option_symbol=trading_symbol,
@@ -205,19 +220,6 @@ async def auto_execute_signal(signal_id) -> dict | None:
         except Exception:
             logger.warning("Could not subscribe to %s on websocket", trading_symbol)
 
-    # Fetch current price so the frontend shows correct P&L immediately
-    current_price = float(signal.entry_price)
-    unrealized_pnl = 0.0
-    if trading_symbol:
-        try:
-            cached = await get_cached_price(trading_symbol)
-            if cached and cached.get("ltp"):
-                ltp = float(cached["ltp"])
-                current_price = ltp
-                unrealized_pnl = (ltp - float(signal.entry_price)) * quantity
-        except Exception:
-            pass
-
     # Broadcast trade:open so the position appears in the frontend immediately
     await ws_manager.broadcast(
         "trade:open",
@@ -231,9 +233,9 @@ async def auto_execute_signal(signal_id) -> dict | None:
             "expiry_date": str(signal.expiry_date),
             "lots": lots,
             "quantity": quantity,
-            "entry_price": float(signal.entry_price),
-            "current_price": current_price,
-            "unrealized_pnl": unrealized_pnl,
+            "entry_price": live_entry,
+            "current_price": live_entry,
+            "unrealized_pnl": 0.0,
             "stop_loss": float(signal.stop_loss),
             "target_price": float(signal.target_price) if signal.target_price else None,
             "strategy_name": signal.strategy_name,
@@ -250,7 +252,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
         "symbol": signal.symbol,
         "signal_type": signal.signal_type,
         "strike_price": float(signal.strike_price),
-        "entry_price": float(signal.entry_price),
+        "entry_price": live_entry,
         "lots": lots,
     }
     await ws_manager.broadcast("agent:auto_executed", action)
@@ -259,7 +261,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
         symbol=signal.symbol,
         signal_type=signal.signal_type,
         strategy_name=signal.strategy_name,
-        entry=float(signal.entry_price),
+        entry=live_entry,
         stop_loss=float(signal.stop_loss),
         target=float(signal.target_price) if signal.target_price else 0,
         strike=float(signal.strike_price) if signal.strike_price else None,
@@ -270,11 +272,11 @@ async def auto_execute_signal(signal_id) -> dict | None:
     )
 
     logger.info(
-        "YOLO auto-executed: %s %s %s @ %s (%d lots)",
+        "YOLO auto-executed: %s %s %s @ %.2f (%d lots)",
         signal.signal_type,
         signal.symbol,
         signal.strike_price,
-        signal.entry_price,
+        live_entry,
         lots,
     )
     return action

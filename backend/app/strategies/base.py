@@ -3,7 +3,6 @@
 All strategies must subclass BaseStrategy and implement:
 - evaluate(): Check if entry conditions are met, return a signal or None
 - should_exit(): Check if exit conditions are met for an open position
-- get_position_size(): Calculate lots based on capital and risk params
 """
 
 from abc import ABC, abstractmethod
@@ -43,6 +42,10 @@ class StrategySignal:
     # Set by futures_resolver post-processing (futures only)
     fyers_futures_symbol: str | None = None  # Full Fyers symbol, e.g. "NSE:TCS26APRFUT"
     futures_resolved: bool = False
+    # Set by strategy_runner post-resolution (snapshot of sizing inputs)
+    lots: int | None = None
+    quantity: int | None = None
+    sizing_meta: dict | None = None
 
 
 @dataclass
@@ -76,6 +79,7 @@ class BaseStrategy(ABC):
 
     name: StrategyName
     holding_type: str = "INTRADAY"  # Override to "POSITIONAL" for multi-day strategies
+    max_lots: int | None = None  # Override in subclass to cap position size
 
     @abstractmethod
     def evaluate(self, ctx: MarketContext) -> StrategySignal | None:
@@ -99,18 +103,3 @@ class BaseStrategy(ABC):
         """
         ...
 
-    @abstractmethod
-    def get_position_size(
-        self,
-        capital: float,
-        risk_per_trade_pct: float,
-        entry_price: float,
-        stop_loss: float,
-        lot_size: int,
-        vix_multiplier: float,
-    ) -> int:
-        """Calculate number of lots to trade.
-
-        Returns number of lots (minimum 1).
-        """
-        ...

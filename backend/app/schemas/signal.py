@@ -26,5 +26,25 @@ class SignalResponse(BaseModel):
     executed_trade_id: uuid.UUID | None = None
     generated_at: datetime
     expires_at: datetime | None = None
+    lots: int | None = None
+    quantity: int | None = None
+    fyers_option_symbol: str | None = None
+    fyers_futures_symbol: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class SignalPreviewResponse(BaseModel):
+    signal_id: uuid.UUID
+    lots: int
+    quantity: int
+    lot_size: int
+    entry_price: float  # live price at preview time
+    stop_loss: float
+    target_price: float | None
+    capital_at_risk: float
+    sizing_meta: dict | None = None
+
+
+class ExecuteSignalRequest(BaseModel):
+    lots: int | None = None  # Optional override; uses signal.lots if omitted

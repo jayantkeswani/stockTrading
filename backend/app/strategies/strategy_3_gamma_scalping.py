@@ -21,6 +21,3 @@ class GammaScalpingStrategy(BaseStrategy):
 
     def should_exit(self, ctx, entry_price, stop_loss, target_price) -> ExitSignal | None:
         return None
-
-    def get_position_size(self, capital, risk_per_trade_pct, entry_price, stop_loss, lot_size, vix_multiplier=1.0) -> int:
-        return 1

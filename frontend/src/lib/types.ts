@@ -84,6 +84,22 @@ export interface Signal {
   executable: boolean;
   blocked_reason: string | null;
   generated_at: string;
+  lots: number | null;
+  quantity: number | null;
+  fyers_option_symbol: string | null;
+  fyers_futures_symbol: string | null;
+}
+
+export interface SignalPreview {
+  signal_id: string;
+  lots: number;
+  quantity: number;
+  lot_size: number;
+  entry_price: number;
+  stop_loss: number;
+  target_price: number | null;
+  capital_at_risk: number;
+  sizing_meta: Record<string, unknown> | null;
 }
 
 export interface RiskDashboard {

@@ -122,10 +122,21 @@ If no valid index-level SL/target can be found (e.g., insufficient market data),
 - **Invalidation:** Close if underlying index price closes below VWAP (for calls) or above VWAP (for puts) on 5-min
 
 ## Position Sizing
-- Base: 2% of capital per trade = Rs 20,000 risk
-- If premium = Rs 250, SL at Rs 170, risk per lot = Rs 80 × lot_size
-- NIFTY: Rs 80 × 75 = Rs 6,000 per lot → 3 lots max
-- Adjust for VIX: if VIX > 18, reduce to 2 lots
+Computed by `calculate_lots()` in `backend/app/services/position_sizing.py`:
+```
+risk_amount = capital × risk_pct          # e.g. 10L × 2% = ₹20,000
+risk_per_lot = |entry − SL| × lot_size   # e.g. ₹80 × 75 = ₹6,000
+lots = int(risk_amount / risk_per_lot) × vix_multiplier
+lots = max(1, min(lots, 5))               # hard cap: max_lots = 5
+```
+
+VIX multiplier (from `vix_to_multiplier()`):
+- VIX < 14 → 1.1× (cheap options, slightly more exposure)
+- VIX 14–18 → 1.0× (normal)
+- VIX 18–22 → 0.9× (elevated)
+- VIX > 22 → 0.8× (high volatility, reduce exposure)
+
+Sizing is **snapshotted onto the signal** at resolution time so the preview modal and actual execution always use the same lot count. Users can override lots in the confirm modal before submitting.
 
 ## Risk Filters (Do NOT trade when):
 - Daily drawdown already at 3%+ → reduce to 1 lot max

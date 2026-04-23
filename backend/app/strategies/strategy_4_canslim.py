@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 class CANSLIMStrategy(BaseStrategy):
     name = StrategyName.CAN_SLIM
     holding_type = "POSITIONAL"
+    max_lots = CANSLIM_MAX_POSITIONAL_LOTS
 
     def evaluate(self, ctx: MarketContext) -> StrategySignal | None:
         """Evaluate CAN SLIM breakout entry conditions.
@@ -225,25 +226,3 @@ class CANSLIMStrategy(BaseStrategy):
 
         return None
 
-    def get_position_size(
-        self,
-        capital: float,
-        risk_per_trade_pct: float,
-        entry_price: float,
-        stop_loss: float,
-        lot_size: int,
-        vix_multiplier: float,
-    ) -> int:
-        """Calculate number of lots for futures position.
-
-        Risk-based sizing: risk_amount / (SL_distance * lot_size).
-        Capped at CANSLIM_MAX_POSITIONAL_LOTS to manage margin.
-        """
-        risk_amount = capital * (risk_per_trade_pct / 100)
-        risk_per_lot = abs(entry_price - stop_loss) * lot_size
-
-        if risk_per_lot <= 0:
-            return 1
-
-        lots = int(risk_amount / risk_per_lot)
-        return max(1, min(lots, CANSLIM_MAX_POSITIONAL_LOTS))

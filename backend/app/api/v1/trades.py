@@ -10,6 +10,7 @@ from app.core.enums import TradeStatus
 from app.core.utils import now_ist
 from app.models.trade import Trade
 from app.schemas.trade import TradeCloseRequest, TradeResponse, TradeSummaryResponse
+from app.websocket.manager import ws_manager
 
 router = APIRouter()
 
@@ -111,4 +112,14 @@ async def close_trade(
         )
 
     await db.flush()
+
+    await ws_manager.broadcast(
+        "position:closed",
+        {
+            "position_id": None,
+            "trade_id": str(trade_id),
+            "exit_price": float(trade.exit_price) if trade.exit_price else 0.0,
+            "pnl": float(trade.pnl) if trade.pnl else 0.0,
+        },
+    )
     return trade

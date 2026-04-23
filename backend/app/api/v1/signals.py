@@ -8,14 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import LOT_SIZES
 from app.services.position_sizing import calculate_lots
 from app.services.trading_config import get_trading_config
+from app.services.live_price import get_live_price
 from app.core.database import get_db
 from app.core.enums import AgentActionType, SignalStatus, TradeStatus
-from app.core.redis import get_cached_price
 from app.core.utils import now_ist
 from app.models.position import Position
 from app.models.signal import Signal
 from app.models.trade import Trade
-from app.schemas.signal import SignalResponse
+from app.schemas.signal import ExecuteSignalRequest, SignalPreviewResponse, SignalResponse
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -51,8 +51,67 @@ async def active_signals(db: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 
+@router.get("/{signal_id}/preview", response_model=SignalPreviewResponse)
+async def preview_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Return sizing preview for a signal including live current entry price."""
+    result = await db.execute(select(Signal).where(Signal.id == signal_id))
+    signal = result.scalar_one_or_none()
+    if not signal:
+        raise HTTPException(status_code=404, detail="Signal not found")
+    if signal.status != SignalStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Signal is not pending")
+
+    is_futures = signal.instrument_type == "FUTURE"
+    if is_futures:
+        lot_size = int((signal.indicators or {}).get("futures_lot_size", 1))
+    else:
+        lot_size = LOT_SIZES.get(signal.symbol, 75)
+
+    # Use snapshotted lots if available, else compute fresh
+    if signal.lots is not None:
+        lots = signal.lots
+    else:
+        cfg = await get_trading_config()
+        lots = calculate_lots(
+            capital=cfg.capital,
+            risk_per_trade_pct=cfg.max_risk_per_trade_pct,
+            entry_price=float(signal.entry_price),
+            stop_loss=float(signal.stop_loss),
+            lot_size=lot_size,
+        )
+
+    quantity = lots * lot_size
+    trading_symbol = signal.fyers_futures_symbol or signal.fyers_option_symbol
+
+    # Fetch live entry price
+    if trading_symbol:
+        live_entry = await get_live_price(trading_symbol)
+    else:
+        live_entry = float(signal.entry_price)
+
+    sl = float(signal.stop_loss)
+    target = float(signal.target_price) if signal.target_price else None
+    capital_at_risk = abs(live_entry - sl) * quantity
+
+    return SignalPreviewResponse(
+        signal_id=signal.id,
+        lots=lots,
+        quantity=quantity,
+        lot_size=lot_size,
+        entry_price=live_entry,
+        stop_loss=sl,
+        target_price=target,
+        capital_at_risk=capital_at_risk,
+        sizing_meta=signal.sizing_meta,
+    )
+
+
 @router.post("/{signal_id}/execute")
-async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def execute_signal(
+    signal_id: uuid.UUID,
+    body: ExecuteSignalRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(Signal).where(Signal.id == signal_id))
     signal = result.scalar_one_or_none()
     if not signal:
@@ -73,21 +132,28 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
             detail=f"Open position already exists for {label}",
         )
 
-    # Determine lot size and quantity
+    # Determine lot size
     is_futures = signal.instrument_type == "FUTURE"
     if is_futures:
-        lot_size = (signal.indicators or {}).get("futures_lot_size", 1)
+        lot_size = int((signal.indicators or {}).get("futures_lot_size", 1))
     else:
         lot_size = LOT_SIZES.get(signal.symbol, 75)
 
-    cfg = await get_trading_config()
-    lots = calculate_lots(
-        capital=cfg.capital,
-        risk_per_trade_pct=cfg.max_risk_per_trade_pct,
-        entry_price=float(signal.entry_price),
-        stop_loss=float(signal.stop_loss),
-        lot_size=lot_size,
-    )
+    # Use user-supplied lots override → snapshotted lots → fallback compute
+    if body and body.lots is not None:
+        lots = max(1, body.lots)
+    elif signal.lots is not None:
+        lots = signal.lots
+    else:
+        cfg = await get_trading_config()
+        lots = calculate_lots(
+            capital=cfg.capital,
+            risk_per_trade_pct=cfg.max_risk_per_trade_pct,
+            entry_price=float(signal.entry_price),
+            stop_loss=float(signal.stop_loss),
+            lot_size=lot_size,
+        )
+
     quantity = lots * lot_size
     now = now_ist()
 
@@ -96,7 +162,6 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
         option_type = None
         from app.strategies.registry import get_strategy
         from app.core.enums import StrategyName
-
         try:
             strat = get_strategy(StrategyName(signal.strategy_name))
             position_type = getattr(strat, "holding_type", "INTRADAY") if strat else "INTRADAY"
@@ -107,6 +172,14 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
         position_type = "INTRADAY"
 
     trading_symbol = signal.fyers_futures_symbol or signal.fyers_option_symbol
+
+    # Use live price as entry — never the stale signal premium
+    if trading_symbol:
+        entry_price = await get_live_price(trading_symbol)
+    else:
+        entry_price = float(signal.entry_price)
+
+    cfg = await get_trading_config()
 
     # Create Trade
     trade = Trade(
@@ -119,7 +192,7 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
         side="BUY",
         quantity=quantity,
         lots=lots,
-        entry_price=signal.entry_price,
+        entry_price=entry_price,
         stop_loss=signal.stop_loss,
         target_price=signal.target_price,
         status=TradeStatus.OPEN.value,
@@ -140,7 +213,7 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
         expiry_date=signal.expiry_date,
         lots=lots,
         quantity=quantity,
-        entry_price=signal.entry_price,
+        entry_price=entry_price,
         stop_loss=signal.stop_loss,
         target_price=signal.target_price,
         fyers_option_symbol=trading_symbol,
@@ -162,26 +235,11 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
     if trading_symbol:
         try:
             from app.data_feed.fyers_ws_client import fyers_ws_client
-
             await fyers_ws_client.subscribe_symbols([trading_symbol])
         except Exception:
             logger.warning("Could not subscribe to %s on websocket", trading_symbol)
 
-    # Fetch current market price for the trading symbol so the frontend
-    # can show correct P&L immediately (before the first live tick arrives).
-    current_price = float(signal.entry_price)
-    unrealized_pnl = 0.0
-    if trading_symbol:
-        try:
-            cached = await get_cached_price(trading_symbol)
-            if cached and cached.get("ltp"):
-                ltp = float(cached["ltp"])
-                current_price = ltp
-                unrealized_pnl = (ltp - float(signal.entry_price)) * quantity
-        except Exception:
-            pass
-
-    # Broadcast trade:open with full position data for frontend
+    # Broadcast trade:open with live entry price
     await ws_manager.broadcast(
         "trade:open",
         {
@@ -194,9 +252,9 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
             "expiry_date": str(signal.expiry_date),
             "lots": lots,
             "quantity": quantity,
-            "entry_price": float(signal.entry_price),
-            "current_price": current_price,
-            "unrealized_pnl": unrealized_pnl,
+            "entry_price": entry_price,
+            "current_price": entry_price,
+            "unrealized_pnl": 0.0,
             "stop_loss": float(signal.stop_loss),
             "target_price": float(signal.target_price) if signal.target_price else None,
             "strategy_name": signal.strategy_name,
@@ -207,11 +265,11 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
     )
 
     logger.info(
-        "Manual execute: %s %s %s @ %s (%d lots)",
+        "Manual execute: %s %s %s @ %.2f (%d lots)",
         signal.signal_type,
         signal.symbol,
         signal.strike_price,
-        signal.entry_price,
+        entry_price,
         lots,
     )
 

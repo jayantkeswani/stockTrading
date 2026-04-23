@@ -101,8 +101,13 @@ export const api = {
     return request(`/api/v1/signals?${query}`);
   },
   getActiveSignals: () => request(`/api/v1/signals/active`),
-  executeSignal: (id: string) =>
-    request(`/api/v1/signals/${id}/execute`, { method: "POST" }),
+  previewSignal: (id: string) =>
+    request<import("./types").SignalPreview>(`/api/v1/signals/${id}/preview`),
+  executeSignal: (id: string, opts?: { lots?: number }) =>
+    request(`/api/v1/signals/${id}/execute`, {
+      method: "POST",
+      body: opts ? JSON.stringify({ lots: opts.lots ?? null }) : undefined,
+    }),
   rejectSignal: (id: string) =>
     request(`/api/v1/signals/${id}/reject`, { method: "POST" }),
 

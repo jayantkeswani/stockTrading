@@ -85,6 +85,12 @@ interface AppState {
   setSelectedResearchId: (id: string | null) => void;
   setResearchReports: (reports: ResearchReportListItem[]) => void;
 
+  // Watchlist
+  watchlistItems: Array<{ symbol: string; display: string; segment: string }>;
+  setWatchlistItems: (items: Array<{ symbol: string; display: string; segment: string }>) => void;
+  addWatchlistItem: (item: { symbol: string; display: string; segment: string }) => void;
+  removeWatchlistItem: (symbol: string) => void;
+
   // UI
   selectedSymbol: string;
   setSelectedSymbol: (symbol: string) => void;
@@ -224,6 +230,19 @@ export const useStore = create<AppState>()(
       setResearchReports: (reports) => set({ researchReports: reports }),
 
       // UI
+      watchlistItems: [],
+      setWatchlistItems: (items) => set({ watchlistItems: items }),
+      addWatchlistItem: (item) =>
+        set((state) => ({
+          watchlistItems: state.watchlistItems.some((w) => w.symbol === item.symbol)
+            ? state.watchlistItems
+            : [...state.watchlistItems, item],
+        })),
+      removeWatchlistItem: (symbol) =>
+        set((state) => ({
+          watchlistItems: state.watchlistItems.filter((w) => w.symbol !== symbol),
+        })),
+
       selectedSymbol: "NIFTY",
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
       activeTimeframe: "5m",

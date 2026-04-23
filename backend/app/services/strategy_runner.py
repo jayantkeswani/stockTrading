@@ -21,9 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
     IST,
+    LOT_SIZES,
     MARKET_OPEN,
     VIX_EXTREME,
 )
+from app.services.position_sizing import calculate_lots, vix_to_multiplier
 from app.services.trading_config import get_trading_config
 from app.core.database import async_session_factory
 from app.core.enums import InstrumentType, SignalStatus, StrategyName
@@ -825,10 +827,14 @@ class StrategyRunner:
         if signal.index_target is not None:
             signal.indicators["index_target"] = signal.index_target
 
+        # Snapshot position sizing at resolution time so preview == execute
+        await self._snapshot_sizing(signal, ctx)
+
         logger.info(
-            "Option resolved: %s %s strike=%.0f expiry=%s premium=%.2f",
+            "Option resolved: %s %s strike=%.0f expiry=%s premium=%.2f lots=%s",
             signal.symbol, signal.fyers_option_symbol,
             resolution.strike_price, resolution.expiry_date, resolution.option_premium,
+            signal.lots,
         )
         return signal, executable, blocked_reason
 
@@ -890,10 +896,14 @@ class StrategyRunner:
         signal.indicators["futures_expiry"] = str(resolution.expiry_date)
         signal.indicators["futures_margin"] = resolution.margin_required
 
+        # Snapshot position sizing at resolution time so preview == execute
+        await self._snapshot_sizing(signal, ctx)
+
         logger.info(
-            "Futures resolved: %s → %s expiry=%s ltp=%.2f lot=%d",
+            "Futures resolved: %s → %s expiry=%s ltp=%.2f lot=%d lots=%s",
             signal.symbol, resolution.fyers_symbol,
             resolution.expiry_date, resolution.ltp, resolution.lot_size,
+            signal.lots,
         )
         return signal, executable, blocked_reason
 
@@ -1067,6 +1077,10 @@ class StrategyRunner:
                     existing.fyers_option_symbol = signal.fyers_option_symbol
                 if signal.fyers_futures_symbol:
                     existing.fyers_futures_symbol = signal.fyers_futures_symbol
+                if signal.lots is not None:
+                    existing.lots = signal.lots
+                    existing.quantity = signal.quantity
+                    existing.sizing_meta = signal.sizing_meta
 
                 await session.commit()
                 await session.refresh(existing)
@@ -1081,6 +1095,58 @@ class StrategyRunner:
         except Exception:
             logger.exception("Error during signal dedup for %s", signal.symbol)
             return None
+
+    async def _snapshot_sizing(self, signal: StrategySignal, ctx: MarketContext) -> None:
+        """Compute and store lot sizing on the signal so preview == execute.
+
+        Wrapped in a broad try/except so a config miss never blocks signal generation.
+        """
+        try:
+            from app.strategies.registry import get_strategy
+
+            is_futures = (
+                signal.instrument_type.value == "FUTURE"
+                if hasattr(signal.instrument_type, "value")
+                else signal.instrument_type == "FUTURE"
+            )
+            if is_futures:
+                lot_size = int((signal.indicators or {}).get("futures_lot_size", 1))
+            else:
+                lot_size = LOT_SIZES.get(signal.symbol, 75)
+
+            try:
+                strat = get_strategy(signal.strategy_name)
+                max_lots = getattr(strat, "max_lots", None)
+            except Exception:
+                max_lots = None
+
+            vix_mult = vix_to_multiplier(getattr(ctx, "india_vix", None))
+            cfg = await get_trading_config()
+
+            lots = calculate_lots(
+                capital=cfg.capital,
+                risk_per_trade_pct=cfg.max_risk_per_trade_pct,
+                entry_price=float(signal.entry_price),
+                stop_loss=float(signal.stop_loss),
+                lot_size=lot_size,
+                vix_multiplier=vix_mult,
+                max_lots=max_lots,
+            )
+            signal.lots = lots
+            signal.quantity = lots * lot_size
+            signal.sizing_meta = {
+                "capital": cfg.capital,
+                "risk_pct": cfg.max_risk_per_trade_pct,
+                "vix": getattr(ctx, "india_vix", None),
+                "vix_multiplier": vix_mult,
+                "max_lots": max_lots,
+                "lot_size": lot_size,
+            }
+        except Exception:
+            logger.debug(
+                "Could not snapshot sizing for %s — will be computed at execute time",
+                signal.symbol,
+            )
 
     async def _persist_signal(
         self,
@@ -1121,6 +1187,9 @@ class StrategyRunner:
                     ),
                     fyers_option_symbol=signal.fyers_option_symbol,
                     fyers_futures_symbol=signal.fyers_futures_symbol,
+                    lots=signal.lots,
+                    quantity=signal.quantity,
+                    sizing_meta=signal.sizing_meta,
                 )
                 session.add(record)
                 await session.commit()
@@ -1163,6 +1232,8 @@ class StrategyRunner:
             "executable": executable,
             "blocked_reason": blocked_reason,
             "generated_at": generated_at.isoformat(),
+            "lots": signal.lots,
+            "quantity": signal.quantity,
         }
         await ws_manager.broadcast(event, payload)
 

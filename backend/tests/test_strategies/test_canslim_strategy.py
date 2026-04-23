@@ -1,4 +1,4 @@
-"""Tests for CAN SLIM strategy evaluate(), should_exit(), get_position_size()."""
+"""Tests for CAN SLIM strategy evaluate() and should_exit()."""
 
 from datetime import date
 from decimal import Decimal
@@ -156,26 +156,26 @@ class TestShouldExit:
 
 class TestPositionSize:
     def test_basic_sizing(self):
-        strategy = CANSLIMStrategy()
-        lots = strategy.get_position_size(
+        from app.core.constants import CANSLIM_MAX_POSITIONAL_LOTS
+        from app.services.position_sizing import calculate_lots
+        lots = calculate_lots(
             capital=1_000_000,
             risk_per_trade_pct=2.0,
             entry_price=3500.0,
             stop_loss=3220.0,  # 8% below
             lot_size=175,
-            vix_multiplier=1.0,
+            max_lots=CANSLIM_MAX_POSITIONAL_LOTS,
         )
         assert lots >= 1
-        assert lots <= 2  # Capped at CANSLIM_MAX_POSITIONAL_LOTS
+        assert lots <= CANSLIM_MAX_POSITIONAL_LOTS
 
     def test_minimum_one_lot(self):
-        strategy = CANSLIMStrategy()
-        lots = strategy.get_position_size(
+        from app.services.position_sizing import calculate_lots
+        lots = calculate_lots(
             capital=100_000,
             risk_per_trade_pct=1.0,
             entry_price=5000.0,
             stop_loss=4600.0,
             lot_size=500,
-            vix_multiplier=1.0,
         )
         assert lots == 1

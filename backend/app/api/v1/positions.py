@@ -12,6 +12,7 @@ from app.core.utils import now_ist
 from app.models.position import Position
 from app.models.trade import Trade
 from app.schemas.position import PositionCloseRequest, PositionResponse, PositionUpdateSLRequest
+from app.websocket.manager import ws_manager
 
 router = APIRouter()
 
@@ -68,9 +69,22 @@ async def close_position(
                 (position.current_price - trade.entry_price) / trade.entry_price * 100
             )
 
+    pnl = float(trade.pnl) if trade and trade.pnl is not None else 0.0
+    exit_price = float(trade.exit_price) if trade and trade.exit_price is not None else 0.0
+
     # Delete position
     await db.delete(position)
     await db.flush()
+
+    await ws_manager.broadcast(
+        "position:closed",
+        {
+            "position_id": str(position_id),
+            "trade_id": str(position.trade_id),
+            "exit_price": exit_price,
+            "pnl": pnl,
+        },
+    )
     return position
 
 

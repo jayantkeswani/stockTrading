@@ -58,8 +58,9 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     if (!confirm("Close this position?")) return;
     try {
       await api.closePosition(positionId);
-      // Re-fetch closed today after manual close
-      setTimeout(fetchClosed, 500);
+      // Optimistically remove from open positions — backend also broadcasts position:closed
+      useStore.getState().removePosition(positionId);
+      setTimeout(fetchClosed, 300);
     } catch (err) {
       console.error("Failed to close position:", err);
     }

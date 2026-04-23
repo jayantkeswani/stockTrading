@@ -399,13 +399,12 @@ class TestShouldExit:
 
 
 # ---------------------------------------------------------------------------
-# get_position_size
+# position sizing via calculate_lots (VWAPPullback uses max_lots=5)
 # ---------------------------------------------------------------------------
 
 class TestGetPositionSize:
 
-    def setup_method(self):
-        self.strategy = VWAPPullbackStrategy()
+    MAX_LOTS = VWAPPullbackStrategy.max_lots  # 5
 
     def test_basic_calculation(self):
         """capital=100000, risk_pct=2%, entry=100, sl=70, lot_size=75.
@@ -413,9 +412,11 @@ class TestGetPositionSize:
         risk_per_lot = |100-70| * 75 = 2250
         lots = int(2000/2250) = 0 => max(1, 0) = 1
         """
-        lots = self.strategy.get_position_size(
+        from app.services.position_sizing import calculate_lots
+        lots = calculate_lots(
             capital=100000, risk_per_trade_pct=2.0,
             entry_price=100, stop_loss=70, lot_size=75,
+            max_lots=self.MAX_LOTS,
         )
         assert lots == 1
 
@@ -425,55 +426,65 @@ class TestGetPositionSize:
         risk_per_lot = 10*75 = 750
         lots = int(20000/750) = 26 => capped at 5
         """
-        lots = self.strategy.get_position_size(
+        from app.services.position_sizing import calculate_lots
+        lots = calculate_lots(
             capital=1_000_000, risk_per_trade_pct=2.0,
             entry_price=100, stop_loss=90, lot_size=75,
+            max_lots=self.MAX_LOTS,
         )
         assert lots == 5  # capped
 
     def test_cap_at_5_lots(self):
-        lots = self.strategy.get_position_size(
+        from app.services.position_sizing import calculate_lots
+        lots = calculate_lots(
             capital=10_000_000, risk_per_trade_pct=5.0,
             entry_price=100, stop_loss=95, lot_size=10,
+            max_lots=self.MAX_LOTS,
         )
         assert lots == 5
 
     def test_minimum_1_lot(self):
         """Even if risk_amount is tiny, at least 1 lot."""
-        lots = self.strategy.get_position_size(
+        from app.services.position_sizing import calculate_lots
+        lots = calculate_lots(
             capital=1000, risk_per_trade_pct=0.01,
             entry_price=100, stop_loss=50, lot_size=75,
+            max_lots=self.MAX_LOTS,
         )
         assert lots >= 1
 
     def test_vix_multiplier_reduces_lots(self):
         """VIX multiplier 0.7 reduces lots."""
-        lots_full = self.strategy.get_position_size(
+        from app.services.position_sizing import calculate_lots
+        lots_full = calculate_lots(
             capital=1_000_000, risk_per_trade_pct=2.0,
             entry_price=100, stop_loss=90, lot_size=75,
-            vix_multiplier=1.0,
+            vix_multiplier=1.0, max_lots=self.MAX_LOTS,
         )
-        lots_reduced = self.strategy.get_position_size(
+        lots_reduced = calculate_lots(
             capital=1_000_000, risk_per_trade_pct=2.0,
             entry_price=100, stop_loss=90, lot_size=75,
-            vix_multiplier=0.7,
+            vix_multiplier=0.7, max_lots=self.MAX_LOTS,
         )
         assert lots_reduced <= lots_full
 
     def test_zero_risk_per_lot(self):
         """entry == stop_loss => risk_per_lot=0 => returns 1."""
-        lots = self.strategy.get_position_size(
+        from app.services.position_sizing import calculate_lots
+        lots = calculate_lots(
             capital=100000, risk_per_trade_pct=2.0,
             entry_price=100, stop_loss=100, lot_size=75,
+            max_lots=self.MAX_LOTS,
         )
         assert lots == 1
 
     def test_position_size_with_various_vix(self):
         """With vix_multiplier=0.0, lots = max(1, 0) = 1."""
-        lots = self.strategy.get_position_size(
+        from app.services.position_sizing import calculate_lots
+        lots = calculate_lots(
             capital=1_000_000, risk_per_trade_pct=2.0,
             entry_price=100, stop_loss=90, lot_size=75,
-            vix_multiplier=0.0,
+            vix_multiplier=0.0, max_lots=self.MAX_LOTS,
         )
         assert lots == 1
 
@@ -484,10 +495,11 @@ class TestGetPositionSize:
         risk_per_lot = 20 * 50 = 1000
         lots = int(10000/1000) = 10 => max(1, int(10*1)) = 10 => min(10,5) = 5
         """
-        lots = self.strategy.get_position_size(
+        from app.services.position_sizing import calculate_lots
+        lots = calculate_lots(
             capital=500_000, risk_per_trade_pct=2.0,
             entry_price=200, stop_loss=180, lot_size=50,
-            vix_multiplier=1.0,
+            vix_multiplier=1.0, max_lots=self.MAX_LOTS,
         )
         assert lots == 5
 

@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 class VWAPPullbackStrategy(BaseStrategy):
     name = StrategyName.VWAP_PULLBACK
+    max_lots = 5
 
     def evaluate(self, ctx: MarketContext) -> StrategySignal | None:
         """Evaluate VWAP pullback entry conditions."""
@@ -265,26 +266,6 @@ class VWAPPullbackStrategy(BaseStrategy):
                 )
 
         return None
-
-    def get_position_size(
-        self,
-        capital: float,
-        risk_per_trade_pct: float,
-        entry_price: float,
-        stop_loss: float,
-        lot_size: int,
-        vix_multiplier: float = 1.0,
-    ) -> int:
-        """Calculate number of lots based on risk parameters."""
-        risk_amount = capital * (risk_per_trade_pct / 100)
-        risk_per_lot = abs(entry_price - stop_loss) * lot_size
-
-        if risk_per_lot <= 0:
-            return 1
-
-        lots = int(risk_amount / risk_per_lot)
-        lots = max(1, int(lots * vix_multiplier))
-        return min(lots, 5)  # Cap at 5 lots
 
     def _build_indicator_snapshot(
         self, ctx: MarketContext, vwap: float, distance: float

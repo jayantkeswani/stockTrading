@@ -30,8 +30,7 @@ interface WatchlistItem {
 }
 
 export function Watchlist({ onOpenChart }: WatchlistProps) {
-  const { prices, updatePrice } = useStore();
-  const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([]);
+  const { prices, updatePrice, watchlistItems, setWatchlistItems, addWatchlistItem, removeWatchlistItem } = useStore();
   const [inputValue, setInputValue] = useState("");
   const [suggestions, setSuggestions] = useState<SymbolResult[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -69,7 +68,7 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
           segment: item.segment || "EQ",
         }));
         setWatchlistItems(items);
-        await fetchWatchlistPrices(items);
+      await fetchWatchlistPrices(items);
         // Subscribe custom symbols on WebSocket for real-time ticks
         const customSymbols = items.map((i) => i.symbol);
         if (customSymbols.length > 0) {
@@ -144,24 +143,24 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
         // API error — still add locally
       }
 
-      setWatchlistItems((prev) => [...prev, newItem]);
+      addWatchlistItem(newItem);
       fetchWatchlistPrices([newItem]);
       subscribeSymbols([newItem.symbol]);
       setInputValue("");
       setSuggestions([]);
       setShowSuggestions(false);
     },
-    [watchlistItems, fetchWatchlistPrices]
+    [watchlistItems, fetchWatchlistPrices, addWatchlistItem]
   );
 
   const handleRemoveItem = useCallback(async (symbol: string) => {
-    setWatchlistItems((prev) => prev.filter((c) => c.symbol !== symbol));
+    removeWatchlistItem(symbol);
     try {
       await api.removeFromWatchlist(symbol);
     } catch {
       // Ignore
     }
-  }, []);
+  }, [removeWatchlistItem]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
