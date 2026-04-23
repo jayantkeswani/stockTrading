@@ -39,7 +39,7 @@ export function AgentFeed() {
   const actionTypes = useMemo(() => {
     const types = new Set<string>();
     for (const log of agentLogs) {
-      types.add(log.action_type);
+      if (log.action_type) types.add(log.action_type);
     }
     return Array.from(types);
   }, [agentLogs]);

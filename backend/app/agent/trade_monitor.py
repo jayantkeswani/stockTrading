@@ -7,11 +7,21 @@ Supports multiple autonomy levels:
 """
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.retry import async_retry
+from app.agent.notification import (
+    notify_confirmation_request,
+    notify_expiry_roll,
+    notify_expiry_roll_failed,
+    notify_profit_booked,
+    notify_sl_hit,
+    notify_time_exit,
+)
 from app.core.enums import AgentActionType, ConfirmationStatus, ExitReason, TradeStatus
 from app.core.redis import get_cached_price
 from app.core.utils import is_past_close_deadline, now_ist
@@ -109,18 +119,15 @@ async def _check_position(
                 pos.symbol, float(pos.entry_price),
             )
 
-    # 4. Expiry check for POSITIONAL positions — alert 3 days before futures expiry
+    # 4. Expiry check for POSITIONAL positions — roll 3 days before futures expiry
     if getattr(pos, "position_type", "INTRADAY") == "POSITIONAL" and pos.expiry_date:
         from app.core.constants import FUTURES_EXPIRY_ROLL_DAYS
         days_to_expiry = (pos.expiry_date - now_ist().date()).days
         if days_to_expiry <= FUTURES_EXPIRY_ROLL_DAYS:
             if yolo_mode:
-                return await _close_position(
-                    db, pos, current_price, ExitReason.EXPIRY_ROLL,
-                    AgentActionType.TIME_EXIT, requires_confirmation=False,
-                )
+                return await _roll_futures_position(db, pos, current_price)
             else:
-                # SEMI: alert user to roll or close
+                # SEMI: request confirmation before rolling
                 return await _request_profit_confirmation(db, pos, current_price)
 
     # 5. Check time — AUTO CLOSE at 3:15 PM (INTRADAY only)
@@ -175,18 +182,36 @@ async def _close_position(
     await db.delete(pos)
     await db.flush()
 
+    pnl_val = float(trade.pnl) if trade and trade.pnl else 0
+
     # Broadcast
     await ws_manager.broadcast("position:closed", {
         "position_id": str(pos.id),
         "exit_price": float(exit_price),
-        "pnl": float(trade.pnl) if trade and trade.pnl else 0,
+        "pnl": pnl_val,
         "exit_reason": exit_reason.value,
     })
 
+    # Telegram alert — pick the right message based on why we're closing
+    entry = float(pos.entry_price)
+    exit_f = float(exit_price)
+    lots = pos.lots
+    sym = pos.symbol
+    strat = pos.strategy_name or ""
+    inst = getattr(pos, "instrument_type", "OPTION") or "OPTION"
+
+    if action_type == AgentActionType.SL_TRIGGERED:
+        await notify_sl_hit(sym, strat, entry, exit_f, pnl_val, lots, inst)
+    elif action_type in (AgentActionType.AUTO_PROFIT_BOOKED, AgentActionType.PROFIT_BOOKED):
+        await notify_profit_booked(sym, strat, entry, exit_f, pnl_val, lots)
+    elif action_type == AgentActionType.TIME_EXIT:
+        await notify_time_exit(sym, strat, entry, exit_f, pnl_val, lots)
+    # EXPIRY_ROLL close notification is handled by _roll_futures_position
+
     action = {
-        "action": action_type.value,
+        "action_type": action_type.value,
         "symbol": pos.symbol,
-        "pnl": float(trade.pnl) if trade and trade.pnl else 0,
+        "pnl": pnl_val,
     }
     logger.info("Position closed: %s", action)
     return action
@@ -194,8 +219,24 @@ async def _close_position(
 
 async def _request_profit_confirmation(
     db: AsyncSession, pos: Position, current_price: Decimal
-) -> dict:
-    """Request user confirmation for profit booking."""
+) -> dict | None:
+    """Request user confirmation for profit booking (SEMI mode).
+
+    Returns None if a PENDING request already exists for this trade,
+    preventing duplicate requests on every monitor loop iteration.
+    """
+    # Guard: skip if a confirmation is already pending for this trade
+    existing = await db.execute(
+        select(AgentLog).where(
+            and_(
+                AgentLog.trade_id == pos.trade_id,
+                AgentLog.action_type == AgentActionType.PROFIT_BOOK_REQUEST.value,
+                AgentLog.confirmation_status == ConfirmationStatus.PENDING.value,
+            )
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        return None
 
     log = AgentLog(
         action_type=AgentActionType.PROFIT_BOOK_REQUEST.value,
@@ -215,7 +256,6 @@ async def _request_profit_confirmation(
     db.add(log)
     await db.flush()
 
-    # Broadcast confirmation request to UI
     await ws_manager.broadcast("agent:confirmation_request", {
         "log_id": str(log.id),
         "action_type": AgentActionType.PROFIT_BOOK_REQUEST.value,
@@ -224,21 +264,199 @@ async def _request_profit_confirmation(
         "suggested_action": "CLOSE",
     })
 
+    unrealized = float(pos.unrealized_pnl) if pos.unrealized_pnl else 0
+    await notify_confirmation_request(
+        symbol=pos.symbol,
+        strategy_name=pos.strategy_name or "",
+        entry=float(pos.entry_price),
+        current_price=float(current_price),
+        pnl=unrealized,
+    )
+
     return {
-        "action": AgentActionType.PROFIT_BOOK_REQUEST.value,
+        "action_type": AgentActionType.PROFIT_BOOK_REQUEST.value,
         "symbol": pos.symbol,
         "log_id": str(log.id),
     }
 
 
-async def _fetch_option_price_rest(fyers_symbol: str) -> dict | None:
-    """Fallback: fetch option LTP via Fyers REST when not in Redis cache."""
+async def _roll_futures_position(
+    db: AsyncSession, pos: Position, current_price: Decimal
+) -> dict:
+    """Close an expiring futures position and immediately open the next month's contract.
+
+    Preserves the same lot count and scales SL/target to the same percentage
+    distances from the new entry price.
+    """
+    from app.config import settings
+    from app.services.futures_resolver import resolve_futures_contract
+
+    symbol = pos.symbol
+
+    # 1. Close the current contract
+    close_action = await _close_position(
+        db, pos, current_price, ExitReason.EXPIRY_ROLL,
+        AgentActionType.EXPIRY_ROLL, requires_confirmation=False,
+    )
+
+    # 2. Resolve the next month's contract (search from day after current expiry)
+    next_from = pos.expiry_date + timedelta(days=1)
+    resolution = await resolve_futures_contract(
+        symbol, float(current_price), from_date=next_from
+    )
+    if resolution is None:
+        logger.warning(
+            "Expiry roll: could not resolve next contract for %s after %s — closed only",
+            symbol, pos.expiry_date,
+        )
+        await notify_expiry_roll_failed(symbol, str(pos.expiry_date))
+        return close_action
+
+    new_ltp = Decimal(str(resolution.ltp))
+
+    # 3. Scale SL/target to same % distances from new entry
+    sl_ratio = pos.stop_loss / pos.entry_price
+    new_sl = new_ltp * sl_ratio
+
+    new_target = None
+    if pos.target_price:
+        target_ratio = pos.target_price / pos.entry_price
+        new_target = new_ltp * target_ratio
+
+    lots = pos.lots
+    quantity = lots * resolution.lot_size
+    now = now_ist()
+
+    # 4. Create new Trade + Position
+    new_trade = Trade(
+        strategy_name=pos.strategy_name,
+        symbol=symbol,
+        expiry_date=resolution.expiry_date,
+        strike_price=pos.strike_price,
+        option_type=pos.option_type or None,
+        side="BUY",
+        quantity=quantity,
+        lots=lots,
+        entry_price=new_ltp,
+        stop_loss=new_sl,
+        target_price=new_target,
+        status=TradeStatus.OPEN.value,
+        position_type=pos.position_type,
+        is_paper=pos.is_paper,
+        entry_time=now,
+        fyers_option_symbol=resolution.fyers_symbol,
+    )
+    db.add(new_trade)
+    await db.flush()
+
+    new_position = Position(
+        trade_id=new_trade.id,
+        symbol=symbol,
+        strike_price=pos.strike_price,
+        option_type=pos.option_type or "",
+        expiry_date=resolution.expiry_date,
+        lots=lots,
+        quantity=quantity,
+        entry_price=new_ltp,
+        stop_loss=new_sl,
+        target_price=new_target,
+        fyers_option_symbol=resolution.fyers_symbol,
+        strategy_name=pos.strategy_name,
+        position_type=pos.position_type,
+        is_paper=pos.is_paper,
+        opened_at=now,
+    )
+    db.add(new_position)
+
+    log = AgentLog(
+        action_type=AgentActionType.EXPIRY_ROLL.value,
+        trade_id=new_trade.id,
+        details={
+            "symbol": symbol,
+            "strategy_name": pos.strategy_name,
+            "rolled_from_expiry": str(pos.expiry_date),
+            "rolled_to_expiry": str(resolution.expiry_date),
+            "old_symbol": pos.fyers_option_symbol,
+            "new_symbol": resolution.fyers_symbol,
+            "entry_price": float(new_ltp),
+        },
+        requires_confirmation=False,
+    )
+    db.add(log)
+    await db.flush()
+
+    # 5. Subscribe new symbol on WebSocket feed
     try:
+        from app.data_feed.fyers_ws_client import fyers_ws_client
+        await fyers_ws_client.subscribe_symbols([resolution.fyers_symbol])
+    except Exception:
+        logger.warning("Could not subscribe rolled symbol %s", resolution.fyers_symbol)
+
+    # 6. Broadcast so frontend shows the new position immediately
+    await ws_manager.broadcast("trade:open", {
+        "id": str(new_position.id),
+        "trade_id": str(new_trade.id),
+        "symbol": symbol,
+        "fyers_option_symbol": resolution.fyers_symbol,
+        "strike_price": float(pos.strike_price),
+        "option_type": pos.option_type or "",
+        "expiry_date": str(resolution.expiry_date),
+        "lots": lots,
+        "quantity": quantity,
+        "entry_price": float(new_ltp),
+        "current_price": float(new_ltp),
+        "unrealized_pnl": 0.0,
+        "stop_loss": float(new_sl),
+        "target_price": float(new_target) if new_target else None,
+        "strategy_name": pos.strategy_name,
+        "is_paper": pos.is_paper,
+        "position_type": pos.position_type,
+        "opened_at": now.isoformat(),
+    })
+
+    await notify_expiry_roll(
+        symbol=symbol,
+        old_expiry=str(pos.expiry_date),
+        new_expiry=str(resolution.expiry_date),
+        old_pnl=close_action.get("pnl", 0),
+        new_entry=float(new_ltp),
+        new_sl=float(new_sl),
+        new_target=float(new_target) if new_target else 0,
+    )
+
+    logger.info(
+        "Expiry roll: %s %s → %s @ %.2f",
+        symbol, pos.expiry_date, resolution.expiry_date, float(new_ltp),
+    )
+    return {
+        "action_type": AgentActionType.EXPIRY_ROLL.value,
+        "symbol": symbol,
+        "pnl": close_action.get("pnl", 0),
+        "rolled_to": str(resolution.expiry_date),
+        "new_symbol": resolution.fyers_symbol,
+    }
+
+
+async def _fetch_option_price_rest(fyers_symbol: str) -> dict | None:
+    """Fallback: fetch option LTP via Fyers REST when not in Redis cache.
+
+    Retries up to 2 times on transient network/HTTP errors before giving up.
+    """
+    async def _try_fetch() -> dict | None:
         from app.services.option_resolver import fetch_option_premium
 
         premium = await fetch_option_premium(fyers_symbol)
         if premium and premium > 0:
             return {"ltp": premium}
+        return None
+
+    try:
+        return await async_retry(
+            _try_fetch,
+            retries=2,
+            base_delay=0.5,
+            label=f"option_price_rest:{fyers_symbol}",
+        )
     except Exception:
-        logger.exception("Failed REST fallback for %s", fyers_symbol)
-    return None
+        logger.exception("Failed REST fallback for %s after retries", fyers_symbol)
+        return None

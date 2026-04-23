@@ -45,16 +45,35 @@ const SYMBOL_GROUPS: Record<string, string[]> = {
 
 const INDEX_SYMBOLS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"];
 
+interface TradingSettings {
+  capital: number;
+  max_daily_drawdown_pct: number;
+  max_risk_per_trade_pct: number;
+  max_trades_per_day: number;
+  paper_trading: boolean;
+  autonomy_level: string;
+}
+
 export default function SettingsPage() {
   const [strategies, setStrategies] = useState<StrategyConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
 
+  const [tradingSettings, setTradingSettings] = useState<TradingSettings | null>(null);
+  const [tradingDraft, setTradingDraft] = useState<Partial<TradingSettings>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
   useEffect(() => {
     async function load() {
       try {
-        const data = await api.getStrategies();
-        setStrategies(data);
+        const [strats, cfg] = await Promise.all([
+          api.getStrategies(),
+          api.getTradingSettings(),
+        ]);
+        setStrategies(strats);
+        setTradingSettings(cfg);
+        setTradingDraft({});
       } catch {
         // API not ready
       }
@@ -62,6 +81,25 @@ export default function SettingsPage() {
     }
     load();
   }, []);
+
+  const currentSettings = tradingSettings ? { ...tradingSettings, ...tradingDraft } : null;
+
+  const handleSaveTradingSettings = async () => {
+    if (!tradingDraft || Object.keys(tradingDraft).length === 0) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const updated = await api.updateTradingSettings(tradingDraft) as TradingSettings;
+      setTradingSettings(updated);
+      setTradingDraft({});
+      setSaveMsg("Saved");
+      setTimeout(() => setSaveMsg(null), 2000);
+    } catch {
+      setSaveMsg("Error saving");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleToggleActive = async (name: string) => {
     try {
@@ -112,71 +150,93 @@ export default function SettingsPage() {
         Settings
       </h1>
 
-      {/* Paper Trading Toggle */}
+      {/* Trading Config */}
       <div className="rounded border border-border bg-bg-secondary px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xs font-mono font-medium text-text-primary">Paper Trading Mode</h2>
-            <p className="text-xs font-mono text-text-muted mt-0.5">
-              All trades simulated. No real money.
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-mono text-warning font-medium">PAPER</span>
-            <div className="w-8 h-4 bg-warning/25 rounded-full relative">
-              <div className="absolute left-0.5 top-0.5 w-3 h-3 bg-warning rounded-full" />
-            </div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
+            Trading Parameters
+          </h2>
+          <div className="flex items-center gap-2">
+            {saveMsg && (
+              <span className={`text-[10px] font-mono ${saveMsg === "Saved" ? "text-profit" : "text-loss"}`}>
+                {saveMsg}
+              </span>
+            )}
+            {Object.keys(tradingDraft).length > 0 && (
+              <button
+                onClick={handleSaveTradingSettings}
+                disabled={saving}
+                className="text-[10px] font-mono px-2 py-1 rounded bg-accent/20 text-accent border border-accent/30 hover:bg-accent/30 disabled:opacity-50"
+              >
+                {saving ? "saving…" : "Save"}
+              </button>
+            )}
           </div>
         </div>
-      </div>
 
-      {/* Risk Parameters */}
-      <div className="rounded border border-border bg-bg-secondary px-4 py-3">
-        <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
-          Risk Management
-        </h2>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">
-              Capital (INR)
-            </label>
-            <input
-              type="text"
-              defaultValue="10,00,000"
-              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">
-              Max Daily Drawdown (%)
-            </label>
-            <input
-              type="number"
-              defaultValue={5}
-              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">
-              Risk Per Trade (%)
-            </label>
-            <input
-              type="number"
-              defaultValue={2}
-              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">
-              Max Trades / Day
-            </label>
-            <input
-              type="number"
-              defaultValue={3}
-              className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
-            />
-          </div>
-        </div>
+        {currentSettings === null ? (
+          <div className="text-xs font-mono text-text-muted">loading…</div>
+        ) : (
+          <>
+            {/* Paper Trading Toggle */}
+            <div className="flex items-center justify-between mb-3 pb-3 border-b border-border/40">
+              <div>
+                <span className="text-xs font-mono font-medium text-text-primary">Paper Trading</span>
+                <p className="text-[10px] font-mono text-text-muted mt-0.5">
+                  All trades simulated. No real money.
+                </p>
+              </div>
+              <button
+                onClick={() => setTradingDraft((d) => ({ ...d, paper_trading: !currentSettings.paper_trading }))}
+                className={`w-8 h-4 rounded-full relative transition-colors ${currentSettings.paper_trading ? "bg-warning/40" : "bg-border"}`}
+              >
+                <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${currentSettings.paper_trading ? "left-4 bg-warning" : "left-0.5 bg-text-muted"}`} />
+              </button>
+            </div>
+
+            {/* Risk grid */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">Capital (INR)</label>
+                <input
+                  type="number"
+                  value={currentSettings.capital}
+                  onChange={(e) => setTradingDraft((d) => ({ ...d, capital: Number(e.target.value) }))}
+                  className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">Max Daily Drawdown (%)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={currentSettings.max_daily_drawdown_pct}
+                  onChange={(e) => setTradingDraft((d) => ({ ...d, max_daily_drawdown_pct: Number(e.target.value) }))}
+                  className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">Risk Per Trade (%)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={currentSettings.max_risk_per_trade_pct}
+                  onChange={(e) => setTradingDraft((d) => ({ ...d, max_risk_per_trade_pct: Number(e.target.value) }))}
+                  className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">Max Trades / Day</label>
+                <input
+                  type="number"
+                  value={currentSettings.max_trades_per_day}
+                  onChange={(e) => setTradingDraft((d) => ({ ...d, max_trades_per_day: Number(e.target.value) }))}
+                  className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Strategy Config */}
@@ -347,7 +407,7 @@ function SymbolSelector({
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
-    if (input.trim().length < 2) {
+    if (input.trim().length < 1) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;

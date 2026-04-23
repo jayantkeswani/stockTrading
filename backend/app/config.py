@@ -31,15 +31,16 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
-    # Trading Config
-    trading_capital: int = 1_000_000  # 10 Lakhs INR in paise... no, in rupees
+    # Trading Config — SEED-ONLY: used once at first startup to populate the
+    # trading_config DB table. After seeding, all runtime code reads from the DB
+    # via app.services.trading_config.get_trading_config(). Do not read these
+    # settings.* fields directly from application logic.
+    trading_capital: int = 1_000_000
     max_daily_drawdown_pct: float = 5.0
     max_risk_per_trade_pct: float = 2.0
     max_trades_per_day: int = 3
     paper_trading: bool = True
-
-    # Agent
-    yolo_mode: bool = False
+    yolo_mode: bool = False  # True → seeds autonomy_level as "YOLO"
 
     # AI Research
     google_api_key: str = ""

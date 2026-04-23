@@ -15,7 +15,9 @@ from app.tasks.fundamental_data_task import (
     stop_fundamental_data_scheduler,
 )
 from app.tasks.oi_snapshot_task import start_oi_snapshot_scheduler, stop_oi_snapshot_scheduler
+from app.tasks.daily_summary_task import start_daily_summary_scheduler, stop_daily_summary_scheduler
 from app.tasks.symbol_master_task import start_symbol_master_scheduler, stop_symbol_master_scheduler
+from app.services import trading_config as _trading_config_svc
 from app.websocket.manager import ws_manager
 
 
@@ -134,6 +136,11 @@ async def lifespan(app: FastAPI):
     # Startup
     print("Starting StockTrading backend...")
 
+    # --- Trading config (seed + live-reload listener) ---
+    await _trading_config_svc.ensure_seeded()
+    t_cfg = asyncio.create_task(_trading_config_svc.start_config_listener(), name="trading_config_listener")
+    task_registry.track_asyncio_task("trading_config_listener", t_cfg, metadata={"description": "Trading config pubsub reload"})
+
     # --- Schedulers (periodic jobs) ---
     await start_fyers_login_scheduler()
     task_registry.register("fyers_login_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 08:55 IST"})
@@ -146,6 +153,9 @@ async def lifespan(app: FastAPI):
 
     await start_fundamental_data_scheduler()
     task_registry.register("fundamental_data_scheduler", TaskType.SCHEDULER, metadata={"schedule": "every 6h"})
+
+    await start_daily_summary_scheduler()
+    task_registry.register("daily_summary_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 15:35 IST"})
 
     # --- One-shot startup tasks (tracked via done callback) ---
     t1 = asyncio.create_task(_load_symbol_master_background(), name="symbol_master_load")
@@ -179,6 +189,9 @@ async def lifespan(app: FastAPI):
 
     await stop_fundamental_data_scheduler()
     task_registry.update_status("fundamental_data_scheduler", TaskStatus.STOPPED)
+
+    await stop_daily_summary_scheduler()
+    task_registry.update_status("daily_summary_scheduler", TaskStatus.STOPPED)
 
     await ws_manager.disconnect_all()
     print("StockTrading backend stopped.")

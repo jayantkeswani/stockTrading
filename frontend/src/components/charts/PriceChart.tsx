@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -12,10 +12,9 @@ import {
 } from "lightweight-charts";
 import { useStore } from "@/store";
 import { api } from "@/lib/api";
+import { displaySymbol } from "@/lib/constants";
+import type { Timeframe } from "@/lib/constants";
 
-type Timeframe = "1m" | "5m" | "15m" | "1h" | "1D";
-
-// Maps UI timeframe → Fyers resolution param + days of history
 const TIMEFRAME_CONFIG: Record<Timeframe, { resolution: string; days: number }> = {
   "1m": { resolution: "1", days: 5 },
   "5m": { resolution: "5", days: 15 },
@@ -24,7 +23,6 @@ const TIMEFRAME_CONFIG: Record<Timeframe, { resolution: string; days: number }> 
   "1D": { resolution: "D", days: 365 },
 };
 
-// Seconds per candle for each timeframe
 const BUCKET_SECONDS: Record<Timeframe, number> = {
   "1m": 60,
   "5m": 300,
@@ -35,14 +33,26 @@ const BUCKET_SECONDS: Record<Timeframe, number> = {
 
 const IST_OFFSET = 19800; // 5h 30m in seconds
 
-/** Compute the start-of-bucket UTC timestamp for the current moment. */
 function currentBucketTime(tf: Timeframe): number {
   const nowUtc = Math.floor(Date.now() / 1000);
   const bucket = BUCKET_SECONDS[tf];
-  // Align to IST then convert back to UTC epoch
   const nowIst = nowUtc + IST_OFFSET;
-  const bucketIst = Math.floor(nowIst / bucket) * bucket;
-  return bucketIst - IST_OFFSET;
+  return Math.floor(nowIst / bucket) * bucket - IST_OFFSET;
+}
+
+function saveRange(symbol: string, tf: Timeframe, range: { from: number; to: number }) {
+  try {
+    localStorage.setItem(`chart_range_${symbol}_${tf}`, JSON.stringify(range));
+  } catch {}
+}
+
+function loadRange(symbol: string, tf: Timeframe): { from: number; to: number } | null {
+  try {
+    const raw = localStorage.getItem(`chart_range_${symbol}_${tf}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 }
 
 interface PriceChartProps {
@@ -51,21 +61,22 @@ interface PriceChartProps {
 
 export function PriceChart({ fullHeight }: PriceChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chartRef = useRef<any>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const lastCandleRef = useRef<CandlestickData<UTCTimestamp> | null>(null);
-  const { selectedSymbol, prices } = useStore();
-  const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("5m");
+
+  const { selectedSymbol, prices, activeTimeframe, setActiveTimeframe } = useStore();
   const [loading, setLoading] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const handleTimeframeChange = useCallback((tf: Timeframe) => {
-    setActiveTimeframe(tf);
-  }, []);
-
-  // Create chart and load historical data
+  // Effect 1: create/destroy chart on symbol or timeframe change
   useEffect(() => {
     if (!chartContainerRef.current) return;
     const container = chartContainerRef.current;
+    const tf = activeTimeframe;
+    const sym = selectedSymbol;
 
     const chart = createChart(container, {
       layout: {
@@ -89,7 +100,7 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
       },
       timeScale: {
         borderColor: "#1a1a2a",
-        timeVisible: activeTimeframe !== "1D",
+        timeVisible: tf !== "1D",
         secondsVisible: false,
       },
       handleScroll: { vertTouchDrag: false },
@@ -109,15 +120,36 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
       priceFormat: { type: "volume" },
       priceScaleId: "",
     });
+    volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
-    });
-
+    chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
 
-    // Fetch pre-aggregated candles from backend (proxied from Fyers)
+    const handleResize = () =>
+      chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+    window.addEventListener("resize", handleResize);
+    handleResize();
+
+    return () => {
+      const range = chart.timeScale().getVisibleLogicalRange();
+      if (range) saveRange(sym, tf, range);
+      chartRef.current = null;
+      candleSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+      lastCandleRef.current = null;
+      window.removeEventListener("resize", handleResize);
+      chart.remove();
+    };
+  }, [selectedSymbol, activeTimeframe]);
+
+  // Effect 2: load OHLCV data — also triggered by refreshKey (no chart recreation)
+  useEffect(() => {
+    const candleSeries = candleSeriesRef.current;
+    const volumeSeries = volumeSeriesRef.current;
+    const chart = chartRef.current;
+    if (!candleSeries || !volumeSeries || !chart) return;
+
     let cancelled = false;
     setLoading(true);
 
@@ -137,7 +169,6 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
           low: c.low,
           close: c.close,
         }));
-
         const volumes = raw.map((c) => ({
           time: c.timestamp as UTCTimestamp,
           value: c.volume,
@@ -148,33 +179,28 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
         volumeSeries.setData(volumes);
         lastCandleRef.current = candles[candles.length - 1];
         setLoading(false);
-        chart.timeScale().fitContent();
+
+        const saved = loadRange(selectedSymbol, activeTimeframe);
+        if (saved) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          chart.timeScale().setVisibleLogicalRange(saved as any);
+        } else {
+          chart.timeScale().fitContent();
+        }
       })
       .catch(() => {
         if (!cancelled) setLoading(false);
       });
 
-    const handleResize = () => {
-      chart.applyOptions({
-        width: container.clientWidth,
-        height: container.clientHeight,
-      });
-    };
-
-    window.addEventListener("resize", handleResize);
-    handleResize();
-
     return () => {
       cancelled = true;
-      candleSeriesRef.current = null;
-      volumeSeriesRef.current = null;
-      lastCandleRef.current = null;
-      window.removeEventListener("resize", handleResize);
-      chart.remove();
+      // Save scroll before a refresh so position is restored after reload
+      const range = chartRef.current?.timeScale().getVisibleLogicalRange();
+      if (range) saveRange(selectedSymbol, activeTimeframe, range);
     };
-  }, [selectedSymbol, activeTimeframe]);
+  }, [selectedSymbol, activeTimeframe, refreshKey]);
 
-  // Update chart on live price ticks
+  // Effect 3: live price tick → update current candle
   const priceData = prices[selectedSymbol];
   useEffect(() => {
     const series = candleSeriesRef.current;
@@ -185,7 +211,6 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
     const bucketTime = currentBucketTime(activeTimeframe) as UTCTimestamp;
 
     if (bucketTime === last.time) {
-      // Same candle — update close/high/low
       const updated: CandlestickData<UTCTimestamp> = {
         time: last.time,
         open: last.open,
@@ -196,7 +221,6 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
       series.update(updated);
       lastCandleRef.current = updated;
     } else if (bucketTime > last.time) {
-      // New candle
       const newCandle: CandlestickData<UTCTimestamp> = {
         time: bucketTime,
         open: ltp,
@@ -206,8 +230,6 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
       };
       series.update(newCandle);
       lastCandleRef.current = newCandle;
-
-      // Also add volume bar for new candle
       volumeSeriesRef.current?.update({
         time: bucketTime,
         value: 0,
@@ -220,12 +242,12 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
     <div className={`rounded border border-border bg-bg-secondary overflow-hidden flex flex-col ${fullHeight ? "h-full" : ""}`}>
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0">
         <div className="flex items-center gap-3">
-          <h2 className="text-xs font-mono font-medium text-text-primary">{selectedSymbol}</h2>
+          <h2 className="text-xs font-mono font-medium text-text-primary">{displaySymbol(selectedSymbol)}</h2>
           <div className="flex gap-0.5">
             {(["1m", "5m", "15m", "1h", "1D"] as Timeframe[]).map((tf) => (
               <button
                 key={tf}
-                onClick={() => handleTimeframeChange(tf)}
+                onClick={() => setActiveTimeframe(tf)}
                 className={`px-1.5 py-0.5 text-xs font-mono rounded transition-colors ${
                   activeTimeframe === tf
                     ? "bg-accent/15 text-accent border border-accent/30"
@@ -236,10 +258,27 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
               </button>
             ))}
           </div>
-          {loading && (
-            <div className="w-3 h-3 border border-accent/50 border-t-accent rounded-full animate-spin" />
-          )}
         </div>
+        <button
+          onClick={() => setRefreshKey((k) => k + 1)}
+          disabled={loading}
+          title="Refresh chart data"
+          className="w-6 h-6 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-tertiary rounded transition-colors disabled:opacity-40"
+        >
+          <svg
+            className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.5}
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
+        </button>
       </div>
       <div
         ref={chartContainerRef}

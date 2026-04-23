@@ -11,9 +11,11 @@ Uses Fyers' undocumented login API at api-t2.fyers.in, which is the same
 flow the web app uses internally.
 """
 
+import asyncio
 import base64
 import hashlib
 import logging
+import time
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -31,6 +33,19 @@ TOKEN_API = "https://api-t1.fyers.in/api/v3/validate-authcode"
 # Redis key and TTL (matches auth.py)
 FYERS_TOKEN_KEY = "fyers:access_token"
 FYERS_TOKEN_TTL_SECONDS = 10 * 60 * 60  # 10 hours
+
+# Reauth guard: prevents stampede when many concurrent calls 401 simultaneously
+_reauth_lock: asyncio.Lock | None = None
+_last_reauth_at: float | None = None
+_REAUTH_COOLDOWN_SECONDS = 60.0
+
+
+def _get_reauth_lock() -> asyncio.Lock:
+    """Lazy-init so the Lock is created in the running event loop."""
+    global _reauth_lock
+    if _reauth_lock is None:
+        _reauth_lock = asyncio.Lock()
+    return _reauth_lock
 
 
 class FyersAutoLoginError(Exception):
@@ -238,6 +253,32 @@ async def auto_login() -> str:
         )
 
     return access_token
+
+
+async def trigger_reauth() -> str:
+    """Lock-guarded reauth wrapper — call on 401 or auth-failure WS errors.
+
+    Uses a 60s cooldown and asyncio.Lock so that N concurrent 401s collapse
+    into one real TOTP login. Returns the (possibly cached) access token.
+    Raises FyersAutoLoginError if the login itself fails.
+    """
+    global _last_reauth_at
+
+    lock = _get_reauth_lock()
+    async with lock:
+        now = time.monotonic()
+        if _last_reauth_at is not None and (now - _last_reauth_at) < _REAUTH_COOLDOWN_SECONDS:
+            # Recent reauth — read the already-stored token from Redis
+            r = get_redis()
+            token = await r.get(FYERS_TOKEN_KEY)
+            if token:
+                logger.info("Reauth cooldown active — reusing recently refreshed token")
+                return token
+
+        logger.info("Triggering full Fyers reauth (TOTP flow)")
+        token = await auto_login_and_store()
+        _last_reauth_at = time.monotonic()
+        return token
 
 
 async def auto_login_and_store() -> str:

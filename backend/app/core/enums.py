@@ -88,6 +88,7 @@ class AgentActionType(StrEnum):
     AUTO_EXECUTED = "AUTO_EXECUTED"
     MANUAL_EXECUTED = "MANUAL_EXECUTED"
     AUTO_PROFIT_BOOKED = "AUTO_PROFIT_BOOKED"
+    EXPIRY_ROLL = "EXPIRY_ROLL"
 
 
 class ConfirmationStatus(StrEnum):

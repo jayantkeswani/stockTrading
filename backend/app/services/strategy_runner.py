@@ -19,14 +19,12 @@ from decimal import Decimal
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.core.constants import (
-    DEFAULT_MAX_DAILY_DRAWDOWN_PCT,
-    DEFAULT_MAX_TRADES_PER_DAY,
     IST,
     MARKET_OPEN,
     VIX_EXTREME,
 )
+from app.services.trading_config import get_trading_config
 from app.core.database import async_session_factory
 from app.core.enums import InstrumentType, SignalStatus, StrategyName
 from app.core.redis import get_cached_price, get_redis
@@ -206,7 +204,8 @@ class StrategyRunner:
             self._daily_signal_count = {}
             self._signal_count_date = today
 
-        max_trades = settings.max_trades_per_day or DEFAULT_MAX_TRADES_PER_DAY
+        cfg = await get_trading_config()
+        max_trades = cfg.max_trades_per_day
         if self._daily_signal_count.get(symbol, 0) >= max_trades:
             logger.info("Max trades (%d) reached for %s today — signal not executable", max_trades, symbol)
             return False, f"Max trades reached ({max_trades}/day)"
@@ -234,9 +233,8 @@ class StrategyRunner:
             )
             realized_pnl = float(result.scalar_one())
 
-        capital = settings.trading_capital
-        max_dd_pct = settings.max_daily_drawdown_pct or DEFAULT_MAX_DAILY_DRAWDOWN_PCT
-        max_dd_amount = capital * (max_dd_pct / 100.0)
+        cfg = await get_trading_config()
+        max_dd_amount = cfg.max_drawdown_amount
 
         # Negative PnL means loss
         if realized_pnl < 0 and abs(realized_pnl) >= max_dd_amount:

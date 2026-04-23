@@ -5,6 +5,7 @@ import type { ResearchReport as ResearchReportType } from "@/lib/types";
 import { formatINR } from "@/lib/formatters";
 import { RecommendationBadge } from "./RecommendationBadge";
 import { ActionableLevels } from "./ActionableLevels";
+import { Markdown } from "./Markdown";
 
 const SECTION_LABELS: Record<string, string> = {
   fundamental: "Fundamental Analysis",
@@ -85,9 +86,7 @@ export function ResearchReport({ report }: { report: ResearchReportType }) {
             <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-1">
               Executive Summary
             </div>
-            <p className="text-xs font-mono text-text-secondary leading-relaxed">
-              {report.executive_summary}
-            </p>
+            <Markdown>{report.executive_summary}</Markdown>
           </div>
         )}
       </div>
@@ -107,8 +106,9 @@ export function ResearchReport({ report }: { report: ResearchReportType }) {
                 Key Risks
               </div>
               {(reportJson.key_risks as string[]).map((r: string, i: number) => (
-                <div key={i} className="text-[11px] font-mono text-text-secondary leading-relaxed">
-                  {i + 1}. {r}
+                <div key={i} className="flex gap-1">
+                  <span className="text-[11px] font-mono text-text-muted flex-shrink-0">{i + 1}.</span>
+                  <Markdown>{r}</Markdown>
                 </div>
               ))}
             </div>
@@ -119,8 +119,9 @@ export function ResearchReport({ report }: { report: ResearchReportType }) {
                 Key Catalysts
               </div>
               {(reportJson.key_catalysts as string[]).map((c: string, i: number) => (
-                <div key={i} className="text-[11px] font-mono text-text-secondary leading-relaxed">
-                  {i + 1}. {c}
+                <div key={i} className="flex gap-1">
+                  <span className="text-[11px] font-mono text-text-muted flex-shrink-0">{i + 1}.</span>
+                  <Markdown>{c}</Markdown>
                 </div>
               ))}
             </div>
@@ -172,9 +173,9 @@ export function ResearchReport({ report }: { report: ResearchReportType }) {
               {isExpanded && agentRun && (
                 <div className="px-3 pb-3 border-t border-border animate-fade-in">
                   {agentRun.summary_text && (
-                    <p className="text-[11px] font-mono text-text-secondary leading-relaxed mt-2 whitespace-pre-wrap">
-                      {agentRun.summary_text}
-                    </p>
+                    <div className="mt-2">
+                      <Markdown>{agentRun.summary_text}</Markdown>
+                    </div>
                   )}
 
                   {agentRun.error_message && (

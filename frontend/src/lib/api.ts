@@ -61,11 +61,31 @@ export const api = {
     }),
 
   // Trades
-  getTrades: (params?: { status?: string; limit?: number }) => {
+  getTrades: (params?: {
+    status?: string;
+    limit?: number;
+    entry_since?: string;
+    entry_until?: string;
+  }) => {
     const query = new URLSearchParams();
     if (params?.status) query.set("status", params.status);
     if (params?.limit) query.set("limit", params.limit.toString());
+    if (params?.entry_since) query.set("entry_since", params.entry_since);
+    if (params?.entry_until) query.set("entry_until", params.entry_until);
     return request(`/api/v1/trades?${query}`);
+  },
+  getClosedTradesToday: () => {
+    // IST midnight = UTC midnight - 5h30m
+    const now = new Date();
+    const istOffset = 5 * 60 + 30; // minutes
+    const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+    const istMs = utcMs + istOffset * 60000;
+    const istToday = new Date(istMs);
+    istToday.setHours(0, 0, 0, 0);
+    const istMidnightUtc = new Date(istToday.getTime() - istOffset * 60000);
+    const since = istMidnightUtc.toISOString();
+    const query = new URLSearchParams({ status: "CLOSED", closed_since: since, limit: "100" });
+    return request<import("./types").Trade[]>(`/api/v1/trades?${query}`);
   },
   getTradeSummary: () => request(`/api/v1/trades/summary`),
   closeTrade: (id: string, exitPrice?: number) =>
@@ -165,6 +185,29 @@ export const api = {
     request<import("./types").ResearchReport>(`/api/v1/research/reports/${id}`),
   deleteResearchReport: (id: string) =>
     request(`/api/v1/research/reports/${id}`, { method: "DELETE" }),
+
+  // Trading settings
+  getTradingSettings: () =>
+    request<{
+      capital: number;
+      max_daily_drawdown_pct: number;
+      max_risk_per_trade_pct: number;
+      max_trades_per_day: number;
+      paper_trading: boolean;
+      autonomy_level: string;
+    }>(`/api/v1/settings/trading`),
+  updateTradingSettings: (patch: {
+    capital?: number;
+    max_daily_drawdown_pct?: number;
+    max_risk_per_trade_pct?: number;
+    max_trades_per_day?: number;
+    paper_trading?: boolean;
+    autonomy_level?: string;
+  }) =>
+    request(`/api/v1/settings/trading`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
 
   // Health
   health: () => request(`/api/v1/health`),

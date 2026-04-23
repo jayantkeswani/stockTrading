@@ -1,6 +1,13 @@
 export const WS_URL =
   process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080/ws";
 
+export type Timeframe = "1m" | "5m" | "15m" | "1h" | "1D";
+
+/** Strip exchange prefix (e.g. "NSE:NIFTY26APRFUT" → "NIFTY26APRFUT"). */
+export function displaySymbol(symbol: string): string {
+  return symbol.includes(":") ? symbol.split(":")[1] : symbol;
+}
+
 export const SYMBOLS = [
   "NIFTY",
   "BANKNIFTY",

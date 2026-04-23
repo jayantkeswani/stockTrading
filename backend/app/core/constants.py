@@ -82,11 +82,7 @@ FYERS_SYMBOL_MAP = {
     "INDIA VIX": "NSE:INDIAVIX-INDEX",
 }
 
-# Risk defaults
-DEFAULT_CAPITAL = 1_000_000  # 10 Lakhs INR
-DEFAULT_MAX_DAILY_DRAWDOWN_PCT = 5.0
-DEFAULT_MAX_RISK_PER_TRADE_PCT = 2.0
-DEFAULT_MAX_TRADES_PER_DAY = 3
+# Strategy-level defaults (not user-configurable; trading_config table holds user params)
 DEFAULT_SL_PCT = 30.0  # 30% of premium
 DEFAULT_TARGET_MULTIPLIER = 1.5  # 1:1.5 risk-reward
 

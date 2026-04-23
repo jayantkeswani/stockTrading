@@ -10,7 +10,9 @@ import type {
   ResearchReportListItem,
   RiskDashboard,
   Signal,
+  Trade,
 } from "@/lib/types";
+import type { Timeframe } from "@/lib/constants";
 
 export interface ScanLogEntry {
   id: string;
@@ -32,6 +34,11 @@ interface AppState {
   addPosition: (position: Position) => void;
   updatePosition: (id: string, updates: Partial<Position>) => void;
   removePosition: (id: string) => void;
+
+  // Closed today
+  closedToday: Trade[];
+  setClosedToday: (trades: Trade[]) => void;
+  prependClosedTrade: (trade: Trade) => void;
 
   // Signals
   signals: Signal[];
@@ -81,6 +88,8 @@ interface AppState {
   // UI
   selectedSymbol: string;
   setSelectedSymbol: (symbol: string) => void;
+  activeTimeframe: Timeframe;
+  setActiveTimeframe: (tf: Timeframe) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -109,6 +118,14 @@ export const useStore = create<AppState>()(
       removePosition: (id) =>
         set((state) => ({
           positions: state.positions.filter((p) => p.id !== id),
+        })),
+
+      // Closed today
+      closedToday: [],
+      setClosedToday: (trades) => set({ closedToday: trades }),
+      prependClosedTrade: (trade) =>
+        set((state) => ({
+          closedToday: [trade, ...state.closedToday.filter((t) => t.id !== trade.id)],
         })),
 
       // Signals
@@ -209,11 +226,13 @@ export const useStore = create<AppState>()(
       // UI
       selectedSymbol: "NIFTY",
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
+      activeTimeframe: "5m",
+      setActiveTimeframe: (tf) => set({ activeTimeframe: tf }),
     }),
     {
       name: "scan-logs-storage",
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ scanLogs: state.scanLogs }),
+      partialize: (state) => ({ scanLogs: state.scanLogs, activeTimeframe: state.activeTimeframe }),
     }
   )
 );

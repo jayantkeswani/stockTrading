@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useEffect } from "react";
+import { Fragment, useState, useEffect, useRef, useCallback } from "react";
 import { useStore } from "@/store";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
@@ -11,9 +11,38 @@ interface ActivePositionsProps {
   compact?: boolean;
 }
 
+function formatISTTime(isoString: string | null): string {
+  if (!isoString) return "—";
+  const d = new Date(isoString);
+  return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
 export function ActivePositions({ compact }: ActivePositionsProps) {
-  const { positions, prices } = useStore();
+  const { positions, prices, closedToday, setClosedToday } = useStore();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const prevPositionsLen = useRef(positions.length);
+
+  const fetchClosed = useCallback(async () => {
+    try {
+      const trades = await api.getClosedTradesToday();
+      setClosedToday(trades);
+    } catch {
+      // non-critical — silently ignore
+    }
+  }, [setClosedToday]);
+
+  // Fetch on mount
+  useEffect(() => {
+    fetchClosed();
+  }, [fetchClosed]);
+
+  // Re-fetch whenever a position is removed (agent or manual close via WS)
+  useEffect(() => {
+    if (positions.length < prevPositionsLen.current) {
+      fetchClosed();
+    }
+    prevPositionsLen.current = positions.length;
+  }, [positions.length, fetchClosed]);
 
   // Subscribe position price symbols on the frontend WebSocket for live ticks
   useEffect(() => {
@@ -29,6 +58,8 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     if (!confirm("Close this position?")) return;
     try {
       await api.closePosition(positionId);
+      // Re-fetch closed today after manual close
+      setTimeout(fetchClosed, 500);
     } catch (err) {
       console.error("Failed to close position:", err);
     }
@@ -49,11 +80,11 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
         )}
       </div>
 
-      {positions.length === 0 ? (
+      {positions.length === 0 && closedToday.length === 0 ? (
         <div className="px-3 py-4 text-center text-text-muted text-xs font-mono">
           no open positions
         </div>
-      ) : (
+      ) : positions.length === 0 ? null : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs" style={{ tableLayout: "fixed" }}>
             <colgroup>
@@ -207,6 +238,80 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Closed Today */}
+      {closedToday.length > 0 && (
+        <div className="border-t border-border">
+          <div className="px-3 py-1.5 border-b border-border/50 flex items-center gap-2">
+            <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
+              Closed Today
+            </span>
+            <span className="text-[10px] font-mono text-text-muted">({closedToday.length})</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs" style={{ tableLayout: "fixed" }}>
+              <colgroup>
+                <col />
+                {!compact && <col style={{ width: "80px" }} />}
+                <col style={{ width: "85px" }} />
+                <col style={{ width: "85px" }} />
+                <col style={{ width: "110px" }} />
+                <col style={{ width: "90px" }} />
+                {!compact && <col style={{ width: "70px" }} />}
+              </colgroup>
+              <thead>
+                <tr className="text-[10px] text-text-muted uppercase font-mono tracking-wider">
+                  <th className="text-left px-3 py-1">Symbol</th>
+                  {!compact && <th className="text-left px-3 py-1">Strike</th>}
+                  <th className="text-right px-3 py-1">Entry</th>
+                  <th className="text-right px-3 py-1">Exit</th>
+                  <th className="text-right px-3 py-1">P&L</th>
+                  <th className="text-right px-3 py-1">Reason</th>
+                  {!compact && <th className="text-right px-3 py-1">Time</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {closedToday.map((t) => (
+                  <tr key={t.id} className="border-t border-border/30">
+                    <td className="px-3 py-1.5">
+                      <span className="font-mono font-medium">{t.symbol}</span>
+                      <span className={`ml-1 text-[10px] font-mono ${t.option_type === "CE" ? "text-profit" : "text-loss"}`}>
+                        {t.option_type}
+                      </span>
+                      {compact && (
+                        <span className="ml-1 text-[10px] text-text-muted font-mono">{t.strike_price}</span>
+                      )}
+                    </td>
+                    {!compact && (
+                      <td className="px-3 py-1.5 font-mono text-text-secondary">{t.strike_price}</td>
+                    )}
+                    <td className="px-3 py-1.5 text-right font-mono text-text-secondary">
+                      {formatINR(t.entry_price)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-text-secondary">
+                      {t.exit_price ? formatINR(t.exit_price) : "—"}
+                    </td>
+                    <td className={`px-3 py-1.5 text-right font-mono font-medium ${pnlColor(t.pnl ?? 0)}`}>
+                      <div>{formatINR(t.pnl ?? 0)}</div>
+                      {t.pnl_percent != null && (
+                        <div className="text-[10px]">{formatPercent(t.pnl_percent)}</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono text-text-muted text-[10px]">
+                      {t.exit_reason?.replace(/_/g, " ") ?? "—"}
+                    </td>
+                    {!compact && (
+                      <td className="px-3 py-1.5 text-right font-mono text-text-muted text-[10px]">
+                        {formatISTTime(t.exit_time)}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

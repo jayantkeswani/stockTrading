@@ -1,37 +1,51 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { PriceChart } from "@/components/charts/PriceChart";
 import { useStore } from "@/store";
-import { SYMBOLS } from "@/lib/constants";
+import { SYMBOLS, displaySymbol } from "@/lib/constants";
+import { api } from "@/lib/api";
 
 function ChartContent() {
   const searchParams = useSearchParams();
   const symbol = searchParams.get("symbol") || "NIFTY";
   const { selectedSymbol, setSelectedSymbol } = useStore();
+  const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
 
   useEffect(() => {
-    if (symbol) {
-      setSelectedSymbol(symbol);
-    }
+    setSelectedSymbol(symbol);
   }, [symbol, setSelectedSymbol]);
+
+  useEffect(() => {
+    api
+      .getWatchlist()
+      .then((data) => {
+        const custom = data.items
+          .map((i) => i.symbol)
+          .filter((s) => !(SYMBOLS as readonly string[]).includes(s));
+        setWatchlistSymbols(custom);
+      })
+      .catch(() => {});
+  }, []);
+
+  const allSymbols = [...SYMBOLS, ...watchlistSymbols];
 
   return (
     <div className="flex flex-col h-[calc(100vh-52px)]">
-      {/* Symbol tabs */}
-      <div className="flex items-center gap-0.5 px-3 py-1 border-b border-border shrink-0">
-        {SYMBOLS.map((sym) => (
+      {/* Symbol tabs — scrollable to handle watchlist items */}
+      <div className="flex items-center gap-0.5 px-3 py-1 border-b border-border shrink-0 overflow-x-auto scrollbar-none">
+        {allSymbols.map((sym) => (
           <button
             key={sym}
             onClick={() => setSelectedSymbol(sym)}
-            className={`px-2 py-0.5 text-xs font-mono font-medium rounded transition-colors ${
+            className={`px-2 py-0.5 text-xs font-mono font-medium rounded transition-colors shrink-0 ${
               selectedSymbol === sym
                 ? "bg-accent/15 text-accent border border-accent/30"
                 : "text-text-muted hover:text-text-secondary hover:bg-bg-tertiary border border-transparent"
             }`}
           >
-            {sym}
+            {displaySymbol(sym)}
           </button>
         ))}
       </div>

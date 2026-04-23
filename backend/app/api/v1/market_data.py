@@ -280,7 +280,7 @@ async def refresh_quotes():
 
 
 @router.get("/symbols/search")
-async def search_symbols(q: str = Query(min_length=2, max_length=50)):
+async def search_symbols(q: str = Query(min_length=1, max_length=50)):
     """Search for tradeable symbols — stocks, futures, and options.
 
     Searches the local symbol master (refreshed daily from Fyers).
@@ -304,7 +304,7 @@ async def search_symbols(q: str = Query(min_length=2, max_length=50)):
             logger.exception("Failed to load symbol master")
             return {"results": []}
 
-    matches = symbol_master.search(q, limit=20)
+    matches = symbol_master.search(q, limit=25)
 
     results = []
     for m in matches:

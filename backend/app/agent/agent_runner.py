@@ -1,6 +1,6 @@
 """Main agent loop — runs as asyncio background task within FastAPI.
 
-Supports multiple autonomy levels:
+Supports multiple autonomy levels (from trading_config DB):
 - MANUAL: Monitor only, no auto-execution
 - SEMI: Auto-close SL, request confirmation for profits
 - YOLO: Auto-execute signals, auto-close SL, auto-book profits
@@ -10,10 +10,11 @@ import asyncio
 import logging
 
 from app.agent.auto_executor import auto_execute_signal
+from app.agent.notification import notify_signal_generated
 from app.agent.trade_monitor import monitor_positions
-from app.config import settings
 from app.core.database import async_session_factory
 from app.core.enums import AgentAutonomyLevel
+from app.services.trading_config import get_trading_config
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -25,26 +26,10 @@ class AgentRunner:
     def __init__(self):
         self._running = False
         self._task: asyncio.Task | None = None
-        self._yolo_mode: bool = settings.yolo_mode
 
     @property
     def is_running(self) -> bool:
         return self._running
-
-    @property
-    def yolo_mode(self) -> bool:
-        return self._yolo_mode
-
-    @property
-    def autonomy_level(self) -> AgentAutonomyLevel:
-        if self._yolo_mode:
-            return AgentAutonomyLevel.YOLO
-        return AgentAutonomyLevel.SEMI
-
-    def set_yolo_mode(self, enabled: bool) -> None:
-        """Toggle YOLO mode at runtime."""
-        self._yolo_mode = enabled
-        logger.info("YOLO mode %s", "enabled" if enabled else "disabled")
 
     async def start(self):
         """Start the agent monitoring loop."""
@@ -53,10 +38,11 @@ class AgentRunner:
             return
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
-        logger.info("Agent started (yolo_mode=%s)", self._yolo_mode)
+        cfg = await get_trading_config()
+        logger.info("Agent started (autonomy=%s)", cfg.autonomy_level)
         await ws_manager.broadcast("agent:status", {
             "running": True,
-            "yolo_mode": self._yolo_mode,
+            "yolo_mode": cfg.yolo_mode,
         })
 
     async def stop(self):
@@ -69,20 +55,44 @@ class AgentRunner:
             except asyncio.CancelledError:
                 pass
         logger.info("Agent stopped")
+        cfg = await get_trading_config()
         await ws_manager.broadcast("agent:status", {
             "running": False,
-            "yolo_mode": self._yolo_mode,
+            "yolo_mode": cfg.yolo_mode,
         })
 
     async def on_new_signal(self, signal_id) -> None:
-        """Called when a new signal is generated. In YOLO mode, auto-execute it.
+        """Called when a new executable signal is generated.
 
-        This method is invoked by the strategy runner after persisting a signal.
+        Always sends a Telegram notification. In YOLO mode also auto-executes.
         """
-        if not self._yolo_mode:
-            return
-        if not self._running:
-            logger.debug("Agent not running, skipping auto-execute for signal %s", signal_id)
+        cfg = await get_trading_config()
+
+        # Always notify regardless of mode
+        try:
+            from app.core.database import async_session_factory
+            from app.models.signal import Signal
+            from sqlalchemy import select
+            async with async_session_factory() as session:
+                result = await session.execute(select(Signal).where(Signal.id == signal_id))
+                sig = result.scalar_one_or_none()
+            if sig:
+                await notify_signal_generated(
+                    symbol=sig.symbol,
+                    signal_type=sig.signal_type,
+                    strategy_name=sig.strategy_name,
+                    entry=float(sig.entry_price),
+                    stop_loss=float(sig.stop_loss),
+                    target=float(sig.target_price) if sig.target_price else 0,
+                    strike=float(sig.strike_price) if sig.strike_price else None,
+                    expiry=str(sig.expiry_date) if sig.expiry_date else None,
+                    confidence=float(sig.confidence) if sig.confidence else None,
+                    instrument_type=sig.instrument_type or "OPTION",
+                )
+        except Exception:
+            logger.exception("Error sending signal notification for %s", signal_id)
+
+        if not cfg.yolo_mode or not self._running:
             return
 
         try:
@@ -96,9 +106,10 @@ class AgentRunner:
         """Main monitoring loop."""
         while self._running:
             try:
+                cfg = await get_trading_config()
                 async with async_session_factory() as session:
                     actions = await monitor_positions(
-                        session, yolo_mode=self._yolo_mode
+                        session, yolo_mode=cfg.yolo_mode
                     )
                     if actions:
                         for action in actions:

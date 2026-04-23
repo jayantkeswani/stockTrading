@@ -13,11 +13,13 @@ Lifecycle:
 
 import asyncio
 import logging
+from datetime import datetime
 from threading import Thread
 
 from app.config import settings
 from app.core.constants import FYERS_SYMBOL_MAP
 from app.core.redis import get_redis
+from app.core.utils import is_market_open, now_ist
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,9 @@ class FyersWSClient:
         # Seeded from FYERS_SYMBOL_MAP (indices), extended when stock symbols
         # are subscribed via register_symbol_map().
         self._reverse_map: dict[str, str] = {v: k for k, v in FYERS_SYMBOL_MAP.items()}
+        # Reconnect tracking for gap backfill
+        self._was_ever_connected: bool = False
+        self._last_disconnect_at: datetime | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -280,21 +285,49 @@ class FyersWSClient:
         await feed_manager.process_tick(symbol, tick_data, fyers_alias=fyers_alias)
 
     def _on_connect(self):
-        """Called when Fyers WebSocket connects."""
+        """Called when Fyers WebSocket connects (initial or reconnect)."""
+        # Snapshot and clear the disconnect timestamp atomically before async work
+        disconnect_at = self._last_disconnect_at
+        self._last_disconnect_at = None
+        self._was_ever_connected = True
         self._connected = True
         logger.info("Fyers WebSocket connected")
 
-        # Broadcast connection status to frontend
         if self._loop:
             self._loop.call_soon_threadsafe(
                 asyncio.ensure_future,
                 self._broadcast_connection_status(True),
             )
+            # Reconnect (not initial connect) — trigger gap backfill
+            if disconnect_at is not None:
+                reconnect_at = now_ist()
+                logger.info(
+                    "Reconnect detected — scheduling gap backfill %s → %s",
+                    disconnect_at.strftime("%H:%M:%S"),
+                    reconnect_at.strftime("%H:%M:%S"),
+                )
+                self._loop.call_soon_threadsafe(
+                    asyncio.ensure_future,
+                    self._run_gap_backfill(disconnect_at, reconnect_at),
+                )
 
     def _on_close(self, *args):
         """Called when Fyers WebSocket disconnects."""
         self._connected = False
         logger.warning("Fyers WebSocket disconnected")
+
+        # Record disconnect time only when mid-session during market hours
+        if self._was_ever_connected and is_market_open():
+            self._last_disconnect_at = now_ist()
+            logger.info(
+                "Disconnect at %s captured for gap backfill",
+                self._last_disconnect_at.strftime("%H:%M:%S"),
+            )
+            if self._loop:
+                self._loop.call_soon_threadsafe(
+                    asyncio.ensure_future,
+                    self._clear_in_progress_candles(),
+                )
 
         if self._loop:
             self._loop.call_soon_threadsafe(
@@ -306,6 +339,16 @@ class FyersWSClient:
         """Called on Fyers WebSocket error."""
         logger.error("Fyers WebSocket error: %s", error)
 
+        # Detect Fyers auth failures and trigger automatic re-login
+        error_str = str(error).lower() if error else ""
+        auth_signals = ("invalid token", "token expired", "code -16", "code -17", "unauthoriz")
+        if any(s in error_str for s in auth_signals) and self._loop:
+            logger.warning("Auth failure on WS error — scheduling reauth + restart")
+            self._loop.call_soon_threadsafe(
+                asyncio.ensure_future,
+                self._trigger_reauth_and_restart(),
+            )
+
     async def _broadcast_connection_status(self, connected: bool):
         """Broadcast Fyers connection status to frontend via WebSocket."""
         from app.websocket.manager import ws_manager
@@ -314,6 +357,70 @@ class FyersWSClient:
             "connected": connected,
             "source": "fyers",
         })
+
+    async def _clear_in_progress_candles(self) -> None:
+        """Clear stale partial candles so the seam candle isn't emitted on reconnect."""
+        from app.data_feed.feed_manager import feed_manager
+        feed_manager.clear_in_progress_candles()
+
+    async def _run_gap_backfill(self, start: datetime, end: datetime) -> None:
+        """Fetch and persist 1m candles for the disconnect gap [start, end].
+
+        Uses the same idempotent upsert as startup backfill — does NOT re-trigger
+        strategy evaluation for gap candles, so strategy state picks up from live ticks.
+        """
+        import asyncio as _asyncio
+
+        from app.core.retry import async_retry
+        from app.services.candle_backfill import (
+            _fetch_history_range_via_sdk,
+            _get_all_backfill_symbols,
+            _persist_candles,
+        )
+
+        logger.info(
+            "Gap backfill: fetching %s → %s for all symbols",
+            start.strftime("%H:%M:%S"), end.strftime("%H:%M:%S"),
+        )
+
+        r = get_redis()
+        token = await r.get(FYERS_TOKEN_KEY)
+        if not token:
+            logger.warning("No Fyers token — skipping gap backfill")
+            return
+
+        symbols = await _get_all_backfill_symbols()
+        from_date = start.date()
+        to_date = end.date()
+        total = 0
+
+        for internal, fyers_symbol in symbols.items():
+            try:
+                candles = await async_retry(
+                    _asyncio.to_thread,
+                    _fetch_history_range_via_sdk, token, fyers_symbol, from_date, to_date,
+                    retries=3,
+                    base_delay=1.0,
+                    label=f"gap_backfill:{internal}",
+                )
+                if candles:
+                    count = await _persist_candles(internal, candles)
+                    total += count
+            except Exception:
+                logger.exception("Gap backfill failed for %s", internal)
+
+        logger.info("Gap backfill complete: %d candles inserted", total)
+
+    async def _trigger_reauth_and_restart(self) -> None:
+        """Handle WS auth failure: re-login and restart the connection."""
+        try:
+            from app.data_feed.fyers_auto_login import trigger_reauth
+            await trigger_reauth()
+            logger.info("Reauth completed — restarting WebSocket")
+            await self.stop()
+            await self.start(symbols=self._symbols)
+        except Exception:
+            logger.exception("Reauth + WS restart failed")
 
     def _fyers_to_internal(self, fyers_symbol: str) -> str | None:
         """Convert Fyers symbol format to our internal symbol name.

@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select, func
@@ -17,15 +18,27 @@ router = APIRouter()
 async def list_trades(
     status: str | None = None,
     strategy: str | None = None,
-    limit: int = Query(default=50, le=200),
+    closed_since: datetime | None = None,
+    entry_since: datetime | None = None,
+    entry_until: datetime | None = None,
+    limit: int = Query(default=50, le=1000),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Trade).order_by(desc(Trade.entry_time))
+    query = select(Trade)
     if status:
         query = query.where(Trade.status == status)
     if strategy:
         query = query.where(Trade.strategy_name == strategy)
+    if closed_since is not None:
+        query = query.where(Trade.exit_time >= closed_since)
+        query = query.order_by(desc(Trade.exit_time))
+    else:
+        if entry_since is not None:
+            query = query.where(Trade.entry_time >= entry_since)
+        if entry_until is not None:
+            query = query.where(Trade.entry_time <= entry_until)
+        query = query.order_by(desc(Trade.entry_time))
     query = query.offset(offset).limit(limit)
     result = await db.execute(query)
     return result.scalars().all()

@@ -22,7 +22,6 @@ CSV columns (0-indexed, no header row):
 
 import asyncio
 import csv
-import gzip
 import io
 import json
 import logging
@@ -147,19 +146,17 @@ class SymbolMaster:
             try:
                 age = time.time() - float(ts)
                 if age < REFRESH_INTERVAL_SECONDS:
-                    # Load from Redis
-                    compressed = await r.get(REDIS_KEY)
-                    if compressed:
-                        data = gzip.decompress(compressed)
-                        self._symbols = json.loads(data)
+                    raw = await r.get(REDIS_KEY)
+                    if raw:
+                        self._symbols = json.loads(raw)
                         self._build_index()
                         logger.info(
                             "Symbol master loaded from Redis (%d symbols, %.0fs old)",
                             len(self._symbols), age,
                         )
                         return
-            except Exception:
-                logger.warning("Failed to load symbol master from Redis, will re-download")
+            except Exception as e:
+                logger.warning("Failed to load symbol master from Redis: %s — will re-download", e)
 
         # Download fresh data
         await self.refresh()
@@ -184,17 +181,17 @@ class SymbolMaster:
         self._build_index()
         self._loaded = True
 
-        # Store in Redis (gzip compressed)
+        # Store in Redis as plain JSON (decode_responses=True on pool requires string values)
         try:
             from app.core.redis import get_redis
 
             r = get_redis()
-            compressed = gzip.compress(json.dumps(all_symbols).encode())
-            await r.set(REDIS_KEY, compressed)
+            payload = json.dumps(all_symbols)
+            await r.set(REDIS_KEY, payload)
             await r.set(REDIS_TS_KEY, str(time.time()))
             logger.info(
-                "Symbol master stored in Redis (%d symbols, %.1f KB compressed)",
-                len(all_symbols), len(compressed) / 1024,
+                "Symbol master stored in Redis (%d symbols, %.1f KB)",
+                len(all_symbols), len(payload) / 1024,
             )
         except Exception:
             logger.exception("Failed to store symbol master in Redis")
@@ -210,7 +207,7 @@ class SymbolMaster:
     def search(
         self,
         query: str,
-        limit: int = 20,
+        limit: int = 25,
     ) -> list[dict]:
         """Search symbols by query string.
 
@@ -221,6 +218,8 @@ class SymbolMaster:
           - "NIFTY 24000CE"    → NIFTY 24000 CE options
           - "NIFTY 24000 CE"   → same as above
           - "RELIANCE"         → RELIANCE equity + derivatives
+          - "industries"       → substring match on display name
+          - "liance"           → substring match on short name
         """
         if not self._symbols:
             return []
@@ -234,17 +233,15 @@ class SymbolMaster:
         target_type: str | None = None
         target_segment: str | None = None
 
-        # Parse remaining parts
+        # Parse remaining parts for strike/segment/option_type filters
         if len(parts) > 1:
             second = parts[1]
-            # Check for segment filter
             if second == "FUT":
                 target_segment = "FUT"
             elif second in ("CE", "PE"):
                 target_type = second
                 target_segment = "OPT"
             else:
-                # Try strike + optional type suffix: "24000CE" or "24000"
                 match = re.match(r"^(\d+(?:\.\d+)?)(CE|PE)?$", second)
                 if match:
                     target_strike = float(match.group(1))
@@ -252,7 +249,6 @@ class SymbolMaster:
                     if match.group(2):
                         target_type = match.group(2)
 
-        # Third part: "NIFTY 24000 CE"
         if len(parts) > 2:
             if parts[2] in ("CE", "PE"):
                 target_type = parts[2]
@@ -260,49 +256,58 @@ class SymbolMaster:
             elif parts[2] == "FUT":
                 target_segment = "FUT"
 
-        # Find matching symbols by name (exact match on short name first)
-        indices = self._by_name.get(name_query, [])
+        # Score each symbol: higher = better match
+        # 100=exact short name, 80=prefix short name, 60=substring short name,
+        # 40=substring display name, 20=substring fyers symbol
+        scored: list[tuple[int, dict]] = []
+        for sym in self._symbols:
+            sn = sym["n"].upper()
+            dn = sym["d"].upper()
+            fs = sym["s"].upper()
 
-        # If no exact match, try prefix match
-        if not indices:
-            for name, idxs in self._by_name.items():
-                if name.startswith(name_query):
-                    indices.extend(idxs)
+            if sn == name_query:
+                score = 100
+            elif sn.startswith(name_query):
+                score = 80
+            elif name_query in sn:
+                score = 60
+            elif name_query in dn:
+                score = 40
+            elif name_query in fs:
+                score = 20
+            else:
+                continue
 
-        results = []
-        for i in indices:
-            sym = self._symbols[i]
-
-            # Filter by segment
+            # Apply segment filter
             if target_segment and sym["g"] != target_segment:
-                # But always include EQ if user just typed the name with no filters
                 if target_segment != "OPT" or target_strike is not None:
                     continue
                 elif sym["g"] != "EQ":
                     continue
 
-            # Filter by strike proximity
+            # Apply strike proximity filter
             if target_strike is not None:
                 if sym["k"] is None:
-                    # Not an option — skip unless it's EQ/FUT with no other filters
                     continue
                 if abs(sym["k"] - target_strike) > 500:
                     continue
 
-            # Filter by option type
+            # Apply option type filter
             if target_type and sym.get("t") != target_type:
                 continue
 
-            results.append(sym)
+            scored.append((score, sym))
 
-        # Sort results: EQ first, then FUT, then OPT by strike proximity
-        def sort_key(s: dict) -> tuple:
-            seg_order = {"EQ": 0, "FUT": 1, "OPT": 2}.get(s["g"], 3)
+        # Sort: score desc, then EQ > FUT > OPT, then strike proximity
+        seg_order = {"EQ": 0, "FUT": 1, "OPT": 2}
+
+        def sort_key(item: tuple[int, dict]) -> tuple:
+            sc, s = item
             strike_dist = abs(s["k"] - target_strike) if target_strike and s["k"] else 0
-            return (seg_order, strike_dist, s.get("k") or 0)
+            return (-sc, seg_order.get(s["g"], 3), strike_dist, s.get("k") or 0)
 
-        results.sort(key=sort_key)
-        return results[:limit]
+        scored.sort(key=sort_key)
+        return [sym for _, sym in scored[:limit]]
 
 
 # Singleton

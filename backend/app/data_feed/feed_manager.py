@@ -208,4 +208,16 @@ class FeedManager:
             logger.exception("Strategy evaluation failed for %s", symbol)
 
 
+    def clear_in_progress_candles(self) -> None:
+        """Clear partially-built candles on WS disconnect.
+
+        Prevents the seam candle (built with pre-disconnect ticks) from being
+        emitted with incorrect OHLC when ticks resume after reconnect.
+        """
+        count = len(self._current_candles)
+        self._current_candles.clear()
+        if count:
+            logger.info("Cleared %d in-progress candles on WS disconnect", count)
+
+
 feed_manager = FeedManager()

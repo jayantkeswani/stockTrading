@@ -5,16 +5,17 @@ Runs:
 - Daily at 8:55 AM IST (before market opens at 9:15 AM)
 
 On success: stores token in Redis and sends Telegram notification.
-On failure: sends Telegram alert with the manual login URL as fallback.
+On failure: schedules retries every 15 min (up to 10 attempts) before alerting.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 from app.agent.notification import send_telegram
 from app.config import settings
@@ -28,6 +29,66 @@ IST = ZoneInfo("Asia/Kolkata")
 # Module-level scheduler instance
 scheduler = AsyncIOScheduler(timezone=IST)
 
+_MAX_LOGIN_RETRIES = 10
+_RETRY_INTERVAL_MINUTES = 15
+
+
+async def _start_data_feed_after_login() -> None:
+    """Start the WS feed after a successful login if not already connected."""
+    try:
+        from app.data_feed.fyers_ws_client import fyers_ws_client
+
+        if not fyers_ws_client.is_connected:
+            await fyers_ws_client.start()
+            logger.info("Data feed started after successful auto-login")
+    except Exception as e:
+        logger.error("Failed to start data feed after login: %s", e)
+
+
+async def _schedule_login_retry(attempt: int) -> None:
+    """Schedule the next login retry attempt via APScheduler DateTrigger."""
+    next_run = datetime.now(IST) + timedelta(minutes=_RETRY_INTERVAL_MINUTES)
+    scheduler.add_job(
+        _retry_auto_login,
+        args=[attempt],
+        trigger=DateTrigger(run_date=next_run, timezone=IST),
+        id=f"fyers_login_retry_{attempt}",
+        name=f"Fyers Login Retry {attempt}",
+        replace_existing=True,
+    )
+    logger.info(
+        "Scheduled login retry %d at %s IST",
+        attempt, next_run.strftime("%H:%M"),
+    )
+
+
+async def _retry_auto_login(attempt: int) -> None:
+    """Single retry attempt; schedules the next one on failure.
+
+    Args:
+        attempt: Current retry number (1-based).
+    """
+    ist_now = datetime.now(IST).strftime("%H:%M:%S IST")
+    logger.info("Fyers auto-login retry %d at %s", attempt, ist_now)
+
+    try:
+        await auto_login_and_store()
+        await _start_data_feed_after_login()
+        await send_telegram(f"✅ Fyers connected (retry {attempt}) — market data live")
+        logger.info("Fyers auto-login retry %d succeeded", attempt)
+
+    except Exception as e:
+        logger.error("Fyers auto-login retry %d failed: %s", attempt, e)
+
+        if attempt >= _MAX_LOGIN_RETRIES:
+            logger.error("Fyers auto-login: exhausted %d retries — giving up", _MAX_LOGIN_RETRIES)
+            await send_telegram(
+                "❌ <b>Fyers login failed after all retries</b>\n"
+                "Open the dashboard on your computer to log in."
+            )
+        else:
+            await _schedule_login_retry(attempt + 1)
+
 
 async def run_fyers_auto_login() -> None:
     """Execute auto-login and send appropriate notification."""
@@ -35,51 +96,30 @@ async def run_fyers_auto_login() -> None:
     logger.info("Running Fyers auto-login at %s", ist_now)
 
     try:
-        access_token = await auto_login_and_store()
+        await auto_login_and_store()
+        await _start_data_feed_after_login()
 
-        # Auto-start the data feed after successful login
-        try:
-            from app.data_feed.fyers_ws_client import fyers_ws_client
-
-            if not fyers_ws_client.is_connected:
-                await fyers_ws_client.start()
-                logger.info("Data feed started after successful auto-login")
-        except Exception as e:
-            logger.error("Failed to start data feed after login: %s", e)
-
-        msg = (
-            f"<b>Fyers Auto-Login Successful</b>\n"
-            f"Time: {ist_now}\n"
-            f"User: {settings.fyers_username}\n"
-            f"Token stored in Redis (TTL: 10 hours)\n"
-            f"Data feed: starting"
-        )
+        msg = "✅ Fyers connected — market data live"
         logger.info("Fyers auto-login succeeded for user %s", settings.fyers_username)
         await send_telegram(msg)
 
     except FyersAutoLoginError as e:
         logger.error("Fyers auto-login failed: %s", e)
-        manual_url = get_auth_url()
-        msg = (
-            f"<b>Fyers Auto-Login Failed</b>\n"
-            f"Time: {ist_now}\n"
-            f"Error: {e}\n\n"
-            f"<b>Manual login required:</b>\n"
-            f"<a href=\"{manual_url}\">Click here to login manually</a>"
+        await _schedule_login_retry(1)
+        next_run_str = (datetime.now(IST) + timedelta(minutes=_RETRY_INTERVAL_MINUTES)).strftime("%H:%M IST")
+        await send_telegram(
+            f"⚠️ <b>Fyers login failed — retrying at {next_run_str}</b>\n"
+            f"{e}"
         )
-        await send_telegram(msg)
 
     except Exception as e:
         logger.exception("Unexpected error during Fyers auto-login: %s", e)
-        manual_url = get_auth_url()
-        msg = (
-            f"<b>Fyers Auto-Login Error</b>\n"
-            f"Time: {ist_now}\n"
-            f"Error: {e}\n\n"
-            f"<b>Manual login required:</b>\n"
-            f"<a href=\"{manual_url}\">Click here to login manually</a>"
+        await _schedule_login_retry(1)
+        next_run_str = (datetime.now(IST) + timedelta(minutes=_RETRY_INTERVAL_MINUTES)).strftime("%H:%M IST")
+        await send_telegram(
+            f"⚠️ <b>Fyers login error — retrying at {next_run_str}</b>\n"
+            f"{e}"
         )
-        await send_telegram(msg)
 
 
 def has_auto_login_credentials() -> bool:

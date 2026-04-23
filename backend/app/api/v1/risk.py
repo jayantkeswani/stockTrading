@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.core.database import get_db
+from app.services.trading_config import get_trading_config
 from app.core.enums import TradeStatus
 from app.core.utils import now_ist
 from app.models.daily_summary import DailySummary
@@ -18,8 +18,9 @@ router = APIRouter()
 
 @router.get("/dashboard", response_model=RiskDashboardResponse)
 async def risk_dashboard(db: AsyncSession = Depends(get_db)):
+    cfg = await get_trading_config()
     today = now_ist().date()
-    capital = Decimal(settings.trading_capital)
+    capital = Decimal(cfg.capital)
 
     # Today's closed trades P&L
     result = await db.execute(
@@ -60,11 +61,11 @@ async def risk_dashboard(db: AsyncSession = Depends(get_db)):
         daily_pnl=total_daily_pnl,
         closed_pnl=daily_pnl,
         daily_drawdown_pct=drawdown_pct,
-        max_daily_drawdown_pct=settings.max_daily_drawdown_pct,
+        max_daily_drawdown_pct=cfg.max_daily_drawdown_pct,
         trades_today=trades_today,
-        max_trades_per_day=settings.max_trades_per_day,
+        max_trades_per_day=cfg.max_trades_per_day,
         capital_at_risk=capital_at_risk,
-        is_halted=drawdown_pct >= settings.max_daily_drawdown_pct,
+        is_halted=drawdown_pct >= cfg.max_daily_drawdown_pct,
         positions_open=positions_open,
     )
 

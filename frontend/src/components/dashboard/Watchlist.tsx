@@ -94,7 +94,7 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
 
   // Debounced symbol search
   useEffect(() => {
-    if (inputValue.trim().length < 2) {
+    if (inputValue.trim().length < 1) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;

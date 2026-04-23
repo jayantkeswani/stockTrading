@@ -8,6 +8,7 @@ Redis key: ``watchlist:items`` (hash: fyers_symbol -> JSON metadata)
 
 import json
 import logging
+import time
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -42,7 +43,9 @@ async def get_watchlist():
             meta["symbol"] = symbol
             result.append(meta)
         except json.JSONDecodeError:
-            result.append({"symbol": symbol, "display": symbol})
+            result.append({"symbol": symbol, "display": symbol, "added_at": 0})
+    # Sort by insertion time so order is stable across reloads
+    result.sort(key=lambda x: x.get("added_at", 0))
     return {"items": result}
 
 
@@ -55,6 +58,7 @@ async def add_to_watchlist(body: WatchlistAddRequest):
         "strike": body.strike,
         "option_type": body.option_type,
         "expiry": body.expiry,
+        "added_at": time.time(),
     }
 
     r = get_redis()

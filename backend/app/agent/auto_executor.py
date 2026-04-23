@@ -15,17 +15,17 @@ from decimal import Decimal
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.notification import send_telegram
-from app.config import settings
+from app.agent.notification import notify_auto_executed, notify_drawdown_halt
 from app.core.constants import (
-    DEFAULT_MAX_DAILY_DRAWDOWN_PCT,
-    DEFAULT_MAX_TRADES_PER_DAY,
     IST,
     LOT_SIZES,
     MARKET_OPEN,
 )
+from app.services.position_sizing import calculate_lots
+from app.services.trading_config import get_trading_config
 from app.core.database import async_session_factory
 from app.core.enums import AgentActionType, SignalStatus, TradeStatus
+from app.core.redis import get_cached_price
 from app.core.utils import now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
@@ -95,9 +95,10 @@ async def auto_execute_signal(signal_id) -> dict | None:
         else:
             lot_size = LOT_SIZES.get(signal.symbol, 75)
 
-        lots = _calculate_lots(
-            capital=settings.trading_capital,
-            risk_per_trade_pct=settings.max_risk_per_trade_pct,
+        cfg = await get_trading_config()
+        lots = calculate_lots(
+            capital=cfg.capital,
+            risk_per_trade_pct=cfg.max_risk_per_trade_pct,
             entry_price=float(signal.entry_price),
             stop_loss=float(signal.stop_loss),
             lot_size=lot_size,
@@ -140,7 +141,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             target_price=signal.target_price,
             status=TradeStatus.OPEN.value,
             position_type=position_type,
-            is_paper=settings.paper_trading,
+            is_paper=cfg.paper_trading,
             entry_time=now,
             fyers_option_symbol=trading_symbol,
         )
@@ -162,7 +163,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             fyers_option_symbol=trading_symbol,
             strategy_name=signal.strategy_name,
             position_type=position_type,
-            is_paper=settings.paper_trading,
+            is_paper=cfg.paper_trading,
             opened_at=now,
         )
         session.add(position)
@@ -204,9 +205,46 @@ async def auto_execute_signal(signal_id) -> dict | None:
         except Exception:
             logger.warning("Could not subscribe to %s on websocket", trading_symbol)
 
-    # Broadcast trade creation
+    # Fetch current price so the frontend shows correct P&L immediately
+    current_price = float(signal.entry_price)
+    unrealized_pnl = 0.0
+    if trading_symbol:
+        try:
+            cached = await get_cached_price(trading_symbol)
+            if cached and cached.get("ltp"):
+                ltp = float(cached["ltp"])
+                current_price = ltp
+                unrealized_pnl = (ltp - float(signal.entry_price)) * quantity
+        except Exception:
+            pass
+
+    # Broadcast trade:open so the position appears in the frontend immediately
+    await ws_manager.broadcast(
+        "trade:open",
+        {
+            "id": str(position.id),
+            "trade_id": str(trade.id),
+            "symbol": signal.symbol,
+            "fyers_option_symbol": trading_symbol,
+            "strike_price": float(signal.strike_price),
+            "option_type": option_type or "",
+            "expiry_date": str(signal.expiry_date),
+            "lots": lots,
+            "quantity": quantity,
+            "entry_price": float(signal.entry_price),
+            "current_price": current_price,
+            "unrealized_pnl": unrealized_pnl,
+            "stop_loss": float(signal.stop_loss),
+            "target_price": float(signal.target_price) if signal.target_price else None,
+            "strategy_name": signal.strategy_name,
+            "is_paper": cfg.paper_trading,
+            "position_type": position_type,
+            "opened_at": now.isoformat(),
+        },
+    )
+
     action = {
-        "action": AgentActionType.AUTO_EXECUTED.value,
+        "action_type": AgentActionType.AUTO_EXECUTED.value,
         "signal_id": str(signal.id),
         "trade_id": str(trade.id),
         "symbol": signal.symbol,
@@ -217,10 +255,18 @@ async def auto_execute_signal(signal_id) -> dict | None:
     }
     await ws_manager.broadcast("agent:auto_executed", action)
 
-    # Telegram notification
-    await send_telegram(
-        f"<b>Auto-executed:</b> {signal.signal_type} {signal.symbol} "
-        f"{int(signal.strike_price)} @ {signal.entry_price}"
+    await notify_auto_executed(
+        symbol=signal.symbol,
+        signal_type=signal.signal_type,
+        strategy_name=signal.strategy_name,
+        entry=float(signal.entry_price),
+        stop_loss=float(signal.stop_loss),
+        target=float(signal.target_price) if signal.target_price else 0,
+        strike=float(signal.strike_price) if signal.strike_price else None,
+        expiry=str(signal.expiry_date) if signal.expiry_date else None,
+        lots=lots,
+        quantity=quantity,
+        instrument_type=signal.instrument_type or "OPTION",
     )
 
     logger.info(
@@ -242,19 +288,21 @@ async def _final_risk_check(session: AsyncSession, symbol: str) -> tuple[bool, s
     today = now_ist().date()
     today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
 
-    # Check max trades for the day
+    # Check max trades for the day — POSITIONAL trades are excluded since they
+    # span multiple days and shouldn't consume the intraday trade budget.
     trade_count_result = await session.execute(
         select(func.count(Trade.id)).where(
             and_(
                 Trade.entry_time >= today_start,
                 Trade.symbol == symbol,
+                Trade.position_type != "POSITIONAL",
             )
         )
     )
     trade_count = trade_count_result.scalar() or 0
-    max_trades = settings.max_trades_per_day or DEFAULT_MAX_TRADES_PER_DAY
-    if trade_count >= max_trades:
-        return False, f"Max trades reached ({max_trades}/day)"
+    cfg = await get_trading_config()
+    if trade_count >= cfg.max_trades_per_day:
+        return False, f"Max trades reached ({cfg.max_trades_per_day}/day)"
 
     # Check drawdown
     pnl_result = await session.execute(
@@ -266,31 +314,15 @@ async def _final_risk_check(session: AsyncSession, symbol: str) -> tuple[bool, s
         )
     )
     realized_pnl = float(pnl_result.scalar_one())
-    max_dd_pct = settings.max_daily_drawdown_pct or DEFAULT_MAX_DAILY_DRAWDOWN_PCT
-    max_dd_amount = settings.trading_capital * (max_dd_pct / 100.0)
+    max_dd_amount = cfg.max_drawdown_amount
 
     if realized_pnl < 0 and abs(realized_pnl) >= max_dd_amount:
+        try:
+            await notify_drawdown_halt(daily_pnl=realized_pnl, limit=max_dd_amount)
+        except Exception:
+            pass
         return False, "Drawdown limit breached"
 
     return True, None
 
 
-def _calculate_lots(
-    capital: float,
-    risk_per_trade_pct: float,
-    entry_price: float,
-    stop_loss: float,
-    lot_size: int,
-) -> int:
-    """Calculate number of lots based on risk per trade.
-
-    Returns at least 1 lot.
-    """
-    risk_amount = capital * (risk_per_trade_pct / 100.0)
-    risk_per_lot = abs(entry_price - stop_loss) * lot_size
-
-    if risk_per_lot <= 0:
-        return 1
-
-    lots = int(risk_amount / risk_per_lot)
-    return max(lots, 1)

@@ -16,15 +16,18 @@ from app.schemas.agent import (
     AgentStatusResponse,
     YoloToggleRequest,
 )
+from app.services.trading_config import get_trading_config, update_trading_config
 
 router = APIRouter()
 
-# In-memory agent state (will be managed by agent_runner in production)
+# In-memory agent state (running/uptime only — mode is persisted in trading_config)
 _agent_state = {"running": False, "started_at": None}
 
 
 @router.get("/status", response_model=AgentStatusResponse)
 async def agent_status(db: AsyncSession = Depends(get_db)):
+    cfg = await get_trading_config()
+
     # Count pending confirmations
     result = await db.execute(
         select(func.count(AgentLog.id)).where(
@@ -44,8 +47,8 @@ async def agent_status(db: AsyncSession = Depends(get_db)):
 
     return AgentStatusResponse(
         running=_agent_state["running"],
-        yolo_mode=agent_runner.yolo_mode,
-        autonomy_level=agent_runner.autonomy_level.value,
+        yolo_mode=cfg.yolo_mode,
+        autonomy_level=cfg.autonomy_level,
         pending_confirmations=pending,
         positions_monitored=positions_monitored,
         uptime_seconds=uptime,
@@ -57,7 +60,8 @@ async def start_agent():
     _agent_state["running"] = True
     _agent_state["started_at"] = now_ist()
     await agent_runner.start()
-    return {"status": "started", "yolo_mode": agent_runner.yolo_mode}
+    cfg = await get_trading_config()
+    return {"status": "started", "yolo_mode": cfg.yolo_mode}
 
 
 @router.post("/stop")
@@ -70,11 +74,12 @@ async def stop_agent():
 
 @router.patch("/yolo")
 async def toggle_yolo(body: YoloToggleRequest):
-    """Toggle YOLO mode on/off at runtime."""
-    agent_runner.set_yolo_mode(body.enabled)
+    """Toggle YOLO mode — persisted to DB and reflected immediately."""
+    autonomy_level = "YOLO" if body.enabled else "SEMI"
+    cfg = await update_trading_config(autonomy_level=autonomy_level)
     return {
-        "yolo_mode": agent_runner.yolo_mode,
-        "autonomy_level": agent_runner.autonomy_level.value,
+        "yolo_mode": cfg.yolo_mode,
+        "autonomy_level": cfg.autonomy_level,
     }
 
 

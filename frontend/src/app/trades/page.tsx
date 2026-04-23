@@ -1,122 +1,105 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { api } from "@/lib/api";
-import { formatINR, formatPercent, formatTime, formatDate, pnlColor } from "@/lib/formatters";
-import { STRATEGY_LABELS, STATUS_COLORS } from "@/lib/constants";
+import { startOfMonthIST, endOfMonthIST, isoDateIST } from "@/lib/formatters";
 import type { Trade } from "@/lib/types";
+import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
+import { SummaryStrip } from "@/components/trades/SummaryStrip";
+import { PnLHeatmap } from "@/components/trades/PnLHeatmap";
+import { TradesTable } from "@/components/trades/TradesTable";
+
+function defaultPeriod(): Period {
+  const now = new Date();
+  return { start: startOfMonthIST(now), end: endOfMonthIST(now), label: "This Month" };
+}
 
 export default function TradesPage() {
+  const [period, setPeriod] = useState<Period>(defaultPeriod);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
   useEffect(() => {
+    setSelectedDay(null);
+    setLoading(true);
+    let cancelled = false;
     async function load() {
       try {
-        const data = (await api.getTrades({ limit: 100 })) as Trade[];
-        setTrades(data);
+        const data = (await api.getTrades({
+          entry_since: period.start.toISOString(),
+          entry_until: period.end.toISOString(),
+          limit: 1000,
+        })) as Trade[];
+        if (!cancelled) setTrades(data);
       } catch {
-        // API not running yet
+        if (!cancelled) setTrades([]);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      setLoading(false);
     }
     load();
-  }, []);
+    return () => { cancelled = true; };
+  }, [period]);
+
+  const dailyPnL = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const t of trades) {
+      if (t.status !== "CLOSED" || t.pnl == null) continue;
+      const key = isoDateIST(new Date(t.entry_time));
+      map.set(key, (map.get(key) ?? 0) + Number(t.pnl));
+    }
+    return map;
+  }, [trades]);
+
+  const displayedTrades = useMemo(() => {
+    if (!selectedDay) return trades;
+    return trades.filter((t) => isoDateIST(new Date(t.entry_time)) === selectedDay);
+  }, [trades, selectedDay]);
+
+  const periodLabel = `${period.start.toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata", day: "2-digit", month: "short",
+  })} — ${period.end.toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric",
+  })}`;
 
   return (
     <div className="space-y-2">
-      <h1 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
-        Trade History
-      </h1>
+      {/* Header: period pills + date range */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <PeriodFilter value={period} onChange={setPeriod} />
+        <span className="text-[9px] font-mono text-text-muted/40 tracking-wider">
+          {periodLabel}
+        </span>
+      </div>
 
+      <SummaryStrip trades={trades} dailyPnL={dailyPnL} />
+
+      <PnLHeatmap
+        period={period}
+        dailyPnL={dailyPnL}
+        selectedDay={selectedDay}
+        onSelectDay={setSelectedDay}
+      />
+
+      {/* Trades table */}
       <div className="rounded border border-border bg-bg-secondary overflow-hidden">
-        {loading ? (
-          <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
-        ) : trades.length === 0 ? (
-          <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">no trades yet</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-[10px] text-text-muted uppercase font-mono tracking-wider bg-bg-tertiary/40">
-                  <th className="text-left px-3 py-1.5">Date</th>
-                  <th className="text-left px-3 py-1.5">Symbol</th>
-                  <th className="text-left px-3 py-1.5">Type</th>
-                  <th className="text-right px-3 py-1.5">Entry</th>
-                  <th className="text-right px-3 py-1.5">Exit</th>
-                  <th className="text-right px-3 py-1.5">P&L</th>
-                  <th className="text-left px-3 py-1.5">Strategy</th>
-                  <th className="text-left px-3 py-1.5">Exit Reason</th>
-                  <th className="text-left px-3 py-1.5">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {trades.map((trade) => (
-                  <tr
-                    key={trade.id}
-                    className="border-t border-border/30 hover:bg-bg-tertiary/30"
-                  >
-                    <td className="px-3 py-1.5 text-text-muted text-xs font-mono">
-                      {formatDate(trade.entry_time)}
-                      <br />
-                      {formatTime(trade.entry_time)}
-                    </td>
-                    <td className="px-3 py-1.5 font-mono">
-                      <span className="font-medium">{trade.symbol}</span>
-                      <span
-                        className={`ml-1 text-[10px] ${
-                          trade.option_type === "CE" ? "text-profit" : "text-loss"
-                        }`}
-                      >
-                        {trade.strike_price} {trade.option_type}
-                      </span>
-                    </td>
-                    <td className="px-3 py-1.5 text-xs font-mono text-text-secondary">{trade.side}</td>
-                    <td className="px-3 py-1.5 text-right font-mono">
-                      {formatINR(trade.entry_price)}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono">
-                      {trade.exit_price ? formatINR(trade.exit_price) : "\u2014"}
-                    </td>
-                    <td
-                      className={`px-3 py-1.5 text-right font-mono font-medium ${pnlColor(
-                        trade.pnl ?? 0
-                      )}`}
-                    >
-                      {trade.pnl != null ? (
-                        <>
-                          {formatINR(trade.pnl)}
-                          <div className="text-[10px]">
-                            {formatPercent(trade.pnl_percent ?? 0)}
-                          </div>
-                        </>
-                      ) : (
-                        "\u2014"
-                      )}
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent">
-                        {STRATEGY_LABELS[trade.strategy_name] || trade.strategy_name}
-                      </span>
-                    </td>
-                    <td className="px-3 py-1.5 text-xs font-mono text-text-muted">
-                      {trade.exit_reason || "\u2014"}
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <span
-                        className={`text-[10px] font-mono px-1 py-px rounded ${
-                          STATUS_COLORS[trade.status] || ""
-                        }`}
-                      >
-                        {trade.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {selectedDay && (
+          <div className="px-3 py-1 border-b border-border/30 flex items-center gap-2 bg-bg-tertiary/30">
+            <span className="text-[8px] font-mono uppercase tracking-wider text-text-muted/50">Day</span>
+            <span className="text-[9px] font-mono text-accent">{selectedDay}</span>
+            <span className="text-[8px] font-mono text-text-muted/40">
+              · {displayedTrades.length} trade{displayedTrades.length !== 1 ? "s" : ""}
+            </span>
+            <button
+              onClick={() => setSelectedDay(null)}
+              className="ml-auto text-[8px] font-mono text-text-muted/40 hover:text-text-muted transition-colors"
+            >
+              ✕ show all
+            </button>
           </div>
         )}
+        <TradesTable trades={displayedTrades} loading={loading} />
       </div>
     </div>
   );

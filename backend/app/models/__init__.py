@@ -9,6 +9,7 @@ from app.models.agent_log import AgentLog
 from app.models.oi_snapshot import OISnapshot
 from app.models.fundamental_data import FundamentalHistory, StockFundamental
 from app.models.research_report import ResearchAgentRun, ResearchReport
+from app.models.trading_config import TradingConfig
 
 __all__ = [
     "Base",
@@ -24,4 +25,5 @@ __all__ = [
     "FundamentalHistory",
     "ResearchReport",
     "ResearchAgentRun",
+    "TradingConfig",
 ]

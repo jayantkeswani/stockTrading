@@ -30,12 +30,11 @@ export function ResearchSearch({
     }
     try {
       const data = await api.searchSymbols(q);
-      // Filter to equity only
-      const eqResults = (data.results || []).filter(
-        (r: SearchResult) => r.segment === "EQ"
+      const filtered = (data.results || []).filter(
+        (r: SearchResult) => r.segment === "EQ" || r.segment === "INDEX"
       );
-      setResults(eqResults.slice(0, 8));
-      setShowDropdown(eqResults.length > 0);
+      setResults(filtered.slice(0, 8));
+      setShowDropdown(filtered.length > 0);
     } catch {
       setResults([]);
     }

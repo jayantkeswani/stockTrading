@@ -37,16 +37,20 @@ class FuturesResolution:
 async def resolve_futures_contract(
     symbol: str,
     entry_price: float,
+    from_date: date | None = None,
 ) -> FuturesResolution | None:
     """Resolve a stock symbol to its nearest-month futures contract.
 
     Args:
         symbol: Stock symbol, e.g. "TCS"
         entry_price: Expected entry price (used for margin estimation)
+        from_date: Starting date for expiry search (defaults to today).
+            Pass ``current_expiry + timedelta(days=1)`` to get the *next*
+            month's contract when rolling an expiring position.
 
     Returns FuturesResolution or None if resolution fails.
     """
-    today = now_ist().date()
+    today = from_date or now_ist().date()
 
     # 1. Find nearest monthly expiry
     expiry = _find_nearest_monthly_expiry(today)

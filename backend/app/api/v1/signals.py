@@ -5,10 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.core.constants import LOT_SIZES
+from app.services.position_sizing import calculate_lots
+from app.services.trading_config import get_trading_config
 from app.core.database import get_db
 from app.core.enums import AgentActionType, SignalStatus, TradeStatus
+from app.core.redis import get_cached_price
 from app.core.utils import now_ist
 from app.models.position import Position
 from app.models.signal import Signal
@@ -78,9 +80,10 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
     else:
         lot_size = LOT_SIZES.get(signal.symbol, 75)
 
-    lots = _calculate_lots(
-        capital=settings.trading_capital,
-        risk_per_trade_pct=settings.max_risk_per_trade_pct,
+    cfg = await get_trading_config()
+    lots = calculate_lots(
+        capital=cfg.capital,
+        risk_per_trade_pct=cfg.max_risk_per_trade_pct,
         entry_price=float(signal.entry_price),
         stop_loss=float(signal.stop_loss),
         lot_size=lot_size,
@@ -121,7 +124,7 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
         target_price=signal.target_price,
         status=TradeStatus.OPEN.value,
         position_type=position_type,
-        is_paper=settings.paper_trading,
+        is_paper=cfg.paper_trading,
         entry_time=now,
         fyers_option_symbol=trading_symbol,
     )
@@ -143,7 +146,7 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
         fyers_option_symbol=trading_symbol,
         strategy_name=signal.strategy_name,
         position_type=position_type,
-        is_paper=settings.paper_trading,
+        is_paper=cfg.paper_trading,
         opened_at=now,
     )
     db.add(position)
@@ -164,6 +167,20 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
         except Exception:
             logger.warning("Could not subscribe to %s on websocket", trading_symbol)
 
+    # Fetch current market price for the trading symbol so the frontend
+    # can show correct P&L immediately (before the first live tick arrives).
+    current_price = float(signal.entry_price)
+    unrealized_pnl = 0.0
+    if trading_symbol:
+        try:
+            cached = await get_cached_price(trading_symbol)
+            if cached and cached.get("ltp"):
+                ltp = float(cached["ltp"])
+                current_price = ltp
+                unrealized_pnl = (ltp - float(signal.entry_price)) * quantity
+        except Exception:
+            pass
+
     # Broadcast trade:open with full position data for frontend
     await ws_manager.broadcast(
         "trade:open",
@@ -171,16 +188,19 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
             "id": str(position.id),
             "trade_id": str(trade.id),
             "symbol": signal.symbol,
+            "fyers_option_symbol": trading_symbol,
             "strike_price": float(signal.strike_price),
             "option_type": option_type or "",
             "expiry_date": str(signal.expiry_date),
             "lots": lots,
             "quantity": quantity,
             "entry_price": float(signal.entry_price),
+            "current_price": current_price,
+            "unrealized_pnl": unrealized_pnl,
             "stop_loss": float(signal.stop_loss),
             "target_price": float(signal.target_price) if signal.target_price else None,
             "strategy_name": signal.strategy_name,
-            "is_paper": settings.paper_trading,
+            "is_paper": cfg.paper_trading,
             "position_type": position_type,
             "opened_at": now.isoformat(),
         },
@@ -201,22 +221,6 @@ async def execute_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
         "trade_id": str(trade.id),
         "position_id": str(position.id),
     }
-
-
-def _calculate_lots(
-    capital: float,
-    risk_per_trade_pct: float,
-    entry_price: float,
-    stop_loss: float,
-    lot_size: int,
-) -> int:
-    """Calculate number of lots based on risk per trade."""
-    risk_amount = capital * (risk_per_trade_pct / 100.0)
-    risk_per_lot = abs(entry_price - stop_loss) * lot_size
-    if risk_per_lot <= 0:
-        return 1
-    lots = int(risk_amount / risk_per_lot)
-    return max(lots, 1)
 
 
 @router.post("/{signal_id}/reject")

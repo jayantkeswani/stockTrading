@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { PriceChart } from "./PriceChart";
 import { useStore } from "@/store";
-import { SYMBOLS } from "@/lib/constants";
+import { SYMBOLS, displaySymbol } from "@/lib/constants";
+import { api } from "@/lib/api";
 
 interface ChartModalProps {
   isOpen: boolean;
@@ -13,6 +14,7 @@ interface ChartModalProps {
 
 export function ChartModal({ isOpen, onClose, initialSymbol }: ChartModalProps) {
   const { selectedSymbol, setSelectedSymbol } = useStore();
+  const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
 
   useEffect(() => {
     if (isOpen && initialSymbol) {
@@ -20,7 +22,20 @@ export function ChartModal({ isOpen, onClose, initialSymbol }: ChartModalProps) 
     }
   }, [isOpen, initialSymbol, setSelectedSymbol]);
 
-  // Close on Escape key
+  // Fetch custom watchlist symbols to show alongside the 5 default indices
+  useEffect(() => {
+    if (!isOpen) return;
+    api
+      .getWatchlist()
+      .then((data) => {
+        const custom = data.items
+          .map((i) => i.symbol)
+          .filter((s) => !(SYMBOLS as readonly string[]).includes(s));
+        setWatchlistSymbols(custom);
+      })
+      .catch(() => {});
+  }, [isOpen]);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -46,6 +61,8 @@ export function ChartModal({ isOpen, onClose, initialSymbol }: ChartModalProps) 
     onClose();
   };
 
+  const allSymbols = [...SYMBOLS, ...watchlistSymbols];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
@@ -60,26 +77,26 @@ export function ChartModal({ isOpen, onClose, initialSymbol }: ChartModalProps) 
         style={{ width: "90vw", height: "85vh" }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-          {/* Symbol tabs */}
-          <div className="flex gap-0.5">
-            {SYMBOLS.map((sym) => (
+        <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0 min-w-0">
+          {/* Symbol tabs — scrollable so watchlist items don't overflow */}
+          <div className="flex gap-0.5 overflow-x-auto scrollbar-none flex-1 min-w-0 mr-2">
+            {allSymbols.map((sym) => (
               <button
                 key={sym}
                 onClick={() => setSelectedSymbol(sym)}
-                className={`px-2 py-0.5 text-xs font-mono font-medium rounded transition-colors ${
+                className={`px-2 py-0.5 text-xs font-mono font-medium rounded transition-colors shrink-0 ${
                   selectedSymbol === sym
                     ? "bg-accent/15 text-accent border border-accent/30"
                     : "text-text-muted hover:text-text-secondary hover:bg-bg-tertiary border border-transparent"
                 }`}
               >
-                {sym}
+                {displaySymbol(sym)}
               </button>
             ))}
           </div>
 
           {/* Actions */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handlePopOut}
               className="text-xs font-mono px-2 py-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors flex items-center gap-1 border border-border"
