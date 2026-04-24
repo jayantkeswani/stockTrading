@@ -10,6 +10,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; [[ \"$f\" =~ \\.(py|tsx|ts|js)$ ]] && [[ \"$f\" != *\"CLAUDE.md\"* ]] && [[ \"$f\" != *\"ARCHITECTURE.md\"* ]] && [[ \"$f\" != *\"/docs/\"* ]] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Doc protocol: this code file was just edited. Update the relevant CLAUDE.md / ARCHITECTURE.md / docs/ in the same commit — do not leave this for later.\"}}' || true; }"
+          }
+        ]
+      }
     ]
   }
 }
