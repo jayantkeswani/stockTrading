@@ -45,3 +45,6 @@ coverage/
 
 # Docker
 docker-compose.override.yml
+
+# Backtest result files (local only)
+backtest_results/

@@ -1,14 +1,16 @@
 """On-demand historical option candle fetcher for accurate backtest mode.
 
-Fyers retains ~6 months of 1m candle history for option contracts. This module
-fetches and caches those candles in MarketData1m (same table as spot/equity
-candles — the symbol column fits Fyers option symbol format up to 30 chars).
+Data sources (in priority order):
+1. In-memory cache (populated from DB after first lookup).
+2. market_data_1m table — option candles collected live via WebSocket feed when
+   the system was trading that contract. These are the primary data source.
+3. Fyers historical API — confirmed NOT available on the free plan (returns
+   no_data even for active contracts). Kept as fallback for paid-plan users.
 
-Design:
-- Check if candles already exist in DB (from a previous backtest run) → reuse.
-- If not, fetch from Fyers SDK and persist (idempotent ON CONFLICT DO NOTHING).
-- Cache per-symbol in memory so repeated lookups on the same contract within
-  a single backtest run do not re-query the DB.
+Cache design:
+  Cache key: "{fyers_option_symbol}_{trade_date}" — always loads the FULL
+  trading day to avoid the bug where a narrow 5-min entry query populates the
+  cache, and a later full-day exit simulation query hits the stale narrow cache.
 """
 
 import asyncio
@@ -21,7 +23,7 @@ from app.indicators.candle_patterns import Candle
 
 logger = logging.getLogger(__name__)
 
-# In-memory cache: fyers_option_symbol -> sorted list[Candle] with timestamps
+# In-memory cache: "{fyers_option_symbol}_{YYYY-MM-DD}" -> full-day candle list
 _candle_cache: dict[str, list[tuple[datetime, Candle]]] = {}
 
 CHUNK_DAYS = 6
@@ -35,29 +37,29 @@ async def ensure_option_candles(
 ) -> list[tuple[datetime, Candle]]:
     """Return 1m candles for an option symbol between start_ts and end_ts.
 
-    Fetches from DB if cached; pulls from Fyers and persists otherwise.
+    Always loads the full trading day into cache to prevent stale-narrow-cache
+    issues when entry (5 min) and exit (full day) queries share the same symbol.
     Returns list of (timestamp, Candle) sorted ascending.
     """
-    cache_key = fyers_option_symbol
-    if cache_key in _candle_cache:
-        return _filter_range(_candle_cache[cache_key], start_ts, end_ts)
+    trade_date = start_ts.date()
+    cache_key = f"{fyers_option_symbol}_{trade_date}"
 
-    # Try DB first
-    candles = await _fetch_from_db(fyers_option_symbol, start_ts, end_ts)
-    if candles:
-        _candle_cache[cache_key] = candles
-        return _filter_range(candles, start_ts, end_ts)
+    if cache_key not in _candle_cache:
+        # Fetch the complete trading day from DB, not just the requested window
+        day_start = datetime.combine(trade_date, MARKET_OPEN, tzinfo=IST)
+        day_end = datetime.combine(trade_date, MARKET_CLOSE, tzinfo=IST)
 
-    # Fetch from Fyers SDK
-    candles = await _fetch_from_fyers(fyers_option_symbol, start_ts.date(), end_ts.date())
-    if candles:
-        _candle_cache[cache_key] = candles
+        full_day = await _fetch_from_db(fyers_option_symbol, day_start, day_end)
+        if not full_day:
+            # Fallback: try Fyers API (works only on paid plans)
+            full_day = await _fetch_from_fyers(fyers_option_symbol, trade_date, trade_date)
+        _candle_cache[cache_key] = full_day
 
-    return _filter_range(candles, start_ts, end_ts)
+    return _filter_range(_candle_cache[cache_key], start_ts, end_ts)
 
 
 def clear_cache() -> None:
-    """Clear in-memory candle cache (call between backtest runs if needed)."""
+    """Clear the in-memory full-day candle cache (call between backtest runs)."""
     _candle_cache.clear()
 
 

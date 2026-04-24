@@ -25,6 +25,7 @@ class BacktestReport:
     wins: int = 0
     losses: int = 0
     no_data: int = 0
+    accurate_fallbacks: int = 0   # Trades where accurate mode fell back to fast (expired contracts)
 
     total_pnl_points: float = 0.0   # Sum of pnl_per_lot / lot_size (net points)
     avg_win_pct: float = 0.0
@@ -38,6 +39,8 @@ class BacktestReport:
     confidence_buckets: dict[str, dict] = field(default_factory=dict)
 
     trades: list[SimulatedTrade] = field(default_factory=list)
+    # Carried from harness for save_run (not serialised into the report itself)
+    _signals_meta: list[dict] = field(default_factory=list, repr=False)
 
 
 def build_report(
@@ -77,6 +80,9 @@ def build_report(
             r.ce_trades += 1
         elif "PE" in signal_type:
             r.pe_trades += 1
+
+        if meta.get("effective_mode") == "fast_fallback":
+            r.accurate_fallbacks += 1
 
         if trade.exit_reason == ExitReason.NO_DATA:
             r.no_data += 1
@@ -142,6 +148,8 @@ def print_report(r: BacktestReport) -> None:
     print(f"  Signals generated : {r.total_signals}")
     print(f"  Trades simulated  : {r.total_trades}  (CE: {r.ce_trades}, PE: {r.pe_trades})")
     print(f"  No-data skips     : {r.no_data}")
+    if r.accurate_fallbacks:
+        print(f"  Accurate→fast     : {r.accurate_fallbacks}  (expired contracts, used delta approx)")
     print(f"  Wins / Losses     : {r.wins} / {r.losses}  (hit rate: {win_rate:.1f}%)")
     print(f"  Avg win           : {r.avg_win_pct:+.1f}%")
     print(f"  Avg loss          : {-r.avg_loss_pct:.1f}%")

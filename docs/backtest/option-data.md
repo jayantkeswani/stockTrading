@@ -1,10 +1,26 @@
 # Option Data in Backtesting
 
+## How option candle data is collected
+
+Option 1m candles come from the **live WebSocket feed** — when the system takes a live trade, it subscribes to that option contract's price feed. Ticks aggregate into 1m candles and persist to `market_data_1m` (same table as spot candles, stored under the full Fyers symbol, e.g. `NSE:NIFTY26APR24200PE`).
+
+**This means:** accurate mode works only for dates where the *specific strike the backtest would pick* matches a contract that was actually traded live. If the backtest chooses a different strike than what was historically traded, the DB query returns 0 rows.
+
+## Fyers historical API — not available on free plan
+
+**Confirmed (Apr 2026):** The Fyers free API does NOT serve 1m historical candle data for option contracts. `get_historical_data` returns `status=no_data` even for currently active options. Only index/equity spot data is available via history API on the free plan.
+
+The fetcher falls through to the Fyers API only when no DB data is found. This fallback is retained for future paid-plan users.
+
+**Fast mode is the correct default** for comprehensive historical backtesting. Accurate mode provides real premiums only on days with a matching live-trade candle in the DB.
+
+---
+
 ## Two modes
 
-### Accurate mode (default)
+### Accurate mode
 
-Fetches 1-minute candle history for the **specific option contract** the strategy would pick:
+Intended to fetch 1-minute candle history for the specific option contract the strategy picks. Currently auto-falls back to fast mode on every signal because Fyers free does not serve option 1m data. Kept for future compatibility with paid data plans.
 
 1. `strike_selector.resolve_option_symbol()` picks strike + expiry using historical spot price and the `as_of_date` (not `now_ist()`).
 2. `option_data_fetcher.ensure_option_candles()` checks `market_data_1m` for existing rows; if missing, fetches from Fyers SDK and persists (idempotent `ON CONFLICT DO NOTHING`).

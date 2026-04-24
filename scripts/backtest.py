@@ -55,15 +55,20 @@ async def main() -> None:
     parser.add_argument("--start", required=True, type=_parse_date, help="Start date YYYY-MM-DD")
     parser.add_argument("--end", required=True, type=_parse_date, help="End date YYYY-MM-DD")
     parser.add_argument(
-        "--mode", choices=["accurate", "fast"], default="accurate",
-        help="Backtest mode (default: accurate — uses real option premium history from Fyers)",
+        "--mode", choices=["accurate", "fast"], default="fast",
+        help="Backtest mode (default: fast — delta approximation, works for all historical dates). "
+             "Use 'accurate' only for recently active contracts (Fyers retains ~few weeks).",
     )
     parser.add_argument(
         "--no-window-filter", action="store_true",
         help="Evaluate every market minute (default: only within Strategy 2 trade windows)",
     )
+    parser.add_argument(
+        "--no-save", action="store_true",
+        help="Skip saving results to backtest_results/ (default: always save)",
+    )
     parser.add_argument("--save-json", metavar="PATH",
-                        help="Save report JSON to this file path")
+                        help="Also save a standalone summary JSON to this path")
     args = parser.parse_args()
 
     from app.strategies.registry import get_strategy
@@ -98,14 +103,20 @@ async def main() -> None:
     report = await backtester.run(strategy, args.symbol, args.start, args.end)
     print_report(report)
 
+    # Auto-save to backtest_results/ (unless suppressed)
+    if not args.no_save:
+        from app.backtest.result_saver import save_run
+        run_dir = save_run(report, report._signals_meta, report.trades)
+        print(f"\n  Results saved to: {run_dir}")
+
+    # Optional standalone JSON summary
     if args.save_json:
         import json
         from dataclasses import asdict
-        out = {k: v for k, v in asdict(report).items() if k != "trades"}
-        out["total_trades"] = report.total_trades
+        out = {k: v for k, v in asdict(report).items() if k not in ("trades", "_signals_meta")}
         with open(args.save_json, "w") as f:
             json.dump(out, f, indent=2, default=str)
-        logger.info("Report saved to %s", args.save_json)
+        logger.info("Summary JSON saved to %s", args.save_json)
 
 
 if __name__ == "__main__":
