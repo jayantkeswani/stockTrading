@@ -40,6 +40,14 @@ interface AppState {
   setClosedToday: (trades: Trade[]) => void;
   prependClosedTrade: (trade: Trade) => void;
 
+  // Position view mode (Real vs Shadow/Signal Test)
+  positionViewMode: "REAL" | "SHADOW";
+  setPositionViewMode: (mode: "REAL" | "SHADOW") => void;
+  shadowPositions: Position[];
+  setShadowPositions: (positions: Position[]) => void;
+  shadowClosedToday: Trade[];
+  setShadowClosedToday: (trades: Trade[]) => void;
+
   // Signals
   signals: Signal[];
   setSignals: (signals: Signal[]) => void;
@@ -133,6 +141,14 @@ export const useStore = create<AppState>()(
         set((state) => ({
           closedToday: [trade, ...state.closedToday.filter((t) => t.id !== trade.id)],
         })),
+
+      // Position view mode
+      positionViewMode: "REAL",
+      setPositionViewMode: (mode) => set({ positionViewMode: mode }),
+      shadowPositions: [],
+      setShadowPositions: (shadowPositions) => set({ shadowPositions }),
+      shadowClosedToday: [],
+      setShadowClosedToday: (shadowClosedToday) => set({ shadowClosedToday }),
 
       // Signals
       signals: [],

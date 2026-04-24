@@ -5,11 +5,14 @@ import { useStore } from "@/store";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 
 export function PnLCard() {
-  const { risk, positions, prices } = useStore();
+  const { risk, positions, prices, positionViewMode, shadowPositions, shadowClosedToday } = useStore();
 
-  // Compute live unrealized P&L from positions + real-time prices
+  const isShadow = positionViewMode === "SHADOW";
+  const activePositions = isShadow ? shadowPositions : positions;
+
+  // Compute live unrealized P&L from active positions + real-time prices
   const liveUnrealizedPnl = useMemo(() => {
-    return positions.reduce((total, pos) => {
+    return activePositions.reduce((total, pos) => {
       const priceKey = pos.fyers_option_symbol || pos.symbol;
       const livePrice = prices[priceKey]?.ltp;
       const currentPrice = livePrice ?? pos.current_price;
@@ -18,25 +21,38 @@ export function PnLCard() {
       }
       return total + (pos.unrealized_pnl ?? 0);
     }, 0);
-  }, [positions, prices]);
+  }, [activePositions, prices]);
 
-  // Total P&L = closed trades P&L (from backend) + live unrealized P&L
-  const closedPnl = Number(risk?.closed_pnl ?? 0);
+  // In shadow mode: closed P&L from shadow trades today (computed client-side)
+  const shadowClosedPnl = useMemo(() => {
+    return shadowClosedToday.reduce((sum, t) => sum + Number(t.pnl ?? 0), 0);
+  }, [shadowClosedToday]);
+
+  const closedPnl = isShadow ? shadowClosedPnl : Number(risk?.closed_pnl ?? 0);
   const pnl = closedPnl + liveUnrealizedPnl;
 
   const capital = Number(risk?.capital ?? 1000000);
   const drawdown = capital > 0 ? Math.abs(Math.min(pnl, 0)) / capital * 100 : 0;
 
-  // Capital at risk: sum of entry_price * quantity for open positions
   const capitalAtRisk = useMemo(() => {
-    return positions.reduce((total, pos) => {
-      return total + pos.entry_price * pos.quantity;
-    }, 0);
-  }, [positions]);
+    return activePositions.reduce((total, pos) => total + pos.entry_price * pos.quantity, 0);
+  }, [activePositions]);
+
+  const tradesCount = isShadow
+    ? shadowClosedToday.length
+    : (risk?.trades_today ?? 0);
 
   return (
-    <div className="flex items-center gap-6 px-3 py-1.5 rounded border border-border bg-bg-secondary">
-      {/* Today's P&L */}
+    <div className={`flex items-center gap-6 px-3 py-1.5 rounded border bg-bg-secondary ${
+      isShadow ? "border-purple-500/30" : "border-border"
+    }`}>
+      {isShadow && (
+        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 shrink-0">
+          GHOST
+        </span>
+      )}
+
+      {/* P&L */}
       <div className="flex items-center gap-2">
         <span className="text-xs text-text-muted font-mono uppercase">P&L</span>
         <span className={`text-sm font-bold font-mono ${pnlColor(pnl)}`}>
@@ -44,34 +60,40 @@ export function PnLCard() {
         </span>
       </div>
 
+      {!isShadow && (
+        <>
+          <div className="w-px h-4 bg-border" />
+
+          {/* Drawdown — only meaningful for real trades */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-text-muted font-mono uppercase">DD</span>
+            <span className={`text-xs font-mono font-medium ${drawdown > 3 ? "text-loss" : "text-text-secondary"}`}>
+              {formatPercent(-drawdown)}
+            </span>
+            <div className="w-16 h-1 bg-bg-tertiary rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  drawdown > 4 ? "bg-loss" : drawdown > 2 ? "bg-warning" : "bg-accent"
+                }`}
+                style={{ width: `${Math.min(drawdown / 5 * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+        </>
+      )}
+
       <div className="w-px h-4 bg-border" />
 
-      {/* Drawdown */}
+      {/* Trades / positions count */}
       <div className="flex items-center gap-2">
-        <span className="text-xs text-text-muted font-mono uppercase">DD</span>
-        <span className={`text-xs font-mono font-medium ${drawdown > 3 ? "text-loss" : "text-text-secondary"}`}>
-          {formatPercent(-drawdown)}
+        <span className="text-xs text-text-muted font-mono uppercase">
+          {isShadow ? "CLOSED" : "TRADES"}
         </span>
-        <div className="w-16 h-1 bg-bg-tertiary rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${
-              drawdown > 4 ? "bg-loss" : drawdown > 2 ? "bg-warning" : "bg-accent"
-            }`}
-            style={{ width: `${Math.min(drawdown / 5 * 100, 100)}%` }}
-          />
-        </div>
-      </div>
-
-      <div className="w-px h-4 bg-border" />
-
-      {/* Trades count */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-text-muted font-mono uppercase">TRADES</span>
         <span className="text-xs font-mono text-text-primary">
-          {risk?.trades_today ?? 0}/{risk?.max_trades_per_day ?? 3}
+          {isShadow ? tradesCount : `${tradesCount}/${risk?.max_trades_per_day ?? 3}`}
         </span>
         <span className="text-xs text-text-muted font-mono">
-          {positions.length} open
+          {activePositions.length} open
         </span>
       </div>
 
@@ -85,7 +107,7 @@ export function PnLCard() {
         </span>
       </div>
 
-      {risk?.is_halted && (
+      {!isShadow && risk?.is_halted && (
         <>
           <div className="w-px h-4 bg-border" />
           <span className="text-xs font-mono font-bold text-loss glow-loss px-1.5 py-0.5 rounded bg-loss/10">

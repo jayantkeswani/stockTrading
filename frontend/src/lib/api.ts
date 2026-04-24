@@ -48,7 +48,8 @@ export const api = {
   getFyersStatus: () => request(`/api/v1/auth/fyers/status`),
 
   // Positions
-  getPositions: () => request(`/api/v1/positions`),
+  getPositions: (includeShadow = false) =>
+    request(`/api/v1/positions${includeShadow ? "?include_shadow=true" : ""}`),
   closePosition: (id: string, reason = "MANUAL") =>
     request(`/api/v1/positions/${id}/close`, {
       method: "POST",
@@ -76,7 +77,7 @@ export const api = {
     if (params?.entry_until) query.set("entry_until", params.entry_until);
     return request(`/api/v1/trades?${query}`);
   },
-  getClosedTradesToday: () => {
+  getClosedTradesToday: (source?: string) => {
     // IST midnight = UTC midnight - 5h30m
     const now = new Date();
     const istOffset = 5 * 60 + 30; // minutes
@@ -87,6 +88,7 @@ export const api = {
     const istMidnightUtc = new Date(istToday.getTime() - istOffset * 60000);
     const since = istMidnightUtc.toISOString();
     const query = new URLSearchParams({ status: "CLOSED", closed_since: since, limit: "100" });
+    if (source) query.set("source", source);
     return request<import("./types").Trade[]>(`/api/v1/trades?${query}`);
   },
   getTradeSummary: (source?: string) => {
