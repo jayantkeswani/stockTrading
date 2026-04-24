@@ -48,3 +48,9 @@ docker-compose.override.yml
 
 # Backtest result files (local only)
 backtest_results/
+
+# Graphify — keep graph outputs, skip local-only files
+graphify-out/cache/
+graphify-out/manifest.json
+graphify-out/cost.json
+graphify-out/.graphify_python
