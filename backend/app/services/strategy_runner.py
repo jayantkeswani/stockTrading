@@ -369,18 +369,13 @@ class StrategyRunner:
         return None
 
     async def _get_india_vix(self) -> float | None:
-        """Fetch India VIX from Redis cache."""
-        r = get_redis()
-        vix_raw = await r.get("indicator:india_vix")
-        if vix_raw:
-            try:
-                return float(vix_raw)
-            except (ValueError, TypeError):
-                pass
-        # Also try the price cache (VIX may be tracked as a symbol)
+        """Fetch India VIX LTP from the Fyers price cache (NSE:INDIAVIX-INDEX)."""
         cached = await get_cached_price("INDIA VIX")
         if cached:
-            return float(cached["ltp"])
+            try:
+                return float(cached["ltp"])
+            except (ValueError, TypeError):
+                pass
         return None
 
     async def _is_canslim_symbol(self, symbol: str) -> bool:
