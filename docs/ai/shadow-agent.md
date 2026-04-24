@@ -30,11 +30,14 @@ Shadow trades and positions are completely isolated from all real-trading data p
 | YOLO `_final_risk_check` drawdown P&L | ✅ `WHERE source != 'SHADOW'` |
 | Active Positions widget | ✅ backend filter |
 | WebSocket `trade:open` → store positions slice | ✅ filtered by `is_shadow` flag |
-| Main dashboard P&L card | ✅ derived from risk endpoint |
+| Main dashboard P&L card (Real mode) | ✅ derived from risk endpoint (shadows excluded by backend) |
+| Dashboard in Ghost mode | shows ghost P&L only — completely separate data path |
 
 ## How to view shadow data
 
-On the Trades page, click the **"Signal Test"** toggle (next to the period filter). The table, summary strip, and heatmap recompute from `GET /trades?source=SHADOW` for the selected period.
+**Dashboard — Active Positions widget:** click the **Real | Ghost** toggle in the widget header. Ghost mode shows open shadow positions with live P&L (polls every 30s) and "Ghost Closed Today" below. The P&L bar above also switches to ghost P&L — closed ghost trades + live unrealized from ghost positions. The drawdown bar is hidden in ghost mode (it's not meaningful for simulated trades).
+
+**Trades page:** click the **"Signal Test"** toggle (next to the period filter). The table, summary strip, and heatmap recompute from `GET /trades?source=SHADOW` for the selected period.
 
 ## DB schema
 
