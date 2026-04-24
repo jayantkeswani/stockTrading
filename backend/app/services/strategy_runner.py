@@ -31,6 +31,7 @@ from app.core.database import async_session_factory
 from app.core.enums import InstrumentType, SignalStatus, StrategyName
 from app.core.redis import get_cached_price, get_redis
 from app.core.utils import is_in_trading_window, is_past_close_deadline, now_ist
+from app.tasks.global_market_task import _get_global_cues_from_redis
 from app.indicators.candle_patterns import Candle
 from app.indicators.cpr import calculate_cpr
 from app.indicators.open_interest import OIAnalysis, analyze_option_chain
@@ -299,6 +300,9 @@ class StrategyRunner:
             if canslim_data and canslim_data.relative_strength_rating is not None:
                 relative_strength = float(canslim_data.relative_strength_rating)
 
+        # Global market cues from Redis (populated by global_market_task every 15 min)
+        global_cues = await _get_global_cues_from_redis()
+
         return MarketContext(
             symbol=symbol,
             current_price=current_price,
@@ -313,6 +317,7 @@ class StrategyRunner:
             volume_avg_20d=volume_avg_20d,
             relative_strength=relative_strength,
             canslim_data=canslim_data,
+            global_cues=global_cues,
         )
 
     # ------------------------------------------------------------------

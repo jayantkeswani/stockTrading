@@ -31,23 +31,25 @@ stockTrading/
 ├── .vscode/               # VS Code launch configs, tasks, settings
 ├── .claude/skills/        # Claude Code skill definitions (test-runner, review-code, build-strategy, etc.)
 ├── docs/
-│   └── strategies/        # One MD per strategy with full trading rules
-├── scripts/               # dev.sh, stop.sh, reset.sh
+│   ├── strategies/        # One MD per strategy with full trading rules
+│   └── backtest/          # Backtest harness docs (harness.md, architecture.md, option-data.md)
+├── scripts/               # dev.sh, stop.sh, reset.sh, backfill_for_backtest.py, backtest.py
 ├── backend/               # Python FastAPI backend (see backend/CLAUDE.md)
 │   ├── app/
 │   │   ├── api/v1/        # REST endpoints (11 routers, incl. watchlist, strategies, tasks, research)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
-│   │   ├── models/        # SQLAlchemy ORM models (12 tables incl. research_reports, research_agent_runs)
+│   │   ├── models/        # SQLAlchemy ORM models (13 tables incl. global_market_snapshots)
 │   │   ├── schemas/       # Pydantic request/response schemas
 │   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill)
 │   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
-│   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels)
+│   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels, global_market, intraday_bias)
 │   │   ├── data_feed/     # Fyers API (auth, REST via API_URL/DATA_URL, WebSocket, feed manager, symbol master)
 │   │   ├── research/      # AI research agent system (orchestrator, 6 sub-agents, LLM client, data gatherer)
 │   │   ├── agent/         # AI trading agent (monitor, execute, notify)
-│   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP incl. VIX), enums, utils, task_registry
-│   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh)
-│   ├── tests/             # pytest test suite
+│   │   ├── backtest/      # Backtest module (context_builder, harness, exit_simulator, option_data_fetcher, strike_selector, report)
+│   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP, NSE_HOLIDAYS), enums, utils, task_registry
+│   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh, global_market every 15m)
+│   ├── tests/             # pytest test suite (482 tests)
 │   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
     └── src/

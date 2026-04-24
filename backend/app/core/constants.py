@@ -1,6 +1,6 @@
 """Market constants for Indian stock exchanges."""
 
-from datetime import time
+from datetime import date, time
 from zoneinfo import ZoneInfo
 
 # Timezone
@@ -136,3 +136,60 @@ CANSLIM_MIN_TOTAL_SCORE = 60.0  # Minimum composite score to qualify
 STOCK_FUTURES_EXPIRY_DOW = 3     # Thursday (last Thursday of month for NSE stock futures)
 FUTURES_MARGIN_PCT = 0.18        # ~18% of contract value (SPAN + exposure)
 FUTURES_EXPIRY_ROLL_DAYS = 3     # Alert 3 days before futures expiry
+
+# ---------------------------------------------------------------------------
+# NSE Trading Holidays
+# ---------------------------------------------------------------------------
+# Official NSE equity market holidays. Update annually from:
+# https://www.nseindia.com/regulations/trading-holiday-calendar
+#
+# NOTE: If a holiday falls on a weekend it has no market impact and is not
+# listed here. The backtest context_builder treats any day with no candles
+# in the DB as a non-trading day regardless, so minor gaps in this list are
+# handled gracefully (the backtest simply skips that day).
+
+NSE_HOLIDAYS: frozenset[date] = frozenset([
+    # 2024
+    date(2024, 1, 26),   # Republic Day
+    date(2024, 3, 8),    # Mahashivratri
+    date(2024, 3, 25),   # Holi
+    date(2024, 3, 29),   # Good Friday
+    date(2024, 4, 11),   # Id-Ul-Fitr (Ramzan Eid)
+    date(2024, 4, 17),   # Ram Navami
+    date(2024, 5, 1),    # Maharashtra Day
+    date(2024, 5, 20),   # General Election Day (special closure)
+    date(2024, 5, 23),   # Buddha Purnima
+    date(2024, 6, 17),   # Bakri Id
+    date(2024, 7, 17),   # Muharram
+    date(2024, 8, 15),   # Independence Day
+    date(2024, 10, 2),   # Mahatma Gandhi Jayanti
+    date(2024, 11, 1),   # Diwali Laxmi Puja
+    date(2024, 11, 15),  # Gurunanak Jayanti
+    date(2024, 12, 25),  # Christmas
+    # 2025
+    date(2025, 2, 26),   # Mahashivratri
+    date(2025, 3, 14),   # Holi
+    date(2025, 4, 10),   # Id-Ul-Fitr (Ramzan Eid)
+    date(2025, 4, 14),   # Dr. Baba Saheb Ambedkar Jayanti
+    date(2025, 4, 18),   # Good Friday
+    date(2025, 5, 1),    # Maharashtra Day
+    date(2025, 5, 12),   # Buddha Purnima
+    date(2025, 6, 6),    # Eid ul Adha (Bakri Id)
+    date(2025, 7, 7),    # Muharram
+    date(2025, 8, 15),   # Independence Day
+    date(2025, 8, 27),   # Ganesh Chaturthi
+    date(2025, 10, 2),   # Mahatma Gandhi Jayanti / Dussehra
+    date(2025, 10, 20),  # Diwali Laxmi Puja
+    date(2025, 10, 21),  # Diwali (Balipratipada)
+    date(2025, 11, 5),   # Gurunanak Jayanti
+    date(2025, 12, 25),  # Christmas
+    # 2026 (partial — update when NSE publishes full list)
+    date(2026, 1, 26),   # Republic Day
+    date(2026, 3, 20),   # Holi
+    date(2026, 4, 3),    # Good Friday
+    date(2026, 4, 14),   # Dr. Baba Saheb Ambedkar Jayanti
+    date(2026, 5, 1),    # Maharashtra Day
+    date(2026, 8, 15),   # Independence Day
+    date(2026, 10, 2),   # Mahatma Gandhi Jayanti
+    date(2026, 12, 25),  # Christmas
+])
