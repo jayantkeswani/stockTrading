@@ -1,4 +1,4 @@
-.PHONY: dev stop reset infra backend frontend migrate test clean
+.PHONY: dev stop reset infra backend frontend migrate test clean hooks
 
 # ── One touch ──────────────────────────────────────────────
 dev:                 ## Start everything (infra + backend + frontend)
@@ -34,6 +34,10 @@ test:                ## Run backend tests
 # ── Cleanup ───────────────────────────────────────────────
 clean:               ## Stop containers and remove volumes
 	docker compose down -v
+
+hooks:               ## Activate graphify git hooks (run once after fresh clone)
+	git config core.hooksPath .githooks
+	@echo "Git hooks activated from .githooks/"
 
 help:                ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
