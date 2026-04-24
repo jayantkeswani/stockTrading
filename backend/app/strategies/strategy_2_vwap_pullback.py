@@ -16,6 +16,7 @@ See docs/strategies/strategy-2-vwap-pullback.md for full specification.
 
 import logging
 
+from app.config import settings
 from app.core.constants import VWAP_PROXIMITY_PCT
 from app.core.enums import DayBias, InstrumentType, SignalType, StrategyName
 from app.indicators.candle_patterns import (
@@ -37,9 +38,6 @@ from app.strategies.base import (
 
 logger = logging.getLogger(__name__)
 
-# Minimum deterministic confidence for a signal to fire.
-# Overridable via settings.fire_confidence_threshold in Phase 2.
-_FIRE_THRESHOLD = 55.0
 
 
 class VWAPPullbackStrategy(BaseStrategy):
@@ -153,10 +151,10 @@ class VWAPPullbackStrategy(BaseStrategy):
         )
 
         # Fire threshold gate
-        if confidence_result.score < _FIRE_THRESHOLD:
+        if confidence_result.score < settings.fire_confidence_threshold:
             logger.debug(
                 "Signal suppressed: confidence %.1f < threshold %.1f for %s %s",
-                confidence_result.score, _FIRE_THRESHOLD, ctx.symbol, direction,
+                confidence_result.score, settings.fire_confidence_threshold, ctx.symbol, direction,
             )
             return None
 
