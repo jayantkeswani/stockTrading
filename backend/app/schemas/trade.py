@@ -23,6 +23,7 @@ class TradeResponse(BaseModel):
     status: str
     exit_reason: str | None = None
     is_paper: bool
+    source: str = "MANUAL"
     pnl: Decimal | None = None
     pnl_percent: Decimal | None = None
     entry_time: datetime

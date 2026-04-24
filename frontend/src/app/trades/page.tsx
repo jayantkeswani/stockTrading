@@ -9,6 +9,8 @@ import { SummaryStrip } from "@/components/trades/SummaryStrip";
 import { PnLHeatmap } from "@/components/trades/PnLHeatmap";
 import { TradesTable } from "@/components/trades/TradesTable";
 
+type TradeMode = "REAL" | "SHADOW";
+
 function defaultPeriod(): Period {
   const now = new Date();
   return { start: startOfMonthIST(now), end: endOfMonthIST(now), label: "This Month" };
@@ -19,6 +21,7 @@ export default function TradesPage() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [mode, setMode] = useState<TradeMode>("REAL");
 
   useEffect(() => {
     setSelectedDay(null);
@@ -30,6 +33,7 @@ export default function TradesPage() {
           entry_since: period.start.toISOString(),
           entry_until: period.end.toISOString(),
           limit: 1000,
+          source: mode === "SHADOW" ? "SHADOW" : undefined,
         })) as Trade[];
         if (!cancelled) setTrades(data);
       } catch {
@@ -40,7 +44,7 @@ export default function TradesPage() {
     }
     load();
     return () => { cancelled = true; };
-  }, [period]);
+  }, [period, mode]);
 
   const dailyPnL = useMemo(() => {
     const map = new Map<string, number>();
@@ -65,13 +69,46 @@ export default function TradesPage() {
 
   return (
     <div className="space-y-2">
-      {/* Header: period pills + date range */}
+      {/* Header: period pills + mode toggle + date range */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <PeriodFilter value={period} onChange={setPeriod} />
+        <div className="flex items-center gap-3">
+          <PeriodFilter value={period} onChange={setPeriod} />
+          {/* Real / Signal Test toggle */}
+          <div className="flex items-center rounded border border-border overflow-hidden text-[10px] font-mono">
+            <button
+              onClick={() => setMode("REAL")}
+              className={`px-2 py-1 transition-colors ${
+                mode === "REAL"
+                  ? "bg-accent/15 text-accent"
+                  : "text-text-muted hover:text-text-secondary"
+              }`}
+            >
+              Real
+            </button>
+            <button
+              onClick={() => setMode("SHADOW")}
+              className={`px-2 py-1 border-l border-border transition-colors ${
+                mode === "SHADOW"
+                  ? "bg-purple-500/15 text-purple-400"
+                  : "text-text-muted hover:text-text-secondary"
+              }`}
+            >
+              Signal Test
+            </button>
+          </div>
+        </div>
         <span className="text-[9px] font-mono text-text-muted/40 tracking-wider">
           {periodLabel}
         </span>
       </div>
+
+      {mode === "SHADOW" && (
+        <div className="px-3 py-1.5 rounded border border-purple-500/20 bg-purple-500/5">
+          <p className="text-[10px] font-mono text-purple-400/70">
+            Signal Test mode — showing ghost trades that execute every signal (including blocked ones) to measure raw signal accuracy. These do not affect P&amp;L, risk, or active positions.
+          </p>
+        </div>
+      )}
 
       <SummaryStrip trades={trades} dailyPnL={dailyPnL} />
 
@@ -99,7 +136,7 @@ export default function TradesPage() {
             </button>
           </div>
         )}
-        <TradesTable trades={displayedTrades} loading={loading} />
+        <TradesTable trades={displayedTrades} loading={loading} showSource={mode === "SHADOW"} />
       </div>
     </div>
   );

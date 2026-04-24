@@ -89,6 +89,13 @@ class AgentActionType(StrEnum):
     MANUAL_EXECUTED = "MANUAL_EXECUTED"
     AUTO_PROFIT_BOOKED = "AUTO_PROFIT_BOOKED"
     EXPIRY_ROLL = "EXPIRY_ROLL"
+    SHADOW_EXECUTED = "SHADOW_EXECUTED"
+
+
+class TradeSource(StrEnum):
+    MANUAL = "MANUAL"
+    YOLO = "YOLO"
+    SHADOW = "SHADOW"
 
 
 class ConfirmationStatus(StrEnum):

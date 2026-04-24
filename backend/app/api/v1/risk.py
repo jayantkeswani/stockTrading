@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.services.trading_config import get_trading_config
-from app.core.enums import TradeStatus
+from app.core.enums import TradeSource, TradeStatus
 from app.core.utils import now_ist
 from app.models.daily_summary import DailySummary
 from app.models.position import Position
@@ -22,37 +22,43 @@ async def risk_dashboard(db: AsyncSession = Depends(get_db)):
     today = now_ist().date()
     capital = Decimal(cfg.capital)
 
-    # Today's closed trades P&L
+    # Today's closed trades P&L — shadow trades excluded
     result = await db.execute(
         select(func.coalesce(func.sum(Trade.pnl), 0))
         .where(Trade.status == TradeStatus.CLOSED)
         .where(func.date(Trade.entry_time) == today)
+        .where(Trade.source != TradeSource.SHADOW.value)
     )
     daily_pnl = result.scalar() or Decimal(0)
 
-    # Today's trade count
+    # Today's trade count — shadow trades excluded
     result = await db.execute(
         select(func.count(Trade.id))
         .where(func.date(Trade.entry_time) == today)
+        .where(Trade.source != TradeSource.SHADOW.value)
     )
     trades_today = result.scalar() or 0
 
-    # Open positions
-    result = await db.execute(select(func.count(Position.id)))
+    # Open positions — shadow positions excluded
+    result = await db.execute(
+        select(func.count(Position.id)).where(Position.is_shadow == False)  # noqa: E712
+    )
     positions_open = result.scalar() or 0
 
-    # Unrealized P&L from open positions
+    # Unrealized P&L from open positions — shadow positions excluded
     result = await db.execute(
         select(func.coalesce(func.sum(Position.unrealized_pnl), 0))
+        .where(Position.is_shadow == False)  # noqa: E712
     )
     unrealized = result.scalar() or Decimal(0)
 
     total_daily_pnl = daily_pnl + unrealized
     drawdown_pct = float(abs(min(total_daily_pnl, 0)) / capital * 100)
 
-    # Capital at risk (sum of entry_price * quantity for open positions)
+    # Capital at risk — shadow positions excluded
     result = await db.execute(
         select(func.coalesce(func.sum(Position.entry_price * Position.quantity), 0))
+        .where(Position.is_shadow == False)  # noqa: E712
     )
     capital_at_risk = result.scalar() or Decimal(0)
 

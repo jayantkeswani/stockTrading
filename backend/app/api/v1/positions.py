@@ -18,8 +18,14 @@ router = APIRouter()
 
 
 @router.get("", response_model=list[PositionResponse])
-async def list_positions(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Position).order_by(Position.opened_at.desc()))
+async def list_positions(
+    include_shadow: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(Position).order_by(Position.opened_at.desc())
+    if not include_shadow:
+        query = query.where(Position.is_shadow == False)  # noqa: E712
+    result = await db.execute(query)
     positions = result.scalars().all()
 
     # Enrich positions with live prices from Redis cache

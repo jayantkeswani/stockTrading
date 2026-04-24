@@ -25,7 +25,7 @@ from app.services.position_sizing import calculate_lots
 from app.services.live_price import get_live_price
 from app.services.trading_config import get_trading_config
 from app.core.database import async_session_factory
-from app.core.enums import AgentActionType, SignalStatus, TradeStatus
+from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
 from app.core.utils import now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
@@ -157,6 +157,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             status=TradeStatus.OPEN.value,
             position_type=position_type,
             is_paper=cfg.paper_trading,
+            source=TradeSource.YOLO.value,
             entry_time=now,
             fyers_option_symbol=trading_symbol,
         )
@@ -290,14 +291,14 @@ async def _final_risk_check(session: AsyncSession, symbol: str) -> tuple[bool, s
     today = now_ist().date()
     today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
 
-    # Check max trades for the day — POSITIONAL trades are excluded since they
-    # span multiple days and shouldn't consume the intraday trade budget.
+    # Check max trades for the day — POSITIONAL and SHADOW trades are excluded.
     trade_count_result = await session.execute(
         select(func.count(Trade.id)).where(
             and_(
                 Trade.entry_time >= today_start,
                 Trade.symbol == symbol,
                 Trade.position_type != "POSITIONAL",
+                Trade.source != TradeSource.SHADOW.value,
             )
         )
     )
@@ -306,12 +307,13 @@ async def _final_risk_check(session: AsyncSession, symbol: str) -> tuple[bool, s
     if trade_count >= cfg.max_trades_per_day:
         return False, f"Max trades reached ({cfg.max_trades_per_day}/day)"
 
-    # Check drawdown
+    # Check drawdown — shadow P&L must never affect real-money drawdown gate.
     pnl_result = await session.execute(
         select(func.coalesce(func.sum(Trade.pnl), 0)).where(
             and_(
                 Trade.entry_time >= today_start,
                 Trade.status == TradeStatus.CLOSED.value,
+                Trade.source != TradeSource.SHADOW.value,
             )
         )
     )

@@ -38,9 +38,11 @@ class Trade(Base, TimestampMixin):
     fyers_option_symbol: Mapped[str | None] = mapped_column(String(60), nullable=True)
     broker_order_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="MANUAL")
 
     __table_args__ = (
         Index("idx_trades_status", "status"),
         Index("idx_trades_entry_time", "entry_time"),
         Index("idx_trades_strategy", "strategy_name"),
+        Index("idx_trades_source", "source"),
     )

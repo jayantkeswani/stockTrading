@@ -48,7 +48,8 @@ export const api = {
   getFyersStatus: () => request(`/api/v1/auth/fyers/status`),
 
   // Positions
-  getPositions: () => request(`/api/v1/positions`),
+  getPositions: (includeShadow = false) =>
+    request(`/api/v1/positions${includeShadow ? "?include_shadow=true" : ""}`),
   closePosition: (id: string, reason = "MANUAL") =>
     request(`/api/v1/positions/${id}/close`, {
       method: "POST",
@@ -63,18 +64,20 @@ export const api = {
   // Trades
   getTrades: (params?: {
     status?: string;
+    source?: string;
     limit?: number;
     entry_since?: string;
     entry_until?: string;
   }) => {
     const query = new URLSearchParams();
     if (params?.status) query.set("status", params.status);
+    if (params?.source) query.set("source", params.source);
     if (params?.limit) query.set("limit", params.limit.toString());
     if (params?.entry_since) query.set("entry_since", params.entry_since);
     if (params?.entry_until) query.set("entry_until", params.entry_until);
     return request(`/api/v1/trades?${query}`);
   },
-  getClosedTradesToday: () => {
+  getClosedTradesToday: (source?: string) => {
     // IST midnight = UTC midnight - 5h30m
     const now = new Date();
     const istOffset = 5 * 60 + 30; // minutes
@@ -85,9 +88,13 @@ export const api = {
     const istMidnightUtc = new Date(istToday.getTime() - istOffset * 60000);
     const since = istMidnightUtc.toISOString();
     const query = new URLSearchParams({ status: "CLOSED", closed_since: since, limit: "100" });
+    if (source) query.set("source", source);
     return request<import("./types").Trade[]>(`/api/v1/trades?${query}`);
   },
-  getTradeSummary: () => request(`/api/v1/trades/summary`),
+  getTradeSummary: (source?: string) => {
+    const query = source ? `?source=${source}` : "";
+    return request(`/api/v1/trades/summary${query}`);
+  },
   closeTrade: (id: string, exitPrice?: number) =>
     request(`/api/v1/trades/${id}/close`, {
       method: "POST",

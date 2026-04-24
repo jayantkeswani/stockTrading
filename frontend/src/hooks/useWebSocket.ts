@@ -71,7 +71,8 @@ export function useWebSocket() {
           updatePrice(msg.data.symbol as string, msg.data as never);
           break;
         case "trade:open":
-          addPosition(msg.data as never);
+          // Shadow trades don't go to the main positions slice
+          if (!msg.data.is_shadow) addPosition(msg.data as never);
           break;
         case "position:update":
           updatePosition(msg.data.position_id as string, {

@@ -35,6 +35,7 @@ export interface Position {
   fyers_option_symbol: string | null;
   strategy_name: string;
   is_paper: boolean;
+  is_shadow: boolean;
   position_type: string;
   opened_at: string;
 }
@@ -57,6 +58,7 @@ export interface Trade {
   status: "OPEN" | "CLOSED" | "CANCELLED";
   exit_reason: string | null;
   is_paper: boolean;
+  source: "MANUAL" | "YOLO" | "SHADOW";
   pnl: number | null;
   pnl_percent: number | null;
   entry_time: string;
