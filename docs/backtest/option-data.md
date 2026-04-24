@@ -6,13 +6,16 @@ Option 1m candles come from the **live WebSocket feed** — when the system take
 
 **This means:** accurate mode works only for dates where the *specific strike the backtest would pick* matches a contract that was actually traded live. If the backtest chooses a different strike than what was historically traded, the DB query returns 0 rows.
 
-## Fyers historical API — not available on free plan
+## Fyers historical API — partial availability on free plan
 
-**Confirmed (Apr 2026):** The Fyers free API does NOT serve 1m historical candle data for option contracts. `get_historical_data` returns `status=no_data` even for currently active options. Only index/equity spot data is available via history API on the free plan.
+**Re-confirmed (Apr 2026) via `scripts/telegram/probe_fyers_history.py`:** the earlier "not available on free plan" assertion was wrong. The actual behavior is:
 
-The fetcher falls through to the Fyers API only when no DB data is found. This fallback is retained for future paid-plan users.
+- **Currently-listed option contracts** (expiry ≥ today): `fyersModel.history()` returns full 1m bars. Verified with MCX/PERSISTENT/TCS April stock options and NIFTY April index option — all returned 2000–3000 candles for a 7-trading-day window.
+- **Expired option contracts** (any expiry < today, including contracts expired only weeks ago): returns `s="error"`, 0 candles. This applies uniformly — the symbol master also purges expired contracts, so you can't even resolve them via master lookup.
 
-**Fast mode is the correct default** for comprehensive historical backtesting. Accurate mode provides real premiums only on days with a matching live-trade candle in the DB.
+**Implication:** accurate-mode backtesting is only viable for signals whose option contract has not yet expired at the time of the backtest run. For historical replay of expired signals, the DB path (option candles captured live by our own WebSocket feed) remains the only accurate-mode source; otherwise fall back to fast mode.
+
+**Fast mode is still the right default** for comprehensive historical backtesting. Accurate mode gives real premiums for (a) contracts still live at replay time, (b) dates where the live feed captured the contract, and (c) future paid-plan users with access to expired-contract history.
 
 ---
 
@@ -20,13 +23,13 @@ The fetcher falls through to the Fyers API only when no DB data is found. This f
 
 ### Accurate mode
 
-Intended to fetch 1-minute candle history for the specific option contract the strategy picks. Currently auto-falls back to fast mode on every signal because Fyers free does not serve option 1m data. Kept for future compatibility with paid data plans.
+Fetches 1-minute candle history for the specific option contract the strategy picks. Works on Fyers free plan **only for contracts whose expiry is still in the future at replay time**; for expired contracts, the fetcher falls back to DB-captured candles (live feed) and, failing that, to fast mode.
 
 1. `strike_selector.resolve_option_symbol()` picks strike + expiry using historical spot price and the `as_of_date` (not `now_ist()`).
 2. `option_data_fetcher.ensure_option_candles()` checks `market_data_1m` for existing rows; if missing, fetches from Fyers SDK and persists (idempotent `ON CONFLICT DO NOTHING`).
 3. `exit_simulator` walks forward on real option 1m candles — wick-based SL/target detection (detects intrabar SL touches that delta-approx misses).
 
-**Fyers retention:** ~6 months of 1m data for option contracts. Backtests older than ~6 months must use fast mode.
+**Fyers retention:** **free plan retains 1m data only while the contract is actively listed** (i.e. expiry ≥ today). Once expired, the contract is purged from both the history API and the symbol master. For any backtest whose signal's contract has already expired, use fast mode (or the DB cache if we captured it live).
 
 **Rate limiting:** fetches are chunked in ≤6-day windows with 0.5s sleep between chunks. A 6-month backtest generating ~40 signals results in ~40 Fyers API calls (manageable in minutes).
 

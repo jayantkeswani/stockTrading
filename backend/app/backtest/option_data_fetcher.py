@@ -3,9 +3,11 @@
 Data sources (in priority order):
 1. In-memory cache (populated from DB after first lookup).
 2. market_data_1m table — option candles collected live via WebSocket feed when
-   the system was trading that contract. These are the primary data source.
-3. Fyers historical API — confirmed NOT available on the free plan (returns
-   no_data even for active contracts). Kept as fallback for paid-plan users.
+   the system was trading that contract. Primary source for historical replay.
+3. Fyers historical API — works on free plan **only while the contract is
+   actively listed** (expiry >= today). Returns s="error" for expired contracts,
+   which are also purged from the symbol master. Verified Apr 2026 via
+   `scripts/telegram/probe_fyers_history.py`. See docs/backtest/option-data.md.
 
 Cache design:
   Cache key: "{fyers_option_symbol}_{trade_date}" — always loads the FULL

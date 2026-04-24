@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     backend_port: int = 8080
     frontend_url: str = "http://localhost:3000"
 
-    model_config = {"env_file": str(_env_file), "env_file_encoding": "utf-8"}
+    model_config = {"env_file": str(_env_file), "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 settings = Settings()

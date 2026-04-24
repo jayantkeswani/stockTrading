@@ -28,6 +28,7 @@ dependencies = [
     "pyotp>=2.9.0",
     "yfinance>=0.2.36",
     "google-genai>=1.0.0",
+    "telethon>=1.36.0",
 ]
 
 [project.optional-dependencies]
