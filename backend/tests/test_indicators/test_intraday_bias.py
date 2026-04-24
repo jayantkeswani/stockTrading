@@ -1,0 +1,126 @@
+"""Tests for indicators/intraday_bias.py."""
+
+import pytest
+from app.core.enums import DayBias
+from app.indicators.candle_patterns import Candle
+from app.indicators.intraday_bias import IntradayBias, compute_intraday_bias, is_blocked_by_bias
+from app.indicators.vwap import VWAPResult
+from tests.conftest import make_prev_day, make_vwap
+
+
+def _candles(n: int, close_direction: str = "flat", base: float = 100.0) -> list[Candle]:
+    """Build n candles trending up/down/flat."""
+    result = []
+    for i in range(n):
+        if close_direction == "up":
+            o, c = base + i * 0.1, base + i * 0.1 + 0.05
+        elif close_direction == "down":
+            o, c = base - i * 0.1 + 0.1, base - i * 0.1
+        else:
+            o, c = base, base
+        result.append(Candle(open=o, high=c + 0.5, low=o - 0.5, close=c, volume=500))
+    return result
+
+
+class TestComputeIntradayBias:
+
+    def test_returns_intradaybias(self):
+        result = compute_intraday_bias(None, [], None, 100.0)
+        assert isinstance(result, IntradayBias)
+
+    def test_all_none_returns_neutral(self):
+        result = compute_intraday_bias(None, [], None, 100.0)
+        assert result.bias == DayBias.NEUTRAL
+        assert result.score == 0.0
+        assert result.strength == "WEAK"
+
+    def test_strong_bullish_signals(self):
+        prev = make_prev_day(DayBias.BULLISH)
+        # PDC at low end to simulate a gap up scenario
+        prev.pdc = 99.0
+        prev.pdl = 98.0
+        prev.pdh = 101.0
+        prev.day_range = 3.0
+        # today candles trending up, price above VWAP
+        candles = _candles(15, "up", 100.05)
+        vwap = make_vwap(100.0)
+        result = compute_intraday_bias(prev, candles, vwap, 100.2)
+        assert result.score > 0
+        assert result.bias in (DayBias.BULLISH, DayBias.NEUTRAL)
+
+    def test_strong_bearish_signals(self):
+        prev = make_prev_day(DayBias.BEARISH)
+        prev.pdc = 100.0
+        prev.pdl = 99.0
+        prev.pdh = 102.0
+        prev.day_range = 3.0
+        # today candles trending down, price below VWAP
+        candles = _candles(15, "down", 99.9)
+        vwap = make_vwap(100.0)
+        result = compute_intraday_bias(prev, candles, vwap, 99.8)
+        assert result.score < 0
+        assert result.bias in (DayBias.BEARISH, DayBias.NEUTRAL)
+
+    def test_price_above_vwap_positive_contribution(self):
+        candles = _candles(10, "flat")
+        vwap = make_vwap(100.0)
+        r_above = compute_intraday_bias(None, candles, vwap, 100.05)
+        r_below = compute_intraday_bias(None, candles, vwap, 99.95)
+        assert r_above.score > r_below.score
+
+    def test_components_populated(self):
+        prev = make_prev_day(DayBias.BULLISH)
+        candles = _candles(15, "up")
+        vwap = make_vwap(100.0)
+        result = compute_intraday_bias(prev, candles, vwap, 100.1)
+        assert "score" in result.components
+        assert "strength" in result.components
+        assert "price_vs_vwap_sign" in result.components
+
+    def test_strength_thresholds(self):
+        candles = _candles(10, "flat")
+        vwap = make_vwap(100.0)
+        # Weak — price barely above VWAP, no strong signals
+        result = compute_intraday_bias(None, candles, vwap, 100.01)
+        # Strength depends on total score; no assertion on exact value but type is correct
+        assert result.strength in ("STRONG", "MODERATE", "WEAK")
+
+    def test_gap_up_boosts_bullish_score(self):
+        prev = make_prev_day(DayBias.NEUTRAL)
+        prev.pdc = 100.0
+        prev.pdl = 99.0
+        prev.pdh = 101.0
+        prev.day_range = 2.0
+        # Gap up opening
+        candles_gap_up = [Candle(open=100.6, high=100.8, low=100.5, close=100.7, volume=500)] + _candles(9, "flat", 100.6)
+        vwap = make_vwap(100.5)
+        result = compute_intraday_bias(prev, candles_gap_up, vwap, 100.6)
+        assert result.score > 0
+
+
+class TestIsBlockedByBias:
+
+    def test_strong_bullish_blocks_pe(self):
+        bias = IntradayBias(bias=DayBias.BULLISH, score=0.6, strength="STRONG", components={})
+        assert is_blocked_by_bias("PE", bias) is True
+        assert is_blocked_by_bias("CE", bias) is False
+
+    def test_strong_bearish_blocks_ce(self):
+        bias = IntradayBias(bias=DayBias.BEARISH, score=-0.6, strength="STRONG", components={})
+        assert is_blocked_by_bias("CE", bias) is True
+        assert is_blocked_by_bias("PE", bias) is False
+
+    def test_moderate_does_not_block(self):
+        bias = IntradayBias(bias=DayBias.BULLISH, score=0.35, strength="MODERATE", components={})
+        assert is_blocked_by_bias("PE", bias) is False
+        assert is_blocked_by_bias("CE", bias) is False
+
+    def test_weak_does_not_block(self):
+        bias = IntradayBias(bias=DayBias.NEUTRAL, score=0.1, strength="WEAK", components={})
+        assert is_blocked_by_bias("PE", bias) is False
+        assert is_blocked_by_bias("CE", bias) is False
+
+    def test_aliases_accepted(self):
+        bias = IntradayBias(bias=DayBias.BULLISH, score=0.6, strength="STRONG", components={})
+        assert is_blocked_by_bias("BUY_PE", bias) is True
+        assert is_blocked_by_bias("BUY_CE", bias) is False

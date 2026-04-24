@@ -38,11 +38,11 @@ stockTrading/
 │   ├── app/
 │   │   ├── api/v1/        # REST endpoints (11 routers, incl. watchlist, strategies, tasks, research)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
-│   │   ├── models/        # SQLAlchemy ORM models (13 tables incl. global_market_snapshots)
+│   │   ├── models/        # SQLAlchemy ORM models (13 tables incl. global_market_snapshots; signals has ai_* columns)
 │   │   ├── schemas/       # Pydantic request/response schemas
 │   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill)
 │   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
-│   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels, global_market, intraday_bias)
+│   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels, global_market, intraday_bias, confidence)
 │   │   ├── data_feed/     # Fyers API (auth, REST via API_URL/DATA_URL, WebSocket, feed manager, symbol master)
 │   │   ├── research/      # AI research agent system (orchestrator, 6 sub-agents, LLM client, data gatherer)
 │   │   ├── agent/         # AI trading agent (monitor, execute, notify)

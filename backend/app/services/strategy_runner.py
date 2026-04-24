@@ -30,7 +30,8 @@ from app.services.trading_config import get_trading_config
 from app.core.database import async_session_factory
 from app.core.enums import InstrumentType, SignalStatus, StrategyName
 from app.core.redis import get_cached_price, get_redis
-from app.core.utils import is_in_trading_window, is_past_close_deadline, now_ist
+from app.core.utils import is_in_trading_window, is_past_close_deadline, now_ist, get_window_state
+from app.indicators.intraday_bias import compute_intraday_bias
 from app.tasks.global_market_task import _get_global_cues_from_redis
 from app.indicators.candle_patterns import Candle
 from app.indicators.cpr import calculate_cpr
@@ -155,6 +156,8 @@ class StrategyRunner:
 
         signal = strategy.evaluate(ctx)
         if signal is not None:
+            window_state = get_window_state()
+            signal.indicators["window_state"] = window_state
             if signal.instrument_type == InstrumentType.OPTION:
                 signal, executable, blocked_reason = await self._resolve_option(
                     signal, ctx, executable, blocked_reason,
@@ -163,7 +166,8 @@ class StrategyRunner:
                 signal, executable, blocked_reason = await self._resolve_futures(
                     signal, ctx, executable, blocked_reason,
                 )
-            await self._handle_signal(signal, executable, blocked_reason)
+            ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
+            await self._handle_signal(signal, executable, blocked_reason, ai_fields=ai_fields)
 
         return signal
 
@@ -174,19 +178,13 @@ class StrategyRunner:
     def _check_hard_guardrails(self) -> bool:
         """Return True if strategy evaluation should proceed.
 
-        Hard guardrails are conditions where generating signals makes no sense
-        (outside market hours, past close deadline, extreme VIX).
+        Hard: past close deadline (3:15 PM) — no point generating any signal.
+        Soft: outside trade windows → signals still generated but marked non-executable.
+              This moved to _check_risk_limits so out-of-window signals are visible in UI.
         """
-        # 1. Trading window check
-        if not is_in_trading_window():
-            logger.debug("Outside trading window — skipping strategy evaluation")
-            return False
-
-        # 2. Position close deadline
         if is_past_close_deadline():
             logger.debug("Past close deadline — no new signals")
             return False
-
         return True
 
     async def _check_risk_limits(self, symbol: str) -> tuple[bool, str | None]:
@@ -194,7 +192,13 @@ class StrategyRunner:
 
         Signals are always generated regardless of risk limits, but these checks
         determine whether the signal can actually be traded.
+        Trade-window check moved here from _check_hard_guardrails so out-of-window
+        signals are persisted and visible in the UI as informational (non-executable).
         """
+        # Trade window — soft: signal still generated, just not executable
+        if not is_in_trading_window():
+            return False, "Outside trade window"
+
         # VIX extreme check (from Redis)
         vix = await self._get_india_vix()
         if vix is not None and vix >= VIX_EXTREME:
@@ -303,6 +307,20 @@ class StrategyRunner:
         # Global market cues from Redis (populated by global_market_task every 15 min)
         global_cues = await _get_global_cues_from_redis()
 
+        # Composite intraday bias — uses 1m candle buffer from today
+        buffer = self._candle_buffers.get(symbol, [])
+        candles_1m_today = [
+            Candle(open=c["o"], high=c["h"], low=c["l"], close=c["c"], volume=c.get("v", 0))
+            for c in buffer
+        ]
+        intraday_bias = compute_intraday_bias(
+            prev_day=prev_day_levels,
+            candles_1m=candles_1m_today,
+            vwap=vwap_result,
+            current_price=current_price,
+            global_cues=global_cues,
+        )
+
         return MarketContext(
             symbol=symbol,
             current_price=current_price,
@@ -318,6 +336,7 @@ class StrategyRunner:
             relative_strength=relative_strength,
             canslim_data=canslim_data,
             global_cues=global_cues,
+            intraday_bias=intraday_bias,
         )
 
     # ------------------------------------------------------------------
@@ -741,13 +760,18 @@ class StrategyRunner:
             try:
                 signal = strategy.evaluate(ctx)
                 if signal is not None:
+                    # Stamp window state onto the signal indicators
+                    window_state = get_window_state()
+                    signal.indicators["window_state"] = window_state
+
                     logger.info(
-                        "Signal generated: %s %s %s (confidence=%.1f, executable=%s)",
+                        "Signal generated: %s %s %s (confidence=%.1f, executable=%s, window=%s)",
                         signal.strategy_name,
                         signal.symbol,
                         signal.signal_type,
                         signal.confidence,
                         executable,
+                        window_state,
                     )
                     # Resolve instrument-specific details
                     if signal.instrument_type == InstrumentType.OPTION:
@@ -759,7 +783,10 @@ class StrategyRunner:
                             signal, ctx, executable, blocked_reason,
                         )
 
-                    await self._handle_signal(signal, executable, blocked_reason)
+                    # LLM confidence overlay — after resolve, ctx still in scope
+                    ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
+
+                    await self._handle_signal(signal, executable, blocked_reason, ai_fields=ai_fields)
             except Exception:
                 logger.exception(
                     "Error evaluating strategy %s for %s",
@@ -936,11 +963,48 @@ class StrategyRunner:
     # Signal handling
     # ------------------------------------------------------------------
 
+    async def _run_ai_confidence_overlay(
+        self,
+        signal: StrategySignal,
+        ctx: MarketContext,
+    ) -> dict:
+        """Call the LLM confidence overlay agent. Returns dict of ai_* fields (may be empty)."""
+        from app.config import settings as _settings
+        if not _settings.ai_confidence_enabled:
+            return {}
+        try:
+            from app.research.agents.signal_confidence import score_signal
+            result = await score_signal(signal, ctx)
+            if result.confidence_adjustment != 0:
+                old = float(signal.confidence) if signal.confidence else 0.0
+                new_conf = max(0.0, min(100.0, old + result.confidence_adjustment))
+                signal.confidence = new_conf
+                logger.info(
+                    "AI confidence overlay: %s %s adj=%+d → %.1f",
+                    signal.symbol, signal.signal_type, result.confidence_adjustment, new_conf,
+                )
+            # Persist key_supports/key_risks in indicators JSONB
+            if result.key_supports:
+                signal.indicators["ai_key_supports"] = result.key_supports
+            if result.key_risks:
+                signal.indicators["ai_key_risks"] = result.key_risks
+
+            return {
+                "ai_summary": result.summary or None,
+                "ai_rationale": result.rationale or None,
+                "ai_adjustment": result.confidence_adjustment if result.confidence_adjustment != 0 else None,
+                "ai_action": result.recommended_action or None,
+            }
+        except Exception:
+            logger.exception("AI confidence overlay error — using deterministic score")
+            return {}
+
     async def _handle_signal(
         self,
         signal: StrategySignal,
         executable: bool,
         blocked_reason: str | None,
+        ai_fields: dict | None = None,
     ) -> None:
         """Deduplicate, persist, and broadcast a signal.
 
@@ -978,7 +1042,8 @@ class StrategyRunner:
             return
 
         # No existing PENDING signal or prior was EXECUTED — create new
-        signal_record = await self._persist_signal(signal, now, executable, blocked_reason)
+        signal_record = await self._persist_signal(signal, now, executable, blocked_reason,
+                                                    ai_fields=ai_fields)
         if signal_record is None:
             return
 
@@ -1159,8 +1224,10 @@ class StrategyRunner:
         now: datetime,
         executable: bool,
         blocked_reason: str | None,
+        ai_fields: dict | None = None,
     ) -> Signal | None:
         """Save the signal to the signals table."""
+        ai = ai_fields or {}
         try:
             async with async_session_factory() as session:
                 record = Signal(
@@ -1195,6 +1262,10 @@ class StrategyRunner:
                     lots=signal.lots,
                     quantity=signal.quantity,
                     sizing_meta=signal.sizing_meta,
+                    ai_summary=ai.get("ai_summary"),
+                    ai_rationale=ai.get("ai_rationale"),
+                    ai_adjustment=Decimal(str(ai["ai_adjustment"])) if ai.get("ai_adjustment") is not None else None,
+                    ai_action=ai.get("ai_action"),
                 )
                 session.add(record)
                 await session.commit()

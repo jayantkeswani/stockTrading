@@ -145,8 +145,57 @@ Sizing is **snapshotted onto the signal** at resolution time so the preview moda
 - VIX > 22 → extreme conditions, sit out
 - 3 consecutive losses today → stop for the day
 
+## Phase 2 Changes (feat/vwap-strategy-improvements)
+
+### Composite Intraday Bias (replaces yesterday-only hard gate)
+`backend/app/indicators/intraday_bias.py`
+
+The old hard gate (`bias in (BULLISH, NEUTRAL) and distance > 0`) blocked PE signals whenever yesterday was bullish — regardless of today's tape. Replaced with a weighted live composite:
+
+| Factor | Weight | What it measures |
+|---|---|---|
+| Yesterday's close_position | 0.25 | Regime from prior day (was the hard gate) |
+| Gap vs PDC | 0.20 | Pre-open direction signal |
+| VWAP slope (last 10 candles) | 0.25 | Intraday trend |
+| Price vs VWAP sign | 0.10 | Which side of VWAP |
+| Global overnight cues | 0.10 | Dow, S&P, USD/INR |
+| Candle momentum (last 5 bars) | 0.10 | Recent body direction |
+
+Score in [-1, +1]. Threshold: `|score| >= 0.5` → STRONG, `>= 0.2` → MODERATE, else WEAK.
+
+**Soft gate:** STRONG opposing bias blocks the trade. MODERATE/WEAK allows both directions with a confidence haircut via the `bias_alignment` factor. A bearish gap after a bullish yesterday produces a MODERATE BEARISH bias → PE signals can fire with reduced confidence.
+
+### Deterministic Confidence Composite (replaces inline 70 ± constants)
+`backend/app/indicators/confidence.py`
+
+10 weighted factors → 0-100 score. Signal fires only when `score >= fire_confidence_threshold` (default 55, configurable). See factor weights in the code.
+
+The `confidence_factors` dict is persisted to `signal.indicators["confidence_factors"]` so post-trade review can see exactly why a signal scored as it did.
+
+### LLM Confidence Overlay
+`backend/app/research/agents/signal_confidence.py`
+
+After deterministic gates pass and option/futures are resolved, an 8-second LLM call (Gemini) reviews the complete indicator snapshot and returns:
+- `confidence_adjustment` ±15 — adjusts the deterministic score
+- `summary` — one-sentence headline for the UI
+- `rationale` — 3-5 sentence post-trade explanation citing specific values
+- `key_supports` / `key_risks` — factor list with values
+- `recommended_action` / `suggested_lot_adjustment`
+
+Never blocks a signal on timeout or error (falls back to deterministic score).
+
+### Out-of-Window Signals as Informational
+Previously: `_check_hard_guardrails` dropped out-of-window evaluations silently.
+Now: out-of-window is a soft guard — signals are still generated, resolved, and persisted with `executable=False, blocked_reason="Outside trade window"` and `indicators["window_state"] = OUT_OF_WINDOW | DEAD_ZONE`. Visible in the UI with an "informational" tag and filtered by the "Hide informational" toggle (default on).
+
+### New Signal Columns (migration: `add_ai_fields_to_signals`)
+`ai_summary`, `ai_rationale`, `ai_adjustment`, `ai_action` — all nullable for backward compat.
+
 ## Key Files
 - `backend/app/strategies/strategy_2_vwap_pullback.py` — strategy logic, entry/exit rules
+- `backend/app/indicators/intraday_bias.py` — composite live bias
+- `backend/app/indicators/confidence.py` — deterministic 10-factor composite
 - `backend/app/indicators/market_levels.py` — index-level SL/target selection from market structure
 - `backend/app/services/option_resolver.py` — strike selection, premium fetch, delta-based SL/target conversion
-- `backend/app/services/strategy_runner.py` — orchestrates strategy → option_resolver → persist/broadcast
+- `backend/app/services/strategy_runner.py` — orchestrates strategy → option_resolver → AI overlay → persist/broadcast
+- `backend/app/research/agents/signal_confidence.py` — LLM overlay agent

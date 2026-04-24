@@ -77,6 +77,15 @@ def _bearish_engulfing_candles(price: float) -> list[Candle]:
     return base + [prev, curr]
 
 
+def _make_intraday_bias(bias: DayBias, strength: str = "MODERATE"):
+    from app.indicators.intraday_bias import IntradayBias
+    score_map = {DayBias.BULLISH: 0.45, DayBias.BEARISH: -0.45, DayBias.NEUTRAL: 0.0}
+    if strength == "STRONG":
+        score_map = {DayBias.BULLISH: 0.7, DayBias.BEARISH: -0.7, DayBias.NEUTRAL: 0.0}
+    score = score_map[bias]
+    return IntradayBias(bias=bias, score=score, strength=strength, components={"score": score})
+
+
 def _make_context(
     price: float = 100.05,
     vwap_val: float = 100.0,
@@ -88,6 +97,7 @@ def _make_context(
     vwap: VWAPResult | None = ...,
     prev_day: PreviousDayLevels | None = ...,
     cpr: CPRResult | None = ...,
+    intraday_bias=...,  # auto-creates from bias if not specified
 ) -> MarketContext:
     """Build a MarketContext with sensible defaults.
 
@@ -101,6 +111,8 @@ def _make_context(
         cpr = _make_cpr(cpr_type)
     if candles is None:
         candles = _bullish_engulfing_candles(price)
+    if intraday_bias is ...:
+        intraday_bias = _make_intraday_bias(bias)
 
     return MarketContext(
         symbol="NIFTY",
@@ -112,6 +124,7 @@ def _make_context(
         oi_analysis=oi,
         india_vix=india_vix,
         current_time_ist="10:30:00",
+        intraday_bias=intraday_bias,
     )
 
 
@@ -220,10 +233,12 @@ class TestEvaluatePutSignal:
 
     def test_put_signal_with_neutral_bias_and_price_below_vwap(self):
         price = 99.95
+        # NEUTRAL bias with narrow CPR to push confidence above threshold
         ctx = _make_context(
             price=price,
             vwap_val=100.0,
             bias=DayBias.NEUTRAL,
+            cpr_type=CPRType.NARROW,
             candles=_bearish_engulfing_candles(price),
         )
         signal = self.strategy.evaluate(ctx)
@@ -236,87 +251,92 @@ class TestEvaluatePutSignal:
 # ---------------------------------------------------------------------------
 
 class TestConfidenceScoring:
+    """Confidence is now a 10-factor weighted composite, not inline constants.
+    Tests use relative comparisons (A > B) rather than exact values."""
 
     def setup_method(self):
         self.strategy = VWAPPullbackStrategy()
 
-    def test_bullish_bias_adds_10(self):
-        """Bullish bias adds 10 to base confidence of 70."""
+    def test_aligned_bias_gives_higher_confidence_than_neutral(self):
         price = 100.05
-        ctx = _make_context(
-            price=price, vwap_val=100.0, bias=DayBias.BULLISH,
-            candles=_bullish_engulfing_candles(price),
-        )
-        signal = self.strategy.evaluate(ctx)
-        assert signal is not None
-        # base=70 + bullish_bias=10 = 80 (no OI, no narrow CPR, VIX=16 so no +5)
-        assert signal.confidence == 80
+        aligned = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
+                                 candles=_bullish_engulfing_candles(price))
+        neutral = _make_context(price=price, vwap_val=100.0, bias=DayBias.NEUTRAL,
+                                 candles=_bullish_engulfing_candles(price))
+        s_aligned = self.strategy.evaluate(aligned)
+        s_neutral = self.strategy.evaluate(neutral)
+        assert s_aligned is not None
+        if s_neutral is not None:
+            assert s_aligned.confidence >= s_neutral.confidence
 
-    def test_narrow_cpr_adds_5(self):
+    def test_narrow_cpr_gives_higher_confidence_than_wide(self):
         price = 100.05
-        ctx = _make_context(
-            price=price, vwap_val=100.0, bias=DayBias.BULLISH,
-            cpr_type=CPRType.NARROW,
-            candles=_bullish_engulfing_candles(price),
-        )
-        signal = self.strategy.evaluate(ctx)
-        assert signal is not None
-        # base=70 + bullish=10 + narrow_cpr=5 = 85
-        assert signal.confidence == 85
+        narrow = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
+                                cpr_type=CPRType.NARROW, candles=_bullish_engulfing_candles(price))
+        wide = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
+                              cpr_type=CPRType.WIDE, candles=_bullish_engulfing_candles(price))
+        s_narrow = self.strategy.evaluate(narrow)
+        s_wide = self.strategy.evaluate(wide)
+        assert s_narrow is not None
+        if s_wide is not None:
+            assert s_narrow.confidence >= s_wide.confidence
 
-    def test_low_vix_adds_5(self):
+    def test_low_vix_gives_higher_confidence_than_high_vix(self):
         price = 100.05
-        ctx = _make_context(
-            price=price, vwap_val=100.0, bias=DayBias.BULLISH,
-            india_vix=12.0,
-            candles=_bullish_engulfing_candles(price),
-        )
-        signal = self.strategy.evaluate(ctx)
-        assert signal is not None
-        # base=70 + bullish=10 + low_vix=5 = 85
-        assert signal.confidence == 85
-
-    def test_all_confidence_boosters(self):
-        price = 100.05
-        ctx = _make_context(
-            price=price, vwap_val=100.0, bias=DayBias.BULLISH,
-            cpr_type=CPRType.NARROW, india_vix=12.0,
-            candles=_bullish_engulfing_candles(price),
-        )
-        signal = self.strategy.evaluate(ctx)
-        assert signal is not None
-        # base=70 + bullish=10 + narrow_cpr=5 + low_vix=5 = 90
-        assert signal.confidence == 90
+        low = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
+                             india_vix=12.0, candles=_bullish_engulfing_candles(price))
+        high = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
+                              india_vix=20.0, candles=_bullish_engulfing_candles(price))
+        s_low = self.strategy.evaluate(low)
+        s_high = self.strategy.evaluate(high)
+        assert s_low is not None
+        if s_high is not None:
+            assert s_low.confidence > s_high.confidence
 
     def test_oi_not_confirmed_reduces_confidence(self):
-        """OI not supporting direction subtracts 20."""
+        """OI support is a weighted factor — confirmed gives higher confidence than not."""
         price = 100.05
-        # OI with max_pe_strike > price => CALL not supported
-        oi = _make_oi(max_pe_strike=200.0, max_ce_strike=300.0)
-        ctx = _make_context(
-            price=price, vwap_val=100.0, bias=DayBias.BULLISH,
-            oi=oi,
-            candles=_bullish_engulfing_candles(price),
-        )
+        oi_good = _make_oi(max_pe_strike=95.0, max_ce_strike=105.0)
+        oi_bad = _make_oi(max_pe_strike=200.0, max_ce_strike=300.0)
+        ctx_good = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
+                                  oi=oi_good, candles=_bullish_engulfing_candles(price))
+        ctx_bad = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
+                                 oi=oi_bad, candles=_bullish_engulfing_candles(price))
+        s_good = self.strategy.evaluate(ctx_good)
+        s_bad = self.strategy.evaluate(ctx_bad)
+        if s_good is not None and s_bad is not None:
+            assert s_good.confidence >= s_bad.confidence
+
+    def test_confidence_in_range(self):
+        price = 100.05
+        ctx = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
+                             cpr_type=CPRType.NARROW, india_vix=12.0,
+                             candles=_bullish_engulfing_candles(price))
         signal = self.strategy.evaluate(ctx)
         assert signal is not None
-        # base=70 - oi_weak=20 + bullish=10 = 60
-        assert signal.confidence == 60
+        assert 0 <= signal.confidence <= 100
 
-    def test_confidence_capped_at_100(self):
-        """Even with all boosts, confidence can't exceed 100."""
-        # This is hard to reach naturally but we test the min(..., 100) guard
+    def test_confidence_factors_in_indicators(self):
+        """New: confidence_factors dict is persisted in signal.indicators."""
         price = 100.05
-        ctx = _make_context(
-            price=price, vwap_val=100.0, bias=DayBias.BULLISH,
-            cpr_type=CPRType.NARROW, india_vix=12.0,
-            candles=_bullish_engulfing_candles(price),
-        )
+        ctx = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
+                             candles=_bullish_engulfing_candles(price))
         signal = self.strategy.evaluate(ctx)
         assert signal is not None
-        assert signal.confidence <= 100
+        assert "confidence_factors" in signal.indicators
+        assert "bias_alignment" in signal.indicators["confidence_factors"]
 
-    def test_bearish_bias_adds_10_for_put(self):
+    def test_intraday_bias_in_indicators(self):
+        """New: intraday_bias components are persisted in signal.indicators."""
+        price = 100.05
+        ctx = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
+                             candles=_bullish_engulfing_candles(price))
+        signal = self.strategy.evaluate(ctx)
+        assert signal is not None
+        assert "intraday_bias" in signal.indicators
+
+    def test_bearish_bias_ce_signal_for_put(self):
+        """Bearish intraday bias should allow PE signal to fire (MODERATE strength)."""
         price = 99.95
         ctx = _make_context(
             price=price, vwap_val=100.0, bias=DayBias.BEARISH,
@@ -324,8 +344,7 @@ class TestConfidenceScoring:
         )
         signal = self.strategy.evaluate(ctx)
         assert signal is not None
-        # base=70 + bearish=10 = 80
-        assert signal.confidence == 80
+        assert signal.signal_type == SignalType.BUY_PE
 
 
 # ---------------------------------------------------------------------------

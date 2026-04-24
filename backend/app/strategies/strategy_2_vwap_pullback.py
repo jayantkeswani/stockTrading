@@ -1,10 +1,15 @@
-"""Strategy 2: VWAP Pullback + Previous Day Context + OI Confirmation.
+"""Strategy 2: VWAP Pullback + Composite Intraday Bias + OI Confirmation.
 
-Primary strategy. Combines:
-1. Previous day analysis for directional bias
-2. VWAP pullback for entry timing
-3. Open Interest data for institutional confirmation
-4. Candlestick patterns for entry confirmation
+Primary strategy. Phase 2 changes:
+- Replaced yesterday-only hard bias gate with composite IntradayBias (live score).
+- STRONG opposing bias blocks the trade; MODERATE/WEAK allows it with a confidence
+  haircut via the bias_alignment factor.
+- Confidence now computed by indicators/confidence.py (10-factor weighted composite)
+  instead of inline constants.
+- LLM overlay (signal_confidence.py) adjusts confidence ±15 and adds ai_summary /
+  ai_rationale / key_supports / key_risks — applied in strategy_runner after resolve.
+- Signal fires only when confidence >= FIRE_THRESHOLD (from config, default 55).
+- intraday_bias components + confidence_factors persisted to signal.indicators JSONB.
 
 See docs/strategies/strategy-2-vwap-pullback.md for full specification.
 """
@@ -18,6 +23,8 @@ from app.indicators.candle_patterns import (
     is_bearish_reversal,
     is_bullish_reversal,
 )
+from app.indicators.confidence import compute_confidence
+from app.indicators.intraday_bias import is_blocked_by_bias
 from app.indicators.market_levels import select_index_sl_target
 from app.indicators.open_interest import is_oi_supporting_direction
 from app.indicators.vwap import is_pullback_to_vwap, price_distance_from_vwap
@@ -30,6 +37,10 @@ from app.strategies.base import (
 
 logger = logging.getLogger(__name__)
 
+# Minimum deterministic confidence for a signal to fire.
+# Overridable via settings.fire_confidence_threshold in Phase 2.
+_FIRE_THRESHOLD = 55.0
+
 
 class VWAPPullbackStrategy(BaseStrategy):
     name = StrategyName.VWAP_PULLBACK
@@ -38,7 +49,6 @@ class VWAPPullbackStrategy(BaseStrategy):
     def evaluate(self, ctx: MarketContext) -> StrategySignal | None:
         """Evaluate VWAP pullback entry conditions."""
 
-        # Need all indicators
         if not ctx.vwap or not ctx.previous_day or not ctx.cpr:
             logger.debug("Missing indicators for %s", ctx.symbol)
             return None
@@ -48,23 +58,19 @@ class VWAPPullbackStrategy(BaseStrategy):
 
         vwap = ctx.vwap.vwap
         price = ctx.current_price
-        bias = ctx.previous_day.bias
 
-        # Check VWAP proximity
         if not is_pullback_to_vwap(price, vwap, VWAP_PROXIMITY_PCT):
             return None
 
         distance = price_distance_from_vwap(price, vwap)
 
-        # Determine direction based on bias + price vs VWAP
-        signal = None
-
-        if bias in (DayBias.BULLISH, DayBias.NEUTRAL) and distance > 0:
-            # Price above VWAP, pulling back — look for bullish reversal
+        # Determine candidate direction from pullback sign (structural rule, not bias)
+        if distance > 0:
             signal = self._evaluate_call(ctx, vwap, distance)
-        elif bias in (DayBias.BEARISH, DayBias.NEUTRAL) and distance < 0:
-            # Price below VWAP, rallying back — look for bearish reversal
+        elif distance < 0:
             signal = self._evaluate_put(ctx, vwap, distance)
+        else:
+            signal = None
 
         return signal
 
@@ -73,127 +79,56 @@ class VWAPPullbackStrategy(BaseStrategy):
     ) -> StrategySignal | None:
         """Evaluate conditions for a CALL buy."""
 
-        # 1. Bullish reversal pattern at VWAP
+        # Soft bias gate: STRONG bearish bias blocks CE
+        if ctx.intraday_bias and is_blocked_by_bias("CE", ctx.intraday_bias):
+            logger.debug("CE blocked by STRONG bearish intraday bias for %s", ctx.symbol)
+            return None
+
         if not is_bullish_reversal(ctx.candles_5m):
             return None
 
-        # 2. Volume check: pullback should have below-average volume
         avg_vol = average_volume(ctx.candles_5m, periods=20)
         curr_vol = ctx.candles_5m[-1].volume
         if avg_vol > 0 and curr_vol > avg_vol * 1.2:
-            # High volume pullback = not a healthy pullback
             return None
 
-        # 3. OI confirmation
-        oi_confirmed = True
-        confidence = 70.0
-        if ctx.oi_analysis:
-            oi_confirmed = is_oi_supporting_direction(
-                ctx.current_price,
-                ctx.oi_analysis.max_pe_oi_strike,
-                ctx.oi_analysis.max_ce_oi_strike,
-                "CALL",
-            )
-            if not oi_confirmed:
-                confidence -= 20
-                # Soft filter: still allow but with lower confidence
-
-        # 4. Adjust confidence based on conditions
-        if ctx.previous_day and ctx.previous_day.bias == DayBias.BULLISH:
-            confidence += 10
-        if ctx.cpr and ctx.cpr.cpr_type.value == "NARROW":
-            confidence += 5  # Trending day = better for directional trades
-        if ctx.india_vix and ctx.india_vix < 14:
-            confidence += 5  # Cheap options
-
-        # Compute index-level SL/target from market structure
-        index_sl, index_target = select_index_sl_target(
-            entry_price=ctx.current_price,
-            signal_type=SignalType.BUY_CE,
-            vwap=ctx.vwap,
-            previous_day=ctx.previous_day,
-            cpr=ctx.cpr,
-            oi_analysis=ctx.oi_analysis,
-            candles_5m=ctx.candles_5m,
-        )
-
-        # Build indicator snapshot
-        indicators = self._build_indicator_snapshot(ctx, vwap, distance)
-
-        if index_sl is not None and index_target is not None:
-            indicators["index_sl"] = index_sl
-            indicators["index_target"] = index_target
-        else:
-            # Fallback to fixed percentages when market structure is insufficient
-            sl_pct = 0.30 if ctx.previous_day.bias == DayBias.BULLISH else 0.35
-            indicators["sl_pct"] = sl_pct
-            indicators["rr_multiplier"] = 1.5
-
-        reason = (
-            f"VWAP pullback BUY CE: {ctx.symbol} at {ctx.current_price:.2f}. "
-            f"Bias: {ctx.previous_day.bias.value}. "
-            f"VWAP: {vwap:.2f} (dist: {distance:.3f}%). "
-            f"Bullish reversal confirmed. "
-            f"OI: {'confirmed' if oi_confirmed else 'weak'}."
-        )
-
-        return StrategySignal(
-            strategy_name=self.name,
-            symbol=ctx.symbol,
-            signal_type=SignalType.BUY_CE,
-            instrument_type=InstrumentType.OPTION,
-            strike_price=0,  # Resolved by option_resolver
-            expiry_date=None,  # Resolved by option_resolver
-            entry_price=ctx.current_price,  # Placeholder; replaced with premium
-            stop_loss=0,  # Resolved by option_resolver
-            target_price=None,  # Resolved by option_resolver
-            confidence=min(confidence, 100),
-            reason=reason,
-            indicators=indicators,
-            index_sl=index_sl,
-            index_target=index_target,
-        )
+        return self._build_signal(ctx, SignalType.BUY_CE, vwap, distance)
 
     def _evaluate_put(
         self, ctx: MarketContext, vwap: float, distance: float
     ) -> StrategySignal | None:
         """Evaluate conditions for a PUT buy."""
 
-        # 1. Bearish reversal pattern at VWAP
+        # Soft bias gate: STRONG bullish bias blocks PE
+        if ctx.intraday_bias and is_blocked_by_bias("PE", ctx.intraday_bias):
+            logger.debug("PE blocked by STRONG bullish intraday bias for %s", ctx.symbol)
+            return None
+
         if not is_bearish_reversal(ctx.candles_5m):
             return None
 
-        # 2. Volume check
         avg_vol = average_volume(ctx.candles_5m, periods=20)
         curr_vol = ctx.candles_5m[-1].volume
         if avg_vol > 0 and curr_vol > avg_vol * 1.2:
             return None
 
-        # 3. OI confirmation
-        oi_confirmed = True
-        confidence = 70.0
-        if ctx.oi_analysis:
-            oi_confirmed = is_oi_supporting_direction(
-                ctx.current_price,
-                ctx.oi_analysis.max_pe_oi_strike,
-                ctx.oi_analysis.max_ce_oi_strike,
-                "PUT",
-            )
-            if not oi_confirmed:
-                confidence -= 20
+        return self._build_signal(ctx, SignalType.BUY_PE, vwap, distance)
 
-        # 4. Adjust confidence
-        if ctx.previous_day and ctx.previous_day.bias == DayBias.BEARISH:
-            confidence += 10
-        if ctx.cpr and ctx.cpr.cpr_type.value == "NARROW":
-            confidence += 5
-        if ctx.india_vix and ctx.india_vix < 14:
-            confidence += 5
+    def _build_signal(
+        self,
+        ctx: MarketContext,
+        signal_type: SignalType,
+        vwap: float,
+        distance: float,
+    ) -> StrategySignal | None:
+        """Common signal builder — resolves SL/target and computes confidence."""
+        is_ce = signal_type == SignalType.BUY_CE
+        direction = "CE" if is_ce else "PE"
 
-        # Compute index-level SL/target from market structure
+        # Index-level SL/target from market structure
         index_sl, index_target = select_index_sl_target(
             entry_price=ctx.current_price,
-            signal_type=SignalType.BUY_PE,
+            signal_type=signal_type,
             vwap=ctx.vwap,
             previous_day=ctx.previous_day,
             cpr=ctx.cpr,
@@ -201,36 +136,75 @@ class VWAPPullbackStrategy(BaseStrategy):
             candles_5m=ctx.candles_5m,
         )
 
-        indicators = self._build_indicator_snapshot(ctx, vwap, distance)
+        # Deterministic confidence composite
+        confidence_result = compute_confidence(
+            signal_direction=direction,
+            intraday_bias=ctx.intraday_bias,
+            candles_5m=ctx.candles_5m,
+            vwap=ctx.vwap,
+            oi_analysis=ctx.oi_analysis,
+            cpr=ctx.cpr,
+            india_vix=ctx.india_vix,
+            global_cues=ctx.global_cues,
+            index_sl=index_sl,
+            index_target=index_target,
+            index_entry=ctx.current_price,
+            current_time_ist=ctx.current_time_ist,
+        )
 
-        if index_sl is not None and index_target is not None:
-            indicators["index_sl"] = index_sl
-            indicators["index_target"] = index_target
-        else:
-            # Fallback to fixed percentages when market structure is insufficient
-            sl_pct = 0.30 if ctx.previous_day.bias == DayBias.BEARISH else 0.35
+        # Fire threshold gate
+        if confidence_result.score < _FIRE_THRESHOLD:
+            logger.debug(
+                "Signal suppressed: confidence %.1f < threshold %.1f for %s %s",
+                confidence_result.score, _FIRE_THRESHOLD, ctx.symbol, direction,
+            )
+            return None
+
+        # OI confirmation (soft — already reflected in oi_support factor)
+        oi_confirmed = True
+        if ctx.oi_analysis:
+            oi_confirmed = is_oi_supporting_direction(
+                ctx.current_price,
+                ctx.oi_analysis.max_pe_oi_strike,
+                ctx.oi_analysis.max_ce_oi_strike,
+                "CALL" if is_ce else "PUT",
+            )
+
+        # Build indicator snapshot — includes both bias + confidence factor breakdown
+        indicators = self._build_indicator_snapshot(
+            ctx, vwap, distance, oi_confirmed, confidence_result, index_sl, index_target
+        )
+
+        # SL/target fallback
+        if index_sl is None or index_target is None:
+            bias = ctx.intraday_bias.bias if ctx.intraday_bias else DayBias.NEUTRAL
+            sl_pct = 0.30 if (is_ce and bias == DayBias.BULLISH) or (not is_ce and bias == DayBias.BEARISH) else 0.35
             indicators["sl_pct"] = sl_pct
             indicators["rr_multiplier"] = 1.5
 
+        # Build human-readable reason string including bias and top confidence factors
+        bias_str = ctx.intraday_bias.bias.value if ctx.intraday_bias else "unknown"
+        bias_score = f"{ctx.intraday_bias.score:+.2f}" if ctx.intraday_bias else "n/a"
         reason = (
-            f"VWAP pullback BUY PE: {ctx.symbol} at {ctx.current_price:.2f}. "
-            f"Bias: {ctx.previous_day.bias.value}. "
+            f"VWAP pullback BUY {direction}: {ctx.symbol} at {ctx.current_price:.2f}. "
+            f"Intraday bias: {bias_str} ({bias_score}). "
             f"VWAP: {vwap:.2f} (dist: {distance:.3f}%). "
-            f"Bearish reversal confirmed. "
-            f"OI: {'confirmed' if oi_confirmed else 'weak'}."
+            f"{'Bullish' if is_ce else 'Bearish'} reversal. "
+            f"OI: {'confirmed' if oi_confirmed else 'weak'}. "
+            f"Confidence: {confidence_result.score:.0f} ({confidence_result.rationale_short})."
         )
 
         return StrategySignal(
             strategy_name=self.name,
             symbol=ctx.symbol,
-            signal_type=SignalType.BUY_PE,
+            signal_type=signal_type,
             instrument_type=InstrumentType.OPTION,
-            strike_price=0,  # Resolved by option_resolver
-            expiry_date=None,  # Resolved by option_resolver
-            entry_price=ctx.current_price,  # Placeholder; replaced with premium
-            stop_loss=0,  # Resolved by option_resolver
-            target_price=None,  # Resolved by option_resolver
-            confidence=min(confidence, 100),
+            strike_price=0,
+            expiry_date=None,
+            entry_price=ctx.current_price,
+            stop_loss=0,
+            target_price=None,
+            confidence=confidence_result.score,
             reason=reason,
             indicators=indicators,
             index_sl=index_sl,
@@ -244,19 +218,14 @@ class VWAPPullbackStrategy(BaseStrategy):
         stop_loss: float,
         target_price: float | None,
     ) -> ExitSignal | None:
-        """Check exit conditions for open position."""
-
         price = ctx.current_price
 
-        # SL hit
         if price <= stop_loss:
             return ExitSignal(reason="Stop loss hit", exit_type="SL_HIT")
 
-        # Target hit
         if target_price and price >= target_price:
             return ExitSignal(reason="Target reached", exit_type="TARGET_HIT")
 
-        # VWAP invalidation: if price was above VWAP (call) but now closes below
         if ctx.vwap:
             vwap = ctx.vwap.vwap
             if entry_price > vwap and price < vwap * 0.998:
@@ -268,9 +237,16 @@ class VWAPPullbackStrategy(BaseStrategy):
         return None
 
     def _build_indicator_snapshot(
-        self, ctx: MarketContext, vwap: float, distance: float
+        self,
+        ctx: MarketContext,
+        vwap: float,
+        distance: float,
+        oi_confirmed: bool,
+        confidence_result,
+        index_sl,
+        index_target,
     ) -> dict:
-        snapshot = {
+        snapshot: dict = {
             "vwap": vwap,
             "vwap_distance_pct": distance,
             "price": ctx.current_price,
@@ -295,7 +271,21 @@ class VWAPPullbackStrategy(BaseStrategy):
                 "max_ce_oi_strike": ctx.oi_analysis.max_ce_oi_strike,
                 "max_pe_oi_strike": ctx.oi_analysis.max_pe_oi_strike,
                 "oi_sentiment": ctx.oi_analysis.sentiment,
+                "oi_confirmed": oi_confirmed,
             })
         if ctx.india_vix:
             snapshot["india_vix"] = ctx.india_vix
+        if ctx.intraday_bias:
+            snapshot["intraday_bias"] = ctx.intraday_bias.components
+        if ctx.global_cues:
+            snapshot["global_score"] = ctx.global_cues.global_score
+        if index_sl is not None:
+            snapshot["index_sl"] = index_sl
+        if index_target is not None:
+            snapshot["index_target"] = index_target
+
+        # Confidence factor breakdown for UI/post-mortem
+        snapshot["confidence_factors"] = confidence_result.factors
+        snapshot["confidence_rationale"] = confidence_result.rationale_short
+
         return snapshot
