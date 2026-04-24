@@ -296,6 +296,11 @@ class TestResolveOptionDetails:
 
 class TestStrategySignalInstrumentType:
 
+    @pytest.fixture(autouse=True)
+    def _low_threshold(self, monkeypatch):
+        import app.config as _cfg
+        monkeypatch.setattr(_cfg.settings, "fire_confidence_threshold", 55.0)
+
     def test_vwap_pullback_sets_instrument_type_option(self):
         """VWAP pullback strategy should set instrument_type=OPTION."""
         from app.strategies.strategy_2_vwap_pullback import VWAPPullbackStrategy

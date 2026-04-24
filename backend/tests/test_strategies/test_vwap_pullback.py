@@ -1,6 +1,15 @@
 """Tests for VWAP Pullback Strategy (Strategy 2)."""
 
+import pytest
 from app.core.enums import CPRType, DayBias, SignalType, StrategyName
+
+
+# Strategy tests validate gate logic and signal structure — not threshold tuning.
+# Pin fire_confidence_threshold to 55 so tests are threshold-independent.
+@pytest.fixture(autouse=True)
+def _low_threshold(monkeypatch):
+    import app.config as _cfg
+    monkeypatch.setattr(_cfg.settings, "fire_confidence_threshold", 55.0)
 from app.indicators.candle_patterns import Candle
 from app.indicators.cpr import CPRResult
 from app.indicators.open_interest import OIAnalysis

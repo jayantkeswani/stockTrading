@@ -201,12 +201,46 @@ def _candles_snapshot(ctx: MarketContext) -> list[dict]:
     ]
 
 
+_USER_PROMPT_TEMPLATE = """=== VWAP PULLBACK SIGNAL FOR REVIEW ===
+
+{context_json}
+
+=== REQUIRED OUTPUT ===
+
+Produce a JSON object with EXACTLY these fields:
+
+{{
+  "confidence_adjustment": <integer -15 to +15 — how much to adjust the deterministic score above>,
+  "summary": "<One sentence ≤ 200 chars. Lead with direction + symbol + key reason. Cite at least two specific values from the input (e.g., VWAP dist, OI wall, gap %). Example: 'PE on NIFTY after -0.45% gap reverses bullish yesterday; VWAP slope -0.12, CE OI +12% wall at 24400.'>",
+  "rationale": "<3-5 sentences. Explain the full confluence: intraday bias drivers → candle pattern quality → OI walls → global cues. Each sentence must cite a specific value. Last sentence should name the biggest risk to this trade.>",
+  "key_supports": [
+    "<Support 1: specific factor + value from input, e.g., 'Bearish engulfing on 1.41× avg volume at VWAP 24358'>",
+    "<Support 2>",
+    "<Support 3 (optional)>",
+    "<Support 4 (optional)>"
+  ],
+  "key_risks": [
+    "<Risk 1: specific factor + value, e.g., 'Counter-trend vs yesterday BULLISH close_position 0.68'>",
+    "<Risk 2>",
+    "<Risk 3 (optional)>",
+    "<Risk 4 (optional)>"
+  ],
+  "recommended_action": "<Exactly one of: PROCEED, PROCEED_WITH_CAUTION, RECONSIDER>",
+  "suggested_lot_adjustment": "<Exactly one of: NONE, REDUCE_50_PCT, SKIP>"
+}}
+
+Field-by-field guidance:
+- confidence_adjustment: Use +5 to +10 for strong multi-factor confirmation. Use -5 to -10 for counter-bias or weak reversal. Use ±15 only for extreme disagreement with the deterministic score.
+- recommended_action: PROCEED if adjustment >= 0 and no major risk. PROCEED_WITH_CAUTION if adjustment is negative or one major risk present. RECONSIDER if adjustment <= -10 or multiple major risks.
+- suggested_lot_adjustment: REDUCE_50_PCT if VIX > 20 or R:R < 1.2 or strong counter-bias. SKIP only if confidence_adjustment <= -12. NONE otherwise."""
+
+
 async def _call_llm(context_json: str) -> SignalConfidence:
     """Call Gemini and parse the structured response."""
     from app.research.llm_client import create_llm_client
 
     llm = create_llm_client()
-    prompt = f"Analyze this VWAP Pullback signal context and respond with the required JSON schema:\n\n{context_json}"
+    prompt = _USER_PROMPT_TEMPLATE.format(context_json=context_json)
 
     raw = await llm.generate_json(
         system_prompt=_SYSTEM_PROMPT,
