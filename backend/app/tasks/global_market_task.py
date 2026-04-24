@@ -29,7 +29,9 @@ _scheduler: AsyncIOScheduler | None = None
 FETCH_INTERVAL_MINUTES = 15
 REDIS_TTL_SECONDS = 20 * 60  # 20 min — survives a missed tick
 
-# yfinance tickers to fetch
+# yfinance tickers to fetch.
+# DXY: "DX-Y.NYB" is the ICE US Dollar Index on the NYB exchange — more reliable
+# than the futures contract "DX=F" which rolls and can disappear.
 _TICKERS = {
     "dow_futures": "YM=F",
     "sp500": "^GSPC",
@@ -37,73 +39,69 @@ _TICKERS = {
     "nifty": "^NSEI",
     "crude": "CL=F",
     "usdinr": "INR=X",
-    "dxy": "DX=F",
+    "dxy": "DX-Y.NYB",
     "us_vix": "^VIX",
 }
 
 
-def _fetch_global_data_sync() -> dict[str, float | None]:
-    """Fetch latest prices for all global tickers synchronously (yfinance)."""
+def _fetch_one_ticker_sync(ticker: str) -> tuple[float | None, float | None]:
+    """Fetch the last two daily closes for a single ticker. Returns (latest, prev)."""
     import yfinance as yf
 
-    tickers = list(_TICKERS.values())
-    data: dict[str, float | None] = {k: None for k in _TICKERS}
-
     try:
-        result = yf.download(
-            tickers,
-            period="2d",
-            interval="1d",
-            auto_adjust=True,
-            progress=False,
-            threads=True,
-        )
-        if result.empty:
-            return data
-
-        # For each ticker, grab the most recent close
-        prices: dict[str, float] = {}
-        prev_prices: dict[str, float] = {}
-
-        close = result["Close"] if "Close" in result.columns else result
-        for key, ticker in _TICKERS.items():
-            try:
-                col = close[ticker] if ticker in close.columns else close.get(ticker)
-                if col is None or col.dropna().empty:
-                    continue
-                col_clean = col.dropna()
-                prices[key] = float(col_clean.iloc[-1])
-                if len(col_clean) >= 2:
-                    prev_prices[key] = float(col_clean.iloc[-2])
-            except Exception:
-                pass
-
-        data["dow_futures_price"] = prices.get("dow_futures")
-        data["sp500_price"] = prices.get("sp500")
-        data["nasdaq_price"] = prices.get("nasdaq")
-        data["nifty_price"] = prices.get("nifty")
-        data["crude_price"] = prices.get("crude")
-        data["usdinr_price"] = prices.get("usdinr")
-        data["dxy_price"] = prices.get("dxy")
-        data["us_vix"] = prices.get("us_vix")
-
-        def _pct_change(key: str) -> float | None:
-            cur = prices.get(key)
-            prev = prev_prices.get(key)
-            if cur is None or prev is None or prev == 0:
-                return None
-            return (cur - prev) / prev * 100.0
-
-        data["dow_futures_pct"] = _pct_change("dow_futures")
-        data["sp500_close_pct"] = _pct_change("sp500")
-        data["nasdaq_close_pct"] = _pct_change("nasdaq")
-        data["nifty_pct"] = _pct_change("nifty")
-        data["crude_pct"] = _pct_change("crude")
-        data["usdinr_pct"] = _pct_change("usdinr")
-        data["dxy_pct"] = _pct_change("dxy")
-
+        t = yf.Ticker(ticker)
+        hist = t.history(period="5d", interval="1d", auto_adjust=True)
+        if hist is None or hist.empty:
+            return None, None
+        closes = hist["Close"].dropna()
+        if len(closes) == 0:
+            return None, None
+        latest = float(closes.iloc[-1])
+        prev = float(closes.iloc[-2]) if len(closes) >= 2 else None
+        return latest, prev
     except Exception:
-        logger.exception("yfinance download failed in global_market_task")
+        return None, None
+
+
+def _fetch_global_data_sync() -> dict[str, float | None]:
+    """Fetch latest prices for all global tickers synchronously (yfinance).
+
+    Fetches each ticker individually so one bad symbol never blocks the others.
+    """
+    data: dict[str, float | None] = {}
+    prices: dict[str, float] = {}
+    prev_prices: dict[str, float] = {}
+
+    for key, ticker in _TICKERS.items():
+        latest, prev = _fetch_one_ticker_sync(ticker)
+        if latest is not None:
+            prices[key] = latest
+        if prev is not None:
+            prev_prices[key] = prev
+
+    data["dow_futures_price"] = prices.get("dow_futures")
+    data["sp500_price"] = prices.get("sp500")
+    data["nasdaq_price"] = prices.get("nasdaq")
+    data["nifty_price"] = prices.get("nifty")
+    data["crude_price"] = prices.get("crude")
+    data["usdinr_price"] = prices.get("usdinr")
+    data["dxy_price"] = prices.get("dxy")
+    data["us_vix"] = prices.get("us_vix")
+
+    def _pct_change(key: str) -> float | None:
+        cur = prices.get(key)
+        prev = prev_prices.get(key)
+        if cur is None or prev is None or prev == 0:
+            return None
+        return (cur - prev) / prev * 100.0
+
+    data["dow_futures_pct"] = _pct_change("dow_futures")
+    data["sp500_close_pct"] = _pct_change("sp500")
+    data["nasdaq_close_pct"] = _pct_change("nasdaq")
+    data["nifty_pct"] = _pct_change("nifty")
+    data["crude_pct"] = _pct_change("crude")
+    data["usdinr_pct"] = _pct_change("usdinr")
+    data["dxy_pct"] = _pct_change("dxy")
 
     return data
 

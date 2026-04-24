@@ -32,7 +32,8 @@ stockTrading/
 ├── .claude/skills/        # Claude Code skill definitions (test-runner, review-code, build-strategy, etc.)
 ├── docs/
 │   ├── strategies/        # One MD per strategy with full trading rules
-│   └── backtest/          # Backtest harness docs (harness.md, architecture.md, option-data.md)
+│   ├── backtest/          # Backtest harness docs (harness.md, option-data.md)
+│   └── ai/                # AI agent docs (signal-confidence-agent.md)
 ├── scripts/               # dev.sh, stop.sh, reset.sh, backfill_for_backtest.py, backtest.py
 ├── backend/               # Python FastAPI backend (see backend/CLAUDE.md)
 │   ├── app/
@@ -108,7 +109,7 @@ cp .env.example .env          # Then fill in Fyers API keys
 ```
 
 ## Test Coverage
-Tests live in `backend/tests/`. 378 tests, all passing. Currently covered:
+Tests live in `backend/tests/`. 508 tests, all passing. Currently covered:
 - `test_core/` - IST timezone utils, market hour checks
 - `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns, relative strength (raw score + percentile ranking), volume analysis, market levels (swing detection, index SL/target selection)
 - `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type; CAN SLIM scoring, base pattern detection, strategy evaluate/exit/sizing
