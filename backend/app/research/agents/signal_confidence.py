@@ -243,8 +243,8 @@ async def _call_llm(context_json: str) -> SignalConfidence:
     prompt = _USER_PROMPT_TEMPLATE.format(context_json=context_json)
 
     raw = await llm.generate_json(
-        system_prompt=_SYSTEM_PROMPT,
-        user_prompt=prompt,
+        prompt=prompt,
+        system=_SYSTEM_PROMPT,
     )
 
     if not raw or not isinstance(raw, dict):

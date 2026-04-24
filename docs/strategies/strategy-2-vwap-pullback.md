@@ -240,3 +240,18 @@ The strategy runner blocks execution when:
 | `backend/app/services/strategy_runner.py` | Orchestration: build context → evaluate → resolve → LLM → persist |
 | `backend/app/research/agents/signal_confidence.py` | LLM overlay: rationale + confidence adjustment |
 | `docs/ai/signal-confidence-agent.md` | Full LLM prompt, schema, tuning notes, cost model |
+
+---
+
+## Implementation Notes
+
+### VWAP proximity threshold
+`VWAP_PROXIMITY_PCT = 0.15` is a hardcoded constant in `backend/app/core/constants.py`. The `strategy_configs.parameters["vwap_proximity_pct"]` DB field exists for documentation but is **not read by the strategy at runtime** — the code imports directly from `constants.py`. To change the threshold, edit the constant and restart the backend.
+
+### Confidence score calibration (Apr 2026 simulation)
+Under typical bearish conditions (MODERATE bearish bias, WIDE CPR, VIX 18–20, no market-structure SL/target), `compute_confidence()` produces ~54–58. A proper bearish reversal candle adds ~15 points (reversal_quality goes from ~0 to ~1.0), bringing the total to ~68–73 — well above the 55 threshold. The old pre-Phase-2 code returned a hardcoded `70 + 10 (OI)` = 80 for all signals.
+
+Factors that most often limit score: `cpr_narrow_trending` (WIDE CPR → 0.3), `vix_regime` (VIX 18–22 → 0.4), `rr_ratio_quality` (no market-structure level → 0.5 neutral). When all three are unfavourable and the reversal candle is weak, the score can fall below 55 and the signal is correctly suppressed.
+
+### LLM overlay kwarg contract
+`signal_confidence._call_llm` calls `llm.generate_json(prompt=..., system=...)`. The `LLMClient.generate_json` signature uses `prompt` and `system` — **not** `system_prompt`/`user_prompt`. Using the wrong names raises a silent `TypeError` that falls through to `_FALLBACK`, leaving `ai_summary`/`ai_adjustment` NULL on every signal.
