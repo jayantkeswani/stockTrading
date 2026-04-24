@@ -51,7 +51,7 @@ class Settings(BaseSettings):
 
     # Signal Confidence LLM Overlay (Phase 2)
     ai_confidence_enabled: bool = True            # Toggle LLM overlay for signals
-    fire_confidence_threshold: float = 55.0       # Minimum deterministic score to fire
+    fire_confidence_threshold: float = 65.0       # Minimum deterministic score to fire
     ai_confidence_timeout_seconds: int = 8        # Timeout for LLM call; never blocks signal
 
     # App
