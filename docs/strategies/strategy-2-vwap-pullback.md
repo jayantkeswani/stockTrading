@@ -217,7 +217,7 @@ The strategy runner blocks execution when:
 
 | Field | Source | Purpose |
 |---|---|---|
-| `vwap` | Today's 1m candle buffer | VWAP proximity + slope |
+| `vwap` | Today's 1m candle buffer (OHLC from index; volume from near-month futures contract) | VWAP proximity + slope |
 | `previous_day` | DB (cached per day) | PDH/PDL/PDC for CPR + fallback bias |
 | `cpr` | Computed from prev day HLC | CPR type (NARROW/WIDE), S1/R1 levels |
 | `oi_analysis` | Latest `oi_snapshots` | OI walls for SL/target + oi_support factor |

@@ -55,6 +55,21 @@ MONTHLY_EXPIRY_DOW = {
     "BSE": 3,  # Last Thursday of month
 }
 
+# Index futures monthly expiry day of week per index symbol.
+# Used to resolve the near-month futures contract for VWAP volume sourcing.
+# NSE index futures (NIFTY/BANKNIFTY/FINNIFTY/MIDCPNIFTY) expire last Tuesday;
+# BSE index futures (SENSEX) expire last Thursday.
+INDEX_FUTURES_EXPIRY_DOW = {
+    "NIFTY": 1,
+    "BANKNIFTY": 1,
+    "FINNIFTY": 1,
+    "MIDCPNIFTY": 1,
+    "SENSEX": 3,
+}
+
+# The five tradeable index symbols (excludes INDIA VIX which has no futures)
+INDEX_SYMBOLS = frozenset(INDEX_FUTURES_EXPIRY_DOW.keys())
+
 # Exchange for each index (used for option symbol construction)
 OPTION_EXCHANGE = {
     "NIFTY": "NSE",

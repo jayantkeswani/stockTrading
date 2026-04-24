@@ -20,6 +20,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
+    INDEX_SYMBOLS,
     IST,
     LOT_SIZES,
     MARKET_OPEN,
@@ -70,6 +71,12 @@ class StrategyRunner:
         self._daily_signal_count: dict[str, int] = {}
         self._signal_count_date: date | None = None
 
+        # Index futures subscriptions for VWAP volume sourcing.
+        # Maps index symbol → (fyers_symbol, expiry_date, internal_buffer_name)
+        # e.g. "NIFTY" → ("NSE:NIFTY25MAYFUT", date(2025,5,27), "NIFTY_FUT")
+        self._index_futures_info: dict[str, tuple[str, date, str]] = {}
+        self._futures_init_done: bool = False
+
     # ------------------------------------------------------------------
     # Public entry points
     # ------------------------------------------------------------------
@@ -90,6 +97,17 @@ class StrategyRunner:
         """
         try:
             await self._append_candle_to_buffer(symbol, candle_data)
+
+            # Futures-volume-only buffers: collect candles for VWAP, skip strategy eval
+            if self._is_futures_volume_symbol(symbol):
+                return
+
+            # Subscribe near-month index futures for VWAP volume (lazy, runs once)
+            if not self._futures_init_done:
+                await self._init_index_futures()
+
+            # Roll any expired index futures contracts (O(1) date check each tick)
+            await self._check_index_futures_roll()
 
             # Hard guardrails — conditions where evaluation itself makes no sense
             if not self._check_hard_guardrails():
@@ -674,6 +692,64 @@ class StrategyRunner:
         ]
 
     # ------------------------------------------------------------------
+    # Index futures subscription for VWAP volume
+    # ------------------------------------------------------------------
+
+    def _is_futures_volume_symbol(self, symbol: str) -> bool:
+        """True when symbol is subscribed only to supply futures volume for VWAP."""
+        return any(symbol == info[2] for info in self._index_futures_info.values())
+
+    async def _init_index_futures(self) -> None:
+        """Subscribe near-month futures for every index — called once on first candle close."""
+        from app.data_feed.fyers_ws_client import fyers_ws_client
+        from app.services.futures_resolver import resolve_index_futures_symbol
+
+        for index in INDEX_SYMBOLS:
+            result = await resolve_index_futures_symbol(index)
+            if result is None:
+                logger.warning("Could not resolve index futures for VWAP: %s", index)
+                continue
+            fyers_sym, expiry = result
+            internal_name = f"{index}_FUT"
+            self._index_futures_info[index] = (fyers_sym, expiry, internal_name)
+            await fyers_ws_client.subscribe_symbols(
+                [fyers_sym],
+                symbol_map={internal_name: fyers_sym},
+            )
+            logger.info(
+                "Subscribed index futures for VWAP volume: %s → %s (expires %s)",
+                index, fyers_sym, expiry,
+            )
+
+        self._futures_init_done = True
+
+    async def _check_index_futures_roll(self) -> None:
+        """Re-subscribe index futures when the current contract has expired."""
+        from app.data_feed.fyers_ws_client import fyers_ws_client
+        from app.services.futures_resolver import resolve_index_futures_symbol
+
+        today = now_ist().date()
+        for index, (fyers_sym, expiry, internal_name) in list(self._index_futures_info.items()):
+            if today <= expiry:
+                continue
+            result = await resolve_index_futures_symbol(index)
+            if result is None:
+                logger.warning("Could not roll index futures for %s — keeping stale contract", index)
+                continue
+            new_fyers_sym, new_expiry = result
+            self._index_futures_info[index] = (new_fyers_sym, new_expiry, internal_name)
+            # Clear stale futures candles so they don't pollute VWAP
+            self._candle_buffers.pop(internal_name, None)
+            await fyers_ws_client.subscribe_symbols(
+                [new_fyers_sym],
+                symbol_map={internal_name: new_fyers_sym},
+            )
+            logger.info(
+                "Rolled index futures: %s %s → %s (expires %s)",
+                index, fyers_sym, new_fyers_sym, new_expiry,
+            )
+
+    # ------------------------------------------------------------------
     # Indicator computation from buffer
     # ------------------------------------------------------------------
 
@@ -714,7 +790,11 @@ class StrategyRunner:
         return candles_5m
 
     def _calculate_vwap_from_buffer(self, symbol: str) -> VWAPResult | None:
-        """Compute VWAP from today's buffered 1m candles."""
+        """Compute VWAP from today's buffered 1m candles.
+
+        For index symbols (no traded volume), volumes are sourced from the
+        near-month futures buffer which is subscribed on startup.
+        """
         buffer = self._candle_buffers.get(symbol, [])
         if len(buffer) < 2:
             return None
@@ -723,6 +803,15 @@ class StrategyRunner:
         lows = [c["l"] for c in buffer]
         closes = [c["c"] for c in buffer]
         volumes = [c["v"] for c in buffer]
+
+        # Index symbols carry zero volume — use near-month futures volumes instead
+        if sum(volumes) == 0 and symbol in self._index_futures_info:
+            _, _, fut_name = self._index_futures_info[symbol]
+            fut_buffer = self._candle_buffers.get(fut_name, [])
+            if fut_buffer:
+                n = min(len(buffer), len(fut_buffer))
+                highs, lows, closes = highs[:n], lows[:n], closes[:n]
+                volumes = [fut_buffer[i]["v"] for i in range(n)]
 
         return calculate_vwap(highs, lows, closes, volumes)
 
