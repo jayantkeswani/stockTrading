@@ -132,8 +132,8 @@ function SignalCard({
     : 0;
   const rrRatio = risk > 0 && reward > 0 ? (reward / risk).toFixed(1) : null;
 
-  // indicators from JSONB
-  const ind = signal.indicators as Record<string, number | string | null>;
+  // indicators from JSONB — guard against null (old signals or pre-Phase-2 rows)
+  const ind = (signal.indicators ?? {}) as Record<string, number | string | null>;
   const vwap = typeof ind.vwap === "number" ? ind.vwap : null;
   const vwapDist =
     typeof ind.vwap_distance_pct === "number" ? ind.vwap_distance_pct : null;

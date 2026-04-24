@@ -248,6 +248,19 @@ The strategy runner blocks execution when:
 ### VWAP proximity threshold
 `VWAP_PROXIMITY_PCT = 0.15` is a hardcoded constant in `backend/app/core/constants.py`. The `strategy_configs.parameters["vwap_proximity_pct"]` DB field exists for documentation but is **not read by the strategy at runtime** — the code imports directly from `constants.py`. To change the threshold, edit the constant and restart the backend.
 
+### Parameter experiments — disable auto_mode first
+Before changing any threshold (proximity, confidence, etc.) for testing:
+1. Go to **Settings → Strategies** and turn `auto_mode` off for VWAP Pullback.
+2. Avoid using the **Scanner** header button or `POST /api/v1/strategies/evaluate/batch` during the experiment.
+
+Both auto-mode candle-close evaluations AND manual evals trigger `shadow_executor`, which creates ghost `Trade(source="SHADOW")` + `Position(is_shadow=True)` for every signal regardless of the `executable` flag. If you forget, clean up with:
+```sql
+DELETE FROM positions WHERE is_shadow = true;
+DELETE FROM trades WHERE source = 'SHADOW';
+DELETE FROM agent_logs WHERE action_type = 'SHADOW_EXECUTED';
+-- Delete invalid signals by checking vwap_distance_pct > normal threshold
+```
+
 ### Confidence score calibration (Apr 2026 simulation)
 Under typical bearish conditions (MODERATE bearish bias, WIDE CPR, VIX 18–20, no market-structure SL/target), `compute_confidence()` produces ~54–58. A proper bearish reversal candle adds ~15 points (reversal_quality goes from ~0 to ~1.0), bringing the total to ~68–73 — well above the 55 threshold. The old pre-Phase-2 code returned a hardcoded `70 + 10 (OI)` = 80 for all signals.
 
