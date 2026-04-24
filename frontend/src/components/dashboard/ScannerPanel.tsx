@@ -102,6 +102,19 @@ export function ScannerPanel() {
   );
 }
 
+const CONFIDENCE_FACTOR_LABELS: Record<string, string> = {
+  bias_alignment:       "Bias",
+  vwap_slope_alignment: "VWAP slope",
+  reversal_quality:     "Reversal",
+  volume_quality:       "Volume",
+  rr_ratio_quality:     "R:R",
+  oi_support:           "OI",
+  cpr_narrow_trending:  "CPR",
+  vix_regime:           "VIX",
+  global_alignment:     "Global",
+  time_of_day:          "Window",
+};
+
 function SignalCard({
   signal,
   onExec,
@@ -112,6 +125,7 @@ function SignalCard({
   onDismiss: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [aiExpanded, setAiExpanded] = useState(false);
   const [watchlistStatus, setWatchlistStatus] = useState<"idle" | "adding" | "done" | "error">("idle");
 
   const isFuture = signal.instrument_type === "FUTURE";
@@ -316,12 +330,26 @@ function SignalCard({
             : "+ Watch"}
         </button>
 
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="text-[10px] font-mono text-text-muted hover:text-text-secondary px-1.5 py-1 rounded transition-colors ml-auto"
-        >
-          {expanded ? "▲ Less" : "▼ Details"}
-        </button>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={() => { setExpanded(!expanded); if (aiExpanded) setAiExpanded(false); }}
+            className="text-[10px] font-mono text-text-muted hover:text-text-secondary px-1.5 py-1 rounded transition-colors"
+          >
+            {expanded ? "▲ Less" : "▼ Details"}
+          </button>
+
+          <button
+            onClick={() => { setAiExpanded(!aiExpanded); if (expanded) setExpanded(false); }}
+            className={`text-[10px] font-mono px-1.5 py-1 rounded transition-colors ${
+              signal.ai_summary
+                ? "text-accent hover:text-accent/80 hover:bg-accent/10"
+                : "text-text-muted hover:text-text-secondary"
+            }`}
+            title={signal.ai_summary ? "AI analysis available" : "No AI analysis yet"}
+          >
+            {signal.ai_summary ? "✦ AI" : "AI"}
+          </button>
+        </div>
 
         <button
           onClick={(e) => {
@@ -340,6 +368,108 @@ function SignalCard({
           <p className="text-[10px] text-text-secondary leading-relaxed font-mono">
             {signal.reason}
           </p>
+        </div>
+      )}
+
+      {/* AI Notes panel */}
+      {aiExpanded && (
+        <div className="mt-2 pt-2 border-t border-accent/20 animate-fade-in space-y-2">
+          {signal.ai_summary ? (
+            <>
+              {/* Summary + adjustment */}
+              <div className="flex items-start gap-2">
+                <span className="text-accent text-[10px] shrink-0 mt-px">✦</span>
+                <p className="text-[10px] font-mono text-text-primary leading-relaxed flex-1">
+                  {signal.ai_summary}
+                </p>
+                {signal.ai_adjustment != null && signal.ai_adjustment !== 0 && (
+                  <span className={`text-[9px] font-mono px-1 py-px rounded shrink-0 ${
+                    signal.ai_adjustment > 0
+                      ? "bg-profit/10 text-profit"
+                      : "bg-loss/10 text-loss"
+                  }`}>
+                    AI {signal.ai_adjustment > 0 ? "+" : ""}{signal.ai_adjustment}
+                  </span>
+                )}
+              </div>
+
+              {/* Rationale */}
+              {signal.ai_rationale && (
+                <p className="text-[10px] font-mono text-text-secondary leading-relaxed pl-4">
+                  {signal.ai_rationale}
+                </p>
+              )}
+
+              {/* Supports + Risks */}
+              {(() => {
+                const supports = (ind.ai_key_supports ?? []) as string[];
+                const risks = (ind.ai_key_risks ?? []) as string[];
+                return (supports.length > 0 || risks.length > 0) ? (
+                  <div className="grid grid-cols-2 gap-2 pl-4">
+                    {supports.length > 0 && (
+                      <div>
+                        <p className="text-[9px] font-mono text-profit/70 uppercase tracking-wider mb-1">Supports</p>
+                        <ul className="space-y-0.5">
+                          {supports.map((s, i) => (
+                            <li key={i} className="text-[9px] font-mono text-text-secondary flex gap-1">
+                              <span className="text-profit shrink-0">+</span>
+                              <span>{s}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {risks.length > 0 && (
+                      <div>
+                        <p className="text-[9px] font-mono text-loss/70 uppercase tracking-wider mb-1">Risks</p>
+                        <ul className="space-y-0.5">
+                          {risks.map((r, i) => (
+                            <li key={i} className="text-[9px] font-mono text-text-secondary flex gap-1">
+                              <span className="text-loss shrink-0">−</span>
+                              <span>{r}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ) : null;
+              })()}
+
+              {/* Confidence factor bars */}
+              {(() => {
+                const factors = ind.confidence_factors as unknown as Record<string, number> | undefined;
+                return factors ? (
+                  <div className="pl-4">
+                    <p className="text-[9px] font-mono text-text-muted uppercase tracking-wider mb-1.5">
+                      Confidence factors
+                    </p>
+                    <div className="space-y-0.5">
+                      {Object.entries(CONFIDENCE_FACTOR_LABELS).map(([key, label]) => {
+                        const val = factors[key];
+                        if (val == null) return null;
+                        const pct = Math.round(val * 100);
+                        const color = pct >= 70 ? "bg-profit" : pct >= 40 ? "bg-accent" : "bg-loss";
+                        return (
+                          <div key={key} className="flex items-center gap-2">
+                            <span className="text-[9px] font-mono text-text-muted w-20 shrink-0">{label}</span>
+                            <div className="flex-1 h-1 bg-border/40 rounded-full overflow-hidden">
+                              <div className={`h-full ${color} rounded-full`} style={{ width: `${pct}%` }} />
+                            </div>
+                            <span className="text-[9px] font-mono text-text-muted w-7 text-right shrink-0">{pct}%</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+            </>
+          ) : (
+            <p className="text-[10px] font-mono text-text-muted pl-4 italic">
+              No AI analysis yet — fires on next signal for this symbol.
+            </p>
+          )}
         </div>
       )}
     </div>
