@@ -17,7 +17,7 @@ from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from app.core.constants import FUTURES_MARGIN_PCT, STOCK_FUTURES_EXPIRY_DOW
+from app.core.constants import FUTURES_MARGIN_PCT, INDEX_FUTURES_EXPIRY_DOW, STOCK_FUTURES_EXPIRY_DOW
 from app.core.utils import now_ist
 
 logger = logging.getLogger(__name__)
@@ -263,3 +263,50 @@ async def _get_lot_size(symbol: str, fyers_symbol: str) -> int:
     # Default: 1 lot = 1 unit (conservative)
     logger.warning("Could not determine lot size for %s, defaulting to 1", symbol)
     return 1
+
+
+def find_index_futures_expiry(index: str, from_date: date) -> date:
+    """Find the near-month expiry date for an index futures contract.
+
+    Uses INDEX_FUTURES_EXPIRY_DOW (NSE indices → last Tuesday, SENSEX → last Thursday).
+    If from_date is already past this month's expiry, returns next month's.
+    """
+    expiry_dow = INDEX_FUTURES_EXPIRY_DOW[index]
+    year, month = from_date.year, from_date.month
+    expiry = _last_dow_of_month(year, month, expiry_dow)
+    if from_date > expiry:
+        if month == 12:
+            year, month = year + 1, 1
+        else:
+            month += 1
+        expiry = _last_dow_of_month(year, month, expiry_dow)
+    return expiry
+
+
+async def resolve_index_futures_symbol(
+    index: str, from_date: date | None = None
+) -> tuple[str, date] | None:
+    """Resolve an index to its near-month futures (Fyers symbol, expiry date).
+
+    Used by strategy_runner to subscribe the correct futures contract for VWAP
+    volume sourcing. Tries near-month; falls back to next month if not found.
+
+    Returns (fyers_symbol, expiry_date) or None if the symbol master lacks the entry.
+    """
+    today = from_date or now_ist().date()
+    expiry = find_index_futures_expiry(index, today)
+
+    fyers_symbol = await _find_futures_symbol(index, expiry)
+    if fyers_symbol is None:
+        next_expiry = find_index_futures_expiry(expiry + timedelta(days=1), expiry + timedelta(days=1))
+        fyers_symbol = await _find_futures_symbol(index, next_expiry)
+        if fyers_symbol is None:
+            logger.warning(
+                "Could not resolve index futures for %s (tried %s and %s)",
+                index, expiry, next_expiry,
+            )
+            return None
+        expiry = next_expiry
+
+    logger.info("Resolved index futures: %s → %s (expires %s)", index, fyers_symbol, expiry)
+    return fyers_symbol, expiry

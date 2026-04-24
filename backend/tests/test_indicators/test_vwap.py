@@ -90,7 +90,7 @@ class TestCalculateVwap:
         assert result is None
 
     def test_zero_total_volume(self):
-        """All volumes zero should return None."""
+        """All volumes zero should return None — caller supplies futures volume instead."""
         result = calculate_vwap([100, 101], [99, 100], [100, 101], [0, 0])
         assert result is None
 
