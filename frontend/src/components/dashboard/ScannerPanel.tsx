@@ -269,26 +269,30 @@ function SignalCard({
       </div>
 
       {/* Row 4: Actions */}
-      <div className="flex items-center gap-1.5">
-        {signal.executable ? (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onExec();
-            }}
-            className="text-xs font-mono font-medium px-2 py-1 rounded bg-profit/15 text-profit hover:bg-profit/25 transition-colors"
-          >
-            EXEC
-            {lotsLabel && (
-              <span className="ml-1 text-[10px] text-profit/70">
-                {lotsLabel}
-                {qtyLabel && ` ${qtyLabel}`}
-              </span>
-            )}
-          </button>
-        ) : (
-          <span className="text-[10px] font-mono text-text-muted px-2 py-1 rounded bg-bg-tertiary">
-            {signal.blocked_reason || "not executable"}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onExec();
+          }}
+          className={`text-xs font-mono font-medium px-2 py-1 rounded transition-colors ${
+            signal.executable
+              ? "bg-profit/15 text-profit hover:bg-profit/25"
+              : "bg-warning/10 text-warning border border-warning/30 hover:bg-warning/20"
+          }`}
+          title={signal.executable ? undefined : `Manual override — ${signal.blocked_reason || "not executable"}`}
+        >
+          EXEC
+          {lotsLabel && (
+            <span className={`ml-1 text-[10px] ${signal.executable ? "text-profit/70" : "text-warning/70"}`}>
+              {lotsLabel}
+              {qtyLabel && ` ${qtyLabel}`}
+            </span>
+          )}
+        </button>
+        {!signal.executable && signal.blocked_reason && (
+          <span className="text-[9px] font-mono text-warning/70 italic">
+            ⚠ {signal.blocked_reason}
           </span>
         )}
 
