@@ -13,6 +13,7 @@ from app.core.enums import DayBias, InstrumentType, SignalType, StrategyName
 from app.indicators.candle_patterns import Candle
 from app.indicators.cpr import CPRResult
 from app.indicators.global_market import GlobalCues
+from app.indicators.intraday_bias import IntradayBias
 from app.indicators.open_interest import OIAnalysis
 from app.indicators.previous_day import PreviousDayLevels
 from app.indicators.vwap import VWAPResult
@@ -75,6 +76,8 @@ class MarketContext:
     canslim_data: object | None = None               # StockFundamental row if available
     # Global market context (None when Redis cache is cold or task hasn't run yet)
     global_cues: GlobalCues | None = None            # World indices, FX, commodities
+    # Composite intraday bias — replaces yesterday-only hard gate (Phase 2)
+    intraday_bias: IntradayBias | None = None        # Live bias: score, strength, components
 
 
 class BaseStrategy(ABC):

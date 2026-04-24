@@ -45,9 +45,14 @@ class Settings(BaseSettings):
     # AI Research
     google_api_key: str = ""
     research_llm_provider: str = "gemini"
-    research_llm_model: str = "gemini-2.5-flash"
+    research_llm_model: str = "gemini-3-flash-preview"
     research_agent_timeout_seconds: int = 90
     research_max_concurrent: int = 3
+
+    # Signal Confidence LLM Overlay (Phase 2)
+    ai_confidence_enabled: bool = True            # Toggle LLM overlay for signals
+    fire_confidence_threshold: float = 65.0       # Minimum deterministic score to fire
+    ai_confidence_timeout_seconds: int = 8        # Timeout for LLM call; never blocks signal
 
     # App
     backend_host: str = "0.0.0.0"

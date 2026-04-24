@@ -30,6 +30,11 @@ class SignalResponse(BaseModel):
     quantity: int | None = None
     fyers_option_symbol: str | None = None
     fyers_futures_symbol: str | None = None
+    # Phase 2 LLM overlay
+    ai_summary: str | None = None
+    ai_rationale: str | None = None
+    ai_adjustment: Decimal | None = None
+    ai_action: str | None = None
 
     model_config = {"from_attributes": True}
 

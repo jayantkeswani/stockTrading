@@ -19,9 +19,10 @@ from app.core.utils import is_trading_day
 from app.indicators.candle_patterns import Candle
 from app.indicators.cpr import calculate_cpr
 from app.indicators.global_market import GlobalCues, combined_global_score
+from app.indicators.intraday_bias import compute_intraday_bias
 from app.indicators.open_interest import analyze_option_chain
 from app.indicators.previous_day import analyze_previous_day
-from app.indicators.vwap import calculate_vwap
+from app.indicators.vwap import VWAPResult, calculate_vwap
 from app.models.global_market_snapshot import GlobalMarketSnapshot
 from app.models.market_data import MarketData1m
 from app.models.oi_snapshot import OISnapshot
@@ -77,14 +78,23 @@ async def build_historical_context(
     # --- OI analysis (latest snapshot <= as_of) ---
     oi_analysis = await _get_oi_analysis(session, symbol, as_of)
 
-    # --- India VIX: not stored historically; leave None ---
-    india_vix = None
+    # --- India VIX from INDIA VIX symbol in MarketData1m (when available) ---
+    india_vix = await _get_india_vix(session, as_of)
 
     # --- Daily candles (for CAN SLIM — skip for VWAP-only backtest) ---
     # candles_daily = None, volume_avg_20d = None (extend later if needed)
 
     # --- Global cues from DB snapshot <= as_of ---
     global_cues = await _get_global_cues(session, as_of)
+
+    # --- Intraday bias (same computation as live strategy_runner) ---
+    intraday_bias = compute_intraday_bias(
+        prev_day=prev_day_levels,
+        candles_1m=today_candles,
+        vwap=vwap_result,
+        current_price=current_price,
+        global_cues=global_cues,
+    )
 
     return MarketContext(
         symbol=symbol,
@@ -97,6 +107,7 @@ async def build_historical_context(
         india_vix=india_vix,
         current_time_ist=as_of.isoformat(),
         global_cues=global_cues,
+        intraday_bias=intraday_bias,
     )
 
 
@@ -110,23 +121,25 @@ async def _fetch_candles_1m(
     from_ts: datetime,
     to_ts: datetime,
 ) -> list[Candle]:
-    """Fetch 1m candles from MarketData1m between from_ts and to_ts (inclusive)."""
+    """Fetch 1m candles from MarketData1m between from_ts and to_ts (inclusive).
+
+    Uses DISTINCT ON (minute) keeping the highest-volume row per minute.
+    This guards against duplicate entries that arise when a backfill candle
+    (clean :00 timestamp, real volume) and a live WS candle (sub-minute
+    timestamp, vol=0) land in the same minute before the feed_manager
+    normalization fix was deployed.
+    """
+    from sqlalchemy import text
     result = await session.execute(
-        select(
-            MarketData1m.open,
-            MarketData1m.high,
-            MarketData1m.low,
-            MarketData1m.close,
-            MarketData1m.volume,
-        )
-        .where(
-            and_(
-                MarketData1m.symbol == symbol,
-                MarketData1m.timestamp >= from_ts,
-                MarketData1m.timestamp <= to_ts,
-            )
-        )
-        .order_by(MarketData1m.timestamp)
+        text("""
+            SELECT DISTINCT ON (date_trunc('minute', timestamp))
+                open, high, low, close, volume
+            FROM market_data_1m
+            WHERE symbol = :symbol
+              AND timestamp BETWEEN :from_ts AND :to_ts
+            ORDER BY date_trunc('minute', timestamp), volume DESC, timestamp
+        """),
+        {"symbol": symbol, "from_ts": from_ts, "to_ts": to_ts},
     )
     rows = result.all()
     return [
@@ -258,6 +271,26 @@ async def _get_oi_analysis(
             entry["pe_volume"] = snap.volume
 
     return analyze_option_chain(list(strike_map.values()))
+
+
+async def _get_india_vix(
+    session: AsyncSession,
+    as_of: datetime,
+) -> float | None:
+    """Return India VIX close from the most recent INDIA VIX candle <= as_of."""
+    result = await session.execute(
+        select(MarketData1m.close)
+        .where(
+            and_(
+                MarketData1m.symbol == "INDIA VIX",
+                MarketData1m.timestamp <= as_of,
+            )
+        )
+        .order_by(MarketData1m.timestamp.desc())
+        .limit(1)
+    )
+    val = result.scalar_one_or_none()
+    return float(val) if val is not None else None
 
 
 async def _get_global_cues(

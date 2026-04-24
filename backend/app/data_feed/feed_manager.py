@@ -34,6 +34,10 @@ class FeedManager:
         self._subscribed_symbols: set[str] = set()
         self._current_candles: dict[str, dict] = {}  # symbol -> candle being built
         self._task: asyncio.Task | None = None
+        # Last seen vol_traded_today per symbol.
+        # Fyers sends cumulative daily volume — we compute the delta to get
+        # the actual volume traded since the previous tick.
+        self._last_vol_today: dict[str, int] = {}
 
     @property
     def db_semaphore(self) -> asyncio.Semaphore:
@@ -103,9 +107,20 @@ class FeedManager:
         await self._aggregate_candle(symbol, ltp, tick_data.get("volume", 0))
 
     async def _aggregate_candle(self, symbol: str, price: float, volume: int):
-        """Aggregate ticks into 1-minute candles."""
+        """Aggregate ticks into 1-minute candles.
+
+        `volume` from Fyers is vol_traded_today — cumulative since market open.
+        We compute the per-tick delta against the last seen value so each candle
+        accumulates only the volume actually traded in that minute.
+        A drop in vol_traded_today (new day, reconnect reset) is treated as a
+        full reset by clamping the delta to zero.
+        """
         now = datetime.now(IST)
         minute_key = now.strftime("%Y-%m-%d %H:%M")
+
+        last_vol = self._last_vol_today.get(symbol, 0)
+        vol_delta = max(0, volume - last_vol)
+        self._last_vol_today[symbol] = volume
 
         if symbol not in self._current_candles:
             self._current_candles[symbol] = {}
@@ -116,14 +131,14 @@ class FeedManager:
             if candle.get("minute_key"):
                 await self._emit_candle(symbol, candle)
 
-            # Start new candle
+            # Start new candle — first tick of the minute contributes its delta
             self._current_candles[symbol] = {
                 "minute_key": minute_key,
                 "open": price,
                 "high": price,
                 "low": price,
                 "close": price,
-                "volume": volume,
+                "volume": vol_delta,
                 "timestamp": now.isoformat(),
             }
         else:
@@ -131,7 +146,7 @@ class FeedManager:
             candle["high"] = max(candle["high"], price)
             candle["low"] = min(candle["low"], price)
             candle["close"] = price
-            candle["volume"] += volume
+            candle["volume"] += vol_delta
 
     async def _emit_candle(self, symbol: str, candle: dict):
         """Emit a completed candle: persist to DB, publish to Redis/WS, trigger strategy."""
@@ -174,6 +189,12 @@ class FeedManager:
             if isinstance(ts, str):
                 ts = datetime.fromisoformat(ts)
 
+            # Normalize to minute boundary so ON CONFLICT catches any backfill duplicate.
+            # Backfill stores clean :00 timestamps; WS fires at :45–:59 of the minute.
+            # Without normalization both rows pass the unique constraint and the zero-vol
+            # WS entry pollutes VWAP and 5m bar aggregation.
+            ts = ts.replace(second=0, microsecond=0)
+
             async with self.db_semaphore:
                 async with async_session_factory() as session:
                     stmt = pg_insert(MarketData1m).values(
@@ -213,9 +234,12 @@ class FeedManager:
 
         Prevents the seam candle (built with pre-disconnect ticks) from being
         emitted with incorrect OHLC when ticks resume after reconnect.
+        Also resets vol_traded_today baselines — on reconnect Fyers sends fresh
+        cumulative values so the old baselines would produce a wrong first delta.
         """
         count = len(self._current_candles)
         self._current_candles.clear()
+        self._last_vol_today.clear()
         if count:
             logger.info("Cleared %d in-progress candles on WS disconnect", count)
 

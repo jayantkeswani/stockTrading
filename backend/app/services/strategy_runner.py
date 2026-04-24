@@ -20,6 +20,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
+    INDEX_SYMBOLS,
     IST,
     LOT_SIZES,
     MARKET_OPEN,
@@ -30,7 +31,8 @@ from app.services.trading_config import get_trading_config
 from app.core.database import async_session_factory
 from app.core.enums import InstrumentType, SignalStatus, StrategyName
 from app.core.redis import get_cached_price, get_redis
-from app.core.utils import is_in_trading_window, is_past_close_deadline, now_ist
+from app.core.utils import is_in_trading_window, is_past_close_deadline, now_ist, get_window_state
+from app.indicators.intraday_bias import compute_intraday_bias
 from app.tasks.global_market_task import _get_global_cues_from_redis
 from app.indicators.candle_patterns import Candle
 from app.indicators.cpr import calculate_cpr
@@ -69,6 +71,12 @@ class StrategyRunner:
         self._daily_signal_count: dict[str, int] = {}
         self._signal_count_date: date | None = None
 
+        # Index futures subscriptions for VWAP volume sourcing.
+        # Maps index symbol → (fyers_symbol, expiry_date, internal_buffer_name)
+        # e.g. "NIFTY" → ("NSE:NIFTY25MAYFUT", date(2025,5,27), "NIFTY_FUT")
+        self._index_futures_info: dict[str, tuple[str, date, str]] = {}
+        self._futures_init_done: bool = False
+
     # ------------------------------------------------------------------
     # Public entry points
     # ------------------------------------------------------------------
@@ -89,6 +97,17 @@ class StrategyRunner:
         """
         try:
             await self._append_candle_to_buffer(symbol, candle_data)
+
+            # Futures-volume-only buffers: collect candles for VWAP, skip strategy eval
+            if self._is_futures_volume_symbol(symbol):
+                return
+
+            # Subscribe near-month index futures for VWAP volume (lazy, runs once)
+            if not self._futures_init_done:
+                await self._init_index_futures()
+
+            # Roll any expired index futures contracts (O(1) date check each tick)
+            await self._check_index_futures_roll()
 
             # Hard guardrails — conditions where evaluation itself makes no sense
             if not self._check_hard_guardrails():
@@ -155,6 +174,8 @@ class StrategyRunner:
 
         signal = strategy.evaluate(ctx)
         if signal is not None:
+            window_state = get_window_state()
+            signal.indicators["window_state"] = window_state
             if signal.instrument_type == InstrumentType.OPTION:
                 signal, executable, blocked_reason = await self._resolve_option(
                     signal, ctx, executable, blocked_reason,
@@ -163,7 +184,8 @@ class StrategyRunner:
                 signal, executable, blocked_reason = await self._resolve_futures(
                     signal, ctx, executable, blocked_reason,
                 )
-            await self._handle_signal(signal, executable, blocked_reason)
+            ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
+            await self._handle_signal(signal, executable, blocked_reason, ai_fields=ai_fields)
 
         return signal
 
@@ -174,19 +196,13 @@ class StrategyRunner:
     def _check_hard_guardrails(self) -> bool:
         """Return True if strategy evaluation should proceed.
 
-        Hard guardrails are conditions where generating signals makes no sense
-        (outside market hours, past close deadline, extreme VIX).
+        Hard: past close deadline (3:15 PM) — no point generating any signal.
+        Soft: outside trade windows → signals still generated but marked non-executable.
+              This moved to _check_risk_limits so out-of-window signals are visible in UI.
         """
-        # 1. Trading window check
-        if not is_in_trading_window():
-            logger.debug("Outside trading window — skipping strategy evaluation")
-            return False
-
-        # 2. Position close deadline
         if is_past_close_deadline():
             logger.debug("Past close deadline — no new signals")
             return False
-
         return True
 
     async def _check_risk_limits(self, symbol: str) -> tuple[bool, str | None]:
@@ -194,7 +210,13 @@ class StrategyRunner:
 
         Signals are always generated regardless of risk limits, but these checks
         determine whether the signal can actually be traded.
+        Trade-window check moved here from _check_hard_guardrails so out-of-window
+        signals are persisted and visible in the UI as informational (non-executable).
         """
+        # Trade window — soft: signal still generated, just not executable
+        if not is_in_trading_window():
+            return False, "Outside trade window"
+
         # VIX extreme check (from Redis)
         vix = await self._get_india_vix()
         if vix is not None and vix >= VIX_EXTREME:
@@ -303,6 +325,20 @@ class StrategyRunner:
         # Global market cues from Redis (populated by global_market_task every 15 min)
         global_cues = await _get_global_cues_from_redis()
 
+        # Composite intraday bias — uses 1m candle buffer from today
+        buffer = self._candle_buffers.get(symbol, [])
+        candles_1m_today = [
+            Candle(open=c["o"], high=c["h"], low=c["l"], close=c["c"], volume=c.get("v", 0))
+            for c in buffer
+        ]
+        intraday_bias = compute_intraday_bias(
+            prev_day=prev_day_levels,
+            candles_1m=candles_1m_today,
+            vwap=vwap_result,
+            current_price=current_price,
+            global_cues=global_cues,
+        )
+
         return MarketContext(
             symbol=symbol,
             current_price=current_price,
@@ -318,6 +354,7 @@ class StrategyRunner:
             relative_strength=relative_strength,
             canslim_data=canslim_data,
             global_cues=global_cues,
+            intraday_bias=intraday_bias,
         )
 
     # ------------------------------------------------------------------
@@ -332,18 +369,13 @@ class StrategyRunner:
         return None
 
     async def _get_india_vix(self) -> float | None:
-        """Fetch India VIX from Redis cache."""
-        r = get_redis()
-        vix_raw = await r.get("indicator:india_vix")
-        if vix_raw:
-            try:
-                return float(vix_raw)
-            except (ValueError, TypeError):
-                pass
-        # Also try the price cache (VIX may be tracked as a symbol)
+        """Fetch India VIX LTP from the Fyers price cache (NSE:INDIAVIX-INDEX)."""
         cached = await get_cached_price("INDIA VIX")
         if cached:
-            return float(cached["ltp"])
+            try:
+                return float(cached["ltp"])
+            except (ValueError, TypeError):
+                pass
         return None
 
     async def _is_canslim_symbol(self, symbol: str) -> bool:
@@ -619,26 +651,25 @@ class StrategyRunner:
             return True
 
     async def _load_todays_candles(self, symbol: str, today: date) -> list[dict]:
-        """Load today's 1m candles from the database."""
+        """Load today's 1m candles from the database.
+
+        Uses DISTINCT ON (minute) keeping highest-volume row per minute to guard
+        against backfill + live-WS duplicate entries (same minute, different seconds).
+        """
+        from sqlalchemy import text
         today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
 
         async with async_session_factory() as session:
             result = await session.execute(
-                select(
-                    MarketData1m.open,
-                    MarketData1m.high,
-                    MarketData1m.low,
-                    MarketData1m.close,
-                    MarketData1m.volume,
-                    MarketData1m.timestamp,
-                )
-                .where(
-                    and_(
-                        MarketData1m.symbol == symbol,
-                        MarketData1m.timestamp >= today_start,
-                    )
-                )
-                .order_by(MarketData1m.timestamp)
+                text("""
+                    SELECT DISTINCT ON (date_trunc('minute', timestamp))
+                        open, high, low, close, volume, timestamp
+                    FROM market_data_1m
+                    WHERE symbol = :symbol
+                      AND timestamp >= :today_start
+                    ORDER BY date_trunc('minute', timestamp), volume DESC, timestamp
+                """),
+                {"symbol": symbol, "today_start": today_start},
             )
             rows = result.all()
 
@@ -653,6 +684,64 @@ class StrategyRunner:
             }
             for r in rows
         ]
+
+    # ------------------------------------------------------------------
+    # Index futures subscription for VWAP volume
+    # ------------------------------------------------------------------
+
+    def _is_futures_volume_symbol(self, symbol: str) -> bool:
+        """True when symbol is subscribed only to supply futures volume for VWAP."""
+        return any(symbol == info[2] for info in self._index_futures_info.values())
+
+    async def _init_index_futures(self) -> None:
+        """Subscribe near-month futures for every index — called once on first candle close."""
+        from app.data_feed.fyers_ws_client import fyers_ws_client
+        from app.services.futures_resolver import resolve_index_futures_symbol
+
+        for index in INDEX_SYMBOLS:
+            result = await resolve_index_futures_symbol(index)
+            if result is None:
+                logger.warning("Could not resolve index futures for VWAP: %s", index)
+                continue
+            fyers_sym, expiry = result
+            internal_name = f"{index}_FUT"
+            self._index_futures_info[index] = (fyers_sym, expiry, internal_name)
+            await fyers_ws_client.subscribe_symbols(
+                [fyers_sym],
+                symbol_map={internal_name: fyers_sym},
+            )
+            logger.info(
+                "Subscribed index futures for VWAP volume: %s → %s (expires %s)",
+                index, fyers_sym, expiry,
+            )
+
+        self._futures_init_done = True
+
+    async def _check_index_futures_roll(self) -> None:
+        """Re-subscribe index futures when the current contract has expired."""
+        from app.data_feed.fyers_ws_client import fyers_ws_client
+        from app.services.futures_resolver import resolve_index_futures_symbol
+
+        today = now_ist().date()
+        for index, (fyers_sym, expiry, internal_name) in list(self._index_futures_info.items()):
+            if today <= expiry:
+                continue
+            result = await resolve_index_futures_symbol(index)
+            if result is None:
+                logger.warning("Could not roll index futures for %s — keeping stale contract", index)
+                continue
+            new_fyers_sym, new_expiry = result
+            self._index_futures_info[index] = (new_fyers_sym, new_expiry, internal_name)
+            # Clear stale futures candles so they don't pollute VWAP
+            self._candle_buffers.pop(internal_name, None)
+            await fyers_ws_client.subscribe_symbols(
+                [new_fyers_sym],
+                symbol_map={internal_name: new_fyers_sym},
+            )
+            logger.info(
+                "Rolled index futures: %s %s → %s (expires %s)",
+                index, fyers_sym, new_fyers_sym, new_expiry,
+            )
 
     # ------------------------------------------------------------------
     # Indicator computation from buffer
@@ -695,7 +784,11 @@ class StrategyRunner:
         return candles_5m
 
     def _calculate_vwap_from_buffer(self, symbol: str) -> VWAPResult | None:
-        """Compute VWAP from today's buffered 1m candles."""
+        """Compute VWAP from today's buffered 1m candles.
+
+        For index symbols (no traded volume), volumes are sourced from the
+        near-month futures buffer which is subscribed on startup.
+        """
         buffer = self._candle_buffers.get(symbol, [])
         if len(buffer) < 2:
             return None
@@ -704,6 +797,15 @@ class StrategyRunner:
         lows = [c["l"] for c in buffer]
         closes = [c["c"] for c in buffer]
         volumes = [c["v"] for c in buffer]
+
+        # Index symbols carry zero volume — use near-month futures volumes instead
+        if sum(volumes) == 0 and symbol in self._index_futures_info:
+            _, _, fut_name = self._index_futures_info[symbol]
+            fut_buffer = self._candle_buffers.get(fut_name, [])
+            if fut_buffer:
+                n = min(len(buffer), len(fut_buffer))
+                highs, lows, closes = highs[:n], lows[:n], closes[:n]
+                volumes = [fut_buffer[i]["v"] for i in range(n)]
 
         return calculate_vwap(highs, lows, closes, volumes)
 
@@ -741,13 +843,18 @@ class StrategyRunner:
             try:
                 signal = strategy.evaluate(ctx)
                 if signal is not None:
+                    # Stamp window state onto the signal indicators
+                    window_state = get_window_state()
+                    signal.indicators["window_state"] = window_state
+
                     logger.info(
-                        "Signal generated: %s %s %s (confidence=%.1f, executable=%s)",
+                        "Signal generated: %s %s %s (confidence=%.1f, executable=%s, window=%s)",
                         signal.strategy_name,
                         signal.symbol,
                         signal.signal_type,
                         signal.confidence,
                         executable,
+                        window_state,
                     )
                     # Resolve instrument-specific details
                     if signal.instrument_type == InstrumentType.OPTION:
@@ -759,7 +866,10 @@ class StrategyRunner:
                             signal, ctx, executable, blocked_reason,
                         )
 
-                    await self._handle_signal(signal, executable, blocked_reason)
+                    # LLM confidence overlay — after resolve, ctx still in scope
+                    ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
+
+                    await self._handle_signal(signal, executable, blocked_reason, ai_fields=ai_fields)
             except Exception:
                 logger.exception(
                     "Error evaluating strategy %s for %s",
@@ -936,11 +1046,48 @@ class StrategyRunner:
     # Signal handling
     # ------------------------------------------------------------------
 
+    async def _run_ai_confidence_overlay(
+        self,
+        signal: StrategySignal,
+        ctx: MarketContext,
+    ) -> dict:
+        """Call the LLM confidence overlay agent. Returns dict of ai_* fields (may be empty)."""
+        from app.config import settings as _settings
+        if not _settings.ai_confidence_enabled:
+            return {}
+        try:
+            from app.research.agents.signal_confidence import score_signal
+            result = await score_signal(signal, ctx)
+            if result.confidence_adjustment != 0:
+                old = float(signal.confidence) if signal.confidence else 0.0
+                new_conf = max(0.0, min(100.0, old + result.confidence_adjustment))
+                signal.confidence = new_conf
+                logger.info(
+                    "AI confidence overlay: %s %s adj=%+d → %.1f",
+                    signal.symbol, signal.signal_type, result.confidence_adjustment, new_conf,
+                )
+            # Persist key_supports/key_risks in indicators JSONB
+            if result.key_supports:
+                signal.indicators["ai_key_supports"] = result.key_supports
+            if result.key_risks:
+                signal.indicators["ai_key_risks"] = result.key_risks
+
+            return {
+                "ai_summary": result.summary or None,
+                "ai_rationale": result.rationale or None,
+                "ai_adjustment": result.confidence_adjustment if result.confidence_adjustment != 0 else None,
+                "ai_action": result.recommended_action or None,
+            }
+        except Exception:
+            logger.exception("AI confidence overlay error — using deterministic score")
+            return {}
+
     async def _handle_signal(
         self,
         signal: StrategySignal,
         executable: bool,
         blocked_reason: str | None,
+        ai_fields: dict | None = None,
     ) -> None:
         """Deduplicate, persist, and broadcast a signal.
 
@@ -978,7 +1125,8 @@ class StrategyRunner:
             return
 
         # No existing PENDING signal or prior was EXECUTED — create new
-        signal_record = await self._persist_signal(signal, now, executable, blocked_reason)
+        signal_record = await self._persist_signal(signal, now, executable, blocked_reason,
+                                                    ai_fields=ai_fields)
         if signal_record is None:
             return
 
@@ -1159,8 +1307,10 @@ class StrategyRunner:
         now: datetime,
         executable: bool,
         blocked_reason: str | None,
+        ai_fields: dict | None = None,
     ) -> Signal | None:
         """Save the signal to the signals table."""
+        ai = ai_fields or {}
         try:
             async with async_session_factory() as session:
                 record = Signal(
@@ -1195,6 +1345,10 @@ class StrategyRunner:
                     lots=signal.lots,
                     quantity=signal.quantity,
                     sizing_meta=signal.sizing_meta,
+                    ai_summary=ai.get("ai_summary"),
+                    ai_rationale=ai.get("ai_rationale"),
+                    ai_adjustment=Decimal(str(ai["ai_adjustment"])) if ai.get("ai_adjustment") is not None else None,
+                    ai_action=ai.get("ai_action"),
                 )
                 session.add(record)
                 await session.commit()

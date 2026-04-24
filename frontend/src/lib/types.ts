@@ -88,6 +88,11 @@ export interface Signal {
   quantity: number | null;
   fyers_option_symbol: string | null;
   fyers_futures_symbol: string | null;
+  // Phase 2 — LLM overlay fields
+  ai_summary: string | null;
+  ai_rationale: string | null;
+  ai_adjustment: number | null;
+  ai_action: string | null;
 }
 
 export interface SignalPreview {

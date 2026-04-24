@@ -9,6 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, TimestampMixin, generate_uuid
 
 
+
+
+
 class Signal(Base, TimestampMixin):
     __tablename__ = "signals"
 
@@ -41,6 +44,11 @@ class Signal(Base, TimestampMixin):
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # LLM overlay fields (Phase 2 — ai_confidence_enabled)
+    ai_summary: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    ai_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_adjustment: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
+    ai_action: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     __table_args__ = (
         Index("idx_signals_status", "status"),

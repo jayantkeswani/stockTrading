@@ -271,4 +271,7 @@ but the REST batch endpoint remains as fallback for symbols not yet subscribed.
 - **Non-default ports**: PostgreSQL 5433, Redis 6380 (avoid conflicts with local instances)
 - **Fyers SDK**: Uses `fyers-apiv3` package — WebSocket via threaded `FyersDataSocket` bridged to asyncio
 - **Decoupled strategy evaluation**: FeedManager only produces candles. Strategy evaluation is triggered by auto_mode config (per strategy + per symbol) or manual API call. Both paths share the same MarketContext builder and signal pipeline.
+- **Phase 2 signal pipeline**: `candle close → build_market_context (incl. intraday_bias + global_cues) → strategy.evaluate → composite confidence (10-factor) → fire threshold gate → option/futures resolve → LLM overlay (±15 adj, ai_summary/rationale) → persist (with ai_* fields) → broadcast`
+- **Phase 2 bias**: `intraday_bias` replaces the yesterday-only hard gate with a weighted live composite (6 factors). STRONG opposing bias still blocks; MODERATE/WEAK allows with confidence haircut.
+- **Backtest harness** (`backend/app/backtest/`): common replay framework — historical 1m candles → `context_builder.build_historical_context` → `strategy.evaluate` → `exit_simulator` → `BacktestReport`. No DB writes, no WS events. Accurate mode uses live-traded option candles from `market_data_1m`; fast mode uses delta approximation.
 - **Watchlist on WebSocket**: Watchlist symbols are subscribed on the Fyers WebSocket at startup and on add. Not just REST polling.
