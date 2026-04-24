@@ -189,6 +189,12 @@ class FeedManager:
             if isinstance(ts, str):
                 ts = datetime.fromisoformat(ts)
 
+            # Normalize to minute boundary so ON CONFLICT catches any backfill duplicate.
+            # Backfill stores clean :00 timestamps; WS fires at :45–:59 of the minute.
+            # Without normalization both rows pass the unique constraint and the zero-vol
+            # WS entry pollutes VWAP and 5m bar aggregation.
+            ts = ts.replace(second=0, microsecond=0)
+
             async with self.db_semaphore:
                 async with async_session_factory() as session:
                     stmt = pg_insert(MarketData1m).values(

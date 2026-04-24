@@ -651,26 +651,25 @@ class StrategyRunner:
             return True
 
     async def _load_todays_candles(self, symbol: str, today: date) -> list[dict]:
-        """Load today's 1m candles from the database."""
+        """Load today's 1m candles from the database.
+
+        Uses DISTINCT ON (minute) keeping highest-volume row per minute to guard
+        against backfill + live-WS duplicate entries (same minute, different seconds).
+        """
+        from sqlalchemy import text
         today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
 
         async with async_session_factory() as session:
             result = await session.execute(
-                select(
-                    MarketData1m.open,
-                    MarketData1m.high,
-                    MarketData1m.low,
-                    MarketData1m.close,
-                    MarketData1m.volume,
-                    MarketData1m.timestamp,
-                )
-                .where(
-                    and_(
-                        MarketData1m.symbol == symbol,
-                        MarketData1m.timestamp >= today_start,
-                    )
-                )
-                .order_by(MarketData1m.timestamp)
+                text("""
+                    SELECT DISTINCT ON (date_trunc('minute', timestamp))
+                        open, high, low, close, volume, timestamp
+                    FROM market_data_1m
+                    WHERE symbol = :symbol
+                      AND timestamp >= :today_start
+                    ORDER BY date_trunc('minute', timestamp), volume DESC, timestamp
+                """),
+                {"symbol": symbol, "today_start": today_start},
             )
             rows = result.all()
 

@@ -121,23 +121,25 @@ async def _fetch_candles_1m(
     from_ts: datetime,
     to_ts: datetime,
 ) -> list[Candle]:
-    """Fetch 1m candles from MarketData1m between from_ts and to_ts (inclusive)."""
+    """Fetch 1m candles from MarketData1m between from_ts and to_ts (inclusive).
+
+    Uses DISTINCT ON (minute) keeping the highest-volume row per minute.
+    This guards against duplicate entries that arise when a backfill candle
+    (clean :00 timestamp, real volume) and a live WS candle (sub-minute
+    timestamp, vol=0) land in the same minute before the feed_manager
+    normalization fix was deployed.
+    """
+    from sqlalchemy import text
     result = await session.execute(
-        select(
-            MarketData1m.open,
-            MarketData1m.high,
-            MarketData1m.low,
-            MarketData1m.close,
-            MarketData1m.volume,
-        )
-        .where(
-            and_(
-                MarketData1m.symbol == symbol,
-                MarketData1m.timestamp >= from_ts,
-                MarketData1m.timestamp <= to_ts,
-            )
-        )
-        .order_by(MarketData1m.timestamp)
+        text("""
+            SELECT DISTINCT ON (date_trunc('minute', timestamp))
+                open, high, low, close, volume
+            FROM market_data_1m
+            WHERE symbol = :symbol
+              AND timestamp BETWEEN :from_ts AND :to_ts
+            ORDER BY date_trunc('minute', timestamp), volume DESC, timestamp
+        """),
+        {"symbol": symbol, "from_ts": from_ts, "to_ts": to_ts},
     )
     rows = result.all()
     return [
