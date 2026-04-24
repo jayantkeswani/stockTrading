@@ -6,7 +6,7 @@ from sqlalchemy import desc, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.enums import TradeStatus
+from app.core.enums import TradeSource, TradeStatus
 from app.core.utils import now_ist
 from app.models.trade import Trade
 from app.schemas.trade import TradeCloseRequest, TradeResponse, TradeSummaryResponse
@@ -19,6 +19,7 @@ router = APIRouter()
 async def list_trades(
     status: str | None = None,
     strategy: str | None = None,
+    source: str | None = None,
     closed_since: datetime | None = None,
     entry_since: datetime | None = None,
     entry_until: datetime | None = None,
@@ -27,6 +28,11 @@ async def list_trades(
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Trade)
+    # Default: exclude shadow trades; pass source="SHADOW" to see only shadows
+    if source:
+        query = query.where(Trade.source == source)
+    else:
+        query = query.where(Trade.source != TradeSource.SHADOW.value)
     if status:
         query = query.where(Trade.status == status)
     if strategy:
@@ -46,10 +52,16 @@ async def list_trades(
 
 
 @router.get("/summary", response_model=TradeSummaryResponse)
-async def trade_summary(db: AsyncSession = Depends(get_db)):
-    closed = await db.execute(
-        select(Trade).where(Trade.status == TradeStatus.CLOSED)
-    )
+async def trade_summary(
+    source: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(Trade).where(Trade.status == TradeStatus.CLOSED)
+    if source:
+        query = query.where(Trade.source == source)
+    else:
+        query = query.where(Trade.source != TradeSource.SHADOW.value)
+    closed = await db.execute(query)
     trades = closed.scalars().all()
     if not trades:
         return TradeSummaryResponse(

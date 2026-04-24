@@ -7,9 +7,10 @@ import type { Trade } from "@/lib/types";
 interface Props {
   trades: Trade[];
   loading: boolean;
+  showSource?: boolean;
 }
 
-export function TradesTable({ trades, loading }: Props) {
+export function TradesTable({ trades, loading, showSource = false }: Props) {
   if (loading) {
     return (
       <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
@@ -92,6 +93,13 @@ export function TradesTable({ trades, loading }: Props) {
                   {trade.status}
                 </span>
               </td>
+              {showSource && (
+                <td className="px-3 py-1.5">
+                  <span className="text-[9px] font-mono px-1 py-px rounded bg-purple-500/15 text-purple-400">
+                    {trade.source}
+                  </span>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

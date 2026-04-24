@@ -63,12 +63,14 @@ export const api = {
   // Trades
   getTrades: (params?: {
     status?: string;
+    source?: string;
     limit?: number;
     entry_since?: string;
     entry_until?: string;
   }) => {
     const query = new URLSearchParams();
     if (params?.status) query.set("status", params.status);
+    if (params?.source) query.set("source", params.source);
     if (params?.limit) query.set("limit", params.limit.toString());
     if (params?.entry_since) query.set("entry_since", params.entry_since);
     if (params?.entry_until) query.set("entry_until", params.entry_until);
@@ -87,7 +89,10 @@ export const api = {
     const query = new URLSearchParams({ status: "CLOSED", closed_since: since, limit: "100" });
     return request<import("./types").Trade[]>(`/api/v1/trades?${query}`);
   },
-  getTradeSummary: () => request(`/api/v1/trades/summary`),
+  getTradeSummary: (source?: string) => {
+    const query = source ? `?source=${source}` : "";
+    return request(`/api/v1/trades/summary${query}`);
+  },
   closeTrade: (id: string, exitPrice?: number) =>
     request(`/api/v1/trades/${id}/close`, {
       method: "POST",

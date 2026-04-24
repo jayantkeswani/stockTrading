@@ -31,5 +31,9 @@ class Position(Base, TimestampMixin):
         String(15), nullable=False, default="INTRADAY"
     )  # INTRADAY or POSITIONAL
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_shadow: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
-    __table_args__ = (Index("idx_positions_symbol", "symbol"),)
+    __table_args__ = (
+        Index("idx_positions_symbol", "symbol"),
+        Index("idx_positions_is_shadow", "is_shadow"),
+    )

@@ -1063,6 +1063,14 @@ class StrategyRunner:
             except Exception:
                 logger.exception("Error notifying agent runner of new signal")
 
+        # Shadow agent — fire-and-forget, no gating, for signal accuracy measurement
+        try:
+            import asyncio
+            from app.agent.shadow_executor import shadow_execute_signal
+            asyncio.create_task(shadow_execute_signal(signal_record.id))
+        except Exception:
+            logger.exception("Shadow execute failed for signal %s", signal_record.id)
+
     async def _has_open_position(self, signal: StrategySignal) -> bool:
         """Check if there's already an open position for the same symbol + direction."""
         try:

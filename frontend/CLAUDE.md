@@ -14,7 +14,7 @@
 All pages use `'use client'` directive.
 - `page.tsx` - Dashboard: full-width PnL strip at top, then 8-col left (ScannerHeader, ScannerPanel, ActivePositions) + 4-col right (Watchlist, ScanFeed, AgentFeed). Loads pending signals and open positions from DB on mount. ChartModal overlay.
 - `layout.tsx` - Root layout with AppShell wrapper
-- `trades/page.tsx` - Kite-style P&L dashboard. Period filter pills (Today/Week/Month/3M/Custom, default=current month), SummaryStrip (total P&L, win rate, best/worst day), PnLHeatmap (calendar grid with cell intensity by daily P&L), filterable TradesTable. Fetches trades with `entry_since`/`entry_until` params; aggregates daily P&L client-side. Clicking a heatmap cell filters the table to that day.
+- `trades/page.tsx` - Kite-style P&L dashboard. Period filter pills (Today/Week/Month/3M/Custom, default=current month), SummaryStrip (total P&L, win rate, best/worst day), PnLHeatmap (calendar grid with cell intensity by daily P&L), filterable TradesTable. **Real / Signal Test toggle**: default "Real" shows only `source != SHADOW` trades; "Signal Test" fetches `?source=SHADOW` and shows an info banner. Clicking a heatmap cell filters the table to that day.
 - `signals/page.tsx` - Signal history feed with status badges
 - `settings/page.tsx` - Strategy configuration (is_active, auto_mode, symbols per strategy with autocomplete + group presets), risk parameters. Wired to backend `/api/v1/strategies` endpoints. When a symbol is added via autocomplete, the full Fyers symbol is sent alongside (`symbol_map`) so the backend never needs to reconstruct it. Group-add symbols are auto-resolved server-side via the symbol master.
 - `research/page.tsx` - AI Research: symbol search, real-time agent progress, full report with expandable cards, past reports history
@@ -56,7 +56,7 @@ All pages use `'use client'` directive.
 - `PeriodFilter.tsx` - Period pill bar (Today / Week / Month / 3M / Custom). Active pill: `bg-accent/20 text-accent border-accent/30`. Custom opens two native `<input type="date">` fields + Apply button. Emits `{ start, end, label }` upward.
 - `SummaryStrip.tsx` - Inline metrics strip (mirrors PnLCard style). Shows total P&L, # closed trades (+ open count badge), win rate, best day, worst day, avg P&L/trade — all computed client-side from props.
 - `PnLHeatmap.tsx` - Calendar heatmap. One month-grid per month in the period; cells colored by daily P&L intensity via inline rgba styles (profit green / loss red). Clicking a cell with trades fires `onSelectDay`; clicking the same cell again deselects. Today highlighted with amber ring.
-- `TradesTable.tsx` - Extracted dense trades table. Accepts `trades: Trade[]` + `loading: boolean`. Same compact monospace layout as the original page.
+- `TradesTable.tsx` - Extracted dense trades table. Accepts `trades: Trade[]`, `loading: boolean`, `showSource?: boolean`. When `showSource=true` (Signal Test mode), renders a purple `SHADOW` / `YOLO` / `MANUAL` pill column.
 
 **positions/**
 - `ActivePositions.tsx` - Dense table of open positions with unrealized P&L, SL distance warnings, expandable detail rows. Also shows a "CLOSED TODAY" section below open positions (fetched via `api.getClosedTradesToday()` on mount; re-fetches when a position is removed). **Live P/L**: computes P/L reactively from `prices` store using `pos.fyers_option_symbol || pos.symbol` as price key. Subscribes position symbols on WebSocket for real-time ticks.
@@ -65,13 +65,13 @@ All pages use `'use client'` directive.
 - `useWebSocket.ts` - WebSocket connection to `ws://localhost:8080/ws`. Auto-reconnect. Subscribes to all 5 index symbols on connect. Handles `signal:new`, `signal:updated` (dedup updates), `trade:open` (adds new position to store), and `research:*` events (started, agent_started, agent_completed, agent_failed, completed, failed → updates Zustand research slice). Exported `subscribeSymbols(symbols)` helper — uses module-level shared WS ref, callable from any component without needing the wsRef.
 
 ### `src/lib/` - Utilities
-- `api.ts` - REST client: trades, signals, positions, agent, risk, market data, strategies. Error responses parse backend `detail` field for user-facing messages. Key functions: `getAllPrices()`, `refreshQuotes()`, `searchSymbols()`, `getClosedTradesToday()` (fetches CLOSED trades since IST midnight), `toggleYolo()`, `evaluateStrategyBatch()`, `toggleAutoMode()`, `updateStrategy()`. `getTrades()` accepts optional `entry_since`/`entry_until` ISO strings (filters by Trade.entry_time) and `limit` up to 1000.
-- `types.ts` - TypeScript interfaces for all entities (Trade, Signal, Position with `fyers_option_symbol` + `position_type`, AgentStatus with `yolo_mode` + `autonomy_level`)
+- `api.ts` - REST client: trades, signals, positions, agent, risk, market data, strategies. `getTrades()` accepts `source?: string` — pass `"SHADOW"` to fetch shadow-only trades. `getTradeSummary(source?)` same. By default both return only non-shadow trades (backend filter).
+- `types.ts` - TypeScript interfaces for all entities. `Trade` has `source: "MANUAL" | "YOLO" | "SHADOW"`. `Position` has `is_shadow: boolean`.
 - `formatters.ts` - INR currency (Indian number system: lakhs/crores), percentages, IST datetime. All formatters coerce inputs via `Number()` to handle string Decimals from the backend. IST date helpers: `startOfDayIST`, `endOfDayIST`, `startOfMonthIST`, `endOfMonthIST`, `startOfWeekIST`, `subDaysIST`, `subMonthsIST`, `eachDayInRange`, `isoDateIST` (YYYY-MM-DD), `formatDateShort` ("24 Apr"), `monthLabel` ("April 2026"), `toISTDate` (Date → IST-adjusted Date).
 - `constants.ts` - `SYMBOLS` (5 indices), `STRATEGY_LABELS`, `STATUS_COLORS`, `WS_URL` (ws://localhost:8080/ws), `Timeframe` type ("1m" | "5m" | "15m" | "1h" | "1D")
 
 ### `src/store/` - Zustand State
-- `index.ts` - Single store with slices: prices (per symbol), positions, signals, scan logs, risk metrics, agent status, market status, UI state. `updatePrice()` action used by Header polling + WebSocket events. Signal actions: `addSignal()` (dedupes by id), `updateSignal()`, `removeSignal()`. Position actions: `addPosition()` (dedupes by id) for `trade:open` WebSocket events. **`closedToday: Trade[]`** slice populated by `ActivePositions` via `getClosedTradesToday()`; actions: `setClosedToday()`, `prependClosedTrade()`. `ScanLogEntry` type for manual scan feed. **`activeTimeframe: Timeframe`** — persisted to localStorage (alongside `scanLogs`), drives PriceChart timeframe selection across reloads.
+- `index.ts` - Single store with slices: prices (per symbol), positions, signals, scan logs, risk metrics, agent status, market status, UI state. Position `addPosition()` skips shadow events (`is_shadow=true`). **`closedToday: Trade[]`** slice (real trades only). **`activeTimeframe: Timeframe`** — persisted to localStorage.
 
 ## Theme — Institutional Terminal (Dark Only)
 

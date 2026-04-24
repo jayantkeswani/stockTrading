@@ -22,6 +22,7 @@ class PositionResponse(BaseModel):
     fyers_option_symbol: str | None = None
     strategy_name: str
     is_paper: bool
+    is_shadow: bool = False
     position_type: str = "INTRADAY"
     opened_at: datetime
 

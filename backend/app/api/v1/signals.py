@@ -10,7 +10,7 @@ from app.services.position_sizing import calculate_lots
 from app.services.trading_config import get_trading_config
 from app.services.live_price import get_live_price
 from app.core.database import get_db
-from app.core.enums import AgentActionType, SignalStatus, TradeStatus
+from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
 from app.core.utils import now_ist
 from app.models.position import Position
 from app.models.signal import Signal
@@ -198,6 +198,7 @@ async def execute_signal(
         status=TradeStatus.OPEN.value,
         position_type=position_type,
         is_paper=cfg.paper_trading,
+        source=TradeSource.MANUAL.value,
         entry_time=now,
         fyers_option_symbol=trading_symbol,
     )

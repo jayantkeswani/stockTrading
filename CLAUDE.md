@@ -46,11 +46,11 @@ stockTrading/
 │   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels, global_market, intraday_bias, confidence)
 │   │   ├── data_feed/     # Fyers API (auth, REST via API_URL/DATA_URL, WebSocket, feed manager, symbol master)
 │   │   ├── research/      # AI research agent system (orchestrator, 6 sub-agents, LLM client, data gatherer)
-│   │   ├── agent/         # AI trading agent (monitor, execute, notify)
+│   │   ├── agent/         # AI trading agent (monitor, execute, notify, shadow_executor)
 │   │   ├── backtest/      # Backtest module (context_builder, harness, exit_simulator, option_data_fetcher, strike_selector, report)
 │   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP, NSE_HOLIDAYS), enums, utils, task_registry
 │   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh, global_market every 15m)
-│   ├── tests/             # pytest test suite (482 tests)
+│   ├── tests/             # pytest test suite (514 tests)
 │   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
     └── src/
@@ -109,7 +109,7 @@ cp .env.example .env          # Then fill in Fyers API keys
 ```
 
 ## Test Coverage
-Tests live in `backend/tests/`. 508 tests, all passing. Currently covered:
+Tests live in `backend/tests/`. 514 tests, all passing. Currently covered:
 - `test_core/` - IST timezone utils, market hour checks
 - `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns, relative strength (raw score + percentile ranking), volume analysis, market levels (swing detection, index SL/target selection)
 - `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type; CAN SLIM scoring, base pattern detection, strategy evaluate/exit/sizing
@@ -117,7 +117,7 @@ Tests live in `backend/tests/`. 508 tests, all passing. Currently covered:
 - `test_api/` - Strategy endpoints (evaluate, batch evaluate, auto-mode toggle)
 
 Not yet covered (stubs only):
-- `test_agent/` - Agent runner, trade monitor, auto-executor tests
+- `test_agent/` - Shadow executor tests (6 tests: PENDING→trade/position creation, no dedup, non-pending skip, missing signal, price fallback)
 
 ## AI Documentation Protocol (MANDATORY)
 This is an AI-first project. Documentation ships WITH every code change — not as an afterthought.
