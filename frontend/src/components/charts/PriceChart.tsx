@@ -37,22 +37,40 @@ function currentBucketTime(tf: Timeframe): number {
   const nowUtc = Math.floor(Date.now() / 1000);
   const bucket = BUCKET_SECONDS[tf];
   const nowIst = nowUtc + IST_OFFSET;
+  // Align bucket boundary in IST, then return as UTC so it matches stored timestamps
   return Math.floor(nowIst / bucket) * bucket - IST_OFFSET;
 }
 
-function saveRange(symbol: string, tf: Timeframe, range: { from: number; to: number }) {
-  try {
-    localStorage.setItem(`chart_range_${symbol}_${tf}`, JSON.stringify(range));
-  } catch {}
+function fmtPrice(v: number) {
+  return v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function loadRange(symbol: string, tf: Timeframe): { from: number; to: number } | null {
-  try {
-    const raw = localStorage.getItem(`chart_range_${symbol}_${tf}`);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+function fmtVol(v: number) {
+  if (v >= 10_000_000) return `${(v / 10_000_000).toFixed(1)}Cr`;
+  if (v >= 100_000) return `${(v / 100_000).toFixed(1)}L`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+  return `${v}`;
+}
+
+function fmtTimeIST(ts: number, tf: Timeframe): string {
+  const d = new Date((ts + IST_OFFSET) * 1000);
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const day = d.getUTCDate().toString().padStart(2, "0");
+  const mon = MONTHS[d.getUTCMonth()];
+  if (tf === "1D") return `${day} ${mon} ${d.getUTCFullYear()}`;
+  const h = d.getUTCHours().toString().padStart(2, "0");
+  const m = d.getUTCMinutes().toString().padStart(2, "0");
+  return `${day} ${mon} ${h}:${m}`;
+}
+
+interface OHLCInfo {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  changePct: number;
 }
 
 interface PriceChartProps {
@@ -66,17 +84,18 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const lastCandleRef = useRef<CandlestickData<UTCTimestamp> | null>(null);
+  const lastVolRef = useRef<number>(0);
 
   const { selectedSymbol, prices, activeTimeframe, setActiveTimeframe } = useStore();
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [ohlcInfo, setOhlcInfo] = useState<OHLCInfo | null>(null);
 
   // Effect 1: create/destroy chart on symbol or timeframe change
   useEffect(() => {
     if (!chartContainerRef.current) return;
     const container = chartContainerRef.current;
     const tf = activeTimeframe;
-    const sym = selectedSymbol;
 
     const chart = createChart(container, {
       layout: {
@@ -98,10 +117,21 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
         borderColor: "#1a1a2a",
         scaleMargins: { top: 0.1, bottom: 0.2 },
       },
+      localization: {
+        timeFormatter: (time: number) => {
+          const d = new Date((time + IST_OFFSET) * 1000);
+          const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          if (tf === "1D") {
+            return `${d.getUTCDate().toString().padStart(2,"0")} ${MONTHS[d.getUTCMonth()]} '${String(d.getUTCFullYear()).slice(2)}`;
+          }
+          return `${d.getUTCHours().toString().padStart(2,"0")}:${d.getUTCMinutes().toString().padStart(2,"0")}`;
+        },
+      },
       timeScale: {
         borderColor: "#1a1a2a",
         timeVisible: tf !== "1D",
         secondsVisible: false,
+        rightOffset: 5, // always show last candle with space to the right
       },
       handleScroll: { vertTouchDrag: false },
     });
@@ -122,6 +152,36 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
     });
     volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
+    // OHLC legend: update on crosshair move, restore last candle on leave
+    chart.subscribeCrosshairMove((param) => {
+      const candle = param.seriesData?.get(candleSeries) as CandlestickData<UTCTimestamp> | undefined;
+      if (!param.time || !candle) {
+        const last = lastCandleRef.current;
+        if (last) {
+          setOhlcInfo({
+            time: fmtTimeIST(last.time, tf),
+            open: last.open,
+            high: last.high,
+            low: last.low,
+            close: last.close,
+            volume: lastVolRef.current,
+            changePct: ((last.close - last.open) / last.open) * 100,
+          });
+        }
+        return;
+      }
+      const volData = param.seriesData?.get(volumeSeries) as { value: number } | undefined;
+      setOhlcInfo({
+        time: fmtTimeIST(param.time as number, tf),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: volData?.value ?? 0,
+        changePct: ((candle.close - candle.open) / candle.open) * 100,
+      });
+    });
+
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
@@ -132,12 +192,12 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
     handleResize();
 
     return () => {
-      const range = chart.timeScale().getVisibleLogicalRange();
-      if (range) saveRange(sym, tf, range);
       chartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
       lastCandleRef.current = null;
+      lastVolRef.current = 0;
+      setOhlcInfo(null);
       window.removeEventListener("resize", handleResize);
       chart.remove();
     };
@@ -177,27 +237,31 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
 
         candleSeries.setData(candles);
         volumeSeries.setData(volumes);
-        lastCandleRef.current = candles[candles.length - 1];
-        setLoading(false);
 
-        const saved = loadRange(selectedSymbol, activeTimeframe);
-        if (saved) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          chart.timeScale().setVisibleLogicalRange(saved as any);
-        } else {
-          chart.timeScale().fitContent();
-        }
+        const lastCandle = candles[candles.length - 1];
+        const lastVol = raw[raw.length - 1].volume;
+        lastCandleRef.current = lastCandle;
+        lastVolRef.current = lastVol;
+
+        setOhlcInfo({
+          time: fmtTimeIST(lastCandle.time, activeTimeframe),
+          open: lastCandle.open,
+          high: lastCandle.high,
+          low: lastCandle.low,
+          close: lastCandle.close,
+          volume: lastVol,
+          changePct: ((lastCandle.close - lastCandle.open) / lastCandle.open) * 100,
+        });
+
+        setLoading(false);
+        // Always fit all data — avoids stale logical range hiding new candles
+        chart.timeScale().fitContent();
       })
       .catch(() => {
         if (!cancelled) setLoading(false);
       });
 
-    return () => {
-      cancelled = true;
-      // Save scroll before a refresh so position is restored after reload
-      const range = chartRef.current?.timeScale().getVisibleLogicalRange();
-      if (range) saveRange(selectedSymbol, activeTimeframe, range);
-    };
+    return () => { cancelled = true; };
   }, [selectedSymbol, activeTimeframe, refreshKey]);
 
   // Effect 3: live price tick → update current candle
@@ -230,6 +294,7 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
       };
       series.update(newCandle);
       lastCandleRef.current = newCandle;
+      lastVolRef.current = 0;
       volumeSeriesRef.current?.update({
         time: bucketTime,
         value: 0,
@@ -238,8 +303,11 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
     }
   }, [priceData?.ltp, activeTimeframe]);
 
+  const isUp = ohlcInfo ? ohlcInfo.close >= ohlcInfo.open : true;
+
   return (
     <div className={`rounded border border-border bg-bg-secondary overflow-hidden flex flex-col ${fullHeight ? "h-full" : ""}`}>
+      {/* Header: symbol, timeframe pills, refresh */}
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0">
         <div className="flex items-center gap-3">
           <h2 className="text-xs font-mono font-medium text-text-primary">{displaySymbol(selectedSymbol)}</h2>
@@ -280,10 +348,32 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
           </svg>
         </button>
       </div>
-      <div
-        ref={chartContainerRef}
-        className={fullHeight ? "flex-1 min-h-0 w-full" : "w-full h-[400px]"}
-      />
+
+      {/* Chart area */}
+      <div className={`relative ${fullHeight ? "flex-1 min-h-0" : ""}`}>
+        {/* OHLC legend overlay — top-left, non-interactive */}
+        {ohlcInfo && (
+          <div className="absolute top-1.5 left-2 z-10 flex items-center gap-2.5 text-[10px] font-mono pointer-events-none select-none leading-none">
+            <span className="text-text-muted">{ohlcInfo.time}</span>
+            <span className="text-text-muted">O <span className="text-text-secondary">{fmtPrice(ohlcInfo.open)}</span></span>
+            <span className="text-profit">H <span>{fmtPrice(ohlcInfo.high)}</span></span>
+            <span className="text-loss">L <span>{fmtPrice(ohlcInfo.low)}</span></span>
+            <span className="text-text-muted">C{" "}
+              <span className={isUp ? "text-profit" : "text-loss"}>{fmtPrice(ohlcInfo.close)}</span>
+            </span>
+            <span className={isUp ? "text-profit" : "text-loss"}>
+              {isUp ? "+" : ""}{ohlcInfo.changePct.toFixed(2)}%
+            </span>
+            {ohlcInfo.volume > 0 && (
+              <span className="text-text-muted">V <span className="text-text-secondary">{fmtVol(ohlcInfo.volume)}</span></span>
+            )}
+          </div>
+        )}
+        <div
+          ref={chartContainerRef}
+          className={fullHeight ? "w-full h-full" : "w-full h-[400px]"}
+        />
+      </div>
     </div>
   );
 }
