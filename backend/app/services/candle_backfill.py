@@ -16,7 +16,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
-from app.core.constants import FYERS_SYMBOL_MAP, IST, MARKET_CLOSE, MARKET_OPEN
+from app.core.constants import FYERS_SYMBOL_MAP, IST, MARKET_CLOSE, MARKET_OPEN, NSE_HOLIDAYS
 from app.core.database import async_session_factory
 from app.core.redis import get_redis
 from app.models.market_data import MarketData1m
@@ -82,9 +82,9 @@ async def _get_all_backfill_symbols() -> dict[str, str]:
 
 
 def _previous_trading_day(ref_date: date) -> date:
-    """Return the most recent weekday before ref_date (skips weekends)."""
+    """Return the most recent NSE trading day before ref_date (skips weekends and holidays)."""
     d = ref_date - timedelta(days=1)
-    while d.weekday() >= 5:  # Saturday=5, Sunday=6
+    while d.weekday() >= 5 or d in NSE_HOLIDAYS:
         d -= timedelta(days=1)
     return d
 

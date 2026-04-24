@@ -46,6 +46,9 @@ coverage/
 # Docker
 docker-compose.override.yml
 
+# Backtest result files (local only)
+backtest_results/
+
 # Graphify — keep graph outputs, skip local-only files
 graphify-out/cache/
 graphify-out/manifest.json

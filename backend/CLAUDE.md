@@ -23,11 +23,11 @@ Lifespan startup: starts Fyers login scheduler, auto-starts data feed if token e
 ### `app/core/` - Foundation
 - `database.py` - Async SQLAlchemy engine + session factory (`get_db` dependency)
 - `redis.py` - Redis connection pool + pub/sub helpers (`get_redis`, `publish_event`). Price cache uses 24h TTL (`price:{symbol}`)
-- `constants.py` - Market hours (9:15-15:30 IST), lot sizes, strike gaps per index (`STRIKE_GAPS`), expiry schedule (`WEEKLY_EXPIRY_DAYS`, `MONTHLY_ONLY_INDICES`, `MONTHLY_EXPIRY_DOW`), option exchange mapping, premium range (150-400), exchange codes, VWAP_PROXIMITY_PCT
+- `constants.py` - Market hours (9:15-15:30 IST), lot sizes, strike gaps per index (`STRIKE_GAPS`), expiry schedule (`WEEKLY_EXPIRY_DAYS`, `MONTHLY_ONLY_INDICES`, `MONTHLY_EXPIRY_DOW`), option exchange mapping, premium range (150-400), exchange codes, VWAP_PROXIMITY_PCT, `NSE_HOLIDAYS: frozenset[date]` (2024-2026 NSE trading holidays for holiday-aware backfill and `_previous_trading_day`)
 - `enums.py` - All enums: OptionType, OrderSide, TradeStatus, ExitReason (incl. TRAILING_SL, EXPIRY_ROLL, MARKET_EXIT), SignalStatus, SignalType, StrategyName (incl. CAN_SLIM), IndexSymbol, InstrumentType (OPTION/FUTURE/EQUITY), PositionType (INTRADAY/POSITIONAL), AgentAutonomyLevel, AgentActionType (incl. MANUAL_EXECUTED, AUTO_EXECUTED, EXPIRY_ROLL), ConfirmationStatus, DayBias, CPRType
 - `task_registry.py` - Singleton `TaskRegistry` tracking all background tasks/schedulers/services with status, timestamps, errors. `task_registry.register()` for schedulers/services, `task_registry.track_asyncio_task()` for fire-and-forget tasks (auto-updates via done callback). Queryable via `GET /api/v1/tasks`.
 - `exceptions.py` - Custom exception hierarchy
-- `utils.py` - IST timezone helpers (`now_ist()`, `is_market_open()`), market hour checks
+- `utils.py` - IST timezone helpers (`now_ist()`, `is_market_open()`), market hour checks. **All window/deadline helpers accept an optional `as_of: datetime | None` param** (defaults to `now_ist()` so live paths are unchanged; backtest passes historical timestamps). New: `is_trading_day(d: date)` (checks weekday + NSE_HOLIDAYS), `get_window_state(as_of)` (returns `"IN_WINDOW" | "DEAD_ZONE" | "OUT_OF_WINDOW"`)
 - `retry.py` - Async retry helper. `async_retry(func, *args, retries, base_delay, max_delay, jitter, retry_on, should_retry, on_retry, label, **func_kwargs)` — exponential backoff with jitter, no third-party deps. `with_retry(**kwargs)` is the decorator form. Used by: `fyers_client` (REST + 401 reauth), `notification.send_telegram` (3×), `trade_monitor._fetch_option_price_rest` (2×), `fyers_ws_client._run_gap_backfill` (per-symbol range fetch).
 
 ### `app/models/` - SQLAlchemy ORM (10 tables)
@@ -42,6 +42,7 @@ Lifespan startup: starts Fyers login scheduler, auto-starts data feed if token e
 - `strategy_config.py` - StrategyConfig: per-index strategy enable/disable + parameters + `auto_mode` (bool) + `symbols` (JSONB list) + `symbol_map` (JSONB dict: short_name → fyers_symbol, populated at insertion time from symbol master search results)
 - `fundamental_data.py` - StockFundamental (CAN SLIM scores + raw fundamentals per stock, updated by periodic task) + FundamentalHistory (quarterly snapshots for trend analysis)
 - `research_report.py` - ResearchReport (persisted AI research report: recommendation, confidence, report_json/markdown, agent tracking) + ResearchAgentRun (individual sub-agent run: findings_json, summary, duration, data sources). FK cascade delete.
+- `global_market_snapshot.py` - **GlobalMarketSnapshot** (Phase 1): 15-min snapshots of world indices + FX + commodities. Columns: `timestamp, dow_futures_pct, sp500_close_pct, nasdaq_close_pct, nifty_pct, crude_pct, usdinr_pct, dxy_pct, us_vix, pre_open_gap_pct, global_score` (derived [-1,+1]) + raw absolute prices. Unique constraint on `timestamp`. Used by backtest `context_builder` for historical `global_cues`.
 
 ### `app/schemas/` - Pydantic Schemas
 Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{Entity}Update`.
@@ -94,6 +95,7 @@ Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{En
 - `relative_strength.py` - IBD-style RS: `compute_rs_raw_score()` returns raw weighted return, `percentile_rank_rs()` converts to 1-99 percentile across stock universe. Also: 50-day moving average, `is_above_50_dma()`
 - `volume_analysis.py` - Volume breakout detection (`is_volume_breakout()`), `compute_avg_volume()`, `volume_ratio()`
 - `market_levels.py` - Index-level SL/target selection from market structure. `select_index_sl_target()` picks nearest support/resistance from VWAP bands, PDH/PDL, CPR levels, OI walls, swing highs/lows. `find_swing_low()`/`find_swing_high()` for intraday swing detection. Used by option-based strategies to emit meaningful SL/target for delta-based premium conversion.
+- `global_market.py` - **Global market context** (Phase 1). Pure functions + `GlobalCues` dataclass. `compute_pre_open_gap(sgx_nifty, prev_close)`, `overnight_bias(dow_pct, sp500_pct, us_vix) -> DayBias`, `combined_global_score(cues) -> float [-1,+1]`, `global_alignment_factor(cues, direction) -> float [0,1]`. Injected into `MarketContext.global_cues`. No DB/Redis access (pure).
 
 ### `app/data_feed/` - Fyers API Integration
 - `fyers_auth.py` - OAuth flow using `SessionModel` from fyers_apiv3 SDK
@@ -128,6 +130,7 @@ Multi-agent stock research system. User searches for any stock → orchestrator 
 - `fyers_login_task.py` - APScheduler job: auto-refreshes Fyers token via TOTP login at 8:55 AM IST. On success sends `✅ Fyers connected — market data live`. On failure: schedules retry jobs every 15 min (up to 10 attempts via `_retry_auto_login(attempt)` + `DateTrigger`), Telegram alert only after exhausting all retries.
 - `symbol_master_task.py` - APScheduler job: refreshes symbol master daily at 8:00 AM IST.
 - `oi_snapshot_task.py` - APScheduler job: fetches option chain OI data from Fyers v3 API every 3 minutes during market hours. Parses flat option chain format (per-row `option_type`/`oi`/`oich` fields, DD-MM-YYYY expiry dates). Persists CE/PE OI per strike to `oi_snapshots` table. Only runs when market is open. Feeds `strategy_runner._get_oi_analysis()`.
+- `global_market_task.py` - **APScheduler job every 15 minutes** (Phase 1). Fetches 8 yfinance tickers (Dow futures, S&P 500, Nasdaq, Nifty proxy, crude, USD/INR, DXY, US VIX). Writes to Redis keys `indicator:global:{field}` (TTL 20 min) AND inserts `GlobalMarketSnapshot` row to DB. Runs once on startup immediately. `_get_global_cues_from_redis()` is called by `strategy_runner._build_market_context` to populate `MarketContext.global_cues`.
 - `fundamental_data_task.py` - APScheduler job: fetches CAN SLIM fundamental data (yfinance + NSE) every 6 hours for all CAN SLIM-configured symbols. Computes individual factor scores and composite CAN SLIM score. Post-processing: percentile-ranks RS ratings across the full stock universe, fetches F&O lot sizes from NSE. Persists to `stock_fundamentals` table. Also runs on startup. Feeds `strategy_runner._get_canslim_fundamentals()`.
 - `daily_summary_task.py` - APScheduler job: sends daily P&L summary via Telegram at 3:35 PM IST. Queries today's closed trades, computes wins/losses/net P&L, best/worst trade. Calls `notify_daily_summary`.
 
@@ -135,6 +138,34 @@ Multi-agent stock research system. User searches for any stock → orchestrator 
 - `yfinance_client.py` - Async wrappers around yfinance for quarterly earnings, annual financials, stock info, price history. Uses `.NS` suffix for NSE. All sync calls dispatched via `asyncio.to_thread`.
 - `nse_client.py` - Fetches FII/DII/MF shareholding patterns from NSE India API, F&O lot sizes from NSE CSV. Rate-limited (2s between requests). Uses httpx with NSE-compatible headers. Two-step shareholding fetch: (1) master endpoint (`/api/corporate-share-holdings-master`) for quarterly records with promoter/public percentages + XBRL URLs, (2) XBRL XML parsing for detailed FII/DII/MF breakdown. Enriches latest 2 quarters automatically.
 - `schemas.py` - Data transfer objects: `QuarterlyEarnings`, `AnnualFinancials`, `ShareholdingPattern`, `PriceHistory`, `StockInfo`.
+
+### `app/backtest/` - Backtest Harness (Phase 1)
+Common replay framework for all strategies. Bypasses `strategy_runner` entirely — calls `strategy.evaluate(ctx)` directly, so no DB writes, no WS events, no agent auto-execution.
+
+- `context_builder.py` - `build_historical_context(symbol, as_of: datetime, session) -> MarketContext | None`. Builds MarketContext from historical `MarketData1m` + `OISnapshot` + `GlobalMarketSnapshot` rows filtered by `timestamp <= as_of`. Replays VWAP calculation from today's candles up to `as_of`; previous-day from `_previous_trading_day()` (holiday-aware); OI from latest snapshot `<= as_of`; global_cues from latest `GlobalMarketSnapshot`. Returns None if insufficient data.
+- `harness.py` - `Backtester(mode, window_filter).run(strategy, symbol, start, end) -> BacktestReport`. Walks minute-by-minute through historical data. Supports `accurate` mode (real option premiums via Fyers history) and `fast` mode (delta approximation). `window_filter=True` only evaluates within Strategy 2 trade windows.
+- `exit_simulator.py` - `simulate_exit(signal, entry_ts, spot_candles_after, fyers_option_symbol, entry_premium, mode)`. Accurate mode: walks option 1m candles via `ensure_option_candles`; wick-based SL/target detection. Fast mode: delta-approximates from spot moves (ATM δ=0.50, ITM δ=0.60). Returns `SimulatedTrade` with `pnl_per_lot`, `pnl_pct`, `exit_reason`.
+- `option_data_fetcher.py` - `ensure_option_candles(fyers_option_symbol, start_ts, end_ts)`. Checks DB first (option candles stored in `MarketData1m`); fetches from Fyers SDK and persists if missing. In-memory cache per symbol within a backtest run.
+- `strike_selector.py` - `select_expiry_as_of(symbol, as_of_date)` and `resolve_option_symbol(symbol, index_price, signal_type, as_of_date)`. Holiday-aware expiry selection using historical date instead of `now_ist()`.
+- `report.py` - `BacktestReport` + `build_report()` + `print_report()`. Metrics: hit rate, avg win/loss, expectancy, profit factor, CE/PE breakdown, `oi_coverage_pct`, confidence-bucket calibration (does a 90-conf signal win more often than a 70-conf one?).
+
+**CLI usage:**
+```bash
+source backend/.venv/bin/activate
+
+# Run historical data backfill first (requires Fyers token in Redis)
+python scripts/backfill_for_backtest.py --symbols NIFTY,BANKNIFTY --start 2025-10-01 --end 2026-04-24
+
+# Run backtest
+python scripts/backtest.py --strategy vwap_pullback --symbol NIFTY --start 2025-10-01 --end 2026-04-24
+
+# Fast mode (no Fyers API calls)
+python scripts/backtest.py --strategy vwap_pullback --symbol NIFTY --start 2025-10-01 --end 2026-04-24 --mode fast
+```
+
+**OI coverage:** OI snapshots only exist from when `oi_snapshot_task` began running. Backtest reports `oi_coverage_pct` so you know how much of the replay had OI context. Pre-task dates use `ctx.oi_analysis = None` (strategy's soft filter allows this gracefully).
+
+**Option history:** Fyers retains ~6 months of 1m option contract data. Accurate mode requires a Fyers token in Redis. Candles are persisted to `MarketData1m` after first fetch so subsequent runs are instant.
 
 ## Conventions
 - All async functions use `async def`

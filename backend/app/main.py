@@ -17,6 +17,7 @@ from app.tasks.fundamental_data_task import (
 from app.tasks.oi_snapshot_task import start_oi_snapshot_scheduler, stop_oi_snapshot_scheduler
 from app.tasks.daily_summary_task import start_daily_summary_scheduler, stop_daily_summary_scheduler
 from app.tasks.symbol_master_task import start_symbol_master_scheduler, stop_symbol_master_scheduler
+from app.tasks.global_market_task import start_global_market_scheduler, stop_global_market_scheduler
 from app.services import trading_config as _trading_config_svc
 from app.websocket.manager import ws_manager
 
@@ -157,6 +158,9 @@ async def lifespan(app: FastAPI):
     await start_daily_summary_scheduler()
     task_registry.register("daily_summary_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 15:35 IST"})
 
+    await start_global_market_scheduler()
+    # task_registry registration is handled inside start_global_market_scheduler
+
     # --- One-shot startup tasks (tracked via done callback) ---
     t1 = asyncio.create_task(_load_symbol_master_background(), name="symbol_master_load")
     task_registry.track_asyncio_task("symbol_master_load", t1, metadata={"description": "Load symbol master into memory"})
@@ -192,6 +196,9 @@ async def lifespan(app: FastAPI):
 
     await stop_daily_summary_scheduler()
     task_registry.update_status("daily_summary_scheduler", TaskStatus.STOPPED)
+
+    await stop_global_market_scheduler()
+    task_registry.update_status("global_market_task", TaskStatus.STOPPED)
 
     await ws_manager.disconnect_all()
     print("StockTrading backend stopped.")
