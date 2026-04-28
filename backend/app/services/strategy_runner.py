@@ -24,14 +24,19 @@ from app.core.constants import (
     IST,
     LOT_SIZES,
     MARKET_OPEN,
-    VIX_EXTREME,
 )
 from app.services.position_sizing import calculate_lots, vix_to_multiplier
+from app.services.strategy_params import get_strategy_params, parse_trading_windows, parse_dead_zone
 from app.services.trading_config import get_trading_config
 from app.core.database import async_session_factory
 from app.core.enums import InstrumentType, SignalStatus, StrategyName
 from app.core.redis import get_cached_price, get_redis
-from app.core.utils import is_in_trading_window, is_past_close_deadline, now_ist, get_window_state
+from app.core.utils import (
+    get_custom_window_state,
+    is_in_custom_trading_window,
+    is_past_close_deadline,
+    now_ist,
+)
 from app.indicators.intraday_bias import compute_intraday_bias
 from app.tasks.global_market_task import _get_global_cues_from_redis
 from app.indicators.candle_patterns import Candle
@@ -113,8 +118,8 @@ class StrategyRunner:
             if not self._check_hard_guardrails():
                 return
 
-            # Soft guardrails — risk limits that block execution but not signal generation
-            executable, blocked_reason = await self._check_risk_limits(symbol)
+            # Global risk limits (max trades, drawdown) — per-strategy checks run inside _evaluate_strategies
+            executable, blocked_reason = await self._check_global_risk_limits(symbol)
 
             ctx = await self._build_market_context(symbol, candle_data)
             if ctx is None:
@@ -158,7 +163,7 @@ class StrategyRunner:
         ):
             self._candle_buffers[symbol] = await self._load_todays_candles(symbol, today)
 
-        executable, blocked_reason = await self._check_risk_limits(symbol)
+        executable, blocked_reason = await self._check_global_risk_limits(symbol)
 
         ctx = await self._build_market_context(symbol, candle_data)
         if ctx is None:
@@ -172,9 +177,26 @@ class StrategyRunner:
             logger.warning("Strategy %s not found in registry", strategy_name)
             return None
 
+        # Load per-strategy params
+        params = await get_strategy_params(strategy_name.value)
+        if strategy_name == StrategyName.INTRADAY_FUTURES:
+            await self._enrich_strategy5_params(symbol, params)
+        ctx.strategy_params = params
+
+        # Per-strategy risk limits (windows, VIX)
+        strat_ok, strat_reason = self._check_strategy_risk_limits(params, ctx.india_vix)
+        if not strat_ok and executable:
+            executable = False
+            blocked_reason = strat_reason
+
+        # Compute window state from strategy's own windows
+        windows = parse_trading_windows(params)
+        dead_zone = parse_dead_zone(params)
+        window_state = get_custom_window_state(windows=windows, dead_zone=dead_zone)
+
         signal = strategy.evaluate(ctx)
+        await self._flush_strategy_logs(strategy)
         if signal is not None:
-            window_state = get_window_state()
             signal.indicators["window_state"] = window_state
             if signal.instrument_type == InstrumentType.OPTION:
                 signal, executable, blocked_reason = await self._resolve_option(
@@ -185,6 +207,13 @@ class StrategyRunner:
                     signal, ctx, executable, blocked_reason,
                 )
             ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
+
+            # Confidence gating — execution threshold
+            min_conf = params.get("min_confidence_for_execution")
+            if min_conf is not None and executable and signal.confidence < min_conf:
+                executable = False
+                blocked_reason = f"Confidence below threshold ({signal.confidence:.0f} < {min_conf:.0f})"
+
             await self._handle_signal(signal, executable, blocked_reason, ai_fields=ai_fields)
 
         return signal
@@ -205,24 +234,12 @@ class StrategyRunner:
             return False
         return True
 
-    async def _check_risk_limits(self, symbol: str) -> tuple[bool, str | None]:
-        """Check risk limits and return (executable, blocked_reason).
+    async def _check_global_risk_limits(self, symbol: str) -> tuple[bool, str | None]:
+        """Check global risk limits (max trades/day, drawdown).
 
-        Signals are always generated regardless of risk limits, but these checks
-        determine whether the signal can actually be traded.
-        Trade-window check moved here from _check_hard_guardrails so out-of-window
-        signals are persisted and visible in the UI as informational (non-executable).
+        These are truly global — not strategy-specific. Trade windows and VIX
+        thresholds are now per-strategy (see _check_strategy_risk_limits).
         """
-        # Trade window — soft: signal still generated, just not executable
-        if not is_in_trading_window():
-            return False, "Outside trade window"
-
-        # VIX extreme check (from Redis)
-        vix = await self._get_india_vix()
-        if vix is not None and vix >= VIX_EXTREME:
-            logger.warning("India VIX %.2f >= %.2f extreme threshold — signal not executable", vix, VIX_EXTREME)
-            return False, f"VIX extreme ({vix:.1f} >= {VIX_EXTREME})"
-
         # Max trades per day
         today = now_ist().date()
         if self._signal_count_date != today:
@@ -239,6 +256,29 @@ class StrategyRunner:
         if await self._is_drawdown_breached():
             logger.warning("Daily drawdown limit breached — signal not executable")
             return False, "Drawdown limit breached"
+
+        return True, None
+
+    def _check_strategy_risk_limits(
+        self, params: dict, india_vix: float | None,
+    ) -> tuple[bool, str | None]:
+        """Check per-strategy risk limits (trading windows, VIX threshold).
+
+        Returns (executable, blocked_reason). Only called inside _evaluate_strategies.
+        """
+        # Trading window — only if strategy defines windows (CAN SLIM has none)
+        windows = parse_trading_windows(params)
+        if windows and not is_in_custom_trading_window(windows=windows):
+            return False, "Outside trade window"
+
+        # VIX threshold — strategy-specific key name
+        vix_threshold = params.get("vix_extreme") or params.get("max_vix")
+        if vix_threshold is not None and india_vix is not None and india_vix >= vix_threshold:
+            logger.warning(
+                "India VIX %.2f >= %.2f strategy threshold — signal not executable",
+                india_vix, vix_threshold,
+            )
+            return False, f"VIX extreme ({india_vix:.1f} >= {vix_threshold})"
 
         return True, None
 
@@ -285,6 +325,16 @@ class StrategyRunner:
         # 5-minute candles for pattern detection
         candles_5m = self._aggregate_5m_candles(symbol)
 
+        # ATR from 5-min candles (needs 15+ candles for a meaningful 14-period ATR)
+        atr_5m = None
+        if len(candles_5m) >= 15:
+            from app.indicators.atr import compute_atr
+            atr_5m = compute_atr(candles_5m, period=14)
+
+        # Today's opening price from earliest candle in buffer
+        buffer = self._candle_buffers.get(symbol, [])
+        today_open = buffer[0]["o"] if buffer else None
+
         # VWAP from today's 1m candles
         vwap_result = self._calculate_vwap_from_buffer(symbol)
 
@@ -312,21 +362,24 @@ class StrategyRunner:
         relative_strength = None
         canslim_data = None
 
+        needs_daily = await self._is_canslim_symbol(symbol) or await self._is_strategy5_symbol(symbol)
+
         if await self._is_canslim_symbol(symbol):
             canslim_data = await self._get_canslim_fundamentals(symbol)
+            if canslim_data and canslim_data.relative_strength_rating is not None:
+                relative_strength = float(canslim_data.relative_strength_rating)
+
+        if needs_daily:
             candles_daily = await self._get_daily_candles(symbol)
             if candles_daily:
                 from app.indicators.volume_analysis import compute_avg_volume
                 daily_volumes = [c.volume for c in candles_daily]
                 volume_avg_20d = compute_avg_volume(daily_volumes, period=20)
-            if canslim_data and canslim_data.relative_strength_rating is not None:
-                relative_strength = float(canslim_data.relative_strength_rating)
 
         # Global market cues from Redis (populated by global_market_task every 15 min)
         global_cues = await _get_global_cues_from_redis()
 
         # Composite intraday bias — uses 1m candle buffer from today
-        buffer = self._candle_buffers.get(symbol, [])
         candles_1m_today = [
             Candle(open=c["o"], high=c["h"], low=c["l"], close=c["c"], volume=c.get("v", 0))
             for c in buffer
@@ -355,6 +408,8 @@ class StrategyRunner:
             canslim_data=canslim_data,
             global_cues=global_cues,
             intraday_bias=intraday_bias,
+            atr_5m=atr_5m,
+            today_open=today_open,
         )
 
     # ------------------------------------------------------------------
@@ -394,6 +449,18 @@ class StrategyRunner:
             symbols = result.scalar_one_or_none()
 
         return symbol in (symbols or [])
+
+    async def _is_strategy5_symbol(self, symbol: str) -> bool:
+        """Check if this symbol is on today's Strategy 5 watchlist."""
+        from app.core.utils import now_ist as _now_ist
+        today = _now_ist().date()
+        r = get_redis()
+        raw = await r.get(f"strat5:watchlist:{today}")
+        if not raw:
+            return False
+        import json
+        watchlist = json.loads(raw)
+        return any(w.get("symbol") == symbol for w in watchlist)
 
     async def _get_canslim_fundamentals(self, symbol: str):
         """Fetch CAN SLIM fundamental data from stock_fundamentals table."""
@@ -475,6 +542,220 @@ class StrategyRunner:
             )
 
         return daily_candles[-90:]
+
+    async def _enrich_strategy5_params(self, symbol: str, params: dict) -> None:
+        """Load RVOL baseline + Nifty bias from Redis and inject into strategy_params."""
+        # RVOL profile
+        if params.get("_rvol_profile") is None:
+            try:
+                r = get_redis()
+                raw = await r.get(f"strat5:rvol_baseline:{symbol}")
+                if raw:
+                    from app.indicators.rvol import deserialize_profile
+                    params["_rvol_profile"] = deserialize_profile(raw)
+            except Exception:
+                logger.debug("Could not load RVOL profile for %s", symbol)
+
+        # Cross-position counts for soft enforcement
+        try:
+            async with async_session_factory() as session:
+                from app.models.trade import Trade
+                from app.models.position import Position
+                from sqlalchemy import func
+
+                today = now_ist().date()
+                pos_count = await session.scalar(
+                    select(func.count()).where(
+                        and_(
+                            Position.strategy_name == "intraday_futures",
+                            Position.status == "OPEN",
+                        )
+                    )
+                )
+                trade_count = await session.scalar(
+                    select(func.count()).where(
+                        and_(
+                            Trade.strategy_name == "intraday_futures",
+                            func.date(Trade.entry_time) == today,
+                        )
+                    )
+                )
+                params["_active_position_count"] = pos_count or 0
+                params["_daily_trade_count"] = trade_count or 0
+        except Exception:
+            logger.debug("Could not fetch Strategy 5 position/trade counts")
+
+        # Nifty intraday bias (for alignment gate)
+        try:
+            nifty_buffer = self._candle_buffers.get("NIFTY", [])
+            if nifty_buffer:
+                nifty_1m = [
+                    Candle(open=c["o"], high=c["h"], low=c["l"], close=c["c"], volume=c.get("v", 0))
+                    for c in nifty_buffer
+                ]
+                nifty_prev = await self._get_previous_day_levels("NIFTY")
+                nifty_price = nifty_buffer[-1]["c"] if nifty_buffer else 0
+                global_cues = await _get_global_cues_from_redis()
+                nifty_vwap = self._calculate_vwap_from_buffer("NIFTY")
+                nifty_bias = compute_intraday_bias(
+                    prev_day=nifty_prev,
+                    candles_1m=nifty_1m,
+                    vwap=nifty_vwap,
+                    current_price=nifty_price,
+                    global_cues=global_cues,
+                )
+                params["_nifty_bias"] = nifty_bias
+        except Exception:
+            logger.debug("Could not compute Nifty bias for Strategy 5")
+
+        # ORB levels from Redis (restore after restart)
+        try:
+            r = get_redis()
+            today = now_ist().date()
+            orb_raw = await r.get(f"strat5:orb:{today}:{symbol}")
+            if orb_raw:
+                import json as _json
+                orb_data = _json.loads(orb_raw)
+                for s in self._active_strategies.values():
+                    load_orb = getattr(s, "load_orb_from_redis", None)
+                    if load_orb:
+                        load_orb(symbol, orb_data)
+        except Exception:
+            logger.debug("Could not load ORB levels from Redis for %s", symbol)
+
+        # Morning briefing output (approach + max_lots cap)
+        try:
+            r = get_redis()
+            today = now_ist().date()
+            raw = await r.get(f"strat5:morning_briefing:{today}")
+            if raw:
+                import json as _json
+                briefing = _json.loads(raw)
+                params["_briefing_approach"] = briefing.get("approach", "normal")
+                params["_briefing_max_lots"] = briefing.get("max_lots_recommendation", 2)
+                params["_briefing_sector_bias"] = briefing.get("sector_bias", "none")
+                params["_briefing_sector_avoid"] = briefing.get("sector_avoid", "none")
+        except Exception:
+            logger.debug("Could not load morning briefing for Strategy 5")
+
+        # Screener composite score + gap data (for position sizing + confidence)
+        try:
+            r = get_redis()
+            today = now_ist().date()
+            wl_raw = await r.get(f"strat5:watchlist:{today}")
+            if wl_raw:
+                import json as _json
+                watchlist = _json.loads(wl_raw)
+                for item in watchlist:
+                    if item.get("symbol") == symbol:
+                        params["_screener_score"] = item.get("composite_score", 0)
+                        params["_stock_gap_pct"] = item.get("gap_pct")
+                        params["_relative_gap_pct"] = item.get("relative_gap_pct")
+                        params["_gap_direction"] = item.get("gap_direction")
+                        params["_stock_bias"] = item.get("bias")
+                        params["_stock_bias_source"] = item.get("bias_source")
+                        params["_stock_trend_strength"] = item.get("trend_strength")
+                        params["_stock_trend_score"] = item.get("trend_score")
+                        break
+        except Exception:
+            logger.debug("Could not load screener score for %s", symbol)
+
+        # India VIX (for position sizing cap)
+        try:
+            r = get_redis()
+            vix_raw = await r.get("price:INDIA VIX")
+            if vix_raw:
+                params["_india_vix"] = float(vix_raw)
+        except Exception:
+            logger.debug("Could not load India VIX for Strategy 5")
+
+        # Global cues mid-day shift detection
+        try:
+            r = get_redis()
+            today = now_ist().date()
+            import json as _json
+
+            morning_raw = await r.get(f"strat5:global_cues:{today}")
+            if morning_raw:
+                morning_cues = _json.loads(morning_raw)
+                current_cues = await _get_global_cues_from_redis()
+                if current_cues is not None:
+                    shifts: list[tuple[str, str]] = []
+
+                    # Crude shift: +-2% from morning snapshot
+                    morning_crude = morning_cues.get("crude_pct")
+                    if morning_crude is not None and current_cues.crude_pct is not None:
+                        crude_delta = current_cues.crude_pct - morning_crude
+                        if abs(crude_delta) >= 2.0:
+                            direction = "up" if crude_delta > 0 else "down"
+                            shifts.append((
+                                "crude",
+                                f"Crude shifted {direction} {abs(crude_delta):.1f}% since morning "
+                                f"({morning_crude:.1f}% -> {current_cues.crude_pct:.1f}%)",
+                            ))
+
+                    # VIX shift: +-2 absolute from morning snapshot
+                    morning_vix = morning_cues.get("us_vix")
+                    if morning_vix is not None and current_cues.us_vix is not None:
+                        vix_delta = current_cues.us_vix - morning_vix
+                        if abs(vix_delta) >= 2.0:
+                            direction = "up" if vix_delta > 0 else "down"
+                            shifts.append((
+                                "vix",
+                                f"VIX shifted {direction} {abs(vix_delta):.1f} since morning "
+                                f"({morning_vix:.1f} -> {current_cues.us_vix:.1f})",
+                            ))
+
+                    # Log each shift with debounce (60-min TTL per shift key)
+                    if shifts:
+                        from app.services.morning_screener import _append_agent_log
+                        for shift_key, message in shifts:
+                            debounce_key = f"strat5:global_shift_logged:{today}:{shift_key}"
+                            already_logged = await r.get(debounce_key)
+                            if not already_logged:
+                                await _append_agent_log(today, "GLOBAL_SHIFT", message)
+                                await r.set(debounce_key, "1", ex=3600)  # 60-min TTL
+        except Exception:
+            logger.debug("Could not check global cues mid-day shift for Strategy 5")
+
+    async def _flush_strategy_logs(self, strategy: BaseStrategy) -> None:
+        """Drain pending log entries, ORB writes, and phase updates from Strategy 5."""
+        today = now_ist().date()
+        r = get_redis()
+
+        # Flush log entries
+        drain = getattr(strategy, "drain_pending_logs", None)
+        if drain is not None:
+            logs = drain()
+            if logs:
+                try:
+                    from app.services.morning_screener import _append_agent_log
+                    for category, message in logs:
+                        await _append_agent_log(today, category, message)
+                except Exception:
+                    logger.debug("Failed to flush strategy logs", exc_info=True)
+
+        # Persist ORB levels to Redis
+        drain_orb = getattr(strategy, "drain_pending_orb_writes", None)
+        if drain_orb is not None:
+            orb_writes = drain_orb()
+            for symbol, levels in orb_writes.items():
+                try:
+                    import json as _json
+                    key = f"strat5:orb:{today}:{symbol}"
+                    await r.set(key, _json.dumps(levels), ex=86400 * 90)
+                except Exception:
+                    logger.debug("Failed to persist ORB levels for %s", symbol)
+
+        # Persist phase to Redis
+        get_phase = getattr(strategy, "get_pending_phase", None)
+        if get_phase is not None:
+            phase = get_phase()
+            if phase:
+                try:
+                    await r.set(f"strat5:phase:{today}", phase, ex=86400)
+                except Exception:
+                    logger.debug("Failed to persist phase")
 
     async def _get_previous_day_levels(self, symbol: str) -> PreviousDayLevels | None:
         """Get previous trading day's OHLC and compute directional bias.
@@ -841,10 +1122,27 @@ class StrategyRunner:
 
         for strategy in strategies:
             try:
+                # Load per-strategy params and set on context
+                params = await get_strategy_params(strategy.name.value)
+                if strategy.name == StrategyName.INTRADAY_FUTURES:
+                    await self._enrich_strategy5_params(symbol, params)
+                ctx.strategy_params = params
+
+                # Per-strategy risk limits (windows, VIX) — may override executable
+                strat_executable, strat_blocked = executable, blocked_reason
+                strat_ok, strat_reason = self._check_strategy_risk_limits(params, ctx.india_vix)
+                if not strat_ok and strat_executable:
+                    strat_executable = False
+                    strat_blocked = strat_reason
+
+                # Compute window state from strategy's own windows
+                windows = parse_trading_windows(params)
+                dead_zone = parse_dead_zone(params)
+                window_state = get_custom_window_state(windows=windows, dead_zone=dead_zone)
+
                 signal = strategy.evaluate(ctx)
+                await self._flush_strategy_logs(strategy)
                 if signal is not None:
-                    # Stamp window state onto the signal indicators
-                    window_state = get_window_state()
                     signal.indicators["window_state"] = window_state
 
                     logger.info(
@@ -853,23 +1151,29 @@ class StrategyRunner:
                         signal.symbol,
                         signal.signal_type,
                         signal.confidence,
-                        executable,
+                        strat_executable,
                         window_state,
                     )
                     # Resolve instrument-specific details
                     if signal.instrument_type == InstrumentType.OPTION:
-                        signal, executable, blocked_reason = await self._resolve_option(
-                            signal, ctx, executable, blocked_reason,
+                        signal, strat_executable, strat_blocked = await self._resolve_option(
+                            signal, ctx, strat_executable, strat_blocked,
                         )
                     elif signal.instrument_type == InstrumentType.FUTURE:
-                        signal, executable, blocked_reason = await self._resolve_futures(
-                            signal, ctx, executable, blocked_reason,
+                        signal, strat_executable, strat_blocked = await self._resolve_futures(
+                            signal, ctx, strat_executable, strat_blocked,
                         )
 
                     # LLM confidence overlay — after resolve, ctx still in scope
                     ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
 
-                    await self._handle_signal(signal, executable, blocked_reason, ai_fields=ai_fields)
+                    # Confidence gating — execution threshold
+                    min_conf = params.get("min_confidence_for_execution")
+                    if min_conf is not None and strat_executable and signal.confidence < min_conf:
+                        strat_executable = False
+                        strat_blocked = f"Confidence below threshold ({signal.confidence:.0f} < {min_conf:.0f})"
+
+                    await self._handle_signal(signal, strat_executable, strat_blocked, ai_fields=ai_fields)
             except Exception:
                 logger.exception(
                     "Error evaluating strategy %s for %s",
@@ -1138,13 +1442,12 @@ class StrategyRunner:
         # Broadcast to connected clients
         await self._broadcast_signal(signal, signal_record.id, now, executable, blocked_reason)
 
-        # Notify agent runner for potential YOLO auto-execution
-        if executable:
-            try:
-                from app.agent.agent_runner import agent_runner
-                await agent_runner.on_new_signal(signal_record.id)
-            except Exception:
-                logger.exception("Error notifying agent runner of new signal")
+        # Notify agent runner (Telegram + potential YOLO auto-execution)
+        try:
+            from app.agent.agent_runner import agent_runner
+            await agent_runner.on_new_signal(signal_record.id)
+        except Exception:
+            logger.exception("Error notifying agent runner of new signal")
 
         # Shadow agent — fire-and-forget, no gating, for signal accuracy measurement
         try:
@@ -1412,6 +1715,7 @@ strategy_runner = StrategyRunner()
 async def get_auto_strategies_for_symbol(symbol: str) -> list[StrategyName]:
     """Return strategy names that have auto_mode=True and include this symbol."""
     from app.models.strategy_config import StrategyConfig
+    from app.strategies.registry import get_strategy
 
     async with async_session_factory() as session:
         result = await session.execute(
@@ -1425,10 +1729,22 @@ async def get_auto_strategies_for_symbol(symbol: str) -> list[StrategyName]:
         rows = result.all()
 
     matched: list[StrategyName] = []
-    for name, symbols in rows:
-        if symbol in (symbols or []):
+    for name, db_symbols in rows:
+        try:
+            strat_name = StrategyName(name)
+        except ValueError:
+            continue
+        if symbol in (db_symbols or []):
+            matched.append(strat_name)
+            continue
+        # Check dynamic symbol override (e.g., Strategy 5 reads from Redis)
+        strategy = get_strategy(strat_name)
+        if strategy is not None:
             try:
-                matched.append(StrategyName(name))
-            except ValueError:
-                pass
+                dynamic_symbols = await strategy.get_symbols()
+            except Exception:
+                continue
+            if dynamic_symbols is not None and symbol in dynamic_symbols:
+                matched.append(strat_name)
+
     return matched

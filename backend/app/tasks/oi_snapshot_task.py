@@ -1,22 +1,39 @@
-"""OI snapshot task — periodically fetches option chain data from Fyers.
+"""OI snapshot task — periodically fetches option chain and futures OI from Fyers.
 
-Runs every 3 minutes during market hours. Fetches the option chain for each
-index symbol and persists strike-level OI data to the oi_snapshots table.
+Three responsibilities:
+1. Index option chain OI — every 3 minutes during market hours. Fetches the
+   option chain for each index symbol and persists strike-level OI data to the
+   oi_snapshots table.
+2. Stock futures EOD OI — daily at 3:25 PM IST. Fetches OI for all F&O stock
+   futures contracts and persists one row per symbol (option_type="FUT",
+   strike_price=0). The morning screener compares two daily snapshots to
+   compute OI change for each stock.
+3. Gap-fill on startup — checks last 7 trading days in DB for FUT OI rows.
+   Any missing days are backfilled from NSE FO bhav copy archives (no Fyers
+   token needed).
+
+NSE FO bhav copy URL (as of 2026):
+    https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{YYYYMMDD}_F_0000.csv.zip
+Requires cookie session (preflight GET to nseindia.com).
 
 The strategy_runner reads from oi_snapshots to build OIAnalysis for
 MarketContext, providing OI confirmation for trade signals.
 """
 
 import asyncio
+import csv
+import io
 import logging
-from datetime import datetime
+import zipfile
+from datetime import date, datetime, time, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import settings
 from app.core.constants import FYERS_SYMBOL_MAP, IST, MARKET_CLOSE, MARKET_OPEN
-from app.core.utils import is_market_open
+from app.core.utils import is_market_open, is_trading_day
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +46,8 @@ OI_SYMBOLS = {
 }
 
 OI_FETCH_INTERVAL_MINUTES = 3
+FYERS_QUOTES_BATCH_SIZE = 50  # Fyers get_quotes supports up to 50 symbols per call
+FYERS_SEMAPHORE_LIMIT = 5    # Max concurrent Fyers API calls for stock futures OI
 
 
 async def fetch_oi_snapshots():
@@ -182,8 +201,321 @@ async def _parse_and_store(symbol: str, data: dict) -> int:
     return len(rows)
 
 
+async def fetch_stock_futures_oi():
+    """Fetch EOD OI data for all F&O stock futures and persist to DB.
+
+    Runs once daily at 3:25 PM IST. Resolves each F&O stock to its nearest
+    futures contract, fetches quotes in batches of 50, and stores one row per
+    symbol with option_type="FUT" and strike_price=0.
+    """
+    from app.core.redis import get_redis
+
+    r = get_redis()
+    token = await r.get("fyers:access_token")
+    if not token:
+        logger.warning("No Fyers token — cannot fetch stock futures OI")
+        return
+
+    # 1. Get list of F&O stocks
+    from app.data_sources.nse_client import get_fo_lot_sizes
+
+    lot_sizes = await get_fo_lot_sizes()
+    if not lot_sizes:
+        logger.warning("No F&O lot sizes returned — skipping stock futures OI")
+        return
+
+    # 2. Resolve each stock to its nearest futures symbol
+    from app.services.futures_resolver import resolve_futures_contract
+
+    semaphore = asyncio.Semaphore(FYERS_SEMAPHORE_LIMIT)
+    resolutions: dict[str, tuple[str, object]] = {}  # symbol -> (fyers_symbol, expiry_date)
+
+    async def _resolve(sym: str):
+        async with semaphore:
+            try:
+                result = await resolve_futures_contract(sym, entry_price=0)
+                if result:
+                    resolutions[sym] = (result.fyers_symbol, result.expiry_date)
+            except Exception:
+                logger.debug("Failed to resolve futures for %s", sym, exc_info=True)
+
+    await asyncio.gather(*[_resolve(sym) for sym in lot_sizes])
+
+    if not resolutions:
+        logger.warning("No futures symbols resolved — skipping stock futures OI")
+        return
+
+    logger.info("Resolved %d/%d F&O stocks to futures symbols", len(resolutions), len(lot_sizes))
+
+    # 3. Batch-fetch quotes (up to 50 per call)
+    from app.data_feed.fyers_client import FyersClient
+
+    fyers_symbols = [fs for fs, _ in resolutions.values()]
+    batches = [
+        fyers_symbols[i : i + FYERS_QUOTES_BATCH_SIZE]
+        for i in range(0, len(fyers_symbols), FYERS_QUOTES_BATCH_SIZE)
+    ]
+
+    all_quotes: dict[str, dict] = {}  # fyers_symbol -> quote data
+
+    async def _fetch_batch(batch: list[str]):
+        async with semaphore:
+            client = FyersClient(access_token=token)
+            try:
+                result = await client.get_quotes(batch)
+                if result and result.get("s") == "ok":
+                    for q in result.get("d", []):
+                        sym = q.get("n", "")
+                        if sym:
+                            all_quotes[sym] = q.get("v", {})
+            except Exception:
+                logger.exception("Failed to fetch quotes batch")
+            finally:
+                await client.close()
+
+    await asyncio.gather(*[_fetch_batch(b) for b in batches])
+
+    # 4. Persist to oi_snapshots
+    from decimal import Decimal
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.core.database import async_session_factory
+    from app.models.oi_snapshot import OISnapshot
+
+    now = datetime.now(IST).replace(second=0, microsecond=0)
+
+    rows = []
+    for symbol, (fyers_symbol, expiry_date) in resolutions.items():
+        quote = all_quotes.get(fyers_symbol, {})
+        oi = int(quote.get("open_interest", 0) or 0)
+
+        rows.append({
+            "symbol": symbol,
+            "expiry_date": expiry_date,
+            "strike_price": Decimal("0"),
+            "option_type": "FUT",
+            "open_interest": oi,
+            "oi_change": 0,
+            "volume": int(quote.get("volume", 0) or 0),
+            "timestamp": now,
+        })
+
+    if not rows:
+        return
+
+    async with async_session_factory() as session:
+        stmt = pg_insert(OISnapshot).values(rows)
+        stmt = stmt.on_conflict_do_nothing(constraint="uq_oi_snapshot")
+        await session.execute(stmt)
+        await session.commit()
+
+    logger.info(
+        "Stock futures OI snapshot: persisted %d rows at %s",
+        len(rows), now.strftime("%H:%M"),
+    )
+
+
+_NSE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.nseindia.com/",
+}
+_NSE_HOME = "https://www.nseindia.com"
+_FO_BHAV_URL = (
+    "https://nsearchives.nseindia.com/content/fo"
+    "/BhavCopy_NSE_FO_0_0_0_{yyyymmdd}_F_0000.csv.zip"
+)
+_GAP_FILL_LOOKBACK_DAYS = 7
+
+
+def _download_fo_bhav(trade_date: date) -> list[dict] | None:
+    """Download NSE FO bhav copy ZIP and extract stock futures rows.
+
+    Runs in thread (called via asyncio.to_thread). Returns list of dicts
+    with symbol/expiry_date/open_interest/volume, or None on failure.
+    """
+    import httpx
+
+    url = _FO_BHAV_URL.format(yyyymmdd=trade_date.strftime("%Y%m%d"))
+    try:
+        with httpx.Client(
+            headers=_NSE_HEADERS,
+            timeout=httpx.Timeout(30.0),
+            follow_redirects=True,
+        ) as client:
+            client.get(_NSE_HOME)
+            response = client.get(url)
+
+            if response.status_code != 200:
+                logger.warning("FO bhav HTTP %d for %s", response.status_code, url)
+                return None
+
+            zip_buffer = io.BytesIO(response.content)
+            try:
+                with zipfile.ZipFile(zip_buffer) as zf:
+                    csv_names = [n for n in zf.namelist() if n.endswith(".csv")]
+                    if not csv_names:
+                        logger.warning("No CSV in FO bhav ZIP for %s", trade_date)
+                        return None
+                    csv_text = zf.read(csv_names[0]).decode("utf-8")
+            except zipfile.BadZipFile:
+                logger.warning("Invalid ZIP for FO bhav %s", trade_date)
+                return None
+
+            return _parse_fo_bhav_csv(csv_text, trade_date)
+
+    except httpx.HTTPError:
+        logger.exception("HTTP error downloading FO bhav for %s", trade_date)
+        return None
+
+
+def _parse_fo_bhav_csv(csv_text: str, trade_date: date) -> list[dict]:
+    """Parse NSE FO bhav CSV, extract nearest-expiry stock futures rows.
+
+    Filters for FinInstrmTp == "STF" (stock futures), picks nearest expiry
+    per symbol.
+    """
+    reader = csv.DictReader(io.StringIO(csv_text))
+
+    by_symbol: dict[str, list[dict]] = {}
+    for row in reader:
+        row = {k.strip(): v.strip() for k, v in row.items()}
+        if row.get("FinInstrmTp") != "STF":
+            continue
+
+        symbol = row.get("TckrSymb", "").strip()
+        if not symbol:
+            continue
+
+        try:
+            expiry_str = row.get("XpryDt", "").strip()
+            expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").date()
+            oi = int(float(row.get("OpnIntrst", 0) or 0))
+            volume = int(float(row.get("TtlTradgVol", 0) or 0))
+        except (ValueError, TypeError):
+            continue
+
+        if expiry_date < trade_date:
+            continue
+
+        if symbol not in by_symbol:
+            by_symbol[symbol] = []
+        by_symbol[symbol].append({
+            "symbol": symbol,
+            "expiry_date": expiry_date,
+            "open_interest": oi,
+            "volume": volume,
+        })
+
+    results: list[dict] = []
+    for entries in by_symbol.values():
+        entries.sort(key=lambda e: e["expiry_date"])
+        results.append(entries[0])
+
+    return results
+
+
+async def _fill_stock_futures_oi_gaps() -> None:
+    """Check last N trading days and fetch any missing stock futures OI from NSE.
+
+    Called once on startup. Checks the oi_snapshots table for days with FUT rows;
+    any missing trading days are backfilled from the NSE FO bhav copy archive.
+    """
+    from decimal import Decimal
+
+    from sqlalchemy import func, select, text
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.core.database import async_session_factory
+    from app.core.utils import now_ist
+    from app.models.oi_snapshot import OISnapshot
+
+    today = now_ist().date()
+
+    # Collect last N trading days
+    days_to_check: list[date] = []
+    d = today - timedelta(days=1)
+    count = 0
+    while count < _GAP_FILL_LOOKBACK_DAYS:
+        if is_trading_day(d):
+            days_to_check.append(d)
+            count += 1
+        d -= timedelta(days=1)
+
+    if not days_to_check:
+        return
+
+    # Check which days already have FUT OI rows in DB
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(func.date(OISnapshot.timestamp))
+            .where(OISnapshot.option_type == "FUT")
+            .where(func.date(OISnapshot.timestamp).in_(days_to_check))
+            .distinct()
+        )
+        existing_dates = {row[0] for row in result.all()}
+
+    missing = [d for d in days_to_check if d not in existing_dates]
+
+    if not missing:
+        logger.info("FUT OI gap-fill: all %d recent trading days present", len(days_to_check))
+        return
+
+    logger.info(
+        "FUT OI gap-fill: %d missing days: %s",
+        len(missing), [str(d) for d in sorted(missing)],
+    )
+
+    filled = 0
+    for trade_date in sorted(missing):
+        rows = await asyncio.to_thread(_download_fo_bhav, trade_date)
+        if rows is None:
+            logger.warning("FUT OI gap-fill failed for %s", trade_date)
+            await asyncio.sleep(2.0)
+            continue
+
+        if not rows:
+            logger.info("FUT OI gap-fill: no STF rows for %s", trade_date)
+            await asyncio.sleep(2.0)
+            continue
+
+        ts = datetime.combine(trade_date, time(15, 25), tzinfo=IST)
+        db_rows = []
+        for r in rows:
+            db_rows.append({
+                "symbol": r["symbol"],
+                "expiry_date": r["expiry_date"],
+                "strike_price": Decimal("0"),
+                "option_type": "FUT",
+                "open_interest": r["open_interest"],
+                "oi_change": 0,
+                "volume": r["volume"],
+                "timestamp": ts,
+            })
+
+        async with async_session_factory() as session:
+            stmt = pg_insert(OISnapshot).values(db_rows)
+            stmt = stmt.on_conflict_do_nothing(constraint="uq_oi_snapshot")
+            result = await session.execute(stmt)
+            await session.commit()
+
+        logger.info(
+            "FUT OI gap-filled %s: %d symbols inserted", trade_date, result.rowcount,
+        )
+        filled += 1
+        await asyncio.sleep(2.0)
+
+    logger.info("FUT OI gap-fill complete: %d/%d days filled", filled, len(missing))
+
+
 async def start_oi_snapshot_scheduler():
-    """Start the periodic OI snapshot scheduler."""
+    """Start the periodic OI snapshot scheduler and fill any gaps."""
     global _scheduler
     _scheduler = AsyncIOScheduler(timezone=IST)
     _scheduler.add_job(
@@ -193,8 +525,24 @@ async def start_oi_snapshot_scheduler():
         name="Fetch OI snapshots",
         replace_existing=True,
     )
+    _scheduler.add_job(
+        fetch_stock_futures_oi,
+        trigger=CronTrigger(hour=15, minute=25, timezone=IST),
+        id="stock_futures_oi_fetch",
+        name="Fetch stock futures OI (EOD)",
+        replace_existing=True,
+    )
     _scheduler.start()
     logger.info("OI snapshot scheduler started (every %d minutes)", OI_FETCH_INTERVAL_MINUTES)
+    logger.info("Stock futures OI scheduler started (daily at 15:25 IST)")
+
+    # Fill gaps from missed days (non-blocking background task)
+    task = asyncio.create_task(_fill_stock_futures_oi_gaps(), name="fut_oi_gap_fill")
+    from app.core.task_registry import task_registry
+    task_registry.track_asyncio_task(
+        "fut_oi_gap_fill", task,
+        metadata={"description": "Fill missing stock futures OI days on startup"},
+    )
 
 
 async def stop_oi_snapshot_scheduler():

@@ -80,6 +80,36 @@ def time_to_market_close_minutes(as_of: datetime | None = None) -> int:
     return max(0, int(delta.total_seconds() / 60))
 
 
+def is_in_custom_trading_window(
+    as_of: datetime | None = None,
+    windows: list[tuple[time, time]] | None = None,
+) -> bool:
+    """Check if time falls within any of the given trading windows.
+
+    If windows is None or empty, returns True (no window restriction).
+    """
+    if not windows:
+        return True
+    t = (as_of or now_ist()).time()
+    return any(start <= t <= end for start, end in windows)
+
+
+def get_custom_window_state(
+    as_of: datetime | None = None,
+    windows: list[tuple[time, time]] | None = None,
+    dead_zone: tuple[time, time] | None = None,
+) -> str:
+    """Return 'IN_WINDOW', 'DEAD_ZONE', or 'OUT_OF_WINDOW' for custom windows."""
+    if not windows:
+        return "IN_WINDOW"
+    t = (as_of or now_ist()).time()
+    if any(start <= t <= end for start, end in windows):
+        return "IN_WINDOW"
+    if dead_zone and dead_zone[0] <= t <= dead_zone[1]:
+        return "DEAD_ZONE"
+    return "OUT_OF_WINDOW"
+
+
 def _in_window_1(t: time) -> bool:
     return WINDOW_1_START <= t <= WINDOW_1_END
 

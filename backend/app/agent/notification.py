@@ -74,6 +74,7 @@ async def notify_signal_generated(
     expiry: str | None,
     confidence: float | None,
     instrument_type: str = "OPTION",
+    blocked_reason: str | None = None,
 ) -> None:
     direction = signal_type.replace("BUY_", "")
     rr = ""
@@ -91,12 +92,14 @@ async def notify_signal_generated(
     elif instrument_type == "FUTURE" and expiry:
         strike_line = f"\nExpiry {expiry}"
 
+    blocked_line = f"\n⚠️ <i>{blocked_reason}</i>" if blocked_reason else ""
+
     msg = (
         f"{_paper()}📊 <b>Signal: {direction}</b>\n"
         f"{symbol}  ·  {_strategy_label(strategy_name)}"
         f"{strike_line}\n"
         f"Entry ₹{entry:.0f}  ·  SL ₹{stop_loss:.0f}  ·  Target ₹{target:.0f}\n"
-        f"{rr}{conf}"
+        f"{rr}{conf}{blocked_line}"
     )
     await send_telegram(msg.strip())
 

@@ -226,3 +226,114 @@ export interface ResearchAgentStatus {
   duration?: number;
   error?: string;
 }
+
+// ── Strategy 5: Intraday Futures ──
+
+export interface S5WatchlistItem {
+  symbol: string;
+  composite_score: number;
+  price: number;
+  bias: string;
+  llm_confidence?: string;
+  llm_reason?: string;
+  lot_size: number;
+  factors: {
+    rs_percentile: number;
+    range_position: number;
+    volume_trend: number;
+    oi_change: number;
+    adr_pct: number;
+    adr_qualifies: boolean;
+    sector: string | null;
+    sector_score: number;
+    delivery_pct: number;
+    high_52w_proximity: number;
+  };
+  news?: {
+    sentiment: string;
+    score: number;
+    key_themes?: string[];
+    risk_events?: string[];
+    catalyst_events?: string[];
+    articles_count?: number;
+    flagged?: boolean;
+  };
+  pdh: number | null;
+  pdl: number | null;
+  pdc: number | null;
+  preopen_price?: number;
+  gap_pct?: number;
+  relative_gap_pct?: number;
+  gap_direction?: "UP" | "DOWN" | null;
+  nifty_gap_pct?: number;
+  original_bias?: string;
+  bias_source?: "screener" | "gap_override" | "gap_nudge";
+  gap_alignment_bonus?: number;
+  orb_high?: number;
+  orb_low?: number;
+  orb_range?: number;
+}
+
+export interface S5AgentLogEntry {
+  timestamp: number;
+  category: string;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+export interface S5GlobalCues {
+  dow_futures_pct?: number;
+  sp500_close_pct?: number;
+  nasdaq_close_pct?: number;
+  nifty_pct?: number;
+  crude_pct?: number;
+  usdinr_pct?: number;
+  dxy_pct?: number;
+  us_vix?: number;
+  halted?: boolean;
+  volatile_open?: boolean;
+  flags?: string[];
+  date?: string;
+}
+
+export interface S5MorningBriefing {
+  approach?: string;
+  summary?: string;
+  sector_bias?: string | string[];
+  setup_priority?: string[];
+  flags?: string[];
+  max_lots_recommendation?: number;
+  date?: string;
+  generated_at?: number;
+}
+
+export interface S5DailyStats {
+  total_trades: number;
+  active_positions: number;
+  closed_trades: number;
+  wins: number;
+  losses: number;
+  net_pnl: number;
+  win_rate: number;
+}
+
+export interface S5SetupStats {
+  wins: number;
+  losses: number;
+  win_rate: number;
+  net_pnl: number;
+  avg_pnl: number;
+  trades: number;
+}
+
+export interface S5SetupPerformance {
+  period: { start: string; end: string; days: number };
+  setups: Record<string, S5SetupStats>;
+  overall: {
+    wins: number;
+    losses: number;
+    win_rate: number;
+    net_pnl: number;
+    trades: number;
+  };
+}

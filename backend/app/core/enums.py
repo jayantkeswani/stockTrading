@@ -56,6 +56,7 @@ class StrategyName(StrEnum):
     VWAP_PULLBACK = "vwap_pullback"
     GAMMA_SCALPING = "gamma_scalping"
     CAN_SLIM = "can_slim"
+    INTRADAY_FUTURES = "intraday_futures"
 
 
 class PositionType(StrEnum):

@@ -176,7 +176,7 @@ def _build_context_json(signal: StrategySignal, ctx: MarketContext) -> str:
         },
         "deterministic_confidence": {
             "score": float(signal.confidence) if signal.confidence else 0,
-            "fire_threshold": settings.fire_confidence_threshold,
+            "persist_threshold": (ctx.strategy_params or {}).get("min_confidence_to_persist", 30.0),
             "factors": conf_factors,
             "rationale": indicators.get("confidence_rationale"),
         },

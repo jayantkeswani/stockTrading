@@ -78,6 +78,12 @@ class MarketContext:
     global_cues: GlobalCues | None = None            # World indices, FX, commodities
     # Composite intraday bias — replaces yesterday-only hard gate (Phase 2)
     intraday_bias: IntradayBias | None = None        # Live bias: score, strength, components
+    # Per-strategy parameters from strategy_configs.parameters JSONB (merged with defaults)
+    strategy_params: dict | None = None
+    # ATR from 5-min candles (Strategy 5 sub-setup SL sizing)
+    atr_5m: float | None = None
+    # Today's opening price (gap analysis)
+    today_open: float | None = None
 
 
 class BaseStrategy(ABC):
@@ -94,6 +100,10 @@ class BaseStrategy(ABC):
         Returns None if no trade should be taken.
         """
         ...
+
+    async def get_symbols(self) -> list[str] | None:
+        """Override for dynamic symbol selection. Default: None (use DB config)."""
+        return None
 
     @abstractmethod
     def should_exit(

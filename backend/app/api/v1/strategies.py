@@ -73,6 +73,11 @@ async def update_strategy(name: str, body: dict, db: AsyncSession = Depends(get_
     await db.commit()
     await db.refresh(config)
 
+    # Invalidate cached strategy params so new values take effect immediately
+    if "parameters" in body:
+        from app.services.strategy_params import clear_strategy_params_cache
+        clear_strategy_params_cache(name)
+
     # Provision newly added symbols: fetch price, backfill candles, subscribe WS
     if "symbols" in body:
         new_symbols = set(body["symbols"]) - old_symbols
@@ -99,6 +104,16 @@ async def toggle_strategy(name: str, db: AsyncSession = Depends(get_db)):
     config.is_active = not config.is_active
     await db.commit()
     return {"strategy": name, "is_active": config.is_active}
+
+
+@router.get("/{name}/parameter-defaults")
+async def get_parameter_defaults(name: str):
+    """Return the default parameter schema for a strategy (for frontend forms)."""
+    from app.services.strategy_params import get_defaults_for_strategy
+    defaults = get_defaults_for_strategy(name)
+    if not defaults:
+        raise HTTPException(status_code=404, detail="No defaults for strategy")
+    return defaults
 
 
 @router.patch("/{name}/auto-mode")

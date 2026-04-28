@@ -1,3 +1,5 @@
+import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance } from "./types";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -65,6 +67,7 @@ export const api = {
   getTrades: (params?: {
     status?: string;
     source?: string;
+    strategy?: string;
     limit?: number;
     entry_since?: string;
     entry_until?: string;
@@ -72,6 +75,7 @@ export const api = {
     const query = new URLSearchParams();
     if (params?.status) query.set("status", params.status);
     if (params?.source) query.set("source", params.source);
+    if (params?.strategy) query.set("strategy", params.strategy);
     if (params?.limit) query.set("limit", params.limit.toString());
     if (params?.entry_since) query.set("entry_since", params.entry_since);
     if (params?.entry_until) query.set("entry_until", params.entry_until);
@@ -169,6 +173,8 @@ export const api = {
     request<{ strategy: string; auto_mode: boolean }>(`/api/v1/strategies/${name}/auto-mode`, { method: "PATCH" }),
   updateStrategy: (name: string, body: Record<string, unknown>) =>
     request(`/api/v1/strategies/${name}`, { method: "PUT", body: JSON.stringify(body) }),
+  getParameterDefaults: (name: string) =>
+    request<Record<string, unknown>>(`/api/v1/strategies/${name}/parameter-defaults`),
   evaluateStrategy: (strategyName: string, symbol: string) =>
     request<{ symbol: string; strategy: string; signal_generated: boolean; signal_type: string | null; confidence: number | null }>(
       `/api/v1/strategies/evaluate`, { method: "POST", body: JSON.stringify({ strategy_name: strategyName, symbol }) }
@@ -220,6 +226,45 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
+
+  // Strategy 5 — Intraday Futures
+  getIntradayFuturesWatchlist: (date?: string) =>
+    request<S5WatchlistItem[]>(`/api/v1/intraday-futures/watchlist${date ? `?date=${date}` : ""}`),
+
+  getIntradayFuturesAgentLog: (date?: string) =>
+    request<S5AgentLogEntry[]>(`/api/v1/intraday-futures/agent-log${date ? `?date=${date}` : ""}`),
+
+  getIntradayFuturesGlobalCues: (date?: string) =>
+    request<S5GlobalCues>(`/api/v1/intraday-futures/global-cues${date ? `?date=${date}` : ""}`),
+
+  getIntradayFuturesBriefing: (date?: string) =>
+    request<S5MorningBriefing>(`/api/v1/intraday-futures/morning-briefing${date ? `?date=${date}` : ""}`),
+
+  getIntradayFuturesDailyStats: (date?: string) =>
+    request<S5DailyStats>(`/api/v1/intraday-futures/daily-stats${date ? `?date=${date}` : ""}`),
+
+  getIntradayFuturesPhase: (date?: string) =>
+    request<{ phase: string }>(`/api/v1/intraday-futures/phase${date ? `?date=${date}` : ""}`),
+
+  getIntradayFuturesAgentStatus: () =>
+    request<{ status: string }>(`/api/v1/intraday-futures/agent-status`),
+
+  getIntradayFuturesSetupPerformance: (date?: string, days?: number) => {
+    const params = new URLSearchParams();
+    if (date) params.set("date", date);
+    if (days) params.set("days", String(days));
+    const qs = params.toString();
+    return request<S5SetupPerformance>(`/api/v1/intraday-futures/setup-performance${qs ? `?${qs}` : ""}`);
+  },
+
+  runIntradayFuturesScreener: () =>
+    request<{ status: string; watchlist_count: number }>(`/api/v1/intraday-futures/screener/run`, { method: "POST" }),
+
+  runIntradayFuturesBriefing: () =>
+    request<{ status: string; briefing: Record<string, unknown> }>(`/api/v1/intraday-futures/briefing/run`, { method: "POST" }),
+
+  setIntradayFuturesAgentAction: (action: "pause" | "resume") =>
+    request<{ status: string }>(`/api/v1/intraday-futures/agent/${action}`, { method: "POST" }),
 
   // Health
   health: () => request(`/api/v1/health`),

@@ -62,13 +62,14 @@ class AgentRunner:
         })
 
     async def on_new_signal(self, signal_id) -> None:
-        """Called when a new executable signal is generated.
+        """Called when a new signal is generated.
 
-        Always sends a Telegram notification. In YOLO mode also auto-executes.
+        Always sends a Telegram notification. In YOLO mode also auto-executes
+        (only executable signals).
         """
         cfg = await get_trading_config()
 
-        # Always notify regardless of mode
+        # Always notify regardless of mode or executable status
         try:
             from app.core.database import async_session_factory
             from app.models.signal import Signal
@@ -88,6 +89,7 @@ class AgentRunner:
                     expiry=str(sig.expiry_date) if sig.expiry_date else None,
                     confidence=float(sig.confidence) if sig.confidence else None,
                     instrument_type=sig.instrument_type or "OPTION",
+                    blocked_reason=sig.blocked_reason,
                 )
         except Exception:
             logger.exception("Error sending signal notification for %s", signal_id)

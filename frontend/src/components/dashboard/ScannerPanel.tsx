@@ -115,6 +115,17 @@ const CONFIDENCE_FACTOR_LABELS: Record<string, string> = {
   time_of_day:          "Window",
 };
 
+const S5_CONFIDENCE_FACTOR_LABELS: Record<string, string> = {
+  vol_factor:   "Volume",
+  rvol_factor:  "RVOL",
+  bias_factor:  "Nifty",
+  phase_factor: "Phase",
+  setup_factor: "Setup",
+  rank_factor:  "Rank",
+  gap_factor:   "Gap",
+  trend_factor: "Trend",
+};
+
 function SignalCard({
   signal,
   onExec,
@@ -130,7 +141,8 @@ function SignalCard({
 
   const isFuture = signal.instrument_type === "FUTURE";
   const isCE = signal.signal_type === "BUY_CE";
-  const isBullish = isCE || isFuture;
+  const isS5 = signal.strategy_name === "intraday_futures";
+  const isBullish = isFuture ? signal.signal_type === "BUY_FUT" : isCE;
   const isUnresolved = !signal.executable && signal.instrument_type === "OPTION";
 
   const directionColor = isBullish ? "text-profit" : "text-loss";
@@ -252,35 +264,85 @@ function SignalCard({
         </div>
       )}
 
-      {/* Row 3: Context (Index, VWAP, OI) */}
-      <div className="flex items-center gap-3 text-[10px] font-mono text-text-muted mb-2">
-        {indexEntry != null && (
-          <span>
-            Idx{" "}
-            <span className="text-text-secondary">
-              {indexEntry.toLocaleString("en-IN")}
-            </span>
-          </span>
-        )}
-        {vwap != null && (
-          <span>
-            VWAP{" "}
-            <span className="text-text-secondary">
-              {vwap.toLocaleString("en-IN")}
-            </span>
-            {vwapDist != null && (
-              <span className="text-text-muted ml-0.5">
-                ({Math.abs(vwapDist).toFixed(3)}%)
+      {/* Row 3: Context — strategy-aware */}
+      {isS5 ? (
+        <div className="space-y-1 mb-2">
+          <div className="flex items-center gap-2 text-[10px] font-mono text-text-muted flex-wrap">
+            {ind.setup_type && (
+              <span className="px-1.5 py-px rounded bg-accent/15 text-accent">
+                {String(ind.setup_type).replace("_", " ")}
               </span>
             )}
-          </span>
-        )}
-        {oiConfirmed != null && (
-          <span className={oiConfirmed ? "text-profit" : "text-text-muted"}>
-            OI {oiConfirmed ? "✓" : "—"}
-          </span>
-        )}
-      </div>
+            {ind.enhanced_orb && (
+              <span className="px-1 py-px rounded bg-profit/15 text-profit">Enhanced</span>
+            )}
+            {ind.phase && (
+              <span className="text-text-secondary">{String(ind.phase).replace("_", " ")}</span>
+            )}
+            {typeof ind.rvol === "number" && (
+              <span>
+                RVOL{" "}
+                <span className={Number(ind.rvol) >= 2.0 ? "text-profit" : Number(ind.rvol) >= 1.5 ? "text-accent" : "text-text-muted"}>
+                  {Number(ind.rvol).toFixed(1)}x
+                </span>
+              </span>
+            )}
+            {vwap != null && (
+              <span>VWAP <span className="text-text-secondary">{vwap.toLocaleString("en-IN")}</span></span>
+            )}
+            {typeof ind.orb_high === "number" && typeof ind.orb_low === "number" && (
+              <span>ORB <span className="text-text-secondary">{Number(ind.orb_low).toLocaleString("en-IN")}–{Number(ind.orb_high).toLocaleString("en-IN")}</span></span>
+            )}
+            {typeof ind.pdh === "number" && (
+              <span>PDH <span className="text-text-secondary">{Number(ind.pdh).toLocaleString("en-IN")}</span></span>
+            )}
+            {typeof ind.pdl === "number" && (
+              <span>PDL <span className="text-text-secondary">{Number(ind.pdl).toLocaleString("en-IN")}</span></span>
+            )}
+            {typeof ind.gap_pct === "number" && (
+              <span>Gap <span className={Number(ind.gap_pct) > 0 ? "text-profit" : "text-loss"}>{Number(ind.gap_pct) > 0 ? "+" : ""}{Number(ind.gap_pct).toFixed(1)}%</span></span>
+            )}
+          </div>
+          {Array.isArray(ind.risk_warnings) && (ind.risk_warnings as string[]).length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {(ind.risk_warnings as string[]).map((w, i) => (
+                <span key={i} className="text-[9px] font-mono px-1 py-px rounded bg-warning/10 text-warning">
+                  ⚠ {w}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 text-[10px] font-mono text-text-muted mb-2">
+          {indexEntry != null && (
+            <span>
+              Idx{" "}
+              <span className="text-text-secondary">
+                {indexEntry.toLocaleString("en-IN")}
+              </span>
+            </span>
+          )}
+          {vwap != null && (
+            <span>
+              VWAP{" "}
+              <span className="text-text-secondary">
+                {vwap.toLocaleString("en-IN")}
+              </span>
+              {vwapDist != null && (
+                <span className="text-text-muted ml-0.5">
+                  ({Math.abs(vwapDist).toFixed(3)}%)
+                </span>
+              )}
+            </span>
+          )}
+          {oiConfirmed != null && (
+            <span className={oiConfirmed ? "text-profit" : "text-text-muted"}>
+              OI {oiConfirmed ? "✓" : "—"}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Row 4: Actions */}
       <div className="flex items-center gap-1.5 flex-wrap">
@@ -439,13 +501,14 @@ function SignalCard({
               {/* Confidence factor bars */}
               {(() => {
                 const factors = ind.confidence_factors as unknown as Record<string, number> | undefined;
+                const factorLabels = isS5 ? S5_CONFIDENCE_FACTOR_LABELS : CONFIDENCE_FACTOR_LABELS;
                 return factors ? (
                   <div className="pl-4">
                     <p className="text-[9px] font-mono text-text-muted uppercase tracking-wider mb-1.5">
                       Confidence factors
                     </p>
                     <div className="space-y-0.5">
-                      {Object.entries(CONFIDENCE_FACTOR_LABELS).map(([key, label]) => {
+                      {Object.entries(factorLabels).map(([key, label]) => {
                         const val = factors[key];
                         if (val == null) return null;
                         const pct = Math.round(val * 100);

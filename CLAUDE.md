@@ -1,5 +1,8 @@
 # StockTrading - Indian Options Trading System
 
+## Subagent Model Policy
+Always spawn subagents with `model: "sonnet"` to reduce costs. Only use `model: "opus"` for subagents that require deep reasoning (complex architecture decisions, subtle multi-file bug diagnosis).
+
 ## Project Overview
 Automated options trading system for Indian stock market (NSE/BSE) focused on **buying** index options (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY). Uses Strategy 2 (VWAP Pullback + Previous Day Context + OI Confirmation) as the primary active strategy.
 
@@ -34,7 +37,7 @@ stockTrading/
 │   ├── strategies/        # One MD per strategy with full trading rules. Includes arjun-liquide-study.md — a full reverse-engineering study (signal parser, independent backtest of 630 trades, feature-importance analysis, implied strategy + edge filters). Not yet a registered strategy; precursor to strategy_5_breakout_momentum.
 │   ├── backtest/          # Backtest harness docs (harness.md, option-data.md)
 │   └── ai/                # AI agent docs (signal-confidence-agent.md)
-├── scripts/               # dev.sh, stop.sh, reset.sh, backfill_for_backtest.py, backtest.py
+├── scripts/               # dev.sh, stop.sh, reset.sh, backfill_for_backtest.py, backtest.py, replay_strategy5.py
 │   └── telegram/          # MTProto client (Telethon) + signal parser + Fyers probe + independent verifier + setup analyzer. list_dialogs.py (discover chat IDs), fetch_history.py (pull signal-channel history to JSON), parse_signals.py (classifies messages into ENTRY / EXIT_FULL (Book Profit) / EXIT_FORCED (cost-to-cost or "at current price" — deliberately separate from EXIT_FULL so channel-claimed wins aren't inflated) / EXIT_PARTIAL / WATCHLIST / HOLD_OVERNIGHT / REPORT / UPDATE / CANCEL / OTHER; stdlib-only), probe_fyers_history.py (one-shot diagnostic: Fyers free plan serves 1m history only while contract is actively listed; expired contracts return s="error"), verify_signals.py (hybrid backtest: accurate mode for currently-live contracts via real option 1m bars, delta-approx for expired contracts via underlying spot 1m × moneyness-derived delta; channel's stated T1-then-C2C rule; NSE F&O lot sizing from the master CSV; outputs per-trade + aggregate hit rate / expectancy / profit factor in JSON + stdout), analyze_setups.py (reverse-engineers the implied strategy: fetches underlying 1m bars up to each entry minute, reuses backend.app.indicators (VWAP, CPR, previous_day, candle_patterns) to compute features at entry time, aggregates CE vs PE distributional stats — time-of-day buckets, VWAP/PDH/PDL/CPR position, candle patterns, volume ratio, moneyness — and prints an evidence-backed hypothesis; also dumps feature CSV + JSON), analyze_edge.py (feature-importance pass: joins setups_*.json with verification_*.json on msg_id, bucketizes each feature (bool/categorical/numeric-quartile), ranks by win-rate lift with min-bucket-size guard, then stress-tests top-3 filter combinations per direction — finds "filters that beat Arjun at his own strategy"; multiple win definitions via --win-def). Fetched JSON, symbol master cache, candle cache all in scripts/telegram/data/ (gitignored). Session files + data/ gitignored. Uses TELEGRAM_API_ID/API_HASH/PHONE/SESSION_NAME from .env
 ├── backend/               # Python FastAPI backend (see backend/CLAUDE.md)
 │   ├── app/
@@ -42,21 +45,21 @@ stockTrading/
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
 │   │   ├── models/        # SQLAlchemy ORM models (13 tables incl. global_market_snapshots; signals has ai_* columns)
 │   │   ├── schemas/       # Pydantic request/response schemas
-│   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill)
+│   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill, strategy_params, morning_screener)
 │   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
-│   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels, global_market, intraday_bias, confidence)
+│   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels, global_market, intraday_bias, confidence, ATR, gap_analysis, stock_trend)
 │   │   ├── data_feed/     # Fyers API (auth, REST via API_URL/DATA_URL, WebSocket, feed manager, symbol master)
 │   │   ├── research/      # AI research agent system (orchestrator, 6 sub-agents, LLM client, data gatherer)
 │   │   ├── agent/         # AI trading agent (monitor, execute, notify, shadow_executor)
 │   │   ├── backtest/      # Backtest module (context_builder, harness, exit_simulator, option_data_fetcher, strike_selector, report)
 │   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP, NSE_HOLIDAYS), enums, utils, task_registry
-│   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh, global_market every 15m)
-│   ├── tests/             # pytest test suite (514 tests)
+│   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh, global_market every 15m, Strategy 5 morning workflow, NSE bhav copy daily)
+│   ├── tests/             # pytest test suite (786 tests)
 │   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
     └── src/
-        ├── app/           # 7 pages (dashboard, trades, signals, research, settings, agent, chart)
-        ├── components/    # React components by domain (21 components incl. research/ResearchSearch, ResearchProgress, ResearchReport)
+        ├── app/           # 8 pages (dashboard, trades, signals, research, settings, agent, chart, intraday-futures)
+        ├── components/    # React components by domain (28 components incl. 7 intraday-futures/*, research/ResearchSearch, ResearchProgress, ResearchReport)
         ├── hooks/         # useWebSocket (auto-reconnect, event subscriptions, research events)
         ├── lib/           # API client, types, formatters, constants
         └── store/         # Zustand store (prices, positions, signals, scanLogs, risk, agent, research)
@@ -79,6 +82,7 @@ stockTrading/
 2. **VWAP Pullback + PDH/PDL + OI** - PRIMARY/ACTIVE - `backend/app/strategies/strategy_2_vwap_pullback.py`
 3. **Expiry Day Gamma Scalping** - STUB - `backend/app/strategies/strategy_3_gamma_scalping.py`
 4. **CAN SLIM Growth Breakout** - ACTIVE - `backend/app/strategies/strategy_4_canslim.py` — Stock futures, positional (multi-day), fundamental screening + chart pattern breakout
+5. **Intraday Stock Futures** - IN DEVELOPMENT - `backend/app/strategies/strategy_5_intraday_futures.py` — AI-agent-driven intraday stock futures, ORB breakout, dynamic screener, phase state machine. `_compute_confidence()` stores 8-key `confidence_factors` dict in signal indicators JSONB. Full spec: `docs/strategies/strategy-5-intraday-futures.md`, phase 1 reference: `docs/strategies/strategy-5-phase1-reference.md`
 
 ### Strategy Execution Modes
 - **Auto mode**: Strategy evaluates automatically on every 1m candle close for its configured symbols. Controlled by `auto_mode` flag in `strategy_configs` table.
@@ -107,18 +111,22 @@ make migration msg="desc"     # Generate new migration
 cd backend && python3.11 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
 cd frontend && npm install
 cp .env.example .env          # Then fill in Fyers API keys
+
+# Strategy 5 replay (offline signal generation test from historical candles)
+cd backend && source .venv/bin/activate
+python scripts/replay_strategy5.py --date 2026-04-28              # all watchlist symbols
+python scripts/replay_strategy5.py --date 2026-04-28 --symbols VEDL,SUNPHARMA  # subset
 ```
 
 ## Test Coverage
-Tests live in `backend/tests/`. 514 tests, all passing. Currently covered:
+Tests live in `backend/tests/`. 786 tests, all passing. Currently covered:
 - `test_core/` - IST timezone utils, market hour checks
-- `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns, relative strength (raw score + percentile ranking), volume analysis, market levels (swing detection, index SL/target selection)
-- `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type; CAN SLIM scoring, base pattern detection, strategy evaluate/exit/sizing
-- `test_services/` - Option resolver (strike/expiry/SL/target), futures resolver (expiry calculation), strategy runner (auto filter, manual eval, strategy filter, signal dedup), FeedManager decoupling, OI snapshot parsing, candle backfill symbol resolution
+- `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns, relative strength (raw score + percentile ranking), volume analysis, market levels (swing detection, index SL/target selection), ADR (computation, threshold), RVOL (profile building, computation, serialization), ATR (computation, Wilder's smoothing), gap analysis (detection, continuation, edge cases), stock trend (6 factors individually, composite direction/strength classification, graceful degradation with <10 candles, V-reversal, flat market)
+- `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type (uses `strategy_params` in MarketContext); CAN SLIM scoring, base pattern detection, strategy evaluate/exit/sizing; Intraday Futures phase machine, ORB breakout detection, 4 sub-setups (ORB/VWAP Bounce/PDH-PDL/Gap Continuation), caution zone confirmation, multi-factor confidence (8 factors incl. stock trend alignment), full position sizing (RVOL/confidence/screener/VIX/briefing/trend), filters (ADR/RVOL/VWAP/price/volume/Nifty bias/stock trend direction), stock trend filter (STRONG opposing blocks, MODERATE allows with risk_warning, NEUTRAL passes), cross-position checks, `get_symbols()` dynamic Redis
+- `test_services/` - Option resolver (strike/expiry/SL/target, uses `strategy_params` in MarketContext), futures resolver (expiry calculation), strategy runner (auto filter, manual eval, strategy filter, signal dedup, `_check_global_risk_limits` + `get_strategy_params` patches), FeedManager decoupling, OI snapshot parsing, candle backfill symbol resolution, morning screener (quant scoring, news integration, LLM enrichment, briefing, OI scoring, delivery % scoring), briefing per-setup win rates (4 tests: Trade→Signal join for setup_type extraction, ORB fallback, empty trades, win rate accuracy), global cues mid-day shift (7 tests: crude/VIX shift detection, threshold filtering, debounce, simultaneous shifts, missing morning/current cues), pre-open reassessment (21 tests: gap-adjusted bias override/nudge/no-change, gap alignment bonus computation/cap/neutral/misaligned, integration: watchlist bias override, VIX update in global cues, score bonus, re-sort, skip on missing watchlist)
+- `test_tasks/` - NSE bhav copy (20 tests: CSV parsing with new NSE format, URL construction, Redis storage, retry logic, date handling, gap-fill); stock futures OI (8 tests: FUT row persistence, OI change calculation, scheduling, symbol resolution)
 - `test_api/` - Strategy endpoints (evaluate, batch evaluate, auto-mode toggle)
-
-Not yet covered (stubs only):
-- `test_agent/` - Shadow executor tests (6 tests: PENDING→trade/position creation, no dedup, non-pending skip, missing signal, price fallback)
+- `test_agent/` - Shadow executor (8 tests: PENDING→trade/position creation, no dedup, non-pending skip, missing signal, price fallback, confidence gate skip low, confidence gate fire at exact threshold); Trade monitor (20 tests: SL hit, target hit YOLO/SEMI/dedup, time exit intraday/positional, trailing SL positional + intraday breakeven/progressive/HWM/SL-never-moves-down, expiry roll, shadow positions, no price, no exit)
 
 ## AI Documentation Protocol (MANDATORY)
 This is an AI-first project. Documentation ships WITH every code change — not as an afterthought.

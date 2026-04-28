@@ -32,6 +32,7 @@ class Position(Base, TimestampMixin):
     )  # INTRADAY or POSITIONAL
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_shadow: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    high_since_entry: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
 
     __table_args__ = (
         Index("idx_positions_symbol", "symbol"),

@@ -21,6 +21,7 @@ export const STRATEGY_LABELS: Record<string, string> = {
   vwap_pullback: "VWAP Pullback",
   gamma_scalping: "Gamma Scalp",
   can_slim: "CAN SLIM",
+  intraday_futures: "Intraday Futures",
 };
 
 export const STATUS_COLORS: Record<string, string> = {

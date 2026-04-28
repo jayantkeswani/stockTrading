@@ -54,6 +54,18 @@ async def _do_shadow_execute(signal_id) -> None:
             logger.debug("Shadow execute: signal %s is %s, skipping", signal_id, signal.status)
             return
 
+        # Confidence gate — skip shadow trades for low-confidence signals
+        from app.services.strategy_params import get_strategy_params
+        params = await get_strategy_params(signal.strategy_name)
+        min_shadow_conf = params.get("min_confidence_for_shadow")
+        if min_shadow_conf is not None and signal.confidence is not None:
+            if float(signal.confidence) < min_shadow_conf:
+                logger.debug(
+                    "Shadow skip: confidence %.0f < shadow threshold %.0f for %s",
+                    float(signal.confidence), min_shadow_conf, signal.symbol,
+                )
+                return
+
         is_futures = signal.instrument_type == "FUTURE"
         if is_futures:
             lot_size = int((signal.indicators or {}).get("futures_lot_size", 1))

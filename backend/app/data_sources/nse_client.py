@@ -249,25 +249,96 @@ def _parse_shareholding_response(
 
 
 async def get_fo_lot_sizes() -> dict[str, int]:
-    """Download F&O lot sizes from NSE.
+    """Return F&O lot sizes for all eligible stocks.
 
-    Returns dict of symbol -> lot_size for all F&O eligible stocks.
-    Source: NSE market lots CSV or API.
+    Primary source: Fyers symbol master (already cached in Redis, refreshed
+    daily). Extracts unique stock symbols with segment=FUT and their lot sizes.
+    Fallback: NSE F&O securities JSON API for the symbol list, paired with
+    lot sizes from Fyers.
     """
+    lot_sizes = await _fo_lot_sizes_from_fyers()
+    if lot_sizes:
+        return lot_sizes
+
+    logger.warning("Fyers symbol master unavailable, trying NSE API fallback")
+    return await _fo_lot_sizes_from_nse_api()
+
+
+async def _fo_lot_sizes_from_fyers() -> dict[str, int]:
+    """Extract F&O stock lot sizes from the Fyers symbol master.
+
+    Fyers classifies stock futures under segment EQ (not FUT — that's index
+    futures only).  Stock futures have symbol pattern NSE:{NAME}{YY}{MON}FUT.
+    """
+    import re
+
+    from app.data_feed.symbol_master import symbol_master
+
+    if not symbol_master.is_loaded:
+        try:
+            await symbol_master.load()
+        except Exception:
+            logger.warning("Could not load Fyers symbol master")
+            return {}
+
+    if not symbol_master.is_loaded:
+        return {}
+
+    _INDEX_NAMES = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYIT", "NIFTYNXT50"}
+    fut_pattern = re.compile(r"^NSE:([A-Z&]+)\d{2}[A-Z]{3}FUT$")
+
+    lot_sizes: dict[str, int] = {}
+    for sym in symbol_master._symbols:
+        if sym.get("e") != "NSE":
+            continue
+        m = fut_pattern.match(sym.get("s", ""))
+        if not m:
+            continue
+        name = m.group(1)
+        lot = sym.get("l", 0)
+        if lot <= 0 or name in _INDEX_NAMES:
+            continue
+        if name not in lot_sizes:
+            lot_sizes[name] = lot
+
+    if lot_sizes:
+        logger.info("F&O lot sizes from Fyers symbol master: %d stocks", len(lot_sizes))
+    return lot_sizes
+
+
+async def _fo_lot_sizes_from_nse_api() -> dict[str, int]:
+    """Fallback: fetch F&O stock list from NSE JSON API."""
     client = await _get_nse_session()
     try:
         await asyncio.sleep(_RATE_LIMIT_DELAY)
-        # Try the lot size CSV endpoint
-        url = "https://archives.nseindia.com/content/fo/fo_mktlots.csv"
+        url = "https://www.nseindia.com/api/equity-stockIndices?index=SECURITIES%20IN%20F%26O"
         response = await client.get(url)
 
         if response.status_code != 200:
-            logger.warning("NSE lot sizes CSV returned %d", response.status_code)
+            logger.warning("NSE F&O API returned %d", response.status_code)
             return {}
 
-        return _parse_lot_sizes_csv(response.text)
+        content_type = response.headers.get("content-type", "")
+        if "html" in content_type.lower():
+            logger.warning("NSE F&O API returned HTML (blocked?)")
+            return {}
+
+        data = response.json()
+        symbols = [item["symbol"] for item in data.get("data", []) if "symbol" in item]
+
+        if not symbols:
+            return {}
+
+        # Pair with Fyers lot sizes if available
+        fyers_lots = await _fo_lot_sizes_from_fyers()
+        lot_sizes: dict[str, int] = {}
+        for sym in symbols:
+            lot_sizes[sym] = fyers_lots.get(sym, 1)
+
+        logger.info("F&O lot sizes from NSE API + Fyers: %d stocks", len(lot_sizes))
+        return lot_sizes
     except httpx.HTTPError:
-        logger.exception("HTTP error fetching F&O lot sizes")
+        logger.exception("HTTP error fetching F&O list from NSE API")
         return {}
     finally:
         await client.aclose()

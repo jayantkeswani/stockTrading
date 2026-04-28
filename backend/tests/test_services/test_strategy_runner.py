@@ -170,13 +170,14 @@ class TestEvaluateManual:
 
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.strategy_runner._handle_signal", new_callable=AsyncMock)
-    @patch("app.services.strategy_runner.strategy_runner._check_risk_limits", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.get_strategy_params", new_callable=AsyncMock, return_value={"min_confidence_to_persist": 10.0, "min_confidence_for_execution": 60.0})
+    @patch("app.services.strategy_runner.strategy_runner._check_global_risk_limits", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._build_market_context", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._load_todays_candles", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._get_current_price", new_callable=AsyncMock)
     @patch("app.strategies.registry.get_strategy")
     async def test_generates_signal_on_manual_scan(
-        self, mock_get_strategy, mock_price, mock_candles, mock_ctx, mock_risk, mock_handle
+        self, mock_get_strategy, mock_price, mock_candles, mock_ctx, mock_risk, mock_params, mock_handle
     ):
         """Manual evaluation should call strategy.evaluate and handle the signal."""
         from app.services.strategy_runner import strategy_runner
@@ -187,6 +188,7 @@ class TestEvaluateManual:
 
         mock_context = MagicMock(spec=MarketContext)
         mock_context.current_price = 24000.0
+        mock_context.india_vix = 16.0
         mock_ctx.return_value = mock_context
 
         signal = _make_signal()
@@ -212,13 +214,14 @@ class TestEvaluateManual:
         assert result is None
 
     @pytest.mark.asyncio
-    @patch("app.services.strategy_runner.strategy_runner._check_risk_limits", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.get_strategy_params", new_callable=AsyncMock, return_value={"min_confidence_to_persist": 10.0})
+    @patch("app.services.strategy_runner.strategy_runner._check_global_risk_limits", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._build_market_context", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._load_todays_candles", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._get_current_price", new_callable=AsyncMock)
     @patch("app.strategies.registry.get_strategy")
     async def test_returns_none_when_strategy_not_found(
-        self, mock_get_strategy, mock_price, mock_candles, mock_ctx, mock_risk
+        self, mock_get_strategy, mock_price, mock_candles, mock_ctx, mock_risk, mock_params
     ):
         """If the strategy doesn't exist in the registry, return None."""
         from app.services.strategy_runner import strategy_runner
@@ -234,13 +237,14 @@ class TestEvaluateManual:
 
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.strategy_runner._handle_signal", new_callable=AsyncMock)
-    @patch("app.services.strategy_runner.strategy_runner._check_risk_limits", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.get_strategy_params", new_callable=AsyncMock, return_value={"min_confidence_to_persist": 10.0})
+    @patch("app.services.strategy_runner.strategy_runner._check_global_risk_limits", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._build_market_context", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._load_todays_candles", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._get_current_price", new_callable=AsyncMock)
     @patch("app.strategies.registry.get_strategy")
     async def test_returns_none_when_no_signal(
-        self, mock_get_strategy, mock_price, mock_candles, mock_ctx, mock_risk, mock_handle
+        self, mock_get_strategy, mock_price, mock_candles, mock_ctx, mock_risk, mock_params, mock_handle
     ):
         """When the strategy returns None (no signal), evaluate_manual returns None."""
         from app.services.strategy_runner import strategy_runner
@@ -249,6 +253,7 @@ class TestEvaluateManual:
         mock_candles.return_value = []
         mock_risk.return_value = (True, None)
         mock_ctx.return_value = MagicMock(spec=MarketContext)
+        mock_ctx.return_value.india_vix = 16.0
 
         mock_strategy = MagicMock()
         mock_strategy.evaluate.return_value = None
@@ -260,7 +265,7 @@ class TestEvaluateManual:
 
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.strategy_runner._build_market_context", new_callable=AsyncMock)
-    @patch("app.services.strategy_runner.strategy_runner._check_risk_limits", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._check_global_risk_limits", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._load_todays_candles", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._get_current_price", new_callable=AsyncMock)
     async def test_returns_none_when_no_market_context(

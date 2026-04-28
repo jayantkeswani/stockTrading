@@ -2,7 +2,7 @@
 
 Runs:
 - Once on application startup
-- Daily at 8:55 AM IST (before market opens at 9:15 AM)
+- Daily at 7:45 AM IST (before morning workflow at 8:00 AM)
 
 On success: stores token in Redis and sends Telegram notification.
 On failure: schedules retries every 15 min (up to 10 attempts) before alerting.
@@ -137,7 +137,7 @@ async def start_fyers_login_scheduler() -> None:
     """Initialize and start the Fyers login scheduler.
 
     - Runs auto-login immediately on startup
-    - Schedules daily auto-login at 8:55 AM IST
+    - Schedules daily auto-login at 7:45 AM IST (before morning workflow)
     """
     if not has_auto_login_credentials():
         logger.warning(
@@ -147,16 +147,16 @@ async def start_fyers_login_scheduler() -> None:
         )
         return
 
-    # Schedule daily run at 8:55 AM IST (before market open at 9:15 AM)
+    # Schedule daily run at 7:45 AM IST (before morning workflow at 8:00 AM)
     scheduler.add_job(
         run_fyers_auto_login,
-        trigger=CronTrigger(hour=8, minute=55, timezone=IST),
+        trigger=CronTrigger(hour=7, minute=45, timezone=IST),
         id="fyers_daily_login",
         name="Fyers Daily Auto-Login",
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("Fyers login scheduler started (daily at 8:55 AM IST)")
+    logger.info("Fyers login scheduler started (daily at 7:45 AM IST)")
 
     # Run immediately on startup
     logger.info("Running Fyers auto-login on startup...")

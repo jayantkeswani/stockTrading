@@ -20,13 +20,14 @@ from datetime import date
 from app.core.constants import (
     CANSLIM_BREAKOUT_VOLUME_MULTIPLIER,
     CANSLIM_MAX_PCT_FROM_52W_HIGH,
+    CANSLIM_MAX_POSITIONAL_LOTS,
     CANSLIM_MAX_VIX,
     CANSLIM_MIN_TOTAL_SCORE,
     CANSLIM_SL_PCT,
     CANSLIM_TARGET_PCT,
     CANSLIM_TRAILING_SL_ACTIVATION_PCT,
-    CANSLIM_MAX_POSITIONAL_LOTS,
 )
+
 from app.core.enums import InstrumentType, SignalType, StrategyName
 from app.indicators.volume_analysis import is_volume_breakout, volume_ratio
 from app.strategies.base import (
@@ -54,6 +55,13 @@ class CANSLIMStrategy(BaseStrategy):
         - ctx.volume_avg_20d: 20-day average volume
         - ctx.india_vix: For market direction scoring
         """
+        p = ctx.strategy_params or {}
+        min_total_score = p.get("min_total_score", CANSLIM_MIN_TOTAL_SCORE)
+        max_vix = p.get("max_vix", CANSLIM_MAX_VIX)
+        volume_mult = p.get("breakout_volume_multiplier", CANSLIM_BREAKOUT_VOLUME_MULTIPLIER)
+        sl_pct = p.get("sl_pct", CANSLIM_SL_PCT)
+        target_pct = p.get("target_pct", CANSLIM_TARGET_PCT)
+
         # 1. Check fundamental data exists
         if ctx.canslim_data is None:
             logger.debug("No CAN SLIM fundamental data for %s — skipping", ctx.symbol)
@@ -63,18 +71,18 @@ class CANSLIMStrategy(BaseStrategy):
 
         # 2. Check composite CAN SLIM score meets minimum
         score = float(canslim.canslim_score) if canslim.canslim_score else 0
-        if score < CANSLIM_MIN_TOTAL_SCORE:
+        if score < min_total_score:
             logger.debug(
                 "%s CAN SLIM score %.1f < %.1f minimum — skipping",
-                ctx.symbol, score, CANSLIM_MIN_TOTAL_SCORE,
+                ctx.symbol, score, min_total_score,
             )
             return None
 
-        # 3. Check market direction (M factor)
-        if ctx.india_vix is not None and ctx.india_vix > CANSLIM_MAX_VIX:
+        # 3. Check market direction (M factor) — VIX threshold from strategy params
+        if ctx.india_vix is not None and ctx.india_vix > max_vix:
             logger.debug(
                 "%s India VIX %.1f > %.1f — CAN SLIM skipping (bearish market)",
-                ctx.symbol, ctx.india_vix, CANSLIM_MAX_VIX,
+                ctx.symbol, ctx.india_vix, max_vix,
             )
             return None
 
@@ -114,11 +122,11 @@ class CANSLIMStrategy(BaseStrategy):
             if today_volume == 0 and ctx.candles_daily:
                 today_volume = ctx.candles_daily[-1].volume
             if not is_volume_breakout(
-                today_volume, ctx.volume_avg_20d, CANSLIM_BREAKOUT_VOLUME_MULTIPLIER
+                today_volume, ctx.volume_avg_20d, volume_mult
             ):
                 logger.debug(
                     "%s volume %d < %.1fx avg %d — no volume confirmation",
-                    ctx.symbol, today_volume, CANSLIM_BREAKOUT_VOLUME_MULTIPLIER,
+                    ctx.symbol, today_volume, volume_mult,
                     ctx.volume_avg_20d,
                 )
                 return None
@@ -128,15 +136,15 @@ class CANSLIMStrategy(BaseStrategy):
 
         # Pattern-based SL: just below the base low (2% buffer)
         pattern_sl = pattern.base_low * 0.98
-        # Cap: never wider than CANSLIM_SL_PCT from entry
-        max_sl = entry_price * (1 - CANSLIM_SL_PCT / 100)
+        # Cap: never wider than sl_pct from entry
+        max_sl = entry_price * (1 - sl_pct / 100)
         stop_loss = max(pattern_sl, max_sl)
 
         # Pattern-based target: measured move (base depth projected above breakout)
         measured_move = pattern.breakout_price - pattern.base_low
         pattern_target = pattern.breakout_price + measured_move
-        # Floor: at least CANSLIM_TARGET_PCT from entry
-        min_target = entry_price * (1 + CANSLIM_TARGET_PCT / 100)
+        # Floor: at least target_pct from entry
+        min_target = entry_price * (1 + target_pct / 100)
         target_price = max(pattern_target, min_target)
 
         # Build reason string
@@ -214,8 +222,10 @@ class CANSLIMStrategy(BaseStrategy):
 
         # 3. Trailing stop check is handled by trade_monitor (updates position.stop_loss)
         # We just flag if price retraces to a trailing SL level
+        p = ctx.strategy_params or {}
+        trailing_activation = p.get("trailing_sl_activation_pct", CANSLIM_TRAILING_SL_ACTIVATION_PCT)
         gain_pct = ((price - entry_price) / entry_price) * 100
-        if gain_pct >= CANSLIM_TRAILING_SL_ACTIVATION_PCT and stop_loss >= entry_price:
+        if gain_pct >= trailing_activation and stop_loss >= entry_price:
             # Trailing SL is active (trade_monitor moved SL to breakeven)
             # Check if price dropped back to breakeven
             if price <= entry_price * 1.01:  # 1% buffer above breakeven

@@ -13,7 +13,7 @@ class OISnapshot(Base):
     symbol: Mapped[str] = mapped_column(String(30), nullable=False)
     expiry_date: Mapped[date] = mapped_column(Date, nullable=False)
     strike_price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
-    option_type: Mapped[str] = mapped_column(String(2), nullable=False)  # CE, PE
+    option_type: Mapped[str] = mapped_column(String(3), nullable=False)  # CE, PE, FUT
     open_interest: Mapped[int] = mapped_column(BigInteger, nullable=False)
     oi_change: Mapped[int] = mapped_column(BigInteger, nullable=False)
     volume: Mapped[int] = mapped_column(BigInteger, nullable=False)

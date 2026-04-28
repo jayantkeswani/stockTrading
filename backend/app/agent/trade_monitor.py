@@ -77,27 +77,38 @@ async def _check_position(
 
     # Update position's current price and unrealized P&L
     pos.current_price = current_price
-    pos.unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
+    # Detect direction from target (immutable) — SL can be trailed past entry
+    if pos.target_price is not None:
+        is_short_pos = pos.target_price < pos.entry_price
+    else:
+        is_short_pos = pos.stop_loss > pos.entry_price
+
+    if is_short_pos:
+        pos.unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
+    else:
+        pos.unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
+
+    pnl_pct = float(pos.unrealized_pnl / (pos.entry_price * pos.quantity) * 100) if pos.entry_price else 0.0
 
     # Broadcast position update
     await ws_manager.broadcast("position:update", {
         "position_id": str(pos.id),
         "current_price": float(current_price),
         "unrealized_pnl": float(pos.unrealized_pnl),
-        "pnl_percent": float(
-            (current_price - pos.entry_price) / pos.entry_price * 100
-        ),
+        "pnl_percent": pnl_pct,
     })
 
     # 1. Check SL — AUTO CLOSE (no confirmation needed in SEMI or YOLO)
-    if current_price <= pos.stop_loss:
+    sl_hit = current_price >= pos.stop_loss if is_short_pos else current_price <= pos.stop_loss
+    if sl_hit:
         return await _close_position(
             db, pos, current_price, ExitReason.AGENT_SL,
             AgentActionType.SL_TRIGGERED, requires_confirmation=False,
         )
 
     # 2. Check target
-    if pos.target_price and current_price >= pos.target_price:
+    target_hit = (pos.target_price and current_price <= pos.target_price) if is_short_pos else (pos.target_price and current_price >= pos.target_price)
+    if target_hit:
         if yolo_mode:
             # YOLO: auto-book profit, no confirmation
             return await _close_position(
@@ -108,16 +119,76 @@ async def _check_position(
             # SEMI: request confirmation from user
             return await _request_profit_confirmation(db, pos, current_price)
 
-    # 3. Trailing stop for POSITIONAL positions — move SL to breakeven after 10% gain
-    if getattr(pos, "position_type", "INTRADAY") == "POSITIONAL":
+    # 3. Trailing stop — POSITIONAL always, INTRADAY when trailing_sl_enabled
+    from app.services.strategy_params import get_strategy_params_sync
+    position_type = getattr(pos, "position_type", "INTRADAY")
+    strat_params = get_strategy_params_sync(pos.strategy_name or "")
+    should_trail = (
+        position_type == "POSITIONAL"
+        or strat_params.get("trailing_sl_enabled", False)
+    )
+    if should_trail:
         from app.core.constants import CANSLIM_TRAILING_SL_ACTIVATION_PCT
-        gain_pct = float((current_price - pos.entry_price) / pos.entry_price * 100)
-        if gain_pct >= CANSLIM_TRAILING_SL_ACTIVATION_PCT and pos.stop_loss < pos.entry_price:
-            pos.stop_loss = pos.entry_price
-            logger.info(
-                "Trailing stop activated for %s: SL moved to breakeven %.2f",
-                pos.symbol, float(pos.entry_price),
-            )
+        breakeven_pct = strat_params.get(
+            "trailing_sl_breakeven_pct",
+            strat_params.get("trailing_sl_activation_pct", CANSLIM_TRAILING_SL_ACTIVATION_PCT),
+        )
+
+        # High water mark tracking (best price since entry)
+        if is_short_pos:
+            if pos.high_since_entry is None:
+                pos.high_since_entry = current_price
+            elif current_price < pos.high_since_entry:
+                pos.high_since_entry = current_price
+        else:
+            if pos.high_since_entry is None:
+                pos.high_since_entry = current_price
+            elif current_price > pos.high_since_entry:
+                pos.high_since_entry = current_price
+
+        # Gain calculation: positive when trade moves in our favor
+        if is_short_pos:
+            gain_pct = float((pos.entry_price - current_price) / pos.entry_price * 100)
+        else:
+            gain_pct = float((current_price - pos.entry_price) / pos.entry_price * 100)
+
+        # Breakeven activation
+        if is_short_pos:
+            if gain_pct >= breakeven_pct and pos.stop_loss > pos.entry_price:
+                pos.stop_loss = pos.entry_price
+                logger.info(
+                    "Trailing stop activated for %s (SHORT): SL moved to breakeven %.2f",
+                    pos.symbol, float(pos.entry_price),
+                )
+        else:
+            if gain_pct >= breakeven_pct and pos.stop_loss < pos.entry_price:
+                pos.stop_loss = pos.entry_price
+                logger.info(
+                    "Trailing stop activated for %s: SL moved to breakeven %.2f",
+                    pos.symbol, float(pos.entry_price),
+                )
+
+        # Progressive trail — only when trail_pct is configured and SL already at breakeven+
+        trail_pct = strat_params.get("trailing_sl_trail_pct")
+        if trail_pct and pos.high_since_entry:
+            if is_short_pos:
+                if pos.stop_loss <= pos.entry_price:
+                    trail_sl = pos.high_since_entry * Decimal(str(1 + trail_pct / 100))
+                    if trail_sl < pos.stop_loss:
+                        pos.stop_loss = trail_sl
+                        logger.info(
+                            "Progressive trail for %s (SHORT): SL moved to %.2f (LWM: %.2f)",
+                            pos.symbol, float(trail_sl), float(pos.high_since_entry),
+                        )
+            else:
+                if pos.stop_loss >= pos.entry_price:
+                    trail_sl = pos.high_since_entry * Decimal(str(1 - trail_pct / 100))
+                    if trail_sl > pos.stop_loss:
+                        pos.stop_loss = trail_sl
+                        logger.info(
+                            "Progressive trail for %s: SL moved to %.2f (HWM: %.2f)",
+                            pos.symbol, float(trail_sl), float(pos.high_since_entry),
+                        )
 
     # 4. Expiry check for POSITIONAL positions — roll 3 days before futures expiry
     if getattr(pos, "position_type", "INTRADAY") == "POSITIONAL" and pos.expiry_date:
@@ -158,8 +229,13 @@ async def _close_position(
         trade.exit_price = exit_price
         trade.exit_time = now_ist()
         trade.exit_reason = exit_reason.value
-        trade.pnl = (exit_price - trade.entry_price) * trade.quantity
-        trade.pnl_percent = (exit_price - trade.entry_price) / trade.entry_price * 100
+        is_short = (pos.target_price is not None and pos.target_price < pos.entry_price)
+        if is_short:
+            trade.pnl = (trade.entry_price - exit_price) * trade.quantity
+            trade.pnl_percent = (trade.entry_price - exit_price) / trade.entry_price * 100
+        else:
+            trade.pnl = (exit_price - trade.entry_price) * trade.quantity
+            trade.pnl_percent = (exit_price - trade.entry_price) / trade.entry_price * 100
 
     # Log agent action
     log = AgentLog(

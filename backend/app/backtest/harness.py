@@ -44,7 +44,8 @@ from app.backtest.strike_selector import resolve_option_symbol
 from app.core.constants import IST, MARKET_CLOSE, MARKET_OPEN, POSITION_CLOSE_DEADLINE
 from app.core.database import async_session_factory
 from app.core.enums import InstrumentType
-from app.core.utils import is_trading_day, is_in_trading_window
+from app.core.utils import is_in_custom_trading_window, is_trading_day
+from app.services.strategy_params import get_strategy_params, parse_trading_windows
 from app.indicators.candle_patterns import Candle
 from app.models.market_data import MarketData1m
 from app.strategies.base import BaseStrategy, StrategySignal
@@ -87,6 +88,11 @@ class Backtester:
         """Run a full backtest and return a BacktestReport."""
         all_trades: list[SimulatedTrade] = []
         signals_meta: list[dict] = []
+
+        # Load per-strategy params once at the start
+        strategy_params = await get_strategy_params(strategy.name.value)
+        self._strategy_params = strategy_params
+        self._trading_windows = parse_trading_windows(strategy_params)
 
         trading_days = [
             start + timedelta(days=i)
@@ -139,7 +145,9 @@ class Backtester:
         current_ts = datetime.combine(day, MARKET_OPEN, tzinfo=IST) + timedelta(minutes=15)
 
         while current_ts <= close_deadline_dt:
-            if self.window_filter and not is_in_trading_window(as_of=current_ts):
+            if self.window_filter and not is_in_custom_trading_window(
+                as_of=current_ts, windows=self._trading_windows or None,
+            ):
                 current_ts += timedelta(minutes=STEP_MINUTES)
                 continue
 
@@ -148,6 +156,7 @@ class Backtester:
                 current_ts += timedelta(minutes=STEP_MINUTES)
                 continue
 
+            ctx.strategy_params = self._strategy_params
             signal = strategy.evaluate(ctx)
 
             if signal is not None and open_signal is None:

@@ -16,7 +16,6 @@ See docs/strategies/strategy-2-vwap-pullback.md for full specification.
 
 import logging
 
-from app.config import settings
 from app.core.constants import VWAP_PROXIMITY_PCT
 from app.core.enums import DayBias, InstrumentType, SignalType, StrategyName
 from app.indicators.candle_patterns import (
@@ -57,7 +56,10 @@ class VWAPPullbackStrategy(BaseStrategy):
         vwap = ctx.vwap.vwap
         price = ctx.current_price
 
-        if not is_pullback_to_vwap(price, vwap, VWAP_PROXIMITY_PCT):
+        p = ctx.strategy_params or {}
+        proximity_pct = p.get("vwap_proximity_pct", VWAP_PROXIMITY_PCT)
+
+        if not is_pullback_to_vwap(price, vwap, proximity_pct):
             return None
 
         distance = price_distance_from_vwap(price, vwap)
@@ -150,11 +152,13 @@ class VWAPPullbackStrategy(BaseStrategy):
             current_time_ist=ctx.current_time_ist,
         )
 
-        # Fire threshold gate
-        if confidence_result.score < settings.fire_confidence_threshold:
+        # Persist threshold gate — signals below this are too noisy to record
+        p = ctx.strategy_params or {}
+        min_persist = p.get("min_confidence_to_persist", 30.0)
+        if confidence_result.score < min_persist:
             logger.debug(
-                "Signal suppressed: confidence %.1f < threshold %.1f for %s %s",
-                confidence_result.score, settings.fire_confidence_threshold, ctx.symbol, direction,
+                "Signal suppressed: confidence %.1f < persist threshold %.1f for %s %s",
+                confidence_result.score, min_persist, ctx.symbol, direction,
             )
             return None
 
@@ -174,11 +178,13 @@ class VWAPPullbackStrategy(BaseStrategy):
         )
 
         # SL/target fallback
+        default_sl = p.get("default_sl_pct", 0.30)
+        default_rr = p.get("default_target_multiplier", 1.5)
         if index_sl is None or index_target is None:
             bias = ctx.intraday_bias.bias if ctx.intraday_bias else DayBias.NEUTRAL
-            sl_pct = 0.30 if (is_ce and bias == DayBias.BULLISH) or (not is_ce and bias == DayBias.BEARISH) else 0.35
+            sl_pct = default_sl if (is_ce and bias == DayBias.BULLISH) or (not is_ce and bias == DayBias.BEARISH) else default_sl + 0.05
             indicators["sl_pct"] = sl_pct
-            indicators["rr_multiplier"] = 1.5
+            indicators["rr_multiplier"] = default_rr
 
         # Build human-readable reason string including bias and top confidence factors
         bias_str = ctx.intraday_bias.bias.value if ctx.intraday_bias else "unknown"

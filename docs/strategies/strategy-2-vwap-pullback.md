@@ -84,7 +84,7 @@ This means a bearish gap on a bullish-yesterday day produces a MODERATE BEARISH 
 
 **File:** `backend/app/indicators/confidence.py`
 
-A 10-factor weighted composite produces a 0–100 score. The signal fires only when this score ≥ 55 (configurable via `settings.fire_confidence_threshold`).
+A 10-factor weighted composite produces a 0–100 score. The signal fires only when this score ≥ `min_confidence_to_persist` (per-strategy, default 30.0 for VWAP, configurable via Settings UI → Strategy Parameters).
 
 | Factor | Weight | What it measures |
 |---|---|---|

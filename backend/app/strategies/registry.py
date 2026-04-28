@@ -6,6 +6,7 @@ from app.strategies.strategy_1_orb import ORBStrategy
 from app.strategies.strategy_2_vwap_pullback import VWAPPullbackStrategy
 from app.strategies.strategy_3_gamma_scalping import GammaScalpingStrategy
 from app.strategies.strategy_4_canslim import CANSLIMStrategy
+from app.strategies.strategy_5_intraday_futures import IntradayFuturesStrategy
 
 # All available strategies
 _STRATEGIES: dict[StrategyName, BaseStrategy] = {
@@ -13,6 +14,7 @@ _STRATEGIES: dict[StrategyName, BaseStrategy] = {
     StrategyName.VWAP_PULLBACK: VWAPPullbackStrategy(),
     StrategyName.GAMMA_SCALPING: GammaScalpingStrategy(),
     StrategyName.CAN_SLIM: CANSLIMStrategy(),
+    StrategyName.INTRADAY_FUTURES: IntradayFuturesStrategy(),
 }
 
 

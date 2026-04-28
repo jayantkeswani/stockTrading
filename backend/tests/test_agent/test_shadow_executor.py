@@ -9,6 +9,10 @@ import pytest
 from app.core.enums import AgentActionType, SignalStatus, TradeSource
 
 
+def _default_params():
+    return {"min_confidence_for_shadow": 45.0, "min_confidence_for_execution": 60.0}
+
+
 class TestShadowExecuteSignal:
 
     @pytest.mark.asyncio
@@ -16,8 +20,9 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_live_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_creates_trade_and_position(
-        self, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_params, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """A PENDING signal — even executable=False — produces Trade(SHADOW) + Position(is_shadow=True)."""
         signal_id = uuid.uuid4()
@@ -54,8 +59,9 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_live_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_fires_for_executable_signal_too(
-        self, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_params, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Shadow also runs when executable=True (normal case)."""
         signal_id = uuid.uuid4()
@@ -103,8 +109,9 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_live_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_no_dedup_two_calls_same_symbol(
-        self, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_params, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Two signals on the same symbol both produce shadow trades — no dedup."""
         signal_id_1 = uuid.uuid4()
@@ -146,8 +153,9 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_live_price", side_effect=Exception("timeout"))
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_falls_back_to_signal_price_on_live_price_failure(
-        self, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_params, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Falls back to signal.entry_price if get_live_price raises."""
         signal_id = uuid.uuid4()
@@ -164,12 +172,51 @@ class TestShadowExecuteSignal:
         assert len(trades) == 1
         assert float(trades[0].entry_price) == 175.0
 
+    @pytest.mark.asyncio
+    @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value={"min_confidence_for_shadow": 45.0})
+    async def test_shadow_skips_low_confidence_signal(self, mock_params, mock_session_factory):
+        """Signal below min_confidence_for_shadow threshold produces no trade."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id, confidence=Decimal("30.0"))
+
+        session, added_objects = _mock_session(mock_session_factory, signal)
+
+        from app.agent.shadow_executor import shadow_execute_signal
+        await shadow_execute_signal(signal_id)
+
+        assert added_objects == []
+
+    @pytest.mark.asyncio
+    @patch("app.agent.shadow_executor.ws_manager")
+    @patch("app.agent.shadow_executor.get_live_price")
+    @patch("app.agent.shadow_executor.get_trading_config")
+    @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value={"min_confidence_for_shadow": 45.0})
+    async def test_shadow_fires_at_exact_threshold(
+        self, mock_params, mock_session_factory, mock_cfg, mock_price, mock_ws
+    ):
+        """Signal at exactly min_confidence_for_shadow should still fire."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id, confidence=Decimal("45.0"))
+
+        session, added_objects = _mock_session(mock_session_factory, signal)
+        mock_cfg.return_value = _make_cfg()
+        mock_price.return_value = 180.0
+        mock_ws.broadcast = AsyncMock()
+
+        from app.agent.shadow_executor import shadow_execute_signal
+        await shadow_execute_signal(signal_id)
+
+        trades = [o for o in added_objects if type(o).__name__ == "Trade"]
+        assert len(trades) == 1
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_signal(signal_id, executable=True, blocked_reason=None, status=None, entry_price=None):
+def _make_signal(signal_id, executable=True, blocked_reason=None, status=None, entry_price=None, confidence=None):
     s = MagicMock()
     s.id = signal_id
     s.status = (status or SignalStatus.PENDING).value if status else SignalStatus.PENDING.value
@@ -184,6 +231,7 @@ def _make_signal(signal_id, executable=True, blocked_reason=None, status=None, e
     s.stop_loss = Decimal("120.0")
     s.target_price = Decimal("270.0")
     s.entry_price = entry_price or Decimal("180.0")
+    s.confidence = confidence if confidence is not None else Decimal("70.0")
     s.fyers_option_symbol = "NSE:NIFTY26MAY24000CE"
     s.fyers_futures_symbol = None
     s.lots = 2

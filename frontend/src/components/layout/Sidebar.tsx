@@ -10,6 +10,7 @@ const navItems = [
   { href: "/signals", label: "Signals", icon: "zap" },
   { href: "/research", label: "Research", icon: "search" },
   { href: "/agent", label: "Agent", icon: "bot" },
+  { href: "/intraday-futures", label: "Futures", icon: "bolt" },
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
@@ -37,6 +38,11 @@ const icons: Record<string, ReactNode> = {
   search: (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+    </svg>
+  ),
+  bolt: (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
     </svg>
   ),
   settings: (

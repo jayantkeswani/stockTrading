@@ -127,6 +127,17 @@ export default function SettingsPage() {
     }
   };
 
+  const handleUpdateParams = async (name: string, params: Record<string, unknown>) => {
+    try {
+      const updated = await api.updateStrategy(name, { parameters: params }) as StrategyConfig;
+      setStrategies((prev) =>
+        prev.map((s) => (s.strategy_name === name ? { ...s, parameters: updated.parameters } : s))
+      );
+    } catch {
+      // Error
+    }
+  };
+
   const handleUpdateSymbols = async (
     name: string,
     symbols: string[],
@@ -296,16 +307,23 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  {/* Expanded: Symbol configuration */}
+                  {/* Expanded: Symbol configuration + Parameters */}
                   {isExpanded && (
-                    <div className="px-3 py-2 border-t border-border/30 animate-fade-in">
-                      <label className="text-[10px] font-mono text-text-muted uppercase block mb-1.5">
-                        Symbols to scan
-                      </label>
-                      <SymbolSelector
-                        selected={s.symbols}
-                        symbolMap={s.symbol_map || {}}
-                        onChange={(symbols, symbolMap) => handleUpdateSymbols(s.strategy_name, symbols, symbolMap)}
+                    <div className="px-3 py-2 border-t border-border/30 animate-fade-in space-y-3">
+                      <div>
+                        <label className="text-[10px] font-mono text-text-muted uppercase block mb-1.5">
+                          Symbols to scan
+                        </label>
+                        <SymbolSelector
+                          selected={s.symbols}
+                          symbolMap={s.symbol_map || {}}
+                          onChange={(symbols, symbolMap) => handleUpdateSymbols(s.strategy_name, symbols, symbolMap)}
+                        />
+                      </div>
+                      <StrategyParams
+                        strategyName={s.strategy_name}
+                        savedParams={s.parameters || {}}
+                        onSave={(params) => handleUpdateParams(s.strategy_name, params)}
                       />
                     </div>
                   )}
@@ -560,6 +578,128 @@ function SymbolSelector({
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
+// Strategy Parameters Editor
+// ------------------------------------------------------------------
+
+const PARAM_LABELS: Record<string, string> = {
+  min_confidence_to_persist: "Min Confidence to Persist",
+  min_confidence_for_shadow: "Min Confidence for Shadow",
+  min_confidence_for_execution: "Min Confidence for Execution",
+  vwap_proximity_pct: "VWAP Proximity %",
+  default_sl_pct: "Default SL %",
+  default_target_multiplier: "Target Multiplier",
+  vix_extreme: "VIX Extreme Threshold",
+  sl_pct: "Stop Loss %",
+  target_pct: "Target %",
+  min_total_score: "Min CAN SLIM Score",
+  max_vix: "Max VIX",
+  breakout_volume_multiplier: "Volume Multiplier",
+  max_positional_lots: "Max Lots",
+  trailing_sl_activation_pct: "Trailing SL Activation %",
+};
+
+const HIDDEN_PARAMS = new Set(["trading_windows", "dead_zone"]);
+
+function StrategyParams({
+  strategyName,
+  savedParams,
+  onSave,
+}: {
+  strategyName: string;
+  savedParams: Record<string, unknown>;
+  onSave: (params: Record<string, unknown>) => void;
+}) {
+  const [defaults, setDefaults] = useState<Record<string, unknown> | null>(null);
+  const [draft, setDraft] = useState<Record<string, unknown>>({});
+  const [expanded, setExpanded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getParameterDefaults(strategyName).then(setDefaults).catch(() => {});
+  }, [strategyName]);
+
+  if (!defaults) return null;
+
+  const merged = { ...defaults, ...savedParams, ...draft };
+  const hasDraft = Object.keys(draft).length > 0;
+
+  const numericKeys = Object.keys(defaults).filter(
+    (k) => typeof defaults[k] === "number" && !HIDDEN_PARAMS.has(k)
+  );
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveMsg(null);
+    const toSave = { ...savedParams, ...draft };
+    try {
+      onSave(toSave);
+      setDraft({});
+      setSaveMsg("Saved");
+      setTimeout(() => setSaveMsg(null), 2000);
+    } catch {
+      setSaveMsg("Error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-1 text-[10px] font-mono text-text-muted uppercase tracking-wider hover:text-text-secondary transition-colors"
+        >
+          <svg
+            className={`w-2.5 h-2.5 transition-transform ${expanded ? "rotate-90" : ""}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          Parameters
+        </button>
+        <div className="flex items-center gap-2">
+          {saveMsg && (
+            <span className={`text-[10px] font-mono ${saveMsg === "Saved" ? "text-profit" : "text-loss"}`}>
+              {saveMsg}
+            </span>
+          )}
+          {hasDraft && (
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="text-[10px] font-mono px-2 py-0.5 rounded bg-accent/20 text-accent border border-accent/30 hover:bg-accent/30 disabled:opacity-50"
+            >
+              {saving ? "saving…" : "Save"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="mt-2 grid grid-cols-3 gap-2 animate-fade-in">
+          {numericKeys.map((key) => (
+            <div key={key}>
+              <label className="text-[10px] font-mono text-text-muted block mb-0.5 truncate" title={key}>
+                {PARAM_LABELS[key] || key}
+              </label>
+              <input
+                type="number"
+                step="any"
+                value={merged[key] as number}
+                onChange={(e) => setDraft((d) => ({ ...d, [key]: Number(e.target.value) }))}
+                className="w-full bg-bg-tertiary border border-border rounded px-1.5 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

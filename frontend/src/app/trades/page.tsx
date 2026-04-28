@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { api } from "@/lib/api";
 import { startOfMonthIST, endOfMonthIST, isoDateIST } from "@/lib/formatters";
+import { STRATEGY_LABELS } from "@/lib/constants";
 import type { Trade } from "@/lib/types";
 import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
 import { SummaryStrip } from "@/components/trades/SummaryStrip";
@@ -22,6 +23,7 @@ export default function TradesPage() {
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [mode, setMode] = useState<TradeMode>("REAL");
+  const [strategyFilter, setStrategyFilter] = useState<string>("");
 
   useEffect(() => {
     setSelectedDay(null);
@@ -34,6 +36,7 @@ export default function TradesPage() {
           entry_until: period.end.toISOString(),
           limit: 1000,
           source: mode === "SHADOW" ? "SHADOW" : undefined,
+          strategy: strategyFilter || undefined,
         })) as Trade[];
         if (!cancelled) setTrades(data);
       } catch {
@@ -44,7 +47,7 @@ export default function TradesPage() {
     }
     load();
     return () => { cancelled = true; };
-  }, [period, mode]);
+  }, [period, mode, strategyFilter]);
 
   const dailyPnL = useMemo(() => {
     const map = new Map<string, number>();
@@ -73,6 +76,17 @@ export default function TradesPage() {
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
           <PeriodFilter value={period} onChange={setPeriod} />
+          {/* Strategy filter */}
+          <select
+            value={strategyFilter}
+            onChange={(e) => setStrategyFilter(e.target.value)}
+            className="text-[10px] font-mono bg-bg-tertiary border border-border rounded px-1.5 py-1 text-text-secondary"
+          >
+            <option value="">All Strategies</option>
+            {Object.entries(STRATEGY_LABELS).map(([key, label]) => (
+              <option key={key} value={key}>{label}</option>
+            ))}
+          </select>
           {/* Real / Signal Test toggle */}
           <div className="flex items-center rounded border border-border overflow-hidden text-[10px] font-mono">
             <button

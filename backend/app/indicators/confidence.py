@@ -66,6 +66,7 @@ def compute_confidence(
     index_target: float | None,
     index_entry: float,
     current_time_ist: str = "",
+    window_state: str | None = None,
 ) -> ConfidenceResult:
     """Compute the deterministic confidence composite.
 
@@ -202,19 +203,22 @@ def compute_confidence(
     # 10. time_of_day — primary windows get full credit
     # ------------------------------------------------------------------
     try:
-        from datetime import time
-        from app.core.utils import get_window_state
-        from app.core.constants import IST
-        from datetime import datetime
-        if current_time_ist:
-            ts = datetime.fromisoformat(current_time_ist)
-            state = get_window_state(as_of=ts)
-            if state == "IN_WINDOW":
-                factors["time_of_day"] = 1.0
-            elif state == "DEAD_ZONE":
-                factors["time_of_day"] = 0.2
-            else:
-                factors["time_of_day"] = 0.5
+        if window_state is not None:
+            state = window_state
+        elif current_time_ist:
+            from datetime import datetime as _dt
+            from app.core.utils import get_window_state as _get_ws
+            ts = _dt.fromisoformat(current_time_ist)
+            state = _get_ws(as_of=ts)
+        else:
+            state = None
+
+        if state == "IN_WINDOW":
+            factors["time_of_day"] = 1.0
+        elif state == "DEAD_ZONE":
+            factors["time_of_day"] = 0.2
+        elif state is not None:
+            factors["time_of_day"] = 0.5
         else:
             factors["time_of_day"] = 0.5
     except Exception:

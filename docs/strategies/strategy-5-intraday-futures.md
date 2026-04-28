@@ -1,394 +1,564 @@
-# Strategy 5: Intraday Stock Futures — Momentum Breakout Scanner
+# Strategy 5: Intraday Stock Futures
+
+**Status:** IN DEVELOPMENT  
+**File:** `backend/app/strategies/strategy_5_intraday_futures.py`  
+**Instruments:** NSE F&O stock futures — BUY_FUT / SELL_FUT  
+**Holding type:** INTRADAY (square off by 3:15 PM)
+
+---
 
 ## Overview
 
-An intraday strategy for trading **stock futures** on NSE. Unlike CAN SLIM (positional, held for days/weeks), this strategy identifies same-day momentum opportunities in F&O stocks and squares off all positions before 3:00 PM IST.
+An AI-agent-driven intraday strategy for trading stock futures on NSE. Unlike other strategies where the user triggers scans or the strategy evaluates on candle close for a fixed symbol list, Strategy 5 operates as an autonomous daily workflow — from morning research through signal generation to end-of-day journaling — on its own dedicated frontend page (`/intraday-futures`).
 
-**Key difference from other strategies:** Two-phase approach — a **morning screener** ranks the best candidates before market opens, then **intraday setups** generate signals on those candidates throughout the day.
+Key characteristics:
 
-**Instrument:** Stock Futures (BUY_FUT / SELL_FUT)
-**Holding type:** INTRADAY (square off by 3:00 PM)
+1. **Agent-driven lifecycle** — A background AI agent runs autonomously through the trading day following a phase-based schedule
+2. **Dynamic symbol selection** — Picks its own symbols each morning via a 3-stage screener (quantitative scoring → news sentiment → LLM confidence). Overrides `get_symbols()` to return dynamic watchlist from Redis instead of static DB config
+3. **Intra-day state** — Carries daily state (ORB levels, RVOL baselines, trade count, drawdown) in Redis, resets each day
+4. **Cross-position awareness** — Checks open Strategy 5 positions before generating signals (sector dedup, position limits). Scoped to this strategy only
+5. **Dedicated frontend page** — Agent activity log with category filters, watchlist with ORB levels, global cues, setup performance, day status bar
+6. **Day-over-day memory** — Reviews yesterday's performance and recent trends via LLM morning briefing, adjusting today's approach
+
+Signals also appear on the main homepage scanner with strategy-aware rendering (setup type, phase, RVOL, risk warnings).
+
 **Target move:** 1-2% intraday
 
 ---
 
-## Research Findings
+## Phase State Machine
 
-### How Professional Intraday Traders in India Select Stocks
+The strategy's `evaluate()` method checks the current phase before deciding which sub-setups to run. Phases are time-based and deterministic. The current phase is stored in Redis (`strat5:phase:{date}`) for frontend display.
 
-Based on extensive research across prop trading firms (PropaTrade, FundedStock), Indian trading educators (Vivek Bajaj, P.R. Sundar), broker platforms (Zerodha Streak, Tradetron, Chartink), academic research (NSE block-based ORB optimization papers), and professional trading communities.
+| Phase | Time | Active Setups | Notes |
+|---|---|---|---|
+| `PRE_MARKET` | before 9:15 AM | None | Screener has already run |
+| `ORB_FORMING` | 9:15 – 9:30 AM | None | Record high/low per stock, compute opening RVOL |
+| `MORNING_ACTIVE` | 9:30 – 11:30 AM | ORB, Gap Continuation, PDH/PDL, VWAP Bounce | Prime trading window |
+| `CAUTION_ZONE` | 11:30 AM – 1:00 PM | PDH/PDL, VWAP Bounce | RVOL >= 2.5, breakout confirmation required |
+| `AFTERNOON` | 1:00 – 2:45 PM | PDH/PDL, VWAP Bounce | ORB + Gap expired |
+| `CLOSING` | 2:45 – 3:15 PM | None | Manage existing positions, force-close at 3:15 PM |
+| `DONE` | after 3:15 PM | None | Log day summary, halt |
 
-#### The Consensus Approach
-
-1. **Pre-market preparation** (6:00–9:15 AM): Check global cues, rank stocks by setup quality
-2. **Opening observation** (9:15–9:30 AM): Watch ORB formation, volume surge
-3. **Active trading** (9:30 AM–2:45 PM): Execute 2-4 high-quality setups
-4. **Exit all** by 3:00 PM to avoid broker auto-square-off penalties
-
-Professional traders consistently recommend **quality over quantity** — 3 good trades outperform 10 random ones.
-
----
-
-## Phase A: Morning Screener — Pre-Market Stock Ranking
-
-### Why Screen Before Market Opens
-
-The F&O universe has ~180 stocks. Without filtering, you'd drown in noise. The morning screener reduces this to 10-15 high-probability candidates ranked by a composite "trade-ability score."
-
-### Screening Factors
-
-| Factor | Weight | What It Measures | Data Source | Scoring |
-|--------|--------|-----------------|------------|---------|
-| **Relative Strength vs NIFTY** | 20% | Stock outperforming the index | 1Y price history → RS raw score | RS > 80 (100pts), RS 50-80 (linear), RS < 50 (0pts) |
-| **Previous Day Range & Close** | 15% | Directional bias from yesterday | Yesterday's OHLC candle | Close in top 25% of range = bullish (100pts), bottom 25% = bearish, middle = neutral |
-| **Volume Trend** | 15% | Is recent volume increasing? | Last 5 days volume vs 20-day avg | Ratio > 1.5 (100pts), 1.0-1.5 (linear), < 1.0 (low) |
-| **OI Change (prev day)** | 15% | Rising OI = new money entering | Bhav copy / OI snapshots | OI up + price up = 100pts, OI up + price down = 50pts (shorts building), OI down = low score |
-| **Proximity to 52-Week High** | 10% | Momentum stocks near highs | Stock info | Within 5% = 100pts, 5-15% = linear, > 15% = low |
-| **Sector Momentum** | 10% | Is the stock's sector in favor? | Sector-level RS ranking | Top 3 sectors = 100pts, middle = 50pts, bottom 3 = 0pts |
-| **Delivery Percentage** | 10% | Genuine buying vs speculation | NSE bhav copy | > 50% delivery in uptrend = strong, < 30% = speculative |
-| **Beta** | 5% | Larger intraday range = more opportunity | Computed from price history | Beta > 1.5 = 100pts (bigger moves), Beta < 0.8 = low |
-
-### Composite Score
-
-```
-Watchlist Score = (RS × 0.20) + (PrevDay × 0.15) + (Volume × 0.15) + (OI × 0.15)
-                + (52WH × 0.10) + (Sector × 0.10) + (Delivery × 0.10) + (Beta × 0.05)
-```
-
-**Minimum score to include:** 50/100
-**Top 10-15 stocks** form "Today's Watchlist"
-
-### Data Sources for Screening
-
-**Already available in the codebase:**
-- **Relative Strength:** `indicators/relative_strength.py` → `compute_rs_raw_score()`, `percentile_rank_rs()`
-- **Previous Day levels:** `indicators/previous_day.py` → `analyze_previous_day()` returns PDH, PDL, PDC, bias
-- **Volume analysis:** `indicators/volume_analysis.py` → `compute_avg_volume()`, `volume_ratio()`
-- **52-week high proximity:** `stock_fundamentals.pct_from_52w_high` (in DB)
-- **F&O stock universe:** `nse_client.get_fo_lot_sizes()` returns all F&O eligible stocks
-
-**Needs building or sourcing:**
-- **OI change (daily):** Can compute from `oi_snapshots` table (latest vs previous day) for configured stocks, or parse NSE bhav copy for broader coverage
-- **Delivery percentage:** Available from NSE daily bhav copy — needs a new data fetch
-- **Sector classification:** Can use yfinance `stock.info["sector"]` or maintain a static mapping
-- **Beta calculation:** Compute from 1Y daily returns vs NIFTY returns (covariance / variance)
+**Caution Zone:** Instead of a hard block on signals, the CAUTION_ZONE raises the bar — RVOL threshold increases from 1.5 to 2.5, breakout confirmation required (the breakout candle must close beyond the level AND the next candle must hold), and confidence is reduced. Signals generated during caution zone are flagged with `caution_zone: true`.
 
 ---
 
-## Phase B: Intraday Signal Generation
+## Agent Daily Workflow
 
-### Setup 1: Opening Range Breakout (ORB)
+### 8:00 AM — Morning Briefing
 
-**Research basis:** ORB is the most backtested intraday strategy for Indian markets. Academic study by Chenxi Wang on NSE showed 400%+ annual returns with proper filters. Works particularly well for stock futures due to cleaner price action vs indices.
+The agent reviews recent history to inform today's approach:
+
+1. **Yesterday's recap** — trades, wins/losses, net P&L, which setups worked
+2. **5-day performance trend** — cumulative P&L, win rate by setup type, best/worst sectors, drawdown streak detection
+3. **Market regime** — VIX trend, Nifty trending vs range-bound, sector themes
+4. **LLM synthesis** — approach recommendation (aggressive/normal/conservative), setup priority adjustments, sector bias, flags (e.g., "3-day losing streak — recommend 1 lot max today")
+
+The briefing adjusts confidence scores and may suggest parameter tweaks, but hard rules (RVOL, R:R, risk limits) still govern signal generation. Stored in Redis (`strat5:morning_briefing:{date}`).
+
+### 8:00 AM — Global Cues
+
+Collects overnight data from Redis (populated by existing `global_market_task` via yfinance every 15 min):
+
+| Data Point | Source | Impact |
+|---|---|---|
+| GIFT Nifty % change | yfinance (SGX Nifty futures) | Gap > 1% → flag "volatile open expected" |
+| US markets (S&P, Nasdaq, Dow close) | yfinance | Risk-on / risk-off sentiment |
+| Crude oil price + % change | yfinance (CL=F) | Impacts energy sector (ONGC, RELIANCE, IOC, BPCL) |
+| USD/INR movement | yfinance (USDINR=X) | Impacts IT sector (TCS, INFY, WIPRO) |
+| India VIX | Redis `indicator:global:india_vix` | VIX > 20 → halt all stock futures trades for the day |
+
+If VIX > 20, agent sets status to HALTED. Stored in Redis (`strat5:global_cues:{date}`).
+
+**Mid-day shift detection:** If crude moves ±2% or VIX shifts ±2 points from the morning snapshot, the agent logs the shift (debounced 60 min). The bias system automatically picks this up via the `global_overnight_score` component.
+
+### 8:30 AM — Morning Screener
+
+Three-stage pipeline (see Morning Screener section below).
+
+### 9:08 AM — Pre-Open Reassessment
+
+After NSE pre-open session ends (9:07 AM), the agent gap-adjusts the watchlist using live pre-open data:
+
+- **Relative gap** = stock gap - Nifty gap. |relative_gap| > 1% → force override bias. 0.5-1% → nudge bias
+- **Live VIX** — refreshed from pre-open (the 8:30 AM value was previous-close)
+- **Nifty gap** — stored in global cues for strategy consumption
+- **Re-ranking** — stocks whose gap aligns with their bias get a score bonus (up to +5 points); watchlist re-sorted
+
+Pure math — no LLM calls. Implemented in `run_preopen_reassessment()` in `morning_screener.py`.
+
+### 9:15 AM — ORB Formation
+
+Records high and low of the first 15 minutes per watchlist stock. Computes opening RVOL from 20-day volume profile. No signals generated. ORB levels stored in Redis (`strat5:orb:{date}:{symbol}`).
+
+### 9:30 AM – 2:45 PM — Active Trading
+
+Phase-dependent evaluation on each 1-minute candle close: hard filters → sub-setup checks → chart-based SL/target → cross-position risk checks → signal persist. Manages open positions (trailing SL, target monitoring). Tracks daily P&L and drawdown (Strategy 5 scoped).
+
+### 2:45 PM — Closing Phase
+
+No new signals. Existing positions managed (trailing SL, target). Force-close at 3:15 PM via existing `is_past_close_deadline()`.
+
+### 3:15 PM — Day Complete
+
+End-of-day summary logged: trades taken, wins/losses, net P&L, best/worst trade, setup breakdown. Stored in Redis → feeds tomorrow's morning briefing.
+
+---
+
+## Morning Screener
+
+**File:** `backend/app/services/morning_screener.py`
+
+### Stage 1: Quantitative Scoring (~180 F&O stocks)
+
+Scans all F&O stocks from `nse_client.get_fo_lot_sizes()`. For each stock, computes 8 screening factors:
+
+| Factor | Weight | What It Measures | Scoring |
+|---|---|---|---|
+| Relative Strength vs NIFTY | 20% | 3-month stock outperformance vs index | RS > 80 → 100, RS 50-80 → linear, RS < 50 → 0 |
+| Previous Day Range & Close | 15% | Directional bias from yesterday | Close in top/bottom 25% → 100, middle → 50 |
+| Volume Trend | 15% | Recent volume increasing? | 5d/20d avg ratio: > 1.5 → 100, 1.0-1.5 → linear |
+| OI Change (prev day) | 15% | New money entering the stock | Long buildup → 100, short buildup → 50, unwinding → low |
+| ADR (Average Daily Range) | 10% | Does the stock move enough intraday? | > 2.5% → 100, 1.5-2.5% → linear, < 1.5% → excluded |
+| Sector Momentum | 10% | Is the stock's sector in favor? | Top 3 RS sectors → 100, middle → 50, bottom 3 → 0 |
+| Delivery Percentage | 10% | Genuine buying vs speculation | > 50% → 100, 30-50% → 50, < 30% → 0 |
+| 52-Week High Proximity | 5% | Momentum near highs | Within 5% → 100, 5-15% → linear, > 15% → low |
+
+Stocks scoring above 50/100 make the initial cut (typically 20-25).
+
+### Stage 2: News & Sentiment (top ~20 candidates)
+
+For each candidate, runs the existing `NewsSentimentAgent` (Gemini with Google Search grounding):
+- Strong negative news (fraud, regulatory, downgrade) → exclude from watchlist
+- Earnings today → flag but don't exclude
+- Strong positive news → boost score
+- Neutral → no adjustment
+
+Calls run in parallel (~30-60 seconds total).
+
+### Stage 3: LLM Confidence Check (top ~15 after news filter)
+
+Single batched LLM call reviews all remaining candidates with quantitative scores and news context. Returns per-stock confidence (HIGH/MEDIUM/LOW) with reasoning. LOW candidates dropped.
+
+**Output:** Final ranked watchlist of 15-20 stocks stored in Redis (`strat5:watchlist:{date}`). Each stock includes: composite score, directional bias (BULLISH/BEARISH/NEUTRAL), trend strength/score, top contributing factors, news sentiment, previous day levels (PDH/PDL/PDC), earnings flag.
+
+### Directional Bias Derivation
+
+Bias is derived from the stock's multi-day trend (computed by `indicators/stock_trend.py`): 5/20 DMA crossover, higher-highs/higher-lows pattern, ADR, close position within range, RS momentum. Output: direction (UP/DOWN/FLAT) + strength (STRONG/MODERATE/WEAK) + score (-1.0 to +1.0).
+
+---
+
+## Nifty Alignment — Directional Gate
+
+Reuses the existing `compute_intraday_bias()` from `indicators/intraday_bias.py` — the same 6-factor weighted composite used by Strategy 2.
+
+The strategy computes Nifty's own intraday bias (not just the stock's):
+- **STRONG opposing** Nifty bias blocks the signal (STRONG BEARISH → no BUY_FUT, STRONG BULLISH → no SELL_FUT)
+- **MODERATE or WEAK** allows both directions but adjusts `bias_factor` in confidence scoring
+
+Same soft gate pattern as Strategy 2.
+
+---
+
+## Pre-Signal Hard Filters
+
+Every sub-setup must pass all of these before generating a signal:
+
+| Filter | Threshold | Rationale |
+|---|---|---|
+| RVOL (time-of-day normalized) | >= 1.5 (>= 2.5 in CAUTION_ZONE) | Volume must be elevated vs normal for this time of day |
+| Nifty intraday bias alignment | STRONG opposing blocks | Counter-trend stock setups fail far more often |
+| Stock price | > Rs 100 | Below this, tick sizes and slippage hurt |
+| ADR | > 1.5% | Stock must move enough to be worth trading intraday |
+| VWAP position | Must be on correct side for the signal direction | Ensures trend alignment |
+| Stock trend direction | STRONG opposing blocks signal, MODERATE adds risk_warning | Multi-day trend from `stock_trend.py` |
+
+---
+
+## Entry Conditions — Sub-Setups
+
+### Priority Order
+
+| Time Window | Priority (highest first) |
+|---|---|
+| Morning (9:30 – 11:30 AM) | ORB > Gap Continuation > PDH/PDL Breakout > VWAP Bounce |
+| Caution Zone (11:30 AM – 1:00 PM) | PDH/PDL Breakout > VWAP Bounce (RVOL >= 2.5 + breakout confirmation) |
+| Afternoon (1:00 – 2:45 PM) | VWAP Bounce > PDH/PDL Breakout (ORB + Gap expired) |
+
+If the same stock triggers multiple setups, take the highest-priority one only.
+
+### Setup 1: ORB Breakout
+
+**Time window:** 9:30 AM – 11:00 AM only
 
 **Rules:**
-- **Opening Range:** High and Low of first 15 minutes (9:15–9:30 AM)
+- **Opening Range:** High and Low of first 15 minutes (9:15–9:30 AM), recorded per stock in Redis
 - **Breakout:** 5-minute candle closes above ORB high → BUY_FUT. Closes below ORB low → SELL_FUT
 - **Volume confirmation:** Breakout candle volume > 1.2x average 5-minute volume
 - **VWAP filter:** For longs, price must be above VWAP. For shorts, below VWAP
-- **Stop Loss:** Opposite side of ORB range (e.g., if long above ORB high, SL at ORB low)
-- **Target:** 1.5x risk (R:R = 1:1.5)
-- **Time window:** 9:30 AM – 11:00 AM only (ORB loses edge after mid-morning)
 
-**Enhanced ORB (ORB + PRB):** If price also breaks Previous Day's Range (PDH for longs, PDL for shorts) in the same direction, probability increases significantly. This is a stronger signal variant.
+**SL/Target:**
+- **SL:** Opposite side of ORB range (ORB low for longs, ORB high for shorts). If ORB range < 1x ATR(14) on 5-min, widen SL to 1x ATR from entry
+- **Target:** Nearest resistance above entry (PDH, swing high, VWAP upper band) that gives R:R >= 1.5. Fallback: 1.5x risk
+- **R:R validation:** Must be >= 1.5; skip signal if not achievable
+
+**Enhanced ORB:** If price also breaks PDH (for longs) or PDL (for shorts), this is a stronger variant logged as "ORB + PDH Breakout" with higher confidence.
 
 ### Setup 2: VWAP Bounce / Pullback
 
-**Research basis:** VWAP is THE institutional benchmark. Professional fund managers execute relative to VWAP. Price rejections from VWAP in trending stocks are high-probability entries.
+**Time window:** 10:00 AM – 2:45 PM
 
 **Rules:**
-- **Trend identification:** Price consistently above VWAP (30+ minutes) = uptrend. Below = downtrend
+- **Trend identification:** Price consistently above VWAP for 30+ minutes = uptrend, below = downtrend
 - **Pullback:** Price pulls back to touch VWAP (within 0.2%)
-- **Rejection:** Bullish reversal candle at VWAP (pin bar, engulfing, or just a strong close away from VWAP)
+- **Rejection:** Bullish reversal candle at VWAP (pin bar, engulfing, or strong close away). Uses existing `candle_patterns.py`
 - **Volume:** Rejection candle volume > average volume
-- **Stop Loss:** 0.3% beyond VWAP on the wrong side
-- **Target:** Previous swing high/low, or 1.5x risk
-- **Time window:** 10:00 AM – 2:45 PM (needs trend to establish first)
 
-### Setup 3: Previous Day Level Breakout (PDH/PDL)
+**SL/Target:**
+- **SL:** Below VWAP by `max(0.3%, 0.5 x ATR(14))`. If price breaks VWAP convincingly, the bounce thesis is dead
+- **Target:** Previous swing high/low from today's candles. Fallback: 1.5x risk
+- **R:R validation:** Must be >= 1.5
 
-**Research basis:** PDH and PDL are the most watched levels by all market participants. Breakouts with volume at these levels generate strong intraday moves.
+### Setup 3: PDH/PDL Breakout
+
+**Time window:** 9:30 AM – 2:00 PM
 
 **Rules:**
 - **Setup:** Price approaches PDH (Previous Day High) or PDL (Previous Day Low)
 - **Breakout:** 5-minute candle closes above PDH → BUY_FUT. Below PDL → SELL_FUT
 - **Volume confirmation:** Breakout candle volume > 1.5x average 5-minute volume
 - **VWAP alignment:** Price must be on the correct side of VWAP
-- **Stop Loss:** 0.5% below breakout level (PDH for longs, PDL for shorts)
-- **Target:** Measured move = (PDH - PDL) range added to breakout price
-- **Time window:** 9:30 AM – 2:00 PM
 
-### Setup 4: Gap Trading (Continuation)
+**SL/Target:**
+- **SL:** Below breakout level by `max(0.5%, 0.5 x ATR(14))` buffer
+- **Target:** Measured move = (PDH - PDL) range projected from breakout point. If R:R < 1.5, look for next structure level. Skip if no valid target
+- **R:R validation:** Must be >= 1.5
 
-**Research basis:** 60-70% of gaps with volume confirmation continue in gap direction. Gap-up with high volume = institutional buying, likely to extend.
+### Setup 4: Gap Continuation
+
+**Time window:** 9:30 AM – 11:00 AM
 
 **Rules:**
-- **Gap identification:** Opening price > 0.5% above previous close (gap up) or < 0.5% below (gap down)
-- **Entry trigger:** After first 15 minutes, if price holds above gap level → BUY_FUT (gap continuation)
+- **Gap identification:** Opening price > 0.5% above previous close (gap up) or < 0.5% below (gap down). Uses `detect_gap()` from `indicators/gap_analysis.py`
+- **Entry trigger:** After first 15 minutes, if price holds above gap level → BUY_FUT (continuation)
 - **Volume:** Opening 15-min volume > 2x average
-- **Stop Loss:** Below gap fill level (previous close)
-- **Target:** Gap size projected forward (e.g., if gapped up 1%, target 2% from previous close)
-- **Time window:** 9:30 AM – 11:00 AM
+
+**SL/Target:**
+- **SL:** Below gap fill level (previous close) with small buffer. If price fills the gap, the continuation thesis failed
+- **Target:** Gap size projected forward. Validate R:R >= 1.5
+- **R:R validation:** Must be >= 1.5
+
+### SL/Target Summary
+
+All sub-setups use **chart-based levels** — not fixed percentages. Each setup has a natural invalidation level (ORB low, VWAP, PDH/PDL, gap fill) that becomes the SL, and scans for structure-based targets.
+
+**ATR(14) on 5-minute candles** serves as a sanity check — SL never closer than 0.5x ATR from entry (avoids whipsaw), target at least 1.5x risk distance.
+
+SL and target are computed directly on the stock futures price. No delta conversion or premium math (unlike Strategy 2's index options).
 
 ---
 
-## Exit Rules (All Setups)
+## Confidence Scoring
 
-| Rule | When | Action |
-|------|------|--------|
-| **Hard Stop Loss** | Always set at entry | Close immediately |
-| **Target 1 hit** | Price reaches 1.5x risk | Book 50% position |
-| **Trailing stop** | After 1% gain | Move SL to breakeven |
-| **Extended trail** | After 1.5% gain | Trail SL by 0.5% below current price |
-| **Time exit** | 3:00 PM IST | Close ALL remaining positions |
-| **Dead zone** | 11:30 AM – 1:00 PM | No new entries (low volume, choppy) |
+**File:** `backend/app/strategies/strategy_5_intraday_futures.py` — `_compute_confidence()`
+
+An 8-factor weighted composite produces a 0–100 score. The full factor breakdown is persisted to `signal.indicators["confidence_factors"]` for every signal.
+
+| Factor | Weight | What It Measures |
+|---|---|---|
+| `vol_factor` | 0.15 | Breakout candle volume relative to average |
+| `rvol_factor` | 0.15 | Time-of-day normalized volume (RVOL threshold) |
+| `bias_factor` | 0.20 | Nifty intraday bias alignment with signal direction |
+| `phase_factor` | 0.10 | Current market phase quality (MORNING_ACTIVE > AFTERNOON > CAUTION_ZONE) |
+| `setup_factor` | 0.15 | Setup-specific quality (enhanced ORB, reversal candle strength, breakout magnitude) |
+| `rank_factor` | 0.10 | Stock's screener rank and composite score |
+| `gap_factor` | 0.05 | Gap alignment with trade direction |
+| `trend_factor` | 0.10 | Stock's multi-day trend alignment from `stock_trend.py` |
+
+**Confidence thresholds** (configurable via strategy_params):
+- `min_confidence_to_persist`: 30.0 — below this, signal not saved
+- `min_confidence_for_shadow`: 45.0 — below this, no shadow trade
+- `min_confidence_for_execution`: 60.0 — below this, signal saved but `executable = False`
+
+---
+
+## Exit Rules & Trailing Stop Loss
+
+### Exit Priority (checked on each trade_monitor cycle)
+
+| Priority | Rule | Trigger | Action |
+|---|---|---|---|
+| 1 | Hard Stop Loss | Price hits current SL (original or trailed) | Close immediately |
+| 2 | Target hit | Price reaches target | Close full position |
+| 3 | Time exit | 3:15 PM IST (`is_past_close_deadline()`) | Close ALL Strategy 5 positions |
+
+### Trailing Stop Loss — Three Stages
+
+The trailing SL progresses through three stages as the position moves in favor. Tracked via the `high_since_entry` field on the Position model.
+
+**Stage 1: Original SL (entry → breakeven activation)**
+- Position has its chart-based SL from the setup
+- `trade_monitor` tracks the high water mark (highest price since entry for longs, lowest for shorts)
+- No SL movement yet
+
+**Stage 2: Breakeven (position gains >= `trailing_sl_breakeven_pct`)**
+- Default: 0.5% gain from entry
+- SL moves to entry price — trade is now risk-free
+
+**Stage 3: Progressive Trail (beyond breakeven)**
+- As price makes new highs, SL trails `trailing_sl_trail_pct` below the high water mark
+- Default: 0.3% below highest price since entry
+- SL only moves UP (for longs), NEVER back down
+
+```
+if current_price > position.high_since_entry:
+    position.high_since_entry = current_price
+
+trail_sl = high_since_entry * (1 - trail_pct / 100)
+if trail_sl > position.stop_loss:
+    position.stop_loss = trail_sl
+```
+
+**Example walkthrough:**
+
+```
+09:42  BUY_FUT ADANIPORTS @ 1,583. SL = 1,562 (ORB low). Target = 1,614.
+       HWM = 1,583.
+
+09:48  Price: 1,591 (+0.51%). HWM -> 1,591. Breakeven activated -> SL moves to 1,583.
+
+09:55  Price: 1,600 (+1.07%). HWM -> 1,600. Trail: 1,600 x 0.997 = 1,595.
+       SL moves 1,583 -> 1,595.
+
+10:02  Price: 1,610 (+1.71%). HWM -> 1,610. Trail: 1,610 x 0.997 = 1,605.
+       SL moves 1,595 -> 1,605.
+
+10:05  Price: 1,607. HWM still 1,610. Trail still 1,605. SL stays at 1,605.
+
+10:08  Price: 1,604. Hits trailed SL at 1,605 -> EXIT. Profit: +1.39%.
+```
+
+### Exit Parameters (in `strategy_params`)
+
+```python
+INTRADAY_FUTURES_DEFAULTS = {
+    "trailing_sl_enabled": True,
+    "trailing_sl_breakeven_pct": 0.5,
+    "trailing_sl_trail_pct": 0.3,
+    "min_confidence_to_persist": 30.0,
+    "min_confidence_for_shadow": 45.0,
+    "min_confidence_for_execution": 60.0,
+    "max_daily_drawdown_pct": 3.0,
+    "max_simultaneous_positions": 3,
+    "max_trades_per_day": 5,
+    "rvol_threshold": 1.5,
+    "rvol_caution_zone_threshold": 2.5,
+    "enabled_setups": ["ORB", "VWAP_BOUNCE", "PDH_PDL", "GAP_CONTINUATION"],
+}
+```
+
+---
+
+## Position Sizing
+
+**Default: 1 lot per trade. Maximum: 2 lots (hard cap).**
+
+Standard risk-based sizing doesn't work for intraday stock futures — contract values are large (e.g., RELIANCE lot=250 x Rs 2800 = Rs 7L contract, Rs 1.4L margin). With 3 positions at 2 lots each, margin alone would be Rs 8.4L.
+
+### 2-Lot Conviction Conditions (all 6 must be met)
+
+| Factor | 2 lots (high conviction) | 1 lot (standard) |
+|---|---|---|
+| RVOL | >= 3.0 (extreme volume) | >= 1.5 (normal threshold) |
+| Nifty bias | STRONG alignment with trade direction | MODERATE or WEAK |
+| Screener score | Top 3 in watchlist (score > 70) | Score 50-70 |
+| Setup type | Enhanced ORB (ORB + PDH break) | Single setup |
+| Morning briefing | Agent recommended "aggressive" today | "Normal" or "conservative" |
+| Stock trend | STRONG or MODERATE aligned | WEAK or opposing |
+
+### VIX Adjustment
+
+Reuses existing `vix_to_multiplier()` from `services/position_sizing.py`:
+- VIX < 14: 1.1x
+- VIX 14-18: 1.0x
+- VIX 18-22: 0.9x → effectively caps at 1 lot (2 x 0.9 rounds down)
+- VIX >= 22: strategy halted entirely
 
 ---
 
 ## Risk Management
 
-### Position Sizing
+### Cross-Position Awareness — Strategy-Scoped, Soft Enforcement
 
-```
-Position Size = (Capital × Risk%) / (Entry - StopLoss)
-```
+All risk limits are scoped to Strategy 5 only. Other strategies' positions don't count toward Strategy 5 limits, and vice versa.
 
-- **Risk per trade:** 1-1.5% of capital
-- **Max daily drawdown:** 3% → stop trading for the day
-- **Max simultaneous positions:** 3
-- **Max trades per day:** 5 (including closed ones)
+Before emitting a signal, the strategy:
+1. Queries open positions where `strategy_name = 'INTRADAY_FUTURES'`
+2. Checks sector deduplication (no two Strategy 5 trades from the same sector)
+3. Checks position count against max simultaneous (3)
+4. Checks daily trade count against max trades (5)
+5. Checks daily drawdown against 3% limit
 
-### Correlation Filter
-
-- **No two trades from the same sector** simultaneously (e.g., don't long both TCS and INFY futures)
-- Reduces portfolio correlation risk
-- If a sector is trending, pick the strongest RS stock from that sector only
+**Soft enforcement:** Signals are never suppressed, only flagged with `risk_warnings` array (e.g., `["daily_drawdown_3pct_reached"]`, `["sector_duplicate: IT"]`). In YOLO mode, auto-execution pauses when warnings are present. Shadow executor still creates shadow trades for tracking.
 
 ### Market Condition Filters
 
 | Condition | Action |
-|-----------|--------|
-| India VIX > 20 | Skip all stock futures trades (too volatile, whipsaws) |
+|---|---|
+| India VIX > 20 | Skip ALL stock futures trades for the day (agent status → HALTED) |
 | India VIX < 12 | Reduce target expectations (low volatility, smaller moves) |
-| NIFTY gap > 1% | Reduce position size by 50% (gap-day uncertainty) |
-| First 15 minutes | No trades — observation only (ORB range forming) |
-| Last 30 minutes | No new trades — only manage existing positions |
+| GIFT Nifty gap > 1% | Flag "volatile open" — agent may recommend conservative approach |
+| First 15 minutes (9:15-9:30) | No trades — ORB forming |
+| Caution zone (11:30-1:00) | Elevated RVOL >= 2.5, breakout confirmation required |
+| Last 30 minutes (2:45-3:15) | No new trades — manage existing, force-close at 3:15 |
+| Daily drawdown >= 3% | Flag all new signals with risk_warning |
 
 ### Margin Management
 
-- **Intraday stock futures margin:** ~20% of contract value (SPAN + Exposure)
-- **Example:** RELIANCE futures (lot=250, price=₹2800) → Contract value = ₹7,00,000 → Margin ≈ ₹1,40,000
-- **With ₹10L capital:** Max 3-4 positions simultaneously depending on stock price and lot size
-- **Use Zerodha margin calculator** or broker API to verify before entry
+- Intraday stock futures margin: ~20% of contract value (SPAN + Exposure)
+- Example: RELIANCE futures (lot=250, price=Rs 2800) → Contract Rs 7,00,000 → Margin ~Rs 1,40,000
+- With Rs 10L capital and 1-2 lots per trade: max 3 positions fits within margin
 
 ---
 
-## Key Indicators for Intraday Stock Futures
+## Redis State Management
 
-### Most Effective (Research-Backed)
+All intra-day state lives in Redis with 90-day TTL:
 
-| Indicator | Use Case | How |
-|-----------|----------|-----|
-| **VWAP** | Trend bias + entry level | Above = bullish bias. Pullback to VWAP = entry |
-| **RSI (14)** | Overbought/oversold on 5m chart | > 70 = caution on longs, < 30 = caution on shorts |
-| **Volume Ratio** | Confirm breakouts | Breakout with > 1.5x avg volume = valid |
-| **ATR (14)** | Dynamic SL sizing | SL = 1.5-2x ATR from entry |
-| **Previous Day H/L** | Key support/resistance | PDH = resistance for longs, PDL = support for shorts |
-| **CPR** | Range identification | Narrow CPR = trending day expected. Wide CPR = range day |
-| **OI Analysis** | Institutional positioning | Rising OI + rising price = bullish conviction |
-
-### OI Interpretation for Stock Futures
-
-| OI Change | Price Change | Interpretation | Trading Bias |
-|-----------|-------------|----------------|-------------|
-| OI UP | Price UP | Long buildup (new money entering bullish) | BUY |
-| OI UP | Price DOWN | Short buildup (new money entering bearish) | SELL |
-| OI DOWN | Price UP | Short covering (bears exiting) | Weak BUY (may fade) |
-| OI DOWN | Price DOWN | Long unwinding (bulls exiting) | Weak SELL (may bounce) |
-
-### Delivery Percentage Guide
-
-| Delivery % | During Uptrend | During Downtrend | Trading Signal |
-|-----------|---------------|-----------------|----------------|
-| > 50% | Strong institutional buying | Heavy distribution | HIGH conviction |
-| 30-50% | Mixed activity | Mixed activity | MODERATE conviction |
-| < 30% | Mostly speculative | Panic selling | LOW conviction, avoid |
+| Key Pattern | Content |
+|---|---|
+| `strat5:watchlist:{date}` | Morning screener output: ranked list with scores, bias, factors, news sentiment |
+| `strat5:orb:{date}:{symbol}` | ORB high/low for a stock |
+| `strat5:rvol_baseline:{symbol}` | 20-day avg volume by 5-min time bucket (rebuilt daily) |
+| `strat5:phase:{date}` | Current market phase enum |
+| `strat5:daily_stats:{date}` | Trade count, P&L, drawdown, positions open (Strategy 5 only) |
+| `strat5:agent_log:{date}` | Chronological agent activity entries (append-only) |
+| `strat5:global_cues:{date}` | Morning global cues snapshot |
+| `strat5:morning_briefing:{date}` | AI morning briefing (yesterday recap + approach for today) |
+| `strat5:agent_status:{date}` | Agent status: RUNNING / PAUSED / HALTED / DONE |
 
 ---
 
-## Pre-Market Routine (Daily Workflow)
+## Key Indicators
 
-### 6:00 AM – 8:00 AM: Global Cues
+### RVOL — Relative Volume (time-of-day normalized)
 
-- GIFT Nifty movement (overnight) — if > 0.5% gap expected, adjust strategy
-- US market close (S&P 500, Nasdaq) — risk-on or risk-off
-- Crude oil price — impacts energy sector stocks (ONGC, Reliance, etc.)
-- Any major news (RBI policy, earnings announcements today)
+**File:** `backend/app/indicators/rvol.py`
 
-### 8:00 AM – 9:00 AM: Run Morning Screener
+Current 5-min candle volume / avg volume for this 5-min bucket over past 20 trading days. ~75 buckets per stock x 180 stocks. Stored in Redis (`strat5:rvol_baseline:{symbol}`), rebuilt each morning.
 
-1. Fetch previous day bhav copy (OI changes, delivery %, volume)
-2. Compute RS rankings across F&O universe
-3. Score each stock on the 8 screening factors
-4. Rank and select top 10-15 candidates
-5. Note PDH/PDL/PDC for each candidate
-6. Identify which candidates have earnings/events today (avoid or special handling)
+Thresholds: >= 1.5 minimum, >= 2.0 high confidence, >= 2.5 for caution zone.
 
-### 9:00 AM – 9:15 AM: Pre-Open Session
+### ADR — Average Daily Range
 
-- Check pre-open auction prices for watchlist stocks
-- Note expected gaps (gap-up / gap-down stocks)
-- Finalize which 5-8 stocks to actively monitor
-- Set alerts on PDH/PDL levels
+**File:** `backend/app/indicators/adr.py`
 
-### 9:15 AM – 9:30 AM: Opening Range Formation
+`mean((high - low) / close * 100)` over last 20 trading days. Threshold: > 1.5% to include in watchlist.
 
-- DO NOT TRADE in first 15 minutes
-- Record ORB high/low for each watchlist stock
-- Note opening volume vs average
-- Identify strongest/weakest stocks relative to NIFTY
+### ATR — Average True Range
 
-### 9:30 AM onwards: Execute
+**File:** `backend/app/indicators/atr.py`
 
-- Trade only the setups defined above
-- Max 2-3 trades in the morning session
-- Review during dead zone (11:30 AM – 1:00 PM)
-- Possibly 1-2 trades in afternoon session
+Wilder's smoothed ATR on 5-minute candles. Used as SL sanity check (minimum distance) across all setups.
 
----
+### Gap Analysis
 
-## Real-World Approaches
+**File:** `backend/app/indicators/gap_analysis.py`
 
-### How Prop Trading Firms Screen
+`detect_gap(today_open, prev_close)` → gap direction, gap %. `is_gap_continuation()` confirms holding after 15 minutes.
 
-PropaTrade (India's largest prop firm, 9,847+ funded traders) and FundedStock teach:
-- **Strict risk management** comes before any strategy
-- **Consistency** over big wins — funded traders must show controlled drawdowns
-- **3-5 max positions** simultaneously, diversified across sectors
-- **High-quality setups only** — ORB, gap continuation, VWAP bounce
+### Stock Trend
 
-### Educator Approaches
+**File:** `backend/app/indicators/stock_trend.py`
 
-**Vivek Bajaj (StockEdge co-founder, 20+ years):**
-- Relative Strength (RS55 model) for stock selection
-- Multi-timeframe analysis: 2-hour chart for direction, 15-minute for entry
-- Price action over indicators — support/resistance + volume
+6-factor composite: 5/20 DMA crossover, HH/HL pattern, ADR, close position, RS momentum, V-reversal detection. Output: direction (UP/DOWN/FLAT) + strength (STRONG/MODERATE/WEAK) + score.
 
-**Common themes across all educators:**
-1. Risk management first (stop-loss, position sizing) before strategy
-2. Multiple timeframe confirmation
-3. Volume confirmation is essential
-4. Emotional discipline > complex systems
+### OI Interpretation
 
-### Backtesting Statistics
-
-| Strategy | Win Rate | Profit Factor | Best Timeframe | Notes |
-|----------|----------|--------------|----------------|-------|
-| ORB (15-min) | 55-65% | 1.8-2.2 | 9:30-11:00 AM | Requires volume filter |
-| VWAP Bounce | 60-70% | 1.5-2.0 | 10:00 AM-2:45 PM | Only in trending stocks |
-| PDH/PDL Breakout | 50-60% | 1.6-2.0 | 9:30 AM-2:00 PM | Needs strong volume |
-| Gap Continuation | 60-70% | 1.4-1.8 | 9:30-11:00 AM | Gap size > 0.5% |
-| MACD + RSI combo | 73%+ | 2.0+ | 15-30 min candles | Optimized params outperform defaults |
+| OI Change | Price Change | Interpretation | Screener Score |
+|---|---|---|---|
+| OI UP | Price UP | Long buildup | 100 |
+| OI UP | Price DOWN | Short buildup | 50 |
+| OI DOWN | Price UP | Short covering | 30 |
+| OI DOWN | Price DOWN | Long unwinding | 20 |
 
 ---
 
-## Data Sources Needed
+## Frontend Components
 
-### Already Available in Codebase
+### Dedicated Page: `/intraday-futures`
 
-| Data | Source | Module |
-|------|--------|--------|
-| 1Y daily price history | yfinance | `data_sources/yfinance_client.py` |
-| RS rating (percentile) | Computed | `indicators/relative_strength.py` |
-| VWAP + bands | Computed from candles | `indicators/vwap.py` |
-| Previous Day H/L/C | Computed | `indicators/previous_day.py` |
-| CPR levels | Computed | `indicators/cpr.py` |
-| Volume analysis | Computed | `indicators/volume_analysis.py` |
-| Candlestick patterns | Computed | `indicators/candle_patterns.py` |
-| Market levels / SL | Computed | `indicators/market_levels.py` |
-| OI analysis | Fyers option chain | `indicators/open_interest.py` |
-| 1-min OHLCV candles | Fyers WebSocket | `data_feed/feed_manager.py` |
-| Historical candles | Fyers REST | `data_feed/fyers_client.py` |
-| F&O lot sizes | NSE CSV | `data_sources/nse_client.py` |
-| Stock fundamentals | yfinance + NSE | `tasks/fundamental_data_task.py` |
-| Futures symbol resolution | Fyers symbol master | `services/futures_resolver.py` |
+| Section | Component | Description |
+|---|---|---|
+| Day Status Bar | `DayStatusBar.tsx` | Phase, Nifty bias, VIX, agent status, daily stats, date picker |
+| Morning Watchlist | `Watchlist.tsx` | Scored stocks with bias, factors, ORB levels, RVOL. 30s polling in live mode |
+| Agent Activity Log | `AgentLog.tsx` | Chronological feed with category filter pills. Categories: BRIEFING, SCREENER, ORB, SIGNAL, TRADE, EXIT, SKIP, PHASE, RISK, GLOBAL, SYSTEM |
+| Setup Performance | `SetupPerformance.tsx` | Per-setup win rate bars, W/L counts, P&L over configurable period |
+| Global Cues | `GlobalCues.tsx` | Overnight data, VIX, morning briefing summary, flags |
+| Config Panel | `ConfigPanel.tsx` | Setup checkboxes, RVOL thresholds, risk parameters |
 
-### Needs Building / Sourcing
+### Signal Cards on Dashboard
 
-| Data | How to Get | Priority |
-|------|-----------|----------|
-| **Daily OI change** | Compute from `oi_snapshots` table (latest vs prev day) or NSE bhav copy | HIGH |
-| **Delivery percentage** | NSE daily bhav copy CSV download | MEDIUM |
-| **Sector classification** | yfinance `info["sector"]` or static mapping table | MEDIUM |
-| **Beta vs NIFTY** | Compute from 1Y daily returns: `cov(stock, nifty) / var(nifty)` | LOW (can derive from RS) |
-| **Gap detection** | Compare today's open vs yesterday's close | LOW (simple calc, build as indicator) |
-| **Pre-open data** | NSE pre-open session API (9:00-9:15 AM) | NICE-TO-HAVE |
+Strategy 5 signals render with strategy-aware context in `ScannerPanel.tsx`:
+- Setup type badge + enhanced ORB indicator
+- Phase, RVOL (color-coded by threshold), gap %, VWAP/ORB/PDH context
+- Risk warnings as amber warning pills
+- 8-factor confidence breakdown with Strategy 5-specific labels
 
 ---
 
-## Implementation Notes (for when we build this)
+## Key Files
 
-### Architecture
-
-- **New strategy class:** `strategy_5_intraday_futures.py` extending `BaseStrategy`
-  - `instrument_type = InstrumentType.FUTURE`
-  - `holding_type = "INTRADAY"`
-  - Multiple sub-setups (ORB, VWAP, PDH/PDL, Gap) evaluated in sequence
-
-- **Morning screener service:** `services/morning_screener.py`
-  - Runs at 9:00 AM via APScheduler
-  - Scores all F&O stocks → ranks top 15
-  - Stores watchlist in Redis for fast access during trading
-  - Exposes via API for dashboard display
-
-- **New indicator:** `indicators/gap_analysis.py`
-  - `detect_gap(open, prev_close)` → gap type, gap %, gap fill probability
-  - `is_gap_continuation(candles, gap_direction)` → bool
-
-### Reusable Code
-
-Almost everything is already built:
-- `BaseStrategy` pattern for strategy class
-- `strategy_runner.py` for auto-mode + manual evaluation
-- `futures_resolver.py` for stock → nearest futures contract
-- All indicators (VWAP, PDH/PDL, CPR, volume, patterns, RS, OI)
-- `candle_backfill.py` for historical data
-- Signal → Trade → Position pipeline
-- WebSocket broadcasting for real-time UI updates
-
-### Configuration
-
-- Add `INTRADAY_FUTURES` to `StrategyName` enum
-- Add intraday-specific constants (ORB window, dead zone, exit time, etc.)
-- Seed `strategy_configs` row with F&O stock universe or curated watchlist
-- Frontend: add strategy label in `STRATEGY_LABELS`
+| File | Role |
+|---|---|
+| `backend/app/strategies/strategy_5_intraday_futures.py` | Strategy class: phase machine, 4 sub-setups, chart-based SL/target, cross-position checks, confidence scoring |
+| `backend/app/services/morning_screener.py` | 3-stage screener (quant + news + LLM), global cues, morning briefing, watchlist, pre-open reassessment, setup performance |
+| `backend/app/indicators/rvol.py` | RVOL: time-of-day normalized volume |
+| `backend/app/indicators/adr.py` | ADR: average daily range |
+| `backend/app/indicators/atr.py` | ATR: average true range (Wilder's smoothing) |
+| `backend/app/indicators/gap_analysis.py` | Gap detection + continuation |
+| `backend/app/indicators/stock_trend.py` | Multi-day trend direction + strength |
+| `backend/app/api/v1/intraday_futures.py` | API router: watchlist, agent log, global cues, setup performance, phase, screener/briefing triggers, agent control |
+| `backend/app/tasks/morning_workflow_task.py` | Scheduled task: orchestrates screener → briefing → pre-open reassessment |
+| `backend/app/tasks/nse_bhav_copy_task.py` | Daily NSE bhav copy download for delivery % data |
+| `backend/app/tasks/oi_snapshot_task.py` | Stock futures OI snapshot for screener OI scoring |
+| `backend/app/data/sector_classification.json` | Static F&O stocks → sectors mapping |
+| `backend/app/services/strategy_params.py` | `INTRADAY_FUTURES_DEFAULTS` dict |
+| `backend/app/agent/trade_monitor.py` | Trailing SL (breakeven + progressive trail + HWM), time exit |
+| `backend/app/models/position.py` | `high_since_entry` field for trailing SL tracking |
+| `frontend/src/app/intraday-futures/page.tsx` | Dedicated Strategy 5 page |
+| `frontend/src/components/intraday-futures/` | 7 components: DayStatusBar, Watchlist, AgentLog, GlobalCues, SetupPerformance, ConfigPanel, DailyStats |
+| `frontend/src/components/dashboard/ScannerPanel.tsx` | Strategy-aware signal card rendering |
+| `docs/strategies/strategy-5-intraday-futures.md` | This file |
 
 ---
 
-## Market Timing Reference (IST)
+## Implementation Notes
 
-| Time | Phase | Action |
-|------|-------|--------|
-| 9:00-9:15 AM | Pre-open auction | Read pre-open prices, finalize watchlist |
-| 9:15-9:30 AM | ORB formation | Observe only — record high/low of first 15 min |
-| 9:30-11:00 AM | Morning session | Execute ORB breakouts, gap continuations |
-| 10:00-11:30 AM | Stable phase | VWAP bounce entries, PDH/PDL breakouts |
-| 11:30 AM-1:00 PM | Dead zone | No new entries — low volume, choppy |
-| 1:00-2:45 PM | Afternoon session | VWAP bounce, PDH/PDL breakouts only |
-| 2:45-3:00 PM | Exit window | Close all remaining positions |
-| 3:00-3:30 PM | Avoid | Broker auto square-off zone |
+### Dynamic symbol registration
+The strategy overrides `get_symbols()` to return today's watchlist symbols from Redis (`strat5:watchlist:{date}`) instead of the static `strategy_configs.symbols` column. The strategy runner calls `await strategy.get_symbols()` for auto-mode symbol resolution.
 
----
+### No auto_mode toggle
+Unlike other strategies, Strategy 5 has no separate `auto_mode` toggle. When the strategy is enabled, the agent runs autonomously. The user controls the agent via Pause/Resume on the dedicated page.
 
-## Key Principles (from research)
+### Futures contract resolution
+Uses existing `futures_resolver.py` for stock → nearest futures contract mapping. No option resolver — SL and target are directly on the stock futures price.
 
-1. **Screen broadly, trade narrowly** — scan 180 stocks, track 15, trade 3-5
-2. **Volume is the truth** — never trade a breakout without volume confirmation
-3. **VWAP is the institutional anchor** — respect it, trade around it
-4. **Risk management is non-negotiable** — 1.5% per trade, 3% daily max
-5. **Time is a filter** — avoid first 15 min, dead zone, last 30 min
-6. **Sector diversification** — max 1 position per sector
-7. **ORB has the strongest statistical edge** — but only with proper filters
-8. **Delivery % separates real moves from noise** — high delivery in uptrend = conviction
-9. **OI buildup confirms direction** — rising OI + rising price = strong long
-10. **Exit discipline > entry skill** — have a plan before you enter
+### LLM usage is front-loaded
+~22 LLM calls per day, all before 9:00 AM (1 briefing + ~20 news sentiment + 1 screener confidence). Zero LLM calls during market hours — all signal generation, filtering, and exit management is deterministic computation.
+
+### Confidence factors storage
+`_compute_confidence()` accepts an optional `indicators: dict` parameter. When provided, it injects a `confidence_factors` dict with the 8 factor values into the signal's indicators JSONB. This enables the frontend to render per-factor confidence bars in the AI panel.
+
+### Parameter experiments — disable strategy first
+Before changing thresholds for testing, go to Settings → Strategies and disable Strategy 5. Both auto-mode evaluations AND manual evals trigger `shadow_executor`, creating shadow trades. Same caveat as Strategy 2 (see Strategy 2 doc).
+
+### Single target for V1
+No T1/T2 partial booking. Close full position on target hit. Partial exits may be added in a future version after collecting real trade data.
+
+### Time stop deferred
+A time-based stop (e.g., "exit after 30 min if position hasn't moved 0.5%") is not yet implemented. Needs real trade data to calibrate the right threshold.
+
+### Force-close time
+3:15 PM via existing `is_past_close_deadline()`. No custom exit time in V1.

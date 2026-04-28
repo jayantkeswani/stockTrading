@@ -126,11 +126,13 @@ SHARED PIPELINE (both paths converge here):
 
 ### Strategy Configuration (strategy_configs table)
 ```
-strategy_name | is_active | auto_mode | symbols              | symbol_map                          | parameters | risk_params
---------------+-----------+-----------+----------------------+-------------------------------------+------------+------------
-vwap_pullback | true      | true      | ["NIFTY","BANKNIFTY"]| {"NIFTY":"NSE:NIFTY50-INDEX",...}   | {...}      | {...}
-orb           | false     | false     | ["NIFTY"]            | {...}                               | {...}      | {...}
-can_slim      | true      | true      | ["TCS","RELIANCE"]   | {"TCS":"NSE:TCS-EQ","RELIANCE":...} | {...}      | {...}
+strategy_name      | is_active | auto_mode | symbols              | symbol_map                          | parameters | risk_params
+-------------------+-----------+-----------+----------------------+-------------------------------------+------------+------------
+vwap_pullback      | true      | true      | ["NIFTY","BANKNIFTY"]| {"NIFTY":"NSE:NIFTY50-INDEX",...}   | {...}      | {...}
+orb                | false     | false     | ["NIFTY"]            | {...}                               | {...}      | {...}
+can_slim           | true      | true      | ["TCS","RELIANCE"]   | {"TCS":"NSE:TCS-EQ","RELIANCE":...} | {...}      | {...}
+intraday_futures   | false     | true      | []                   | {}                                  | {...}      | {...}
+  (Strategy 5 uses dynamic symbols from Redis watchlist, not the symbols column)
 
 is_active   = strategy is available for evaluation (manual or auto)
 auto_mode   = strategy runs automatically on every candle close for its configured symbols
@@ -198,14 +200,43 @@ Signal ──> Trade Created (OPEN) ──> Position Created
 Every 2 seconds (agent_runner main loop):
   For each open position:
     1. Get current price from Redis (option premium via fyers_option_symbol, index fallback)
-    2. Check SL: price <= stop_loss → AUTO CLOSE (no confirmation needed)
-    3. Check Target: price >= target
+    2. Detect direction: target < entry = SHORT, else LONG
+       (uses target_price, not stop_loss — SL can be trailed past entry)
+    3. Check SL: LONG price <= SL, SHORT price >= SL → AUTO CLOSE
+    4. Check Target: LONG price >= target, SHORT price <= target
        - YOLO: auto-book profit
        - SEMI: send Telegram confirmation, wait for approve/reject
        - MANUAL: send alert only
-    4. Check Time: time >= 15:15 IST → AUTO CLOSE all positions
-    5. Check Drawdown: daily_loss >= 5% → CLOSE ALL, HALT TRADING for the day
-    6. Update unrealized P&L → broadcast via WebSocket (position:pnl)
+    5. Trailing SL (POSITIONAL always, INTRADAY when trailing_sl_enabled):
+       - Breakeven: move SL to entry after gain >= breakeven_pct
+       - Progressive: trail SL at HWM*(1-trail%) for longs, LWM*(1+trail%) for shorts
+    6. Check Expiry: POSITIONAL positions roll 3 days before futures expiry
+    7. Check Time: time >= 15:15 IST → AUTO CLOSE INTRADAY positions
+    8. Check Drawdown: daily_loss >= 5% → CLOSE ALL, HALT TRADING for the day
+    9. Update unrealized P&L (direction-aware) → broadcast via WebSocket (position:pnl)
+```
+
+### 4b. Strategy 5 Daily Workflow
+```
+APScheduler (morning_workflow_task.py):
+  8:00 AM  — Morning briefing: gather yesterday's trades + 5-day stats → LLM synthesis
+             → Redis strat5:morning_briefing:{date}
+  8:00 AM  — Global cues snapshot: package global_market_task data → Redis strat5:global_cues:{date}
+             VIX > 20 → HALT agent
+  8:30 AM  — Morning screener (3-stage):
+             Stage 1: Quant scoring ~180 F&O stocks (8 factors: RS, range, volume, OI, ADR, sector, delivery%, 52w high)
+             Stage 2: News sentiment ~20 stocks (parallel Gemini calls)
+             Stage 3: LLM confidence check (batched)
+             → Final watchlist (15-20 stocks) → Redis strat5:watchlist:{date}
+             → Subscribe watchlist stocks on Fyers WebSocket
+             → Build RVOL baselines → Redis strat5:rvol_baseline:{symbol}
+  9:15 AM  — ORB_FORMING phase: strategy tracks 15-min opening range (high/low)
+  9:31 AM  — ORB level logging: logs ORB high/low/range for each watchlist stock
+  9:30+    — Signal generation: ORB breakout with ADR/RVOL/VWAP/volume/bias filters
+  15:15 PM — EOD summary: query DB trades, log stats to agent log
+
+Strategy 5 uses dynamic symbols (Redis watchlist, not DB config).
+get_auto_strategies_for_symbol() calls strategy.get_symbols() for dynamic matching.
 ```
 
 ### 5. Fyers Authentication Flow
@@ -271,7 +302,7 @@ but the REST batch endpoint remains as fallback for symbols not yet subscribed.
 - **Non-default ports**: PostgreSQL 5433, Redis 6380 (avoid conflicts with local instances)
 - **Fyers SDK**: Uses `fyers-apiv3` package — WebSocket via threaded `FyersDataSocket` bridged to asyncio
 - **Decoupled strategy evaluation**: FeedManager only produces candles. Strategy evaluation is triggered by auto_mode config (per strategy + per symbol) or manual API call. Both paths share the same MarketContext builder and signal pipeline.
-- **Signal pipeline**: `candle close → build_market_context (incl. intraday_bias + global_cues) → strategy.evaluate → composite confidence (10-factor) → fire threshold gate → option/futures resolve → LLM overlay (±15 adj, ai_summary/rationale) → persist (with ai_* fields) → broadcast → [YOLO: auto_executor] + [shadow_executor fire-and-forget]`
+- **Signal pipeline**: `candle close → build_market_context (incl. intraday_bias + global_cues) → strategy.evaluate → composite confidence (10-factor) → fire threshold gate → option/futures resolve → LLM overlay (±15 adj, ai_summary/rationale) → persist (with ai_* fields) → broadcast → [YOLO: auto_executor] + [shadow_executor fire-and-forget]`. Strategy 5 adds skip logging (flush `_pending_logs` after each evaluate) and cross-position count injection into strategy params.
 - **Shadow agent** (`backend/app/agent/shadow_executor.py`): every signal → `Trade(source="SHADOW") + Position(is_shadow=True)`, no gating. All default queries exclude shadows (`WHERE source != 'SHADOW'` / `WHERE is_shadow = FALSE`). Dashboard Active Positions widget + P&L bar have a Real/Signal Test toggle. `trade_monitor` monitors shadow positions identically to real ones. See `docs/ai/shadow-agent.md`.
 - **Phase 2 bias**: `intraday_bias` replaces the yesterday-only hard gate with a weighted live composite (6 factors). STRONG opposing bias still blocks; MODERATE/WEAK allows with confidence haircut.
 - **Backtest harness** (`backend/app/backtest/`): common replay framework — historical 1m candles → `context_builder.build_historical_context` → `strategy.evaluate` → `exit_simulator` → `BacktestReport`. No DB writes, no WS events. Accurate mode uses live-traded option candles from `market_data_1m`; fast mode uses delta approximation.

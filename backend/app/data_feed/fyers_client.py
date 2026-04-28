@@ -139,8 +139,8 @@ class FyersClient:
                 "symbol": symbol,
                 "resolution": resolution,
                 "date_format": "1",
-                "range_from": str(int(datetime.combine(from_date, datetime.min.time()).timestamp())) if from_date else "",
-                "range_to": str(int(datetime.combine(to_date, datetime.min.time()).timestamp())) if to_date else "",
+                "range_from": str(from_date) if from_date else "",
+                "range_to": str(to_date) if to_date else "",
                 "cont_flag": "1",
             }
             response = await self._request_with_auth(

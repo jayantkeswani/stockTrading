@@ -51,8 +51,9 @@ class Settings(BaseSettings):
 
     # Signal Confidence LLM Overlay (Phase 2)
     ai_confidence_enabled: bool = True            # Toggle LLM overlay for signals
-    fire_confidence_threshold: float = 65.0       # Minimum deterministic score to fire
     ai_confidence_timeout_seconds: int = 8        # Timeout for LLM call; never blocks signal
+    # NOTE: fire_confidence_threshold removed — now per-strategy as min_confidence_to_persist
+    # in strategy_configs.parameters JSONB (see services/strategy_params.py)
 
     # App
     backend_host: str = "0.0.0.0"

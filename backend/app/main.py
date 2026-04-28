@@ -18,6 +18,8 @@ from app.tasks.oi_snapshot_task import start_oi_snapshot_scheduler, stop_oi_snap
 from app.tasks.daily_summary_task import start_daily_summary_scheduler, stop_daily_summary_scheduler
 from app.tasks.symbol_master_task import start_symbol_master_scheduler, stop_symbol_master_scheduler
 from app.tasks.global_market_task import start_global_market_scheduler, stop_global_market_scheduler
+from app.tasks.morning_workflow_task import start_morning_workflow_scheduler, stop_morning_workflow_scheduler
+from app.tasks.nse_bhav_copy_task import start_nse_bhav_copy_scheduler, stop_nse_bhav_copy_scheduler
 from app.services import trading_config as _trading_config_svc
 from app.websocket.manager import ws_manager
 
@@ -161,6 +163,12 @@ async def lifespan(app: FastAPI):
     await start_global_market_scheduler()
     # task_registry registration is handled inside start_global_market_scheduler
 
+    await start_morning_workflow_scheduler()
+    task_registry.register("morning_workflow_scheduler", TaskType.SCHEDULER, metadata={"schedule": "briefing 08:00, screener 08:30 IST"})
+
+    await start_nse_bhav_copy_scheduler()
+    task_registry.register("nse_bhav_copy_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 07:30 IST"})
+
     # --- One-shot startup tasks (tracked via done callback) ---
     t1 = asyncio.create_task(_load_symbol_master_background(), name="symbol_master_load")
     task_registry.track_asyncio_task("symbol_master_load", t1, metadata={"description": "Load symbol master into memory"})
@@ -199,6 +207,12 @@ async def lifespan(app: FastAPI):
 
     await stop_global_market_scheduler()
     task_registry.update_status("global_market_task", TaskStatus.STOPPED)
+
+    await stop_morning_workflow_scheduler()
+    task_registry.update_status("morning_workflow_scheduler", TaskStatus.STOPPED)
+
+    await stop_nse_bhav_copy_scheduler()
+    task_registry.update_status("nse_bhav_copy_scheduler", TaskStatus.STOPPED)
 
     await ws_manager.disconnect_all()
     print("StockTrading backend stopped.")
