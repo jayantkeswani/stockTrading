@@ -10,6 +10,7 @@ import asyncio
 import logging
 
 from app.agent.auto_executor import auto_execute_signal
+from app.core.utils import now_ist
 from app.agent.notification import notify_signal_generated
 from app.agent.trade_monitor import monitor_positions
 from app.core.database import async_session_factory
