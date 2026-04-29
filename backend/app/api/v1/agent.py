@@ -20,10 +20,6 @@ from app.services.trading_config import get_trading_config, update_trading_confi
 
 router = APIRouter()
 
-# In-memory agent state (running/uptime only — mode is persisted in trading_config)
-_agent_state = {"running": False, "started_at": None}
-
-
 @router.get("/status", response_model=AgentStatusResponse)
 async def agent_status(db: AsyncSession = Depends(get_db)):
     cfg = await get_trading_config()
@@ -42,11 +38,11 @@ async def agent_status(db: AsyncSession = Depends(get_db)):
     positions_monitored = pos_result.scalar() or 0
 
     uptime = None
-    if _agent_state["running"] and _agent_state["started_at"]:
-        uptime = int((now_ist() - _agent_state["started_at"]).total_seconds())
+    if agent_runner.is_running and agent_runner.started_at:
+        uptime = int((now_ist() - agent_runner.started_at).total_seconds())
 
     return AgentStatusResponse(
-        running=_agent_state["running"],
+        running=agent_runner.is_running,
         yolo_mode=cfg.yolo_mode,
         autonomy_level=cfg.autonomy_level,
         pending_confirmations=pending,
@@ -57,8 +53,6 @@ async def agent_status(db: AsyncSession = Depends(get_db)):
 
 @router.post("/start")
 async def start_agent():
-    _agent_state["running"] = True
-    _agent_state["started_at"] = now_ist()
     await agent_runner.start()
     cfg = await get_trading_config()
     return {"status": "started", "yolo_mode": cfg.yolo_mode}
@@ -66,8 +60,6 @@ async def start_agent():
 
 @router.post("/stop")
 async def stop_agent():
-    _agent_state["running"] = False
-    _agent_state["started_at"] = None
     await agent_runner.stop()
     return {"status": "stopped"}
 

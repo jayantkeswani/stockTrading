@@ -26,6 +26,7 @@ class AgentRunner:
     def __init__(self):
         self._running = False
         self._task: asyncio.Task | None = None
+        self.started_at = None
 
     @property
     def is_running(self) -> bool:
@@ -37,6 +38,7 @@ class AgentRunner:
             logger.warning("Agent is already running")
             return
         self._running = True
+        self.started_at = now_ist()
         self._task = asyncio.create_task(self._run_loop())
         cfg = await get_trading_config()
         logger.info("Agent started (autonomy=%s)", cfg.autonomy_level)
@@ -48,6 +50,7 @@ class AgentRunner:
     async def stop(self):
         """Stop the agent."""
         self._running = False
+        self.started_at = None
         if self._task:
             self._task.cancel()
             try:
