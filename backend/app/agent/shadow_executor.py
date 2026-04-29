@@ -117,7 +117,7 @@ async def _do_shadow_execute(signal_id) -> None:
             expiry_date=signal.expiry_date,
             strike_price=signal.strike_price,
             option_type=option_type,
-            side="BUY",
+            side="SELL" if "SELL" in signal.signal_type else "BUY",
             quantity=quantity,
             lots=lots,
             entry_price=entry_price,
