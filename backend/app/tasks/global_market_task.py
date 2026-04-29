@@ -25,6 +25,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.constants import IST
+from app.data_sources.yahoo_finance_http import YF_HEADERS as _YF_HEADERS
+from app.data_sources.yahoo_finance_http import fetch_chart as _fetch_chart_raw
+from app.data_sources.yahoo_finance_http import get_crumb as _get_crumb
 from app.indicators.global_market import GlobalCues, combined_global_score
 
 logger = logging.getLogger(__name__)
@@ -46,95 +49,21 @@ _TICKERS = {
     "us_vix": "^VIX",
 }
 
-_YF_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json,text/plain,*/*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://finance.yahoo.com/",
-}
-
-# Module-level crumb cache — shared across the 8 per-tick fetches within one run.
-_yf_crumb: str | None = None
-_yf_crumb_at: float = 0.0
-_CRUMB_TTL = 3600  # Yahoo crumbs last several hours; refresh hourly to be safe
-
-
-def _get_crumb(client) -> str | None:
-    """Fetch a Yahoo Finance crumb using an existing httpx.Client (cookies shared)."""
-    global _yf_crumb, _yf_crumb_at
-
-    now = time.time()
-    if _yf_crumb and now - _yf_crumb_at < _CRUMB_TTL:
-        return _yf_crumb
-
-    try:
-        # fc.yahoo.com sets the A3 consent cookie; response is usually 404 but cookies land.
-        client.get("https://fc.yahoo.com", timeout=5)
-        r = client.get("https://query2.finance.yahoo.com/v1/test/getcrumb", timeout=5)
-        if r.status_code == 200 and r.text and "\n" not in r.text:
-            _yf_crumb = r.text.strip()
-            _yf_crumb_at = now
-            return _yf_crumb
-    except Exception:
-        pass
-    return None
-
-
-_MAX_RETRIES = 3
-_BASE_RETRY_DELAY = 5  # seconds; doubles each attempt
-
 
 def _fetch_ticker(client, ticker: str, crumb: str | None) -> tuple[float | None, float | None]:
-    """Fetch last two daily closes for one ticker. Retries on 429 with backoff."""
-    params: dict = {"range": "5d", "interval": "1d", "includePrePost": "false"}
-    if crumb:
-        params["crumb"] = crumb
+    """Fetch last two daily closes for one ticker via shared httpx helper."""
+    result = _fetch_chart_raw(client, ticker, crumb, interval="1d", range_="5d")
+    if not result:
+        return None, None
 
-    for attempt in range(_MAX_RETRIES + 1):
-        try:
-            r = client.get(
-                f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
-                params=params,
-                timeout=8,
-            )
+    closes = result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+    closes = [c for c in closes if c is not None]
+    if not closes:
+        return None, None
 
-            if r.status_code == 429:
-                if attempt < _MAX_RETRIES:
-                    wait = _BASE_RETRY_DELAY * (2 ** attempt)
-                    logger.warning(
-                        "Yahoo Finance rate limit for %s (attempt %d/%d), retrying in %ds",
-                        ticker, attempt + 1, _MAX_RETRIES, wait,
-                    )
-                    time.sleep(wait)
-                    continue
-                logger.warning("Yahoo Finance rate limit for %s — giving up", ticker)
-                return None, None
-
-            if r.status_code != 200:
-                logger.warning("Yahoo Finance %s → HTTP %d", ticker, r.status_code)
-                return None, None
-
-            result = (r.json().get("chart") or {}).get("result") or []
-            if not result:
-                return None, None
-
-            closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
-            closes = [c for c in closes if c is not None]
-            if not closes:
-                return None, None
-
-            latest = float(closes[-1])
-            prev = float(closes[-2]) if len(closes) >= 2 else None
-            return latest, prev
-
-        except Exception:
-            logger.warning("Failed to fetch %s from Yahoo Finance", ticker)
-            return None, None
-
-    return None, None
+    latest = float(closes[-1])
+    prev = float(closes[-2]) if len(closes) >= 2 else None
+    return latest, prev
 
 
 def _fetch_global_data_sync() -> dict[str, float | None]:

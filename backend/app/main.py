@@ -1,6 +1,9 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+
+logger = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
@@ -142,9 +145,11 @@ async def _fetch_fundamentals_background():
     await asyncio.sleep(5)
     try:
         count = await fetch_fundamentals()
-        print(f"Fundamental data: updated {count} symbols")
+        logger.info("Fundamental data: updated %d symbols", count)
+        if count == 0:
+            logger.warning("Fundamental data: 0 symbols updated — check Yahoo Finance connectivity")
     except Exception as e:
-        print(f"Fundamental data fetch failed: {e}")
+        logger.error("Fundamental data fetch failed: %s", e, exc_info=True)
 
 
 async def _deep_backfill_background():
