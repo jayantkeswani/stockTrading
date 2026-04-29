@@ -41,6 +41,7 @@ export function ScannerPanel() {
   };
 
   const handleReject = async (signalId: string) => {
+    if (!window.confirm("Dismiss this signal?")) return;
     try {
       await api.rejectSignal(signalId);
       removeSignal(signalId);

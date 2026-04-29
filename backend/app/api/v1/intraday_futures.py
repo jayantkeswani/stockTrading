@@ -74,6 +74,7 @@ async def daily_stats(date: str | None = None):
     from sqlalchemy import and_, func, select
 
     from app.core.database import async_session_factory
+    from app.core.enums import TradeSource
     from app.core.utils import now_ist
     from app.models.position import Position
     from app.models.trade import Trade
@@ -81,21 +82,25 @@ async def daily_stats(date: str | None = None):
     today = date_type.fromisoformat(date) if date else now_ist().date()
 
     async with async_session_factory() as session:
-        # Today's trades
+        # Today's trades (exclude shadow)
         result = await session.execute(
             select(Trade).where(
                 and_(
                     Trade.strategy_name == "intraday_futures",
                     func.date(Trade.entry_time) == today,
+                    Trade.source != TradeSource.SHADOW.value,
                 )
             )
         )
         trades = result.scalars().all()
 
-        # Active positions
+        # Active positions (exclude shadow)
         result = await session.execute(
             select(func.count()).select_from(Position).where(
-                Position.strategy_name == "intraday_futures",
+                and_(
+                    Position.strategy_name == "intraday_futures",
+                    Position.is_shadow == False,
+                )
             )
         )
         active_positions = result.scalar() or 0
