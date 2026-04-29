@@ -257,6 +257,8 @@ All sub-setups use **chart-based levels** — not fixed percentages. Each setup 
 
 SL and target are computed directly on the stock futures price. No delta conversion or premium math (unlike Strategy 2's index options).
 
+**Price sourcing convention (important):** PDH/PDL Breakout and Gap Continuation use `last_candle.close` — not the live tick (`ctx.current_price`) — as the reference price for entry, SL, and target computation. The candle close is the *confirmed* breakout price. Using the live tick instead can cause the SL to land on the wrong side of the entry when the tick has moved significantly from the candle close (e.g. BUY at 9533, SL at 9576 — seen in OFSS). PDH/PDL also includes a post-computation SL sanity guard that hard-rejects any signal where the SL lands on the wrong side of the entry price. **ORB** and **VWAP Bounce** use `ctx.current_price` intentionally: ORB's SL is anchored to structural `orb_low`/`orb_high` (always correct regardless of tick); VWAP Bounce's SL is anchored to VWAP (always below/above entry since the live price must be near VWAP to trigger the proximity check).
+
 ---
 
 ## Confidence Scoring
@@ -267,14 +269,16 @@ An 8-factor weighted composite produces a 0–100 score. The full factor breakdo
 
 | Factor | Weight | What It Measures |
 |---|---|---|
-| `vol_factor` | 0.15 | Breakout candle volume relative to average |
+| `vol_factor` | 0.15 | Breakout candle volume relative to average; default 0.2 if no data |
 | `rvol_factor` | 0.15 | Time-of-day normalized volume (RVOL threshold) |
-| `bias_factor` | 0.20 | Nifty intraday bias alignment with signal direction |
-| `phase_factor` | 0.10 | Current market phase quality (MORNING_ACTIVE > AFTERNOON > CAUTION_ZONE) |
-| `setup_factor` | 0.15 | Setup-specific quality (enhanced ORB, reversal candle strength, breakout magnitude) |
-| `rank_factor` | 0.10 | Stock's screener rank and composite score |
-| `gap_factor` | 0.05 | Gap alignment with trade direction |
-| `trend_factor` | 0.10 | Stock's multi-day trend alignment from `stock_trend.py` |
+| `bias_factor` | 0.12 | Nifty intraday bias alignment with signal direction |
+| `phase_factor` | 0.12 | Current market phase quality (MORNING_ACTIVE > AFTERNOON > CAUTION_ZONE) |
+| `setup_factor` | 0.14 | Setup-specific quality (enhanced ORB, reversal candle strength, breakout magnitude) |
+| `rank_factor` | 0.12 | Stock's screener rank (`score/100`); default 0.0 if no screener data |
+| `gap_factor` | 0.10 | Gap alignment with trade direction; default 0.2 if no gap data |
+| `trend_factor` | 0.10 | Stock's multi-day trend alignment from `stock_trend.py`; default 0.2 if no data |
+
+Weights sum to **1.0**. Missing-data defaults are **0.2** (not 0.5) to penalise signals where context is absent, reducing score inflation.
 
 **Confidence thresholds** (configurable via strategy_params):
 - `min_confidence_to_persist`: 30.0 — below this, signal not saved

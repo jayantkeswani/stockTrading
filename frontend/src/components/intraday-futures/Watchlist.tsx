@@ -2,11 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useStore } from "@/store";
+import { pnlColor } from "@/lib/formatters";
+import { subscribeSymbols } from "@/hooks/useWebSocket";
 import type { S5WatchlistItem } from "@/lib/types";
 
 export function Watchlist({ date }: { date: string | null }) {
   const [items, setItems] = useState<S5WatchlistItem[]>([]);
   const [sortKey, setSortKey] = useState<"composite_score" | "rs_percentile">("composite_score");
+  const prices = useStore((s) => s.prices);
 
   const isHistorical = date != null;
 
@@ -14,6 +18,10 @@ export function Watchlist({ date }: { date: string | null }) {
     try {
       const data = await api.getIntradayFuturesWatchlist(date ?? undefined);
       setItems(data);
+      if (!isHistorical && data.length > 0) {
+        const syms = data.map((d: S5WatchlistItem) => `NSE:${d.symbol}-EQ`);
+        subscribeSymbols(syms);
+      }
     } catch {
       /* silent */
     }
@@ -122,7 +130,29 @@ export function Watchlist({ date }: { date: string | null }) {
                     </span>
                   ) : "—"}
                 </td>
-                <td className="px-2 py-1 text-right text-text-secondary">{item.price.toFixed(1)}</td>
+                <td className="px-2 py-1 text-right">
+                  {(() => {
+                    const p = prices[item.symbol] || prices[`NSE:${item.symbol}-EQ`];
+                    const ltp = p?.ltp ?? item.price;
+                    const changePct = p?.change_pct ?? null;
+                    const change = p?.change ?? null;
+                    return (
+                      <>
+                        <div className="text-text-primary">{ltp.toFixed(1)}</div>
+                        {changePct != null && (
+                          <div className={`text-[10px] font-mono ${pnlColor(changePct)}`}>
+                            {changePct > 0 ? "+" : ""}{changePct.toFixed(2)}%
+                            {change != null && (
+                              <span className="text-text-muted ml-0.5">
+                                ({change > 0 ? "+" : ""}{change.toFixed(1)})
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </td>
               </tr>
             ))}
             {items.length === 0 && (

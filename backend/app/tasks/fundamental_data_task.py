@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 
 FUNDAMENTAL_FETCH_INTERVAL_HOURS = 6
-RATE_LIMIT_DELAY_SECONDS = 3  # Delay between stock fetches (yfinance rate limiting)
+RATE_LIMIT_DELAY_SECONDS = 5  # Delay between stock fetches (yfinance rate limiting)
 
 
 async def fetch_fundamentals() -> int:

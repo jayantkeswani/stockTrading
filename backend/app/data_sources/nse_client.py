@@ -9,6 +9,7 @@ the latest quarters to extract the detailed FII/DII/MF breakdown.
 """
 
 import asyncio
+import io
 import logging
 import xml.etree.ElementTree as ET
 from datetime import date
@@ -370,6 +371,116 @@ def _parse_lot_sizes_csv(csv_text: str) -> dict[str, int]:
                 break
 
     return lot_sizes
+
+
+async def get_fo_ban_list(trade_date: date | None = None) -> set[str]:
+    """Return the set of F&O securities currently under the NSE ban/MWPL list.
+
+    Checks Redis cache first (key ``nse:fo_ban_list:{YYYY-MM-DD}``, 24h TTL).
+    On cache miss, fetches from the NSE JSON API:
+        https://www.nseindia.com/api/live-analysis-oi-ban-securities
+    Falls back to the CSV archive endpoint on JSON failure:
+        https://nsearchives.nseindia.com/content/fo/fo_secban.csv
+
+    Returns a set of short NSE symbol names (e.g. {"HINDCOPPER", "MANAPPURAM"}).
+    Returns an empty set on any failure so callers can degrade gracefully.
+    """
+    from app.core.utils import now_ist
+
+    if trade_date is None:
+        trade_date = now_ist().date()
+
+    # --- Redis cache check ---
+    from app.core.redis import get_redis
+
+    r = get_redis()
+    cache_key = f"nse:fo_ban_list:{trade_date}"
+    cached = await r.get(cache_key)
+    if cached:
+        import json
+        ban_set = set(json.loads(cached))
+        logger.debug("F&O ban list for %s loaded from Redis (%d symbols)", trade_date, len(ban_set))
+        return ban_set
+
+    # --- Fetch from NSE (runs in thread to avoid blocking the event loop) ---
+    ban_set = await asyncio.to_thread(_fetch_fo_ban_list_sync)
+
+    # Cache result (empty set cached too — avoids hammering NSE on bad days)
+    import json
+    await r.setex(cache_key, 86400, json.dumps(sorted(ban_set)))  # 24h TTL
+    logger.info(
+        "F&O ban list for %s fetched and cached: %d symbols banned",
+        trade_date, len(ban_set),
+    )
+    return ban_set
+
+
+def _fetch_fo_ban_list_sync() -> set[str]:
+    """Synchronous fetch of the F&O ban list from NSE.
+
+    Tries the live JSON API first; falls back to the CSV archive endpoint.
+    Intended to be run via ``asyncio.to_thread``.
+    """
+    _BAN_JSON_URL = "https://www.nseindia.com/api/live-analysis-oi-ban-securities"
+    _BAN_CSV_URL = "https://nsearchives.nseindia.com/content/fo/fo_secban.csv"
+
+    try:
+        with httpx.Client(
+            headers=NSE_HEADERS,
+            timeout=httpx.Timeout(30.0),
+            follow_redirects=True,
+        ) as client:
+            # Preflight to establish NSE session cookies
+            client.get(NSE_BASE_URL)
+
+            # Primary: JSON API
+            resp = client.get(_BAN_JSON_URL)
+            if resp.status_code == 200:
+                content_type = resp.headers.get("content-type", "")
+                if "html" not in content_type.lower():
+                    try:
+                        data = resp.json()
+                        # API returns {"data": ["HINDCOPPER", "MANAPPURAM", ...]}
+                        symbols = data.get("data", [])
+                        if isinstance(symbols, list) and symbols:
+                            return {str(s).strip().upper() for s in symbols if s}
+                    except Exception:
+                        logger.debug("F&O ban JSON parse failed — trying CSV fallback", exc_info=True)
+
+            # Fallback: CSV archive
+            resp = client.get(_BAN_CSV_URL)
+            if resp.status_code == 200:
+                content_type = resp.headers.get("content-type", "")
+                if "html" not in content_type.lower():
+                    return _parse_ban_csv(resp.text)
+
+            logger.warning(
+                "F&O ban list: both JSON (%d) and CSV (%d) endpoints failed",
+                resp.status_code, resp.status_code,
+            )
+            return set()
+
+    except httpx.HTTPError:
+        logger.exception("HTTP error fetching F&O ban list")
+        return set()
+
+
+def _parse_ban_csv(csv_text: str) -> set[str]:
+    """Parse the NSE fo_secban.csv file into a set of banned symbol names.
+
+    The CSV has a single column of symbol names, sometimes with a header row.
+    """
+    banned: set[str] = set()
+    reader = io.StringIO(csv_text)
+    for line in reader:
+        sym = line.strip().upper()
+        # Skip empty lines, header rows, and non-symbol entries
+        if not sym or sym in ("SYMBOL", "SECURITY"):
+            continue
+        # Only include lines that look like a stock symbol (alpha-numeric, no spaces)
+        if sym.replace("&", "").replace("-", "").isalnum():
+            banned.add(sym)
+    return banned
 
 
 def _safe_float(val) -> float | None:

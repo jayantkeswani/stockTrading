@@ -13,6 +13,7 @@ Redis values are used until they expire.
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from decimal import Decimal
 
@@ -72,12 +73,14 @@ def _fetch_global_data_sync() -> dict[str, float | None]:
     prices: dict[str, float] = {}
     prev_prices: dict[str, float] = {}
 
-    for key, ticker in _TICKERS.items():
+    for i, (key, ticker) in enumerate(_TICKERS.items()):
         latest, prev = _fetch_one_ticker_sync(ticker)
         if latest is not None:
             prices[key] = latest
         if prev is not None:
             prev_prices[key] = prev
+        if i < len(_TICKERS) - 1:
+            time.sleep(1.5)
 
     data["dow_futures_price"] = prices.get("dow_futures")
     data["sp500_price"] = prices.get("sp500")

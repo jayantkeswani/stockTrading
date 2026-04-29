@@ -22,7 +22,7 @@ from app.agent.notification import (
     notify_sl_hit,
     notify_time_exit,
 )
-from app.core.enums import AgentActionType, ConfirmationStatus, ExitReason, TradeStatus
+from app.core.enums import AgentActionType, ConfirmationStatus, ExitReason, TradeSource, TradeStatus
 from app.core.redis import get_cached_price
 from app.core.utils import is_past_close_deadline, now_ist
 from app.models.agent_log import AgentLog
@@ -69,10 +69,14 @@ async def _check_position(
         if pos.fyers_option_symbol:
             price_data = await _fetch_option_price_rest(pos.fyers_option_symbol)
         if not price_data:
+            if pos.is_shadow:
+                return await _close_stale_shadow(db, pos)
             return None
 
     current_price = Decimal(str(price_data.get("ltp", 0)))
     if current_price <= 0:
+        if pos.is_shadow:
+            return await _close_stale_shadow(db, pos)
         return None
 
     # Update position's current price and unrealized P&L
@@ -109,8 +113,7 @@ async def _check_position(
     # 2. Check target
     target_hit = (pos.target_price and current_price <= pos.target_price) if is_short_pos else (pos.target_price and current_price >= pos.target_price)
     if target_hit:
-        if yolo_mode:
-            # YOLO: auto-book profit, no confirmation
+        if yolo_mode or pos.is_shadow:
             return await _close_position(
                 db, pos, current_price, ExitReason.AGENT_PROFIT,
                 AgentActionType.AUTO_PROFIT_BOOKED, requires_confirmation=False,
@@ -195,7 +198,7 @@ async def _check_position(
         from app.core.constants import FUTURES_EXPIRY_ROLL_DAYS
         days_to_expiry = (pos.expiry_date - now_ist().date()).days
         if days_to_expiry <= FUTURES_EXPIRY_ROLL_DAYS:
-            if yolo_mode:
+            if yolo_mode or pos.is_shadow:
                 return await _roll_futures_position(db, pos, current_price)
             else:
                 # SEMI: request confirmation before rolling
@@ -268,21 +271,22 @@ async def _close_position(
         "exit_reason": exit_reason.value,
     })
 
-    # Telegram alert — pick the right message based on why we're closing
-    entry = float(pos.entry_price)
-    exit_f = float(exit_price)
-    lots = pos.lots
-    sym = pos.symbol
-    strat = pos.strategy_name or ""
-    inst = getattr(pos, "instrument_type", "OPTION") or "OPTION"
+    # Telegram alert — skip for shadow positions to avoid noise
+    if not pos.is_shadow:
+        entry = float(pos.entry_price)
+        exit_f = float(exit_price)
+        lots = pos.lots
+        sym = pos.symbol
+        strat = pos.strategy_name or ""
+        inst = getattr(pos, "instrument_type", "OPTION") or "OPTION"
 
-    if action_type == AgentActionType.SL_TRIGGERED:
-        await notify_sl_hit(sym, strat, entry, exit_f, pnl_val, lots, inst)
-    elif action_type in (AgentActionType.AUTO_PROFIT_BOOKED, AgentActionType.PROFIT_BOOKED):
-        await notify_profit_booked(sym, strat, entry, exit_f, pnl_val, lots)
-    elif action_type == AgentActionType.TIME_EXIT:
-        await notify_time_exit(sym, strat, entry, exit_f, pnl_val, lots)
-    # EXPIRY_ROLL close notification is handled by _roll_futures_position
+        if action_type == AgentActionType.SL_TRIGGERED:
+            await notify_sl_hit(sym, strat, entry, exit_f, pnl_val, lots, inst)
+        elif action_type in (AgentActionType.AUTO_PROFIT_BOOKED, AgentActionType.PROFIT_BOOKED):
+            await notify_profit_booked(sym, strat, entry, exit_f, pnl_val, lots)
+        elif action_type == AgentActionType.TIME_EXIT:
+            await notify_time_exit(sym, strat, entry, exit_f, pnl_val, lots)
+        # EXPIRY_ROLL close notification is handled by _roll_futures_position
 
     action = {
         "action_type": action_type.value,
@@ -404,7 +408,7 @@ async def _roll_futures_position(
     now = now_ist()
 
     # 4. Create new Trade + Position
-    new_trade = Trade(
+    trade_kwargs = dict(
         strategy_name=pos.strategy_name,
         symbol=symbol,
         expiry_date=resolution.expiry_date,
@@ -422,6 +426,9 @@ async def _roll_futures_position(
         entry_time=now,
         fyers_option_symbol=resolution.fyers_symbol,
     )
+    if pos.is_shadow:
+        trade_kwargs["source"] = TradeSource.SHADOW.value
+    new_trade = Trade(**trade_kwargs)
     db.add(new_trade)
     await db.flush()
 
@@ -440,6 +447,7 @@ async def _roll_futures_position(
         strategy_name=pos.strategy_name,
         position_type=pos.position_type,
         is_paper=pos.is_paper,
+        is_shadow=pos.is_shadow,
         opened_at=now,
     )
     db.add(new_position)
@@ -511,6 +519,21 @@ async def _roll_futures_position(
         "rolled_to": str(resolution.expiry_date),
         "new_symbol": resolution.fyers_symbol,
     }
+
+
+async def _close_stale_shadow(db: AsyncSession, pos: Position) -> dict:
+    """Close a shadow position whose contract price is no longer available.
+
+    Uses entry_price as exit so PnL = 0 — better than leaving it OPEN forever.
+    """
+    logger.info(
+        "Closing stale shadow position %s (no price available), PnL zeroed",
+        pos.symbol,
+    )
+    return await _close_position(
+        db, pos, pos.entry_price, ExitReason.TIME_EXIT,
+        AgentActionType.TIME_EXIT, requires_confirmation=False,
+    )
 
 
 async def _fetch_option_price_rest(fyers_symbol: str) -> dict | None:

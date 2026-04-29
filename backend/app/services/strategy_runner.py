@@ -236,13 +236,29 @@ class StrategyRunner:
         return True
 
     async def _check_global_risk_limits(self, symbol: str) -> tuple[bool, str | None]:
-        """Check global risk limits (max trades/day, drawdown).
+        """Check global risk limits (max trades/day, drawdown, F&O ban list).
 
         These are truly global — not strategy-specific. Trade windows and VIX
         thresholds are now per-strategy (see _check_strategy_risk_limits).
         """
-        # Max trades per day
+        # F&O ban list — block new positions in MWPL-breached securities (safety net;
+        # screener already filters these out pre-market, but intraday watchlist changes
+        # or manual evaluations could still reach here)
         today = now_ist().date()
+        try:
+            from app.core.redis import get_redis
+            import json as _json
+            r = get_redis()
+            ban_raw = await r.get(f"nse:fo_ban_list:{today}")
+            if ban_raw:
+                ban_set = set(_json.loads(ban_raw))
+                if symbol.upper() in ban_set:
+                    logger.info("Symbol %s is on the NSE F&O ban list — signal not executable", symbol)
+                    return False, f"{symbol} is on NSE F&O ban list"
+        except Exception:
+            logger.debug("Could not read F&O ban list from Redis for %s — skipping check", symbol)
+
+        # Max trades per day
         if self._signal_count_date != today:
             self._daily_signal_count = {}
             self._signal_count_date = today
@@ -326,6 +342,11 @@ class StrategyRunner:
         # 5-minute candles for pattern detection
         candles_5m = self._aggregate_5m_candles(symbol)
 
+        # For index symbols, build 5m candles with futures volume (reliable)
+        candles_5m_futures_volume = None
+        if symbol in self._index_futures_info:
+            candles_5m_futures_volume = self._aggregate_5m_candles_with_futures_volume(symbol)
+
         # ATR from 5-min candles (needs 15+ candles for a meaningful 14-period ATR)
         atr_5m = None
         if len(candles_5m) >= 15:
@@ -408,6 +429,7 @@ class StrategyRunner:
             relative_strength=relative_strength,
             canslim_data=canslim_data,
             global_cues=global_cues,
+            candles_5m_futures_volume=candles_5m_futures_volume,
             intraday_bias=intraday_bias,
             atr_5m=atr_5m,
             today_open=today_open,
@@ -1067,6 +1089,55 @@ class StrategyRunner:
             )
 
         return candles_5m
+
+    def _aggregate_5m_candles_with_futures_volume(self, symbol: str) -> list[Candle] | None:
+        """Aggregate 5m candles using index OHLC but futures volume.
+
+        Index volume from Fyers is unreliable. This uses the same futures
+        buffer that _calculate_vwap_from_buffer uses, paired with index OHLC.
+        """
+        if symbol not in self._index_futures_info:
+            return None
+
+        buffer = self._candle_buffers.get(symbol, [])
+        _, _, fut_name = self._index_futures_info[symbol]
+        fut_buffer = self._candle_buffers.get(fut_name, [])
+
+        if len(buffer) < 5 or not fut_buffer:
+            return None
+
+        n = min(len(buffer), len(fut_buffer))
+        candles_5m: list[Candle] = []
+
+        for i in range(0, n - 4, 5):
+            idx_chunk = buffer[i : i + 5]
+            fut_chunk = fut_buffer[i : i + 5]
+            candles_5m.append(
+                Candle(
+                    open=idx_chunk[0]["o"],
+                    high=max(c["h"] for c in idx_chunk),
+                    low=min(c["l"] for c in idx_chunk),
+                    close=idx_chunk[-1]["c"],
+                    volume=sum(c["v"] for c in fut_chunk),
+                )
+            )
+
+        remainder_start = (n // 5) * 5
+        if remainder_start < n:
+            idx_rem = buffer[remainder_start:n]
+            fut_rem = fut_buffer[remainder_start:n]
+            if idx_rem:
+                candles_5m.append(
+                    Candle(
+                        open=idx_rem[0]["o"],
+                        high=max(c["h"] for c in idx_rem),
+                        low=min(c["l"] for c in idx_rem),
+                        close=idx_rem[-1]["c"],
+                        volume=sum(c["v"] for c in fut_rem),
+                    )
+                )
+
+        return candles_5m if candles_5m else None
 
     def _calculate_vwap_from_buffer(self, symbol: str) -> VWAPResult | None:
         """Compute VWAP from today's buffered 1m candles.

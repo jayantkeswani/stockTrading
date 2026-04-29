@@ -80,6 +80,9 @@ class MarketContext:
     intraday_bias: IntradayBias | None = None        # Live bias: score, strength, components
     # Per-strategy parameters from strategy_configs.parameters JSONB (merged with defaults)
     strategy_params: dict | None = None
+    # 5m candles with futures volume for index symbols (reliable volume source).
+    # None for non-index symbols where native volume is reliable.
+    candles_5m_futures_volume: list[Candle] | None = None
     # ATR from 5-min candles (Strategy 5 sub-setup SL sizing)
     atr_5m: float | None = None
     # Today's opening price (gap analysis)

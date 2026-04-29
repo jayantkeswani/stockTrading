@@ -3,10 +3,15 @@
 Uses the yfinance library with .NS suffix for NSE stocks.
 All yfinance calls are synchronous — wrapped with asyncio.to_thread.
 Results are cached in Redis with 12h TTL to avoid repeated API calls.
+
+Rate-limit protection: asyncio.Semaphore caps concurrent yfinance calls,
+inter-request delay spaces them out, and sync retry with exponential backoff
+handles transient SSL resets / 429s from Yahoo Finance.
 """
 
 import asyncio
 import logging
+import time
 from datetime import date, timedelta
 
 from app.data_sources.schemas import (
@@ -17,6 +22,32 @@ from app.data_sources.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# --- Rate-limit protection ---
+_YFINANCE_SEMAPHORE = asyncio.Semaphore(2)
+_YFINANCE_INTER_REQUEST_DELAY = 1.0  # seconds between calls within a semaphore slot
+_YFINANCE_MAX_RETRIES = 3
+_YFINANCE_BASE_DELAY = 5  # seconds before first retry
+
+_RATE_LIMIT_PATTERNS = ("connection reset", "rate limit", "too many requests", "429")
+
+
+def _yf_call_with_retry(fn, *args, **kwargs):
+    """Retry a sync yfinance call on rate-limit / SSL errors with exponential backoff."""
+    for attempt in range(_YFINANCE_MAX_RETRIES + 1):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            err_str = str(e).lower()
+            if any(p in err_str for p in _RATE_LIMIT_PATTERNS) and attempt < _YFINANCE_MAX_RETRIES:
+                wait = _YFINANCE_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "yfinance rate limit (attempt %d/%d), retrying in %ds: %s",
+                    attempt + 1, _YFINANCE_MAX_RETRIES, wait, str(e)[:120],
+                )
+                time.sleep(wait)
+                continue
+            raise
 
 
 def _to_ns_ticker(symbol: str) -> str:
@@ -225,11 +256,18 @@ def _fetch_price_history_sync(ticker: str, period: str = "1y") -> list[PriceHist
 # ---------------------------------------------------------------------------
 
 
+async def _throttled_call(fn, *args, **kwargs):
+    """Run a sync yfinance function with semaphore, delay, and retry."""
+    async with _YFINANCE_SEMAPHORE:
+        await asyncio.sleep(_YFINANCE_INTER_REQUEST_DELAY)
+        return await asyncio.to_thread(_yf_call_with_retry, fn, *args, **kwargs)
+
+
 async def get_quarterly_earnings(symbol: str) -> list[QuarterlyEarnings]:
     """Fetch quarterly earnings for an NSE stock. Async wrapper."""
     ticker = _to_ns_ticker(symbol)
     try:
-        return await asyncio.to_thread(_fetch_quarterly_earnings_sync, ticker)
+        return await _throttled_call(_fetch_quarterly_earnings_sync, ticker)
     except Exception:
         logger.exception("Failed to fetch quarterly earnings for %s", symbol)
         return []
@@ -239,7 +277,7 @@ async def get_annual_financials(symbol: str) -> list[AnnualFinancials]:
     """Fetch annual financials for an NSE stock. Async wrapper."""
     ticker = _to_ns_ticker(symbol)
     try:
-        return await asyncio.to_thread(_fetch_annual_financials_sync, ticker)
+        return await _throttled_call(_fetch_annual_financials_sync, ticker)
     except Exception:
         logger.exception("Failed to fetch annual financials for %s", symbol)
         return []
@@ -249,7 +287,7 @@ async def get_stock_info(symbol: str) -> StockInfo | None:
     """Fetch stock metadata for an NSE stock. Async wrapper."""
     ticker = _to_ns_ticker(symbol)
     try:
-        return await asyncio.to_thread(_fetch_stock_info_sync, ticker)
+        return await _throttled_call(_fetch_stock_info_sync, ticker)
     except Exception:
         logger.exception("Failed to fetch stock info for %s", symbol)
         return None
@@ -259,7 +297,7 @@ async def get_price_history(symbol: str, period: str = "1y") -> list[PriceHistor
     """Fetch daily OHLCV for an NSE stock. Async wrapper."""
     ticker = _to_ns_ticker(symbol)
     try:
-        return await asyncio.to_thread(_fetch_price_history_sync, ticker)
+        return await _throttled_call(_fetch_price_history_sync, ticker)
     except Exception:
         logger.exception("Failed to fetch price history for %s", symbol)
         return []

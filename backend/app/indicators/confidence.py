@@ -67,6 +67,7 @@ def compute_confidence(
     index_entry: float,
     current_time_ist: str = "",
     window_state: str | None = None,
+    candles_5m_futures_volume: list[Candle] | None = None,
 ) -> ConfidenceResult:
     """Compute the deterministic confidence composite.
 
@@ -129,9 +130,10 @@ def compute_confidence(
     # ------------------------------------------------------------------
     # 4. volume_quality — pullback on low volume, breakout on rising volume
     # ------------------------------------------------------------------
-    if len(candles_5m) >= 5:
-        avg_vol = average_volume(candles_5m[:-1], periods=min(20, len(candles_5m) - 1))
-        curr_vol = candles_5m[-1].volume
+    vol_candles = candles_5m_futures_volume or candles_5m
+    if len(vol_candles) >= 5:
+        avg_vol = average_volume(vol_candles[:-1], periods=min(20, len(vol_candles) - 1))
+        curr_vol = vol_candles[-1].volume
         if avg_vol > 0:
             vol_ratio = curr_vol / avg_vol
             # Ideal: pullback vol < 0.8 of avg (quality pullback). Cap reward at 0.5 ratio (very light).

@@ -43,10 +43,12 @@ def _resolve_fyers_symbol(symbol: str) -> str:
 
 
 async def _get_all_backfill_symbols() -> dict[str, str]:
-    """Get all symbols that need backfilling: FYERS_SYMBOL_MAP + strategy-configured symbols.
+    """Get all symbols that need backfilling: FYERS_SYMBOL_MAP + strategy-configured + index futures.
 
     Returns dict of {internal_symbol: fyers_symbol}.
     Uses symbol_map from strategy_configs for accurate Fyers symbols (stored at insertion time).
+    Index futures (e.g. NIFTY_FUT → NSE:NIFTY25MAYFUT) are included so that
+    strategy_runner's futures-volume buffers are populated on mid-day restart.
     """
     from sqlalchemy import select
     from app.models.strategy_config import StrategyConfig
@@ -77,6 +79,22 @@ async def _get_all_backfill_symbols() -> dict[str, str]:
                     symbols[sym] = sym_map.get(sym) or _resolve_fyers_symbol(sym)
     except Exception:
         logger.exception("Failed to load strategy symbols for backfill")
+
+    # Near-month index futures for VWAP volume sourcing.
+    # Internal key "{INDEX}_FUT" matches strategy_runner._init_index_futures().
+    try:
+        from app.core.constants import INDEX_SYMBOLS
+        from app.services.futures_resolver import resolve_index_futures_symbol
+
+        for index in INDEX_SYMBOLS:
+            result = await resolve_index_futures_symbol(index)
+            if result is not None:
+                fyers_sym, _expiry = result
+                internal_name = f"{index}_FUT"
+                symbols[internal_name] = fyers_sym
+                logger.info("Including index futures in backfill: %s → %s", internal_name, fyers_sym)
+    except Exception:
+        logger.exception("Failed to resolve index futures for backfill")
 
     return symbols
 

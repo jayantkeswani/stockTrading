@@ -87,8 +87,9 @@ class VWAPPullbackStrategy(BaseStrategy):
         if not is_bullish_reversal(ctx.candles_5m):
             return None
 
-        avg_vol = average_volume(ctx.candles_5m, periods=20)
-        curr_vol = ctx.candles_5m[-1].volume
+        vol_candles = ctx.candles_5m_futures_volume or ctx.candles_5m
+        avg_vol = average_volume(vol_candles, periods=20)
+        curr_vol = vol_candles[-1].volume
         if avg_vol > 0 and curr_vol > avg_vol * 1.2:
             return None
 
@@ -107,8 +108,9 @@ class VWAPPullbackStrategy(BaseStrategy):
         if not is_bearish_reversal(ctx.candles_5m):
             return None
 
-        avg_vol = average_volume(ctx.candles_5m, periods=20)
-        curr_vol = ctx.candles_5m[-1].volume
+        vol_candles = ctx.candles_5m_futures_volume or ctx.candles_5m
+        avg_vol = average_volume(vol_candles, periods=20)
+        curr_vol = vol_candles[-1].volume
         if avg_vol > 0 and curr_vol > avg_vol * 1.2:
             return None
 
@@ -150,6 +152,7 @@ class VWAPPullbackStrategy(BaseStrategy):
             index_target=index_target,
             index_entry=ctx.current_price,
             current_time_ist=ctx.current_time_ist,
+            candles_5m_futures_volume=ctx.candles_5m_futures_volume,
         )
 
         # Persist threshold gate — signals below this are too noisy to record

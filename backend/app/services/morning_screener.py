@@ -488,7 +488,7 @@ async def _fetch_stock_oi_changes(symbols: list[str]) -> dict[str, dict]:
 
 async def _stage1_quantitative(today: date) -> list[dict]:
     """Score ~180 F&O stocks on 8 quantitative factors."""
-    from app.data_sources.nse_client import get_fo_lot_sizes
+    from app.data_sources.nse_client import get_fo_ban_list, get_fo_lot_sizes
     from app.tasks.nse_bhav_copy_task import get_bhav_copy, _previous_trading_day
 
     # Get F&O stock list
@@ -498,7 +498,23 @@ async def _stage1_quantitative(today: date) -> list[dict]:
         return []
 
     symbols = list(lot_sizes.keys())
-    logger.info("Screener: scoring %d F&O stocks", len(symbols))
+
+    # Filter out F&O ban list (MWPL-breached securities — new positions are prohibited)
+    ban_set = await get_fo_ban_list(today)
+    if ban_set:
+        banned_present = [s for s in symbols if s in ban_set]
+        symbols = [s for s in symbols if s not in ban_set]
+        if banned_present:
+            await _append_agent_log(
+                today, "SCREENER",
+                f"Excluded {len(banned_present)} F&O banned symbol(s): {', '.join(sorted(banned_present))}",
+            )
+            logger.info(
+                "Screener: excluded %d banned F&O symbols: %s",
+                len(banned_present), banned_present,
+            )
+
+    logger.info("Screener: scoring %d F&O stocks (%d banned excluded)", len(symbols), len(ban_set))
 
     # Fetch daily candle data for all symbols (last 60 days)
     daily_data = await _fetch_daily_data_batch(symbols, today, days=60)

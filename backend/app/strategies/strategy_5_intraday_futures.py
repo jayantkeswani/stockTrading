@@ -451,6 +451,9 @@ class IntradayFuturesStrategy(BaseStrategy):
             return None
 
         vwap_price = ctx.vwap.vwap
+        # VWAP bounce uses live price for entry and proximity — unlike PDH/PDL breakout,
+        # the SL here is anchored to VWAP (not to a breakout level relative to price),
+        # so live-tick-vs-candle divergence doesn't produce inverted SL.
         price = ctx.current_price
 
         # Trend check: last 6 candle closes consistently on one side of VWAP
@@ -461,7 +464,7 @@ class IntradayFuturesStrategy(BaseStrategy):
         if not all_above and not all_below:
             return None
 
-        # Pullback: price within 0.2% of VWAP
+        # Pullback: live price within 0.2% of VWAP
         if not is_pullback_to_vwap(price, vwap_price, proximity_pct=0.2):
             return None
 
@@ -550,8 +553,11 @@ class IntradayFuturesStrategy(BaseStrategy):
 
         pdh = ctx.previous_day.pdh
         pdl = ctx.previous_day.pdl
-        price = ctx.current_price
         last_candle = ctx.candles_5m[-1]
+        # Use confirmed candle close as the entry price for consistent SL/target computation.
+        # ctx.current_price (live tick) can diverge significantly from the breakout candle
+        # close, causing SL to land on the wrong side of entry or trivial R:R.
+        price = last_candle.close
 
         # Breakout detection: latest 5m candle close breaks PDH or PDL
         is_long = last_candle.close > pdh
@@ -598,6 +604,15 @@ class IntradayFuturesStrategy(BaseStrategy):
             stop_loss = pdl + sl_buffer
             target = price - measured_move
             risk = stop_loss - price
+
+        # Sanity: SL must be on the correct side of entry price.
+        # Guards against edge cases where pdh/pdl proximity produces an inverted SL.
+        if is_long and stop_loss >= price:
+            self._skip(ctx.symbol, f"PDH/PDL SL sanity fail: SL {stop_loss:.2f} >= entry {price:.2f}")
+            return None
+        if is_short and stop_loss <= price:
+            self._skip(ctx.symbol, f"PDH/PDL SL sanity fail: SL {stop_loss:.2f} <= entry {price:.2f}")
+            return None
 
         # R:R check
         reward = abs(target - price)
@@ -676,7 +691,8 @@ class IntradayFuturesStrategy(BaseStrategy):
             return None
 
         signal_type = SignalType.BUY_FUT if is_long else SignalType.SELL_FUT
-        price = ctx.current_price
+        # Use confirmed candle close for consistent SL/target/entry computation.
+        price = ctx.candles_5m[-1].close
 
         # SL: beyond gap fill level (PDC) with buffer
         atr_buffer = ctx.atr_5m * 0.5 if ctx.atr_5m else price * 0.003
@@ -837,14 +853,14 @@ class IntradayFuturesStrategy(BaseStrategy):
         """
         threshold = params.get("rvol_threshold", 1.5)
 
-        # 1. Volume quality (0.18) — breakout candle vs avg
-        vol_factor = 0.5
+        # 1. Volume quality (0.15) — breakout candle vs avg
+        vol_factor = 0.2
         if breakout_vol and ctx.candles_5m:
             avg_vol = average_volume(ctx.candles_5m)
             if avg_vol > 0:
                 vol_factor = min(1.0, breakout_vol / (avg_vol * 2))
 
-        # 2. RVOL strength (0.18)
+        # 2. RVOL strength (0.15)
         rvol_factor = 0.0
         if rvol is not None and threshold > 0:
             rvol_factor = min(1.0, (rvol - threshold) / threshold)
@@ -865,7 +881,7 @@ class IntradayFuturesStrategy(BaseStrategy):
             "CAUTION_ZONE": 0.4,
         }.get(phase, 0.3)
 
-        # 5. Setup quality (0.15)
+        # 5. Setup quality (0.14)
         setup_factor = {
             "ORB": 0.8,
             "PDH_PDL": 0.7,
@@ -880,14 +896,14 @@ class IntradayFuturesStrategy(BaseStrategy):
                 if price > ctx.previous_day.pdh or price < ctx.previous_day.pdl:
                     setup_factor = 1.0
 
-        # 6. Screener rank (0.15)
+        # 6. Screener rank (0.12)
         screener_score = params.get("_screener_score", 0)
-        rank_factor = min(1.0, screener_score / 80) if screener_score > 0 else 0.0
+        rank_factor = min(1.0, screener_score / 100) if screener_score > 0 else 0.0
 
         # 7. Gap alignment (0.10) — signal direction matches stock's gap direction
         gap_direction = params.get("_gap_direction")
         relative_gap = params.get("_relative_gap_pct")
-        gap_factor = 0.5
+        gap_factor = 0.2
         if gap_direction and relative_gap is not None:
             gap_aligned = (is_long and gap_direction == "UP") or (
                 not is_long and gap_direction == "DOWN"
@@ -898,9 +914,9 @@ class IntradayFuturesStrategy(BaseStrategy):
             else:
                 gap_factor = max(0.0, 0.4 - abs_gap * 0.2)
 
-        # 8. Stock trend alignment (0.08)
+        # 8. Stock trend alignment (0.10)
         trend_score = params.get("_stock_trend_score")
-        trend_factor = 0.5
+        trend_factor = 0.2
         if trend_score is not None:
             if is_long:
                 trend_factor = min(1.0, 0.5 + trend_score)
@@ -909,14 +925,14 @@ class IntradayFuturesStrategy(BaseStrategy):
             trend_factor = max(0.0, trend_factor)
 
         composite = (
-            vol_factor * 0.16
-            + rvol_factor * 0.16
+            vol_factor * 0.15
+            + rvol_factor * 0.15
             + bias_factor * 0.12
             + phase_factor * 0.12
             + setup_factor * 0.14
-            + rank_factor * 0.14
+            + rank_factor * 0.12
             + gap_factor * 0.10
-            + trend_factor * 0.08
+            + trend_factor * 0.10
         ) * 100
 
         if indicators is not None:
