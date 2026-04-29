@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import { WS_URL, SYMBOLS } from "@/lib/constants";
+import { getWsUrl, SYMBOLS } from "@/lib/constants";
 import { useStore } from "@/store";
 
 // Module-level ref so subscribeSymbols() can be called from any component
@@ -28,7 +28,7 @@ export function useWebSocket() {
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(getWsUrl());
     wsRef.current = ws;
     sharedWs = ws;
 
