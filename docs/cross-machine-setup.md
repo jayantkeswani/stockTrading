@@ -27,34 +27,40 @@ Primary Laptop (dev)                    Remote Laptop (server)
 | WebSocket     | ws://100.95.114.17:8080/ws            |
 | SSH           | ssh jaykeswani@100.95.114.17          |
 
-## Daily Workflow
+## Regular Day (No Code Changes)
 
-### After pushing code from primary laptop
+Nothing to do. As long as Docker Desktop and the backend/frontend processes are running on the remote laptop, everything works automatically — morning jobs (Fyers login at 7:45, screener at 8:30, briefing at 8:00) all run on their own.
+
+Just open http://100.95.114.17:3000 from this laptop and watch.
+
+### After a laptop restart (remote)
+Docker Desktop auto-starts (if configured), but the backend and frontend processes do not survive a reboot. Start them:
 ```bash
-# SSH to remote and pull + restart
-ssh jaykeswani@100.95.114.17
-
-# On remote:
-source ~/.zshrc
-cd ~/projects/stockTrading
-git pull
-
-# Restart backend (if backend changed)
-pkill -f "uvicorn app.main"
-cd backend && source .venv/bin/activate
-nohup uvicorn app.main:app --host 0.0.0.0 --port 8080 > /tmp/backend.log 2>&1 &
-
-# Restart frontend (if frontend changed)
-pkill -f "next dev"
-cd ../frontend
-nohup npm run dev -- -H 0.0.0.0 > /tmp/frontend.log 2>&1 &
+ssh jaykeswani@100.95.114.17 "source ~/.zshrc; cd ~/projects/stockTrading/backend && source .venv/bin/activate && nohup uvicorn app.main:app --host 0.0.0.0 --port 8080 > /tmp/backend.log 2>&1 &"
+ssh jaykeswani@100.95.114.17 "source ~/.zshrc; cd ~/projects/stockTrading/frontend && nohup npm run dev -- -H 0.0.0.0 > /tmp/frontend.log 2>&1 &"
 ```
 
-### Quick SSH commands from primary laptop
-```bash
-# Pull and restart everything in one command
-ssh jaykeswani@100.95.114.17 "source ~/.zshrc; cd ~/projects/stockTrading && git pull && cd backend && source .venv/bin/activate && pkill -f 'uvicorn app.main'; nohup uvicorn app.main:app --host 0.0.0.0 --port 8080 > /tmp/backend.log 2>&1 & cd ../frontend && pkill -f 'next dev'; nohup npm run dev -- -H 0.0.0.0 > /tmp/frontend.log 2>&1 &"
+## After Pushing Code Changes
 
+Pull on the remote laptop and restart whichever service changed:
+```bash
+# Always pull first
+ssh jaykeswani@100.95.114.17 "source ~/.zshrc; cd ~/projects/stockTrading && git pull"
+
+# Restart backend (only if backend/ changed)
+ssh jaykeswani@100.95.114.17 "source ~/.zshrc; cd ~/projects/stockTrading/backend && source .venv/bin/activate && pkill -f 'uvicorn app.main'; nohup uvicorn app.main:app --host 0.0.0.0 --port 8080 > /tmp/backend.log 2>&1 &"
+
+# Restart frontend (only if frontend/ changed)
+ssh jaykeswani@100.95.114.17 "source ~/.zshrc; cd ~/projects/stockTrading/frontend && pkill -f 'next dev'; nohup npm run dev -- -H 0.0.0.0 > /tmp/frontend.log 2>&1 &"
+```
+
+### Pull + restart everything in one command
+```bash
+ssh jaykeswani@100.95.114.17 "source ~/.zshrc; cd ~/projects/stockTrading && git pull && cd backend && source .venv/bin/activate && pkill -f 'uvicorn app.main'; nohup uvicorn app.main:app --host 0.0.0.0 --port 8080 > /tmp/backend.log 2>&1 & cd ../frontend && pkill -f 'next dev'; nohup npm run dev -- -H 0.0.0.0 > /tmp/frontend.log 2>&1 &"
+```
+
+### Useful check commands
+```bash
 # Check logs
 ssh jaykeswani@100.95.114.17 "tail -30 /tmp/backend.log"
 ssh jaykeswani@100.95.114.17 "tail -30 /tmp/frontend.log"
