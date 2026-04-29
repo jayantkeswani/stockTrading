@@ -1437,7 +1437,7 @@ class StrategyRunner:
             # Updated existing signal — broadcast as update (not new)
             await self._broadcast_signal(
                 signal, dedup_result.id, now, executable, blocked_reason,
-                event="signal:updated",
+                event="signal:updated", ai_fields=ai_fields,
             )
             return
 
@@ -1453,7 +1453,8 @@ class StrategyRunner:
             self._daily_signal_count[signal.symbol] = count + 1
 
         # Broadcast to connected clients
-        await self._broadcast_signal(signal, signal_record.id, now, executable, blocked_reason)
+        await self._broadcast_signal(signal, signal_record.id, now, executable, blocked_reason,
+                                         ai_fields=ai_fields)
 
         # Notify agent runner (Telegram + potential YOLO auto-execution)
         try:
@@ -1691,12 +1692,14 @@ class StrategyRunner:
         executable: bool,
         blocked_reason: str | None,
         event: str = "signal:new",
+        ai_fields: dict | None = None,
     ) -> None:
         """Broadcast a signal to all WebSocket clients.
 
         Args:
             event: "signal:new" for new signals, "signal:updated" for dedup updates.
         """
+        ai = ai_fields or {}
         payload = {
             "id": str(signal_id),
             "strategy_name": signal.strategy_name.value,
@@ -1717,6 +1720,11 @@ class StrategyRunner:
             "generated_at": generated_at.isoformat(),
             "lots": signal.lots,
             "quantity": signal.quantity,
+            "indicators": signal.indicators,
+            "ai_summary": ai.get("ai_summary"),
+            "ai_rationale": ai.get("ai_rationale"),
+            "ai_adjustment": ai.get("ai_adjustment"),
+            "ai_action": ai.get("ai_action"),
         }
         await ws_manager.broadcast(event, payload)
 
