@@ -2,13 +2,17 @@
 
 Data flow:
     scheduler -> fetch_global_market_data()
-        -> yfinance: Dow futures, S&P 500, Nasdaq, Nifty proxy, crude, USD/INR, DXY, US VIX
+        -> httpx → Yahoo Finance v8 chart API (no curl_cffi, uses system SSL)
         -> write to Redis (TTL 20 min) for hot-path MarketContext reads
         -> insert GlobalMarketSnapshot row for history / backtest replay
 
 Data is intentionally lightweight (8 tickers, daily/intraday) and cached in Redis so
-strategy_runner never waits on this task. If yfinance is unreachable, the previous
+strategy_runner never waits on this task. If Yahoo Finance is unreachable, the previous
 Redis values are used until they expire.
+
+httpx is used instead of yfinance because yfinance 1.0+ mandates curl_cffi whose
+bundled libcurl has TLS handshake failures on macOS 15.2. httpx uses Python's native
+SecureTransport SSL stack which works on all macOS versions.
 """
 
 import asyncio
@@ -30,9 +34,7 @@ _scheduler: AsyncIOScheduler | None = None
 FETCH_INTERVAL_MINUTES = 15
 REDIS_TTL_SECONDS = 20 * 60  # 20 min — survives a missed tick
 
-# yfinance tickers to fetch.
-# DXY: "DX-Y.NYB" is the ICE US Dollar Index on the NYB exchange — more reliable
-# than the futures contract "DX=F" which rolls and can disappear.
+# Yahoo Finance tickers. DX-Y.NYB = ICE US Dollar Index (more stable than DX=F futures).
 _TICKERS = {
     "dow_futures": "YM=F",
     "sp500": "^GSPC",
@@ -44,43 +46,116 @@ _TICKERS = {
     "us_vix": "^VIX",
 }
 
+_YF_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://finance.yahoo.com/",
+}
 
-def _fetch_one_ticker_sync(ticker: str) -> tuple[float | None, float | None]:
-    """Fetch the last two daily closes for a single ticker. Returns (latest, prev)."""
-    import yfinance as yf
+# Module-level crumb cache — shared across the 8 per-tick fetches within one run.
+_yf_crumb: str | None = None
+_yf_crumb_at: float = 0.0
+_CRUMB_TTL = 3600  # Yahoo crumbs last several hours; refresh hourly to be safe
+
+
+def _get_crumb(client) -> str | None:
+    """Fetch a Yahoo Finance crumb using an existing httpx.Client (cookies shared)."""
+    global _yf_crumb, _yf_crumb_at
+
+    now = time.time()
+    if _yf_crumb and now - _yf_crumb_at < _CRUMB_TTL:
+        return _yf_crumb
 
     try:
-        t = yf.Ticker(ticker)
-        hist = t.history(period="5d", interval="1d", auto_adjust=True)
-        if hist is None or hist.empty:
-            return None, None
-        closes = hist["Close"].dropna()
-        if len(closes) == 0:
-            return None, None
-        latest = float(closes.iloc[-1])
-        prev = float(closes.iloc[-2]) if len(closes) >= 2 else None
-        return latest, prev
+        # fc.yahoo.com sets the A3 consent cookie; response is usually 404 but cookies land.
+        client.get("https://fc.yahoo.com", timeout=5)
+        r = client.get("https://query2.finance.yahoo.com/v1/test/getcrumb", timeout=5)
+        if r.status_code == 200 and r.text and "\n" not in r.text:
+            _yf_crumb = r.text.strip()
+            _yf_crumb_at = now
+            return _yf_crumb
     except Exception:
-        return None, None
+        pass
+    return None
+
+
+_MAX_RETRIES = 3
+_BASE_RETRY_DELAY = 5  # seconds; doubles each attempt
+
+
+def _fetch_ticker(client, ticker: str, crumb: str | None) -> tuple[float | None, float | None]:
+    """Fetch last two daily closes for one ticker. Retries on 429 with backoff."""
+    params: dict = {"range": "5d", "interval": "1d", "includePrePost": "false"}
+    if crumb:
+        params["crumb"] = crumb
+
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            r = client.get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+                params=params,
+                timeout=8,
+            )
+
+            if r.status_code == 429:
+                if attempt < _MAX_RETRIES:
+                    wait = _BASE_RETRY_DELAY * (2 ** attempt)
+                    logger.warning(
+                        "Yahoo Finance rate limit for %s (attempt %d/%d), retrying in %ds",
+                        ticker, attempt + 1, _MAX_RETRIES, wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                logger.warning("Yahoo Finance rate limit for %s — giving up", ticker)
+                return None, None
+
+            if r.status_code != 200:
+                logger.warning("Yahoo Finance %s → HTTP %d", ticker, r.status_code)
+                return None, None
+
+            result = (r.json().get("chart") or {}).get("result") or []
+            if not result:
+                return None, None
+
+            closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+            closes = [c for c in closes if c is not None]
+            if not closes:
+                return None, None
+
+            latest = float(closes[-1])
+            prev = float(closes[-2]) if len(closes) >= 2 else None
+            return latest, prev
+
+        except Exception:
+            logger.warning("Failed to fetch %s from Yahoo Finance", ticker)
+            return None, None
+
+    return None, None
 
 
 def _fetch_global_data_sync() -> dict[str, float | None]:
-    """Fetch latest prices for all global tickers synchronously (yfinance).
+    """Fetch latest prices for all global tickers via Yahoo Finance chart API (httpx)."""
+    import httpx
 
-    Fetches each ticker individually so one bad symbol never blocks the others.
-    """
     data: dict[str, float | None] = {}
     prices: dict[str, float] = {}
     prev_prices: dict[str, float] = {}
 
-    for i, (key, ticker) in enumerate(_TICKERS.items()):
-        latest, prev = _fetch_one_ticker_sync(ticker)
-        if latest is not None:
-            prices[key] = latest
-        if prev is not None:
-            prev_prices[key] = prev
-        if i < len(_TICKERS) - 1:
-            time.sleep(1.5)
+    with httpx.Client(headers=_YF_HEADERS, follow_redirects=True, timeout=10) as client:
+        crumb = _get_crumb(client)
+
+        for i, (key, ticker) in enumerate(_TICKERS.items()):
+            latest, prev = _fetch_ticker(client, ticker, crumb)
+            if latest is not None:
+                prices[key] = latest
+            if prev is not None:
+                prev_prices[key] = prev
+            if i < len(_TICKERS) - 1:
+                time.sleep(0.5)
 
     data["dow_futures_price"] = prices.get("dow_futures")
     data["sp500_price"] = prices.get("sp500")

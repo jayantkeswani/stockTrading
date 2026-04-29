@@ -127,12 +127,40 @@ curl -s http://100.95.114.17:8080/api/v1/auth/fyers/status | python3 -m json.too
 4. **Next.js dev origins**: `next.config.ts` has `allowedDevOrigins: ["192.168.*.*", "100.*.*.*"]` to allow HMR from LAN/Tailscale IPs.
 5. **Node.js version**: Remote laptop uses Node 22 via nvm (Next.js 15 requires >= 20.9.0).
 6. **Docker path**: SSH non-login shells don't have Docker in PATH. Use `/usr/local/bin/docker`.
+7. **Python version**: Remote venv uses Python 3.11.11 (ARM64) installed via pyenv at `~/.pyenv/versions/3.11.11`. The Homebrew default (`/opt/homebrew/bin/python3.11`) is 3.11.15 — **do not use it** to recreate the venv; curl_cffi's bundled libcurl fails with TLS resets on macOS 15.2 under that build (same root cause as the Fyers anyio regression). Always use `/Users/jaykeswani/.pyenv/versions/3.11.11/bin/python3.11` to recreate the remote venv.
+8. **Yahoo Finance / curl_cffi**: curl_cffi's bundled libcurl fails on macOS 15.2 (remote) but works on macOS 15.7.3 (primary) — macOS version difference in system TLS frameworks. The global market task bypasses this by using httpx directly against Yahoo Finance's v8 chart API.
 
 ## Data Persistence
 
 Both PostgreSQL and Redis use Docker named volumes:
 - `st_postgres_data` — survives `docker compose down` / restarts
 - `st_redis_data` — Redis data persists across Docker restarts
+
+## Rebuilding the Remote venv
+
+If the remote venv ever needs to be recreated (e.g. after a Python upgrade):
+
+```bash
+ssh jaykeswani@100.95.114.17 "
+  cd ~/Projects/stockTrading/backend
+  rm -rf .venv
+  /Users/jaykeswani/.pyenv/versions/3.11.11/bin/python3.11 -m venv .venv
+  source .venv/bin/activate
+  pip install -e '.[dev]'
+"
+```
+
+**Do not** use `/opt/homebrew/bin/python3.11` (3.11.15) — curl_cffi TLS fails under that build on macOS 15.2.
+
+pyenv is installed at `/opt/homebrew/Cellar/pyenv`. To reinstall Python 3.11.11 if needed:
+```bash
+ssh jaykeswani@100.95.114.17 "
+  export PYENV_ROOT=\$HOME/.pyenv
+  export PATH=/opt/homebrew/bin:\$PYENV_ROOT/bin:\$PATH
+  eval \"\$(/opt/homebrew/bin/pyenv init -)\"
+  pyenv install 3.11.11
+"
+```
 
 ## Troubleshooting
 
@@ -143,3 +171,5 @@ Both PostgreSQL and Redis use Docker named volumes:
 | Frontend not loading | Node version? `ssh jaykeswani@100.95.114.17 "source ~/.zshrc; node -v"` (needs >= 20.9) |
 | SSH fails | Tailscale up? `tailscale status` on both machines |
 | Docker commands fail via SSH | Use full path: `/usr/local/bin/docker` |
+| Global market cues all None | macOS TLS issue; httpx-based fetcher should handle it — check backend logs for 429s |
+| yfinance fundamentals failing | curl_cffi TLS on macOS 15.2; non-critical, CAN SLIM degrades gracefully |
