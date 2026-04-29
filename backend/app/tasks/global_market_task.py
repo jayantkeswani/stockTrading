@@ -279,12 +279,6 @@ async def start_global_market_scheduler() -> None:
         metadata={"interval_minutes": FETCH_INTERVAL_MINUTES},
     )
 
-    # Run once immediately on startup so data is available before first trade window
-    try:
-        await fetch_global_market_data()
-    except Exception:
-        logger.exception("Initial global market fetch failed — will retry on next interval")
-
     logger.info("Global market scheduler started (every %d min)", FETCH_INTERVAL_MINUTES)
 
 
