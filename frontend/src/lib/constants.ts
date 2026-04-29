@@ -1,8 +1,7 @@
 export function getWsUrl(): string {
-  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
-  if (typeof window !== "undefined" && window.location.hostname !== "localhost")
-    return `ws://${window.location.hostname}:8080/ws`;
-  return "ws://localhost:8080/ws";
+  if (typeof window === "undefined") return "ws://localhost:8080/ws";
+  const host = window.location.hostname;
+  return `ws://${host}:8080/ws`;
 }
 
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "1D";

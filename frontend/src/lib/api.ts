@@ -1,10 +1,9 @@
 import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance } from "./types";
 
 function getApiBase(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
-  if (typeof window !== "undefined" && window.location.hostname !== "localhost")
-    return `http://${window.location.hostname}:8080`;
-  return "http://localhost:8080";
+  if (typeof window === "undefined") return "http://localhost:8080";
+  const host = window.location.hostname;
+  return `http://${host}:8080`;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
