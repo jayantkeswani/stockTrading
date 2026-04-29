@@ -66,139 +66,91 @@ def _compute_app_id_hash(app_id: str, secret_key: str) -> str:
     return hash_val.hexdigest()
 
 
-async def _send_login_otp(client: httpx.AsyncClient, username: str) -> str:
-    """Step 1: Send login OTP request. Returns request_key for next step."""
-    payload = {"fy_id": base64.b64encode(username.encode()).decode(), "app_id": "2"}
-    response = await client.post(f"{LOGIN_API}/send_login_otp_v2", json=payload)
-    data = response.json()
 
-    if data.get("s") != "ok" and data.get("code") != 200:
-        raise FyersAutoLoginError(
-            f"send_login_otp failed: {data.get('message', data)}"
-        )
+def _auto_login_sync() -> str:
+    """Execute the full login flow using sync httpx.
 
-    request_key = data.get("request_key")
-    if not request_key:
-        raise FyersAutoLoginError("No request_key in send_login_otp response")
+    anyio's async TLS wrapper is broken on some OpenSSL 3.6 + macOS combos
+    (BrokenResourceError during TLS handshake) while sync httpx works fine.
+    Running this in a thread via asyncio.to_thread avoids the issue.
+    """
+    with httpx.Client(timeout=30.0) as client:
+        # Step 1: Send login OTP
+        payload = {"fy_id": base64.b64encode(settings.fyers_username.encode()).decode(), "app_id": "2"}
+        response = client.post(f"{LOGIN_API}/send_login_otp_v2", json=payload)
+        data = response.json()
+        if data.get("s") != "ok" and data.get("code") != 200:
+            raise FyersAutoLoginError(f"send_login_otp failed: {data.get('message', data)}")
+        request_key = data.get("request_key")
+        if not request_key:
+            raise FyersAutoLoginError("No request_key in send_login_otp response")
 
-    logger.debug("send_login_otp succeeded, got request_key")
-    return request_key
+        # Step 2: Generate and verify TOTP
+        totp = _generate_totp(settings.fyers_totp_secret)
+        payload = {"request_key": request_key, "otp": int(totp)}
+        response = client.post(f"{LOGIN_API}/verify_otp", json=payload)
+        data = response.json()
+        if data.get("s") != "ok" and data.get("code") != 200:
+            raise FyersAutoLoginError(f"verify_otp failed: {data.get('message', data)}")
+        request_key = data.get("request_key")
+        if not request_key:
+            raise FyersAutoLoginError("No request_key in verify_otp response")
 
+        # Step 3: Verify PIN
+        payload = {
+            "request_key": request_key,
+            "identity_type": "pin",
+            "identifier": base64.b64encode(str(settings.fyers_pin).encode()).decode(),
+        }
+        response = client.post(f"{LOGIN_API}/verify_pin_v2", json=payload)
+        data = response.json()
+        if data.get("s") != "ok" and data.get("code") != 200:
+            raise FyersAutoLoginError(f"verify_pin failed: {data.get('message', data)}")
+        login_token = data.get("data", {}).get("access_token")
+        if not login_token:
+            raise FyersAutoLoginError("No access_token in verify_pin response")
 
-async def _verify_totp(
-    client: httpx.AsyncClient, request_key: str, totp: str
-) -> str:
-    """Step 2: Verify the TOTP. Returns request_key for PIN verification."""
-    payload = {"request_key": request_key, "otp": int(totp)}
-    response = await client.post(f"{LOGIN_API}/verify_otp", json=payload)
-    data = response.json()
+        # Step 4: Get auth code
+        payload = {
+            "fyers_id": settings.fyers_username,
+            "app_id": settings.fyers_app_id.split("-")[0],
+            "redirect_uri": settings.fyers_redirect_uri,
+            "appType": "100",
+            "code_challenge": "",
+            "state": "stocktrading",
+            "scope": "",
+            "nonce": "",
+            "response_type": "code",
+            "create_cookie": True,
+        }
+        headers = {"Authorization": f"Bearer {login_token}"}
+        response = client.post("https://api-t1.fyers.in/api/v3/token", json=payload, headers=headers)
+        data = response.json()
+        if data.get("s") != "ok" and data.get("code") != 200:
+            raise FyersAutoLoginError(f"token (auth_code) request failed: {data.get('message', data)}")
+        url_str = data.get("Url")
+        if not url_str:
+            raise FyersAutoLoginError("No Url in token response")
+        parsed = urlparse(url_str)
+        auth_code_params = parse_qs(parsed.query)
+        auth_code = auth_code_params.get("auth_code", [None])[0]
+        if not auth_code:
+            raise FyersAutoLoginError(f"Could not extract auth_code from URL: {url_str}")
 
-    if data.get("s") != "ok" and data.get("code") != 200:
-        raise FyersAutoLoginError(
-            f"verify_otp failed: {data.get('message', data)}"
-        )
-
-    request_key = data.get("request_key")
-    if not request_key:
-        raise FyersAutoLoginError("No request_key in verify_otp response")
-
-    logger.debug("verify_otp succeeded")
-    return request_key
-
-
-async def _verify_pin(
-    client: httpx.AsyncClient, request_key: str, pin: str, username: str
-) -> str:
-    """Step 3: Verify 4-digit PIN. Returns access_token (login token, not API token)."""
-    payload = {
-        "request_key": request_key,
-        "identity_type": "pin",
-        "identifier": base64.b64encode(str(pin).encode()).decode(),
-    }
-    response = await client.post(f"{LOGIN_API}/verify_pin_v2", json=payload)
-    data = response.json()
-
-    if data.get("s") != "ok" and data.get("code") != 200:
-        raise FyersAutoLoginError(
-            f"verify_pin failed: {data.get('message', data)}"
-        )
-
-    access_token = data.get("data", {}).get("access_token")
-    if not access_token:
-        raise FyersAutoLoginError("No access_token in verify_pin response")
-
-    logger.debug("verify_pin succeeded")
-    return access_token
-
-
-async def _get_auth_code(
-    client: httpx.AsyncClient, login_token: str, app_id: str, redirect_uri: str
-) -> str:
-    """Step 4: Use the login token to generate an auth code via the token endpoint."""
-    payload = {
-        "fyers_id": settings.fyers_username,
-        "app_id": app_id.split("-")[0],  # Extract the numeric app_id part
-        "redirect_uri": redirect_uri,
-        "appType": "100",
-        "code_challenge": "",
-        "state": "stocktrading",
-        "scope": "",
-        "nonce": "",
-        "response_type": "code",
-        "create_cookie": True,
-    }
-    headers = {"Authorization": f"Bearer {login_token}"}
-
-    response = await client.post(
-        "https://api-t1.fyers.in/api/v3/token",
-        json=payload,
-        headers=headers,
-    )
-    data = response.json()
-
-    if data.get("s") != "ok" and data.get("code") != 200:
-        raise FyersAutoLoginError(
-            f"token (auth_code) request failed: {data.get('message', data)}"
-        )
-
-    # The auth code is in the Url field as a redirect URL with ?auth_code=xxx
-    url_str = data.get("Url")
-    if not url_str:
-        raise FyersAutoLoginError("No Url in token response")
-
-    parsed = urlparse(url_str)
-    auth_code_params = parse_qs(parsed.query)
-    auth_code = auth_code_params.get("auth_code", [None])[0]
-
-    if not auth_code:
-        raise FyersAutoLoginError(f"Could not extract auth_code from URL: {url_str}")
-
-    logger.debug("Got auth_code from redirect URL")
-    return auth_code
-
-
-async def _exchange_auth_code_for_token(
-    client: httpx.AsyncClient, auth_code: str, app_id: str, secret_key: str
-) -> str:
-    """Step 5: Exchange auth code for the final API access token."""
-    app_id_hash = _compute_app_id_hash(app_id, secret_key)
-    payload = {
-        "grant_type": "authorization_code",
-        "appIdHash": app_id_hash,
-        "code": auth_code,
-    }
-
-    response = await client.post(TOKEN_API, json=payload)
-    data = response.json()
-
-    if data.get("s") != "ok":
-        raise FyersAutoLoginError(
-            f"validate-authcode failed: {data.get('message', data)}"
-        )
-
-    access_token = data.get("access_token")
-    if not access_token:
-        raise FyersAutoLoginError("No access_token in validate-authcode response")
+        # Step 5: Exchange for API access token
+        app_id_hash = _compute_app_id_hash(settings.fyers_app_id, settings.fyers_secret_key)
+        payload = {
+            "grant_type": "authorization_code",
+            "appIdHash": app_id_hash,
+            "code": auth_code,
+        }
+        response = client.post(TOKEN_API, json=payload)
+        data = response.json()
+        if data.get("s") != "ok":
+            raise FyersAutoLoginError(f"validate-authcode failed: {data.get('message', data)}")
+        access_token = data.get("access_token")
+        if not access_token:
+            raise FyersAutoLoginError("No access_token in validate-authcode response")
 
     logger.info("Successfully obtained Fyers API access token")
     return access_token
@@ -223,36 +175,7 @@ async def auto_login() -> str:
 
     logger.info("Starting Fyers auto-login for user %s", settings.fyers_username)
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        # Step 1: Send login OTP
-        request_key = await _send_login_otp(client, settings.fyers_username)
-
-        # Step 2: Generate and verify TOTP
-        totp = _generate_totp(settings.fyers_totp_secret)
-        request_key = await _verify_totp(client, request_key, totp)
-
-        # Step 3: Verify PIN
-        login_token = await _verify_pin(
-            client, request_key, settings.fyers_pin, settings.fyers_username
-        )
-
-        # Step 4: Get auth code
-        auth_code = await _get_auth_code(
-            client,
-            login_token,
-            settings.fyers_app_id,
-            settings.fyers_redirect_uri,
-        )
-
-        # Step 5: Exchange for API access token
-        access_token = await _exchange_auth_code_for_token(
-            client,
-            auth_code,
-            settings.fyers_app_id,
-            settings.fyers_secret_key,
-        )
-
-    return access_token
+    return await asyncio.to_thread(_auto_login_sync)
 
 
 async def trigger_reauth() -> str:
