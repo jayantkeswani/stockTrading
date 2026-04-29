@@ -77,7 +77,7 @@ All pages use `'use client'` directive.
 - `api.ts` - REST client: trades, signals, positions, agent, risk, market data, strategies, intraday-futures. `getTrades()` accepts `source?: string` — pass `"SHADOW"` to fetch shadow-only trades. `getTradeSummary(source?)` same. By default both return only non-shadow trades (backend filter). `getPositions(includeShadow = false)` — pass `true` to include shadow positions. `getClosedTradesToday(source?)` — pass `"SHADOW"` to fetch ghost closed trades. `getParameterDefaults(name)` — fetches raw default parameters for a strategy (used by StrategyParams component in settings). **Strategy 5 endpoints**: `getIntradayFuturesWatchlist`, `getIntradayFuturesAgentLog`, `getIntradayFuturesGlobalCues`, `getIntradayFuturesBriefing`, `getIntradayFuturesDailyStats`, `getIntradayFuturesPhase` (accepts optional `date` param for historical phase lookup), `getIntradayFuturesAgentStatus`, `getIntradayFuturesSetupPerformance(date?, days?)` (per-setup win rate/P&L), `runIntradayFuturesScreener`, `runIntradayFuturesBriefing`, `setIntradayFuturesAgentAction` — all accept optional `date` param (defaults to today).
 - `types.ts` - TypeScript interfaces for all entities. `Trade` has `source: "MANUAL" | "YOLO" | "SHADOW"`. `Position` has `is_shadow: boolean`. `S5WatchlistItem` includes `orb_high?`, `orb_low?`, `orb_range?` fields. `S5SetupStats` and `S5SetupPerformance` for per-setup performance tracking.
 - `formatters.ts` - INR currency (Indian number system: lakhs/crores), percentages, IST datetime. All formatters coerce inputs via `Number()` to handle string Decimals from the backend. IST date helpers: `startOfDayIST`, `endOfDayIST`, `startOfMonthIST`, `endOfMonthIST`, `startOfWeekIST`, `subDaysIST`, `subMonthsIST`, `eachDayInRange`, `isoDateIST` (YYYY-MM-DD), `formatDateShort` ("24 Apr"), `monthLabel` ("April 2026"), `toISTDate` (Date → IST-adjusted Date).
-- `constants.ts` - `SYMBOLS` (5 indices), `STRATEGY_LABELS`, `STATUS_COLORS`, `WS_URL` (ws://localhost:8080/ws), `Timeframe` type ("1m" | "5m" | "15m" | "1h" | "1D")
+- `constants.ts` - `SYMBOLS` (5 indices), `STRATEGY_LABELS`, `STATUS_COLORS`, `WS_URL` (auto-detects host: uses `window.location.hostname` when accessed remotely, falls back to `localhost:8080`), `Timeframe` type ("1m" | "5m" | "15m" | "1h" | "1D")
 
 ### `src/store/` - Zustand State
 - `index.ts` - Single store with slices: prices (per symbol), positions, signals, scan logs, risk metrics, agent status, market status, UI state. Position `addPosition()` skips shadow events (`is_shadow=true`). **`closedToday: Trade[]`** slice (real trades only). **`positionViewMode: "REAL" | "SHADOW"`** — drives ActivePositions + PnLCard toggle; **`shadowPositions: Position[]`** + **`shadowClosedToday: Trade[]`** — populated by ActivePositions when Ghost mode is active. **`activeTimeframe: Timeframe`** — persisted to localStorage.
@@ -125,8 +125,8 @@ Font:        Geist Sans + Geist Mono
 - WebSocket events go through `hooks/useWebSocket.ts`
 - Currency formatted as INR with Indian number system (e.g., Rs 1,50,000)
 - All 5 indices always referenced: NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY
-- Backend API base URL: `http://localhost:8080/api/v1`
-- WebSocket URL: `ws://localhost:8080/ws`
+- Backend API base URL: auto-detected from `window.location.hostname` (falls back to `http://localhost:8080/api/v1`)
+- WebSocket URL: auto-detected from `window.location.hostname` (falls back to `ws://localhost:8080/ws`)
 - Strategy badges: `text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent`
 - Section headers: `text-xs font-mono font-medium text-text-secondary uppercase tracking-wider`
 - Empty states: `text-xs font-mono text-text-muted` with lowercase text

@@ -1,5 +1,8 @@
 export const WS_URL =
-  process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080/ws";
+  process.env.NEXT_PUBLIC_WS_URL ||
+  (typeof window !== "undefined" && window.location.hostname !== "localhost"
+    ? `ws://${window.location.hostname}:8080/ws`
+    : "ws://localhost:8080/ws");
 
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "1D";
 
