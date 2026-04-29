@@ -152,9 +152,9 @@ function SignalCard({
     ? `${signal.symbol} FUT`
     : `${signal.symbol} ${signal.strike_price > 0 ? signal.strike_price : ""} ${isCE ? "CE" : "PE"}`;
 
-  const risk = Number(signal.entry_price) - Number(signal.stop_loss);
+  const risk = Math.abs(Number(signal.entry_price) - Number(signal.stop_loss));
   const reward = signal.target_price
-    ? Number(signal.target_price) - Number(signal.entry_price)
+    ? Math.abs(Number(signal.target_price) - Number(signal.entry_price))
     : 0;
   const rrRatio = risk > 0 && reward > 0 ? (reward / risk).toFixed(1) : null;
 

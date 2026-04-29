@@ -87,7 +87,7 @@ Final Target    = max(Pattern Target, Min Target)
 - Min target (20%): ₹612 → **measured move wins at ₹650**
 
 ### Futures LTP Adjustment
-When the futures resolver maps spot to futures LTP, SL/target ratios are preserved proportionally (e.g., if SL is 5% below spot, it stays 5% below futures LTP).
+When the futures resolver maps spot to futures LTP, SL/target percentage distances from spot entry are preserved proportionally against the futures LTP. Direction-aware: for longs, SL stays below and target above; for shorts, SL stays above and target below.
 
 ## Exit Rules
 

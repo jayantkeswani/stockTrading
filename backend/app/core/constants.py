@@ -98,7 +98,7 @@ FYERS_SYMBOL_MAP = {
 }
 
 # Strategy-level defaults (not user-configurable; trading_config table holds user params)
-DEFAULT_SL_PCT = 30.0  # 30% of premium
+DEFAULT_SL_PCT = 0.30  # 30% of premium
 DEFAULT_TARGET_MULTIPLIER = 1.5  # 1:1.5 risk-reward
 
 # VIX thresholds

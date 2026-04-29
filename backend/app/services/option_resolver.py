@@ -377,6 +377,13 @@ def _compute_premium_sl_target(
         ATM options: delta ~0.50 (1 index point ≈ 0.50 premium point)
         ITM options: delta ~0.60
     """
+    if not (0 < sl_pct < 1):
+        logger.error(
+            "Invalid sl_pct=%.4f (must be 0-1 fraction, got percentage?) — using 0.30",
+            sl_pct,
+        )
+        sl_pct = 0.30
+
     if index_sl is not None and index_target is not None and index_price > 0:
         delta = 0.50 if label == "ATM" else 0.60
 

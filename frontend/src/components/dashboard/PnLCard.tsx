@@ -17,7 +17,9 @@ export function PnLCard() {
       const livePrice = prices[priceKey]?.ltp;
       const currentPrice = livePrice ?? pos.current_price;
       if (currentPrice && pos.entry_price > 0) {
-        return total + (currentPrice - pos.entry_price) * pos.quantity;
+        const isShort = pos.target_price != null && pos.target_price < pos.entry_price;
+        const diff = isShort ? pos.entry_price - currentPrice : currentPrice - pos.entry_price;
+        return total + diff * pos.quantity;
       }
       return total + (pos.unrealized_pnl ?? 0);
     }, 0);

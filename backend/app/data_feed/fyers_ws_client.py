@@ -296,9 +296,21 @@ class FyersWSClient:
         # Snapshot and clear the disconnect timestamp atomically before async work
         disconnect_at = self._last_disconnect_at
         self._last_disconnect_at = None
+        is_reconnect = self._was_ever_connected
         self._was_ever_connected = True
         self._connected = True
         logger.info("Fyers WebSocket connected")
+
+        # Re-subscribe ALL symbols on reconnect — the SDK only replays the
+        # last subscribe() call; symbols added incrementally are lost.
+        if is_reconnect and self._symbols and self._ws:
+            try:
+                self._ws.subscribe(symbols=self._symbols, data_type="SymbolUpdate")
+                logger.info(
+                    "Re-subscribed %d symbols after reconnect", len(self._symbols),
+                )
+            except Exception:
+                logger.exception("Failed to re-subscribe after reconnect")
 
         if self._loop:
             self._loop.call_soon_threadsafe(

@@ -543,7 +543,7 @@ The strategy overrides `get_symbols()` to return today's watchlist symbols from 
 Unlike other strategies, Strategy 5 has no separate `auto_mode` toggle. When the strategy is enabled, the agent runs autonomously. The user controls the agent via Pause/Resume on the dedicated page.
 
 ### Futures contract resolution
-Uses existing `futures_resolver.py` for stock → nearest futures contract mapping. No option resolver — SL and target are directly on the stock futures price.
+Uses existing `futures_resolver.py` for stock → nearest futures contract mapping. No option resolver — SL and target are set on the stock futures price. `strategy_runner._resolve_futures()` proportionally adjusts SL/target from spot entry to futures LTP (direction-aware for long/short).
 
 ### LLM usage is front-loaded
 ~22 LLM calls per day, all before 9:00 AM (1 briefing + ~20 news sentiment + 1 screener confidence). Zero LLM calls during market hours — all signal generation, filtering, and exit management is deterministic computation.

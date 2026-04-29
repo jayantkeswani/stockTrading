@@ -82,9 +82,6 @@ class StrategyRunner:
         self._index_futures_info: dict[str, tuple[str, date, str]] = {}
         self._futures_init_done: bool = False
 
-        # Strategy 5 watchlist symbols confirmed subscribed on WS this session
-        self._strat5_subscribed: set[str] = set()
-        self._strat5_subscribed_date: date | None = None
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -722,51 +719,6 @@ class StrategyRunner:
         except Exception:
             logger.debug("Could not check global cues mid-day shift for Strategy 5")
 
-    async def _ensure_watchlist_subscribed(self) -> None:
-        """Ensure Strategy 5 watchlist symbols are subscribed on the Fyers WS.
-
-        Called on every candle-close cycle.  Resets the tracking set daily so
-        new watchlist entries picked up by the screener are subscribed promptly.
-        """
-        from app.data_feed.fyers_ws_client import fyers_ws_client
-
-        today = now_ist().date()
-        if self._strat5_subscribed_date != today:
-            self._strat5_subscribed = set()
-            self._strat5_subscribed_date = today
-
-        if not fyers_ws_client.is_connected:
-            return
-
-        r = get_redis()
-        raw = await r.get(f"strat5:watchlist:{today}")
-        if not raw:
-            return
-
-        try:
-            import json
-            watchlist = json.loads(raw)
-        except Exception:
-            return
-
-        new_fyers: list[str] = []
-        symbol_map: dict[str, str] = {}
-
-        for item in watchlist:
-            sym = item.get("symbol", "")
-            if not sym or sym in self._strat5_subscribed:
-                continue
-            fyers_sym = f"NSE:{sym}-EQ"
-            if not fyers_ws_client.is_symbol_subscribed(fyers_sym):
-                new_fyers.append(fyers_sym)
-                symbol_map[sym] = fyers_sym
-            self._strat5_subscribed.add(sym)
-
-        if new_fyers:
-            await fyers_ws_client.subscribe_symbols(new_fyers, symbol_map=symbol_map)
-            await fyers_ws_client.fetch_quotes_rest(extra_symbols=symbol_map)
-            logger.info("Strategy 5: subscribed %d new watchlist symbols on WS", len(new_fyers))
-
     async def _flush_strategy_logs(self, strategy: BaseStrategy) -> None:
         """Drain pending log entries, ORB writes, and phase updates from Strategy 5."""
         today = now_ist().date()
@@ -983,8 +935,11 @@ class StrategyRunner:
     async def _load_todays_candles(self, symbol: str, today: date) -> list[dict]:
         """Load today's 1m candles from the database.
 
-        Uses DISTINCT ON (minute) keeping highest-volume row per minute to guard
-        against backfill + live-WS duplicate entries (same minute, different seconds).
+        Uses DISTINCT ON (minute) keeping the earliest row per minute. Backfill
+        writes clean :00 timestamps; live WS is also normalized to :00, but for
+        pre-Apr-24 data where duplicates exist with sub-second timestamps and
+        inflated cumulative volume, preferring the earliest row picks the
+        backfill (correct delta) over the WS (cumulative dump).
         """
         from sqlalchemy import text
         today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
@@ -997,7 +952,7 @@ class StrategyRunner:
                     FROM market_data_1m
                     WHERE symbol = :symbol
                       AND timestamp >= :today_start
-                    ORDER BY date_trunc('minute', timestamp), volume DESC, timestamp
+                    ORDER BY date_trunc('minute', timestamp), timestamp
                 """),
                 {"symbol": symbol, "today_start": today_start},
             )
@@ -1128,8 +1083,11 @@ class StrategyRunner:
         closes = [c["c"] for c in buffer]
         volumes = [c["v"] for c in buffer]
 
-        # Index symbols carry zero volume — use near-month futures volumes instead
-        if sum(volumes) == 0 and symbol in self._index_futures_info:
+        # Index symbols have unreliable volume from Fyers (mostly zero with
+        # sporadic cumulative spikes on reconnect). Always use near-month
+        # futures volumes for index VWAP — futures are the actual traded
+        # instrument and have consistent per-minute volume.
+        if symbol in self._index_futures_info:
             _, _, fut_name = self._index_futures_info[symbol]
             fut_buffer = self._candle_buffers.get(fut_name, [])
             if fut_buffer:
@@ -1174,7 +1132,6 @@ class StrategyRunner:
                 # Load per-strategy params and set on context
                 params = await get_strategy_params(strategy.name.value)
                 if strategy.name == StrategyName.INTRADAY_FUTURES:
-                    await self._ensure_watchlist_subscribed()
                     await self._enrich_strategy5_params(symbol, params)
                 ctx.strategy_params = params
 
@@ -1335,17 +1292,23 @@ class StrategyRunner:
 
         # Enrich signal with resolved futures details
         signal.expiry_date = resolution.expiry_date
+        spot_entry = signal.entry_price
         signal.entry_price = resolution.ltp
         signal.fyers_futures_symbol = resolution.fyers_symbol
         signal.futures_resolved = True
 
         # Adjust SL/target proportionally for futures LTP vs spot price
         # This preserves pattern-based SL/target distances from the strategy
-        if signal.entry_price > 0 and signal.stop_loss > 0:
-            sl_pct = (signal.entry_price - signal.stop_loss) / signal.entry_price
-            target_pct = (signal.target_price - signal.entry_price) / signal.entry_price
-            signal.stop_loss = resolution.ltp * (1 - sl_pct)
-            signal.target_price = resolution.ltp * (1 + target_pct)
+        if spot_entry > 0 and signal.stop_loss > 0:
+            sl_pct = abs(spot_entry - signal.stop_loss) / spot_entry
+            target_pct = abs(signal.target_price - spot_entry) / spot_entry
+            is_short = signal.stop_loss > spot_entry
+            if is_short:
+                signal.stop_loss = resolution.ltp * (1 + sl_pct)
+                signal.target_price = resolution.ltp * (1 - target_pct)
+            else:
+                signal.stop_loss = resolution.ltp * (1 - sl_pct)
+                signal.target_price = resolution.ltp * (1 + target_pct)
         else:
             from app.core.constants import CANSLIM_SL_PCT, CANSLIM_TARGET_PCT
             signal.stop_loss = resolution.ltp * (1 - CANSLIM_SL_PCT / 100)

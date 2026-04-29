@@ -118,10 +118,10 @@ async def close_trade(
     trade.exit_time = now_ist()
     if body.exit_price:
         trade.exit_price = body.exit_price
-        trade.pnl = (body.exit_price - trade.entry_price) * trade.quantity
-        trade.pnl_percent = (
-            (body.exit_price - trade.entry_price) / trade.entry_price * 100
-        )
+        is_short = trade.side == "SELL"
+        diff = (trade.entry_price - body.exit_price) if is_short else (body.exit_price - trade.entry_price)
+        trade.pnl = diff * trade.quantity
+        trade.pnl_percent = float(diff / trade.entry_price * 100)
 
     await db.flush()
 

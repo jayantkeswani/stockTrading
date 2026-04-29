@@ -117,7 +117,10 @@ SHARED PIPELINE (both paths converge here):
           │   ├── Look up Fyers symbol via symbol master
           │   ├── Fetch option premium (Redis cache → Fyers REST fallback)
           │   └── Compute SL/target on premium (not index price)
-          ├── [FUTURE signals] pass through as-is (SL/target on futures price)
+          ├── [FUTURE signals] futures_resolver enriches:
+          │   ├── Resolve nearest-month futures contract (symbol, expiry, lot size)
+          │   ├── Fetch futures LTP
+          │   └── Proportionally adjust SL/target from spot to futures price (direction-aware)
           ├── Save to signals table (with executable flag)
           ├── Broadcast via WebSocket (signal:new)
           ├── YOLO mode → auto_executor.execute()

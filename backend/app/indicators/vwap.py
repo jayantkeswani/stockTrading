@@ -42,15 +42,15 @@ def calculate_vwap(
     cum_tp_vol = np.cumsum(typical_price * v)
     cum_vol = np.cumsum(v)
 
-    # Avoid division by zero
+    # Avoid division by zero — np.divide(where=) skips masked positions entirely
     mask = cum_vol > 0
-    vwap_values = np.where(mask, cum_tp_vol / cum_vol, 0)
+    vwap_values = np.divide(cum_tp_vol, cum_vol, out=np.zeros_like(cum_tp_vol), where=mask)
     current_vwap = float(vwap_values[-1])
 
     # Standard deviation bands
     squared_diff = (typical_price - vwap_values) ** 2
     cum_sq_diff_vol = np.cumsum(squared_diff * v)
-    variance = np.where(mask, cum_sq_diff_vol / cum_vol, 0)
+    variance = np.divide(cum_sq_diff_vol, cum_vol, out=np.zeros_like(cum_sq_diff_vol), where=mask)
     std_dev = float(np.sqrt(variance[-1]))
 
     return VWAPResult(

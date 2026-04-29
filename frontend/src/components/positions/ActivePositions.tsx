@@ -12,6 +12,16 @@ interface ActivePositionsProps {
   compact?: boolean;
 }
 
+interface PositionRowsProps {
+  list: Position[];
+  prices: Record<string, { ltp?: number }>;
+  expandedId: string | null;
+  toggleExpand: (id: string) => void;
+  handleClose: (id: string) => void;
+  isShadow: boolean;
+  compact?: boolean;
+}
+
 function formatISTTime(isoString: string | null): string {
   if (!isoString) return "—";
   const d = new Date(isoString);
@@ -95,115 +105,9 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
   const activePositions = isShadow ? shadowPositions : positions;
   const activeClosed = isShadow ? shadowClosedToday : closedToday;
 
-  function PositionRows({ list }: { list: Position[] }) {
-    return (
-      <>
-        {list.map((pos) => {
-          const priceKey = pos.fyers_option_symbol || pos.symbol;
-          const livePrice = prices[priceKey]?.ltp;
-          const currentPrice = livePrice ?? pos.current_price;
-          const pnl = currentPrice && pos.entry_price > 0
-            ? (currentPrice - pos.entry_price) * pos.quantity
-            : (pos.unrealized_pnl ?? 0);
-          const pnlPct = pos.entry_price > 0 && currentPrice
-            ? ((currentPrice - pos.entry_price) / pos.entry_price) * 100
-            : 0;
-          const slDistance = currentPrice && pos.stop_loss
-            ? ((currentPrice - pos.stop_loss) / currentPrice) * 100
-            : 0;
-          const isExpanded = expandedId === pos.id;
-
-          return (
-            <Fragment key={pos.id}>
-              <tr
-                className="border-t border-border/30 hover:bg-bg-tertiary/40 transition-colors cursor-pointer"
-                onClick={() => toggleExpand(pos.id)}
-              >
-                <td className="px-3 py-1.5">
-                  <span className="font-mono font-medium">{pos.symbol}</span>
-                  <span className={`ml-1 text-[10px] font-mono ${pos.option_type === "CE" ? "text-profit" : "text-loss"}`}>
-                    {pos.option_type}
-                  </span>
-                  {compact && (
-                    <span className="ml-1 text-[10px] text-text-muted font-mono">{pos.strike_price}</span>
-                  )}
-                </td>
-                {!compact && (
-                  <td className="px-3 py-1.5 font-mono text-text-secondary">{pos.strike_price}</td>
-                )}
-                <td className="px-3 py-1.5 text-right font-mono">{formatINR(pos.entry_price)}</td>
-                <td className="px-3 py-1.5 text-right font-mono">
-                  {currentPrice ? formatINR(currentPrice) : "—"}
-                </td>
-                <td className={`px-3 py-1.5 text-right font-mono font-medium ${pnlColor(pnl)}`}>
-                  <div>{formatINR(pnl)}</div>
-                  <div className="text-[10px]">{formatPercent(pnlPct)}</div>
-                </td>
-                <td className="px-3 py-1.5 text-right">
-                  <span className={`text-xs font-mono ${slDistance < 1 ? "text-loss font-bold" : slDistance < 3 ? "text-warning" : "text-text-muted"}`}>
-                    {slDistance.toFixed(1)}%
-                  </span>
-                </td>
-                {!compact && (
-                  <td className="px-3 py-1.5">
-                    <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent">
-                      {STRATEGY_LABELS[pos.strategy_name] || pos.strategy_name}
-                    </span>
-                  </td>
-                )}
-                <td className="px-3 py-1.5 text-right">
-                  {!isShadow && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleClose(pos.id); }}
-                      className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-loss/10 text-loss hover:bg-loss/20 transition-colors"
-                    >
-                      CLOSE
-                    </button>
-                  )}
-                </td>
-              </tr>
-              {isExpanded && (
-                <tr key={`${pos.id}-expanded`} className="bg-bg-tertiary/20">
-                  <td colSpan={compact ? 6 : 8} className="px-3 py-2">
-                    <div className="grid grid-cols-4 gap-3 text-xs font-mono animate-fade-in">
-                      <div>
-                        <span className="text-text-muted">Strategy</span>
-                        <div className="text-text-primary mt-0.5">{STRATEGY_LABELS[pos.strategy_name] || pos.strategy_name}</div>
-                      </div>
-                      <div>
-                        <span className="text-text-muted">Expiry</span>
-                        <div className="text-text-primary mt-0.5">{pos.expiry_date}</div>
-                      </div>
-                      <div>
-                        <span className="text-text-muted">Lots / Qty</span>
-                        <div className="text-text-primary mt-0.5">{pos.lots}L / {pos.quantity}</div>
-                      </div>
-                      <div>
-                        <span className="text-text-muted">Stop Loss</span>
-                        <div className="text-loss mt-0.5">{formatINR(pos.stop_loss)}</div>
-                      </div>
-                      {pos.target_price && (
-                        <div>
-                          <span className="text-text-muted">Target</span>
-                          <div className="text-profit mt-0.5">{formatINR(pos.target_price)}</div>
-                        </div>
-                      )}
-                      <div>
-                        <span className="text-text-muted">Type</span>
-                        <div className="text-text-primary mt-0.5">
-                          {isShadow ? "GHOST" : pos.is_paper ? "PAPER" : "LIVE"} / {pos.position_type}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </Fragment>
-          );
-        })}
-      </>
-    );
-  }
+  const rowProps: PositionRowsProps = {
+    list: activePositions, prices, expandedId, toggleExpand, handleClose, isShadow, compact,
+  };
 
   return (
     <div className={`rounded border bg-bg-secondary ${isShadow ? "border-purple-500/30" : "border-border"}`}>
@@ -266,7 +170,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
               </tr>
             </thead>
             <tbody>
-              <PositionRows list={activePositions} />
+              <PositionRows {...rowProps} />
             </tbody>
           </table>
         </div>
@@ -344,5 +248,131 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
         </div>
       )}
     </div>
+  );
+}
+
+function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, isShadow, compact }: PositionRowsProps) {
+  return (
+    <>
+      {list.map((pos) => {
+        const priceKey = pos.fyers_option_symbol || pos.symbol;
+        const livePrice = prices[priceKey]?.ltp;
+        const currentPrice = livePrice ?? pos.current_price;
+        const isShort = pos.target_price != null && pos.target_price < pos.entry_price;
+        const isFutures = !pos.option_type;
+        const priceDiff = isShort ? pos.entry_price - currentPrice : currentPrice - pos.entry_price;
+        const pnl = currentPrice && pos.entry_price > 0
+          ? priceDiff * pos.quantity
+          : (pos.unrealized_pnl ?? 0);
+        const pnlPct = pos.entry_price > 0 && currentPrice
+          ? (priceDiff / pos.entry_price) * 100
+          : 0;
+        const slDistance = currentPrice && pos.stop_loss
+          ? isShort
+            ? ((pos.stop_loss - currentPrice) / currentPrice) * 100
+            : ((currentPrice - pos.stop_loss) / currentPrice) * 100
+          : 0;
+        const isExpanded = expandedId === pos.id;
+
+        return (
+          <Fragment key={pos.id}>
+            <tr
+              className="border-t border-border/30 hover:bg-bg-tertiary/40 transition-colors cursor-pointer"
+              onClick={() => toggleExpand(pos.id)}
+            >
+              <td className="px-3 py-1.5">
+                <span className="font-mono font-medium">{pos.symbol}</span>
+                {isFutures ? (
+                  <span className={`ml-1 text-[10px] font-mono ${isShort ? "text-loss" : "text-profit"}`}>
+                    {isShort ? "SHORT" : "LONG"}
+                  </span>
+                ) : (
+                  <span className={`ml-1 text-[10px] font-mono ${pos.option_type === "CE" ? "text-profit" : "text-loss"}`}>
+                    {pos.option_type}
+                  </span>
+                )}
+                {compact && (
+                  <span className="ml-1 text-[10px] text-text-muted font-mono">{pos.strike_price}</span>
+                )}
+              </td>
+              {!compact && (
+                <td className="px-3 py-1.5 font-mono text-text-secondary">{pos.strike_price}</td>
+              )}
+              <td className="px-3 py-1.5 text-right font-mono">{formatINR(pos.entry_price)}</td>
+              <td className="px-3 py-1.5 text-right font-mono">
+                {currentPrice ? formatINR(currentPrice) : "—"}
+              </td>
+              <td className={`px-3 py-1.5 text-right font-mono font-medium ${pnlColor(pnl)}`}>
+                <div>{formatINR(pnl)}</div>
+                <div className="text-[10px]">{formatPercent(pnlPct)}</div>
+              </td>
+              <td className="px-3 py-1.5 text-right">
+                <span className={`text-xs font-mono ${slDistance < 1 ? "text-loss font-bold" : slDistance < 3 ? "text-warning" : "text-text-muted"}`}>
+                  {slDistance.toFixed(1)}%
+                </span>
+              </td>
+              {!compact && (
+                <td className="px-3 py-1.5">
+                  <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent">
+                    {STRATEGY_LABELS[pos.strategy_name] || pos.strategy_name}
+                  </span>
+                </td>
+              )}
+              <td className="px-3 py-1.5 text-right">
+                {!isShadow && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleClose(pos.id); }}
+                    className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-loss/10 text-loss hover:bg-loss/20 transition-colors"
+                  >
+                    CLOSE
+                  </button>
+                )}
+              </td>
+            </tr>
+            {isExpanded && (
+              <tr key={`${pos.id}-expanded`} className="bg-bg-tertiary/20">
+                <td colSpan={compact ? 6 : 8} className="px-3 py-2">
+                  <div className="grid grid-cols-4 gap-3 text-xs font-mono animate-fade-in">
+                    <div>
+                      <span className="text-text-muted">Strategy</span>
+                      <div className="text-text-primary mt-0.5">{STRATEGY_LABELS[pos.strategy_name] || pos.strategy_name}</div>
+                    </div>
+                    <div>
+                      <span className="text-text-muted">Expiry</span>
+                      <div className="text-text-primary mt-0.5">{pos.expiry_date}</div>
+                    </div>
+                    <div>
+                      <span className="text-text-muted">Lots / Qty</span>
+                      <div className="text-text-primary mt-0.5">{pos.lots}L / {pos.quantity}</div>
+                    </div>
+                    <div>
+                      <span className="text-text-muted">Stop Loss</span>
+                      <div className="text-loss mt-0.5">{formatINR(pos.stop_loss)}</div>
+                    </div>
+                    {pos.target_price && (
+                      <div>
+                        <span className="text-text-muted">Target</span>
+                        <div className="text-profit mt-0.5">{formatINR(pos.target_price)}</div>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-text-muted">Type</span>
+                      <div className="text-text-primary mt-0.5">
+                        {isShadow ? "GHOST" : pos.is_paper ? "PAPER" : "LIVE"} / {pos.position_type}
+                        {isFutures && (
+                          <span className={`ml-1 ${isShort ? "text-loss" : "text-profit"}`}>
+                            {isShort ? "SHORT" : "LONG"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </Fragment>
+        );
+      })}
+    </>
   );
 }

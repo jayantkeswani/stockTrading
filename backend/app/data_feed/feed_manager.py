@@ -234,12 +234,17 @@ class FeedManager:
 
         Prevents the seam candle (built with pre-disconnect ticks) from being
         emitted with incorrect OHLC when ticks resume after reconnect.
-        Also resets vol_traded_today baselines — on reconnect Fyers sends fresh
-        cumulative values so the old baselines would produce a wrong first delta.
+
+        Preserves _last_vol_today baselines — Fyers vol_traded_today is
+        cumulative and continues from where it left off after reconnect.
+        Clearing the baseline would make the first post-reconnect tick dump
+        the entire day's cumulative volume into a single candle. Keeping the
+        old baseline produces the correct delta (volume traded during the gap).
+        Day-boundary resets are handled by the max(0, ...) clamp in
+        _aggregate_candle: when vol_traded_today drops (new session), delta = 0.
         """
         count = len(self._current_candles)
         self._current_candles.clear()
-        self._last_vol_today.clear()
         if count:
             logger.info("Cleared %d in-progress candles on WS disconnect", count)
 

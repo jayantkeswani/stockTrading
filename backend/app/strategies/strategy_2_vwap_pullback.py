@@ -177,12 +177,14 @@ class VWAPPullbackStrategy(BaseStrategy):
             ctx, vwap, distance, oi_confirmed, confidence_result, index_sl, index_target
         )
 
-        # SL/target fallback
-        default_sl = p.get("default_sl_pct", 0.30)
+        # SL/target fallback (when market structure levels unavailable)
+        sl_aligned = p.get("sl_pct_aligned", 0.30)
+        sl_unaligned = p.get("sl_pct_unaligned", 0.35)
         default_rr = p.get("default_target_multiplier", 1.5)
         if index_sl is None or index_target is None:
             bias = ctx.intraday_bias.bias if ctx.intraday_bias else DayBias.NEUTRAL
-            sl_pct = default_sl if (is_ce and bias == DayBias.BULLISH) or (not is_ce and bias == DayBias.BEARISH) else default_sl + 0.05
+            bias_aligned = (is_ce and bias == DayBias.BULLISH) or (not is_ce and bias == DayBias.BEARISH)
+            sl_pct = sl_aligned if bias_aligned else sl_unaligned
             indicators["sl_pct"] = sl_pct
             indicators["rr_multiplier"] = default_rr
 

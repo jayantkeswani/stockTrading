@@ -36,7 +36,9 @@ async def list_positions(
             ltp = Decimal(str(price_data.get("ltp", 0)))
             if ltp > 0:
                 pos.current_price = ltp
-                pos.unrealized_pnl = (ltp - pos.entry_price) * pos.quantity
+                is_short = pos.target_price is not None and pos.target_price < pos.entry_price
+                diff = (pos.entry_price - ltp) if is_short else (ltp - pos.entry_price)
+                pos.unrealized_pnl = diff * pos.quantity
 
     return positions
 
@@ -70,10 +72,10 @@ async def close_position(
         trade.exit_time = now_ist()
         if position.current_price:
             trade.exit_price = position.current_price
-            trade.pnl = (position.current_price - trade.entry_price) * trade.quantity
-            trade.pnl_percent = (
-                (position.current_price - trade.entry_price) / trade.entry_price * 100
-            )
+            is_short = trade.side == "SELL"
+            diff = (trade.entry_price - position.current_price) if is_short else (position.current_price - trade.entry_price)
+            trade.pnl = diff * trade.quantity
+            trade.pnl_percent = float(diff / trade.entry_price * 100)
 
     pnl = float(trade.pnl) if trade and trade.pnl is not None else 0.0
     exit_price = float(trade.exit_price) if trade and trade.exit_price is not None else 0.0

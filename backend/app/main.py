@@ -52,15 +52,19 @@ async def _start_data_feed_if_authenticated():
         # Collect all extra symbols to subscribe and fetch prices for
         watchlist_symbols = await _get_watchlist_symbols()
         strategy_symbols = await _get_all_backfill_symbols()
+        s5_symbols = await _get_strat5_watchlist_symbols()
+        position_symbols = await _get_open_position_symbols()
 
-        # Extra symbols for WS subscription: watchlist + strategy Fyers symbols
+        # Extra symbols for WS subscription: dashboard watchlist + strategy configs
+        # + S5 screener watchlist + open position contracts
         extra_ws_symbols = list(set(
             watchlist_symbols + list(strategy_symbols.values())
+            + list(s5_symbols.values()) + position_symbols
         ))
 
-        # Register strategy symbol mappings so ticks are converted to short names
-        # (strategy_symbols is {short_name: fyers_symbol}, e.g. {"TCS": "NSE:TCS-EQ"})
+        # Register symbol mappings so ticks are converted to short names
         fyers_ws_client.register_symbol_map(strategy_symbols)
+        fyers_ws_client.register_symbol_map(s5_symbols)
 
         print("Starting live data feed...")
         await fyers_ws_client.start(extra_symbols=extra_ws_symbols)
@@ -86,6 +90,45 @@ async def _get_watchlist_symbols() -> list[str]:
         items = await r.hgetall("watchlist:items")
         # Keys in the watchlist hash are Fyers symbols (e.g. "NSE:TCS-EQ")
         return list(items.keys()) if items else []
+    except Exception:
+        return []
+
+
+async def _get_strat5_watchlist_symbols() -> dict[str, str]:
+    """Load Strategy 5 screener watchlist from Redis for WS subscription.
+
+    Returns {short_name: fyers_symbol} so register_symbol_map can be called.
+    """
+    import json
+    from app.core.redis import get_redis
+    from app.core.utils import now_ist
+
+    try:
+        r = get_redis()
+        today = str(now_ist().date())
+        raw = await r.get(f"strat5:watchlist:{today}")
+        if not raw:
+            return {}
+        watchlist = json.loads(raw)
+        return {item["symbol"]: f"NSE:{item['symbol']}-EQ" for item in watchlist if item.get("symbol")}
+    except Exception:
+        return {}
+
+
+async def _get_open_position_symbols() -> list[str]:
+    """Load Fyers symbols for all open positions so trade_monitor gets live ticks."""
+    from sqlalchemy import select
+    from app.core.database import async_session_factory
+    from app.models.position import Position
+
+    try:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Position.fyers_option_symbol).where(
+                    Position.fyers_option_symbol.isnot(None),
+                )
+            )
+            return [row[0] for row in result.all() if row[0]]
     except Exception:
         return []
 
