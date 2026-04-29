@@ -68,7 +68,13 @@ async def add_to_watchlist(body: WatchlistAddRequest):
     # Subscribe on live data feed so watchlist gets real-time ticks
     from app.data_feed.fyers_ws_client import fyers_ws_client
     if fyers_ws_client.is_connected:
-        await fyers_ws_client.subscribe_symbols([body.symbol])
+        segment_suffix = {
+            "EQ": "-EQ", "FUT": "FUT", "CE": "CE", "PE": "PE",
+        }.get(body.segment, "-EQ")
+        fyers_sym = f"NSE:{body.symbol}{segment_suffix}"
+        await fyers_ws_client.subscribe_symbols(
+            [fyers_sym], symbol_map={body.symbol: fyers_sym},
+        )
 
     return {"status": "added", "symbol": body.symbol}
 

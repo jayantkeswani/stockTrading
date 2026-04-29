@@ -127,6 +127,7 @@ Font:        Geist Sans + Geist Mono
 - All 5 indices always referenced: NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY
 - Backend API base URL: auto-detected from `window.location.hostname` (falls back to `http://localhost:8080/api/v1`)
 - WebSocket URL: auto-detected from `window.location.hostname` (falls back to `ws://localhost:8080/ws`)
+- `next.config.ts` sets `allowedDevOrigins: ["192.168.*.*", "100.*.*.*"]` — allows cross-machine dev access from local network and Tailscale IPs without HMR blocking
 - Strategy badges: `text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent`
 - Section headers: `text-xs font-mono font-medium text-text-secondary uppercase tracking-wider`
 - Empty states: `text-xs font-mono text-text-muted` with lowercase text

@@ -205,6 +205,10 @@ class FyersWSClient:
         for internal, fyers in symbol_map.items():
             self._reverse_map[fyers] = internal
 
+    def is_symbol_subscribed(self, fyers_symbol: str) -> bool:
+        """Check if a Fyers symbol is already in the subscription list."""
+        return fyers_symbol in self._symbols
+
     async def subscribe_symbols(
         self,
         symbols: list[str],
@@ -221,10 +225,13 @@ class FyersWSClient:
         if symbol_map:
             self.register_symbol_map(symbol_map)
         if self._ws and self._connected:
+            new_symbols = [s for s in symbols if s not in self._symbols]
+            if not new_symbols:
+                return
             try:
-                self._ws.subscribe(symbols=symbols, data_type="SymbolUpdate")
-                self._symbols.extend(symbols)
-                logger.info("Subscribed to additional symbols: %s", symbols)
+                self._ws.subscribe(symbols=new_symbols, data_type="SymbolUpdate")
+                self._symbols.extend(new_symbols)
+                logger.info("Subscribed to additional symbols: %s", new_symbols)
             except Exception:
                 logger.exception("Failed to subscribe to additional symbols")
 

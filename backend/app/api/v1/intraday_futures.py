@@ -128,6 +128,109 @@ async def setup_performance(date: str | None = None, days: int = 5):
     return await get_setup_performance(end, days=days)
 
 
+@router.post("/backfill-symbols")
+async def backfill_symbols(symbols: list[str] | None = None):
+    """One-shot backfill: fetch today's candles, compute ORB, subscribe on WS.
+
+    If symbols is None, backfills all watchlist symbols missing ORB data.
+    """
+    import json
+    from datetime import time as dt_time
+    from decimal import Decimal
+
+    from sqlalchemy import and_, select
+
+    from app.core.database import async_session_factory
+    from app.core.redis import get_redis
+    from app.core.utils import now_ist
+    from app.data_feed.fyers_ws_client import fyers_ws_client
+    from app.models.market_data import MarketData1m
+    from app.services.candle_backfill import _backfill_symbol
+
+    today = now_ist().date()
+    r = get_redis()
+
+    # Resolve target symbols: explicit list or watchlist minus already-ORB'd
+    if symbols:
+        target = symbols
+    else:
+        raw = await r.get(f"strat5:watchlist:{today}")
+        if not raw:
+            raise HTTPException(status_code=404, detail="No watchlist for today")
+        watchlist = json.loads(raw)
+        target = []
+        for item in watchlist:
+            sym = item.get("symbol", "")
+            existing = await r.get(f"strat5:orb:{today}:{sym}")
+            if not existing:
+                target.append(sym)
+
+    if not target:
+        return {"status": "ok", "message": "All symbols already have ORB", "backfilled": []}
+
+    token = await r.get("fyers:access_token")
+    if not token:
+        raise HTTPException(status_code=503, detail="No Fyers token")
+
+    results = []
+    for sym in target:
+        fyers_sym = f"NSE:{sym}-EQ"
+        try:
+            count = await _backfill_symbol(token, sym, fyers_sym, today)
+
+            # Query 9:15-9:30 candles to compute ORB
+            from datetime import datetime, timezone
+            from zoneinfo import ZoneInfo
+            IST = ZoneInfo("Asia/Kolkata")
+            orb_start = datetime.combine(today, dt_time(9, 15), tzinfo=IST)
+            orb_end = datetime.combine(today, dt_time(9, 30), tzinfo=IST)
+
+            async with async_session_factory() as session:
+                rows = await session.execute(
+                    select(MarketData1m).where(
+                        and_(
+                            MarketData1m.symbol == sym,
+                            MarketData1m.timestamp >= orb_start,
+                            MarketData1m.timestamp <= orb_end,
+                        )
+                    )
+                )
+                candles = rows.scalars().all()
+
+            if candles:
+                orb_high = float(max(c.high for c in candles))
+                orb_low = float(min(c.low for c in candles))
+                orb_data = {"high": orb_high, "low": orb_low, "range": round(orb_high - orb_low, 2)}
+                await r.set(
+                    f"strat5:orb:{today}:{sym}",
+                    json.dumps(orb_data),
+                    ex=86400 * 90,
+                )
+
+                # Load into live strategy instance
+                from app.strategies.registry import get_active_strategies
+                from app.core.enums import StrategyName
+                strategies = get_active_strategies([StrategyName.INTRADAY_FUTURES])
+                for s in strategies:
+                    s.load_orb_from_redis(sym, orb_data)
+
+                results.append({"symbol": sym, "candles": count, "orb": orb_data})
+            else:
+                results.append({"symbol": sym, "candles": count, "orb": None})
+
+            # Subscribe on WS + seed REST price
+            if fyers_ws_client.is_connected:
+                await fyers_ws_client.subscribe_symbols(
+                    [fyers_sym], symbol_map={sym: fyers_sym},
+                )
+            await fyers_ws_client.fetch_quotes_rest(extra_symbols={sym: fyers_sym})
+
+        except Exception as e:
+            results.append({"symbol": sym, "error": str(e)})
+
+    return {"status": "ok", "backfilled": results}
+
+
 @router.post("/screener/run")
 async def run_screener():
     try:
