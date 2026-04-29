@@ -45,12 +45,32 @@ _TICKERS = {
 }
 
 
+def _make_yf_session():
+    """Return a requests.Session that bypasses yfinance's curl-cffi backend.
+
+    Recent yfinance versions use curl-cffi for TLS fingerprinting which fails
+    on some macOS/OpenSSL combinations with connection-reset errors. A plain
+    requests session with a browser User-Agent is reliable on all platforms.
+    """
+    import requests
+
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    })
+    return session
+
+
 def _fetch_one_ticker_sync(ticker: str) -> tuple[float | None, float | None]:
     """Fetch the last two daily closes for a single ticker. Returns (latest, prev)."""
     import yfinance as yf
 
     try:
-        t = yf.Ticker(ticker)
+        t = yf.Ticker(ticker, session=_make_yf_session())
         hist = t.history(period="5d", interval="1d", auto_adjust=True)
         if hist is None or hist.empty:
             return None, None

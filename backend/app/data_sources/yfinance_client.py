@@ -23,6 +23,27 @@ from app.data_sources.schemas import (
 
 logger = logging.getLogger(__name__)
 
+
+def _make_yf_session():
+    """Return a requests.Session that bypasses yfinance's curl-cffi backend.
+
+    Recent yfinance versions use curl-cffi for TLS fingerprinting which fails
+    on macOS with OpenSSL 3.6.x (connection-reset errors). A plain requests
+    session with a browser User-Agent is reliable on all platforms.
+    """
+    import requests
+
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    })
+    return session
+
+
 # --- Rate-limit protection ---
 _YFINANCE_SEMAPHORE = asyncio.Semaphore(2)
 _YFINANCE_INTER_REQUEST_DELAY = 1.0  # seconds between calls within a semaphore slot
@@ -65,7 +86,7 @@ def _fetch_quarterly_earnings_sync(ticker: str) -> list[QuarterlyEarnings]:
     """
     import yfinance as yf
 
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=_make_yf_session())
 
     # Use quarterly_income_stmt (current API) — columns are quarter dates, rows are line items
     qi = stock.quarterly_income_stmt
@@ -134,7 +155,7 @@ def _fetch_annual_financials_sync(ticker: str) -> list[AnnualFinancials]:
     """Synchronous yfinance call to get annual financials."""
     import yfinance as yf
 
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=_make_yf_session())
     info = stock.info or {}
 
     financials = stock.financials
@@ -199,7 +220,7 @@ def _fetch_stock_info_sync(ticker: str) -> StockInfo:
     """Synchronous yfinance call to get stock metadata."""
     import yfinance as yf
 
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=_make_yf_session())
     info = stock.info or {}
 
     # Market cap in crores
@@ -227,7 +248,7 @@ def _fetch_price_history_sync(ticker: str, period: str = "1y") -> list[PriceHist
     """Synchronous yfinance call to get daily OHLCV data."""
     import yfinance as yf
 
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=_make_yf_session())
     hist = stock.history(period=period)
 
     if hist is None or hist.empty:
