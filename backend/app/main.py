@@ -24,6 +24,7 @@ from app.tasks.global_market_task import start_global_market_scheduler, stop_glo
 from app.tasks.morning_workflow_task import start_morning_workflow_scheduler, stop_morning_workflow_scheduler
 from app.tasks.nse_bhav_copy_task import start_nse_bhav_copy_scheduler, stop_nse_bhav_copy_scheduler
 from app.tasks.fo_ban_list_task import start_fo_ban_list_scheduler, stop_fo_ban_list_scheduler
+from app.agent.agent_runner import agent_runner
 from app.services import trading_config as _trading_config_svc
 from app.websocket.manager import ws_manager
 
@@ -204,7 +205,7 @@ async def lifespan(app: FastAPI):
     task_registry.register("oi_snapshot_scheduler", TaskType.SCHEDULER, metadata={"schedule": "every 3m (market hours)"})
 
     await start_fundamental_data_scheduler()
-    task_registry.register("fundamental_data_scheduler", TaskType.SCHEDULER, metadata={"schedule": "every 6h"})
+    task_registry.register("fundamental_data_scheduler", TaskType.SCHEDULER, metadata={"schedule": "06:00, 12:00, 18:00 IST"})
 
     await start_daily_summary_scheduler()
     task_registry.register("daily_summary_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 15:35 IST"})
@@ -225,9 +226,6 @@ async def lifespan(app: FastAPI):
     t1 = asyncio.create_task(_load_symbol_master_background(), name="symbol_master_load")
     task_registry.track_asyncio_task("symbol_master_load", t1, metadata={"description": "Load symbol master into memory"})
 
-    t2 = asyncio.create_task(_fetch_fundamentals_background(), name="fundamental_data_startup")
-    task_registry.track_asyncio_task("fundamental_data_startup", t2, metadata={"description": "Fetch CAN SLIM fundamentals"})
-
     # --- Data feed (service) ---
     await _start_data_feed_if_authenticated()
     task_registry.register("fyers_data_feed", TaskType.SERVICE, metadata={"description": "Fyers WebSocket live data feed"})
@@ -236,9 +234,14 @@ async def lifespan(app: FastAPI):
     t3 = asyncio.create_task(_deep_backfill_background(), name="deep_backfill")
     task_registry.track_asyncio_task("deep_backfill", t3, metadata={"description": "Backfill 120d candle history for CAN SLIM"})
 
+    # --- Agent (trade monitor + auto-executor) ---
+    await agent_runner.start()
+    task_registry.register("agent_runner", TaskType.SERVICE, metadata={"description": "Trade monitor — SL/target/EOD exits (SEMI mode)"})
+
     yield
 
     # Shutdown — mark services/schedulers as stopped
+    await agent_runner.stop()
     await fyers_ws_client.stop()
     task_registry.update_status("fyers_data_feed", TaskStatus.STOPPED)
 

@@ -19,7 +19,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 from app.core.constants import IST
 
@@ -27,8 +27,7 @@ logger = logging.getLogger(__name__)
 
 _scheduler: AsyncIOScheduler | None = None
 
-FUNDAMENTAL_FETCH_INTERVAL_HOURS = 6
-RATE_LIMIT_DELAY_SECONDS = 5  # Delay between stock fetches (yfinance rate limiting)
+RATE_LIMIT_DELAY_SECONDS = 5  # Delay between stock fetches (Yahoo Finance rate limiting)
 
 
 async def fetch_fundamentals() -> int:
@@ -386,21 +385,19 @@ async def _store_fundamental_history(symbol, quarterly, shareholding) -> None:
 
 
 async def start_fundamental_data_scheduler():
-    """Start the periodic fundamental data scheduler."""
+    """Start the fundamental data scheduler (06:00, 12:00, 18:00 IST)."""
     global _scheduler
     _scheduler = AsyncIOScheduler(timezone=IST)
-    _scheduler.add_job(
-        fetch_fundamentals,
-        trigger=IntervalTrigger(hours=FUNDAMENTAL_FETCH_INTERVAL_HOURS, timezone=IST),
-        id="fundamental_data_fetch",
-        name="Fetch CAN SLIM fundamental data",
-        replace_existing=True,
-    )
+    for hour in (6, 12, 18):
+        _scheduler.add_job(
+            fetch_fundamentals,
+            trigger=CronTrigger(hour=hour, minute=0, timezone=IST),
+            id=f"fundamental_data_fetch_{hour}",
+            name=f"Fetch CAN SLIM fundamental data ({hour:02d}:00 IST)",
+            replace_existing=True,
+        )
     _scheduler.start()
-    logger.info(
-        "Fundamental data scheduler started (every %d hours)",
-        FUNDAMENTAL_FETCH_INTERVAL_HOURS,
-    )
+    logger.info("Fundamental data scheduler started (06:00, 12:00, 18:00 IST)")
 
 
 async def stop_fundamental_data_scheduler():
