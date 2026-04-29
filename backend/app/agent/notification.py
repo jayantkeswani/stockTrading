@@ -22,14 +22,20 @@ async def send_telegram(message: str) -> bool:
         return False
     url = _TELEGRAM_API.format(token=settings.telegram_bot_token)
 
-    async def _send() -> bool:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(
+    # Sync httpx via asyncio.to_thread — avoids anyio async TLS failures on
+    # macOS 15.2 + Python 3.11.x where httpx.AsyncClient raises ConnectError('').
+    def _send_sync() -> bool:
+        with httpx.Client(timeout=10) as client:
+            r = client.post(
                 url,
                 json={"chat_id": settings.telegram_chat_id, "text": message, "parse_mode": "HTML"},
             )
             r.raise_for_status()
             return True
+
+    async def _send() -> bool:
+        import asyncio
+        return await asyncio.to_thread(_send_sync)
 
     try:
         return await async_retry(_send, retries=3, base_delay=2.0, label="telegram_send")

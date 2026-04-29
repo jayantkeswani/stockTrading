@@ -85,7 +85,12 @@ def _auto_login_sync() -> str:
         if not request_key:
             raise FyersAutoLoginError("No request_key in send_login_otp response")
 
-        # Step 2: Generate and verify TOTP
+        # Step 2: Generate and verify TOTP.
+        # Guard: if < 5s remain in the current 30s window the code may expire
+        # in transit — wait for the next fresh window instead.
+        window_remaining = 30 - (int(time.time()) % 30)
+        if window_remaining < 5:
+            time.sleep(window_remaining + 1)
         totp = _generate_totp(settings.fyers_totp_secret)
         payload = {"request_key": request_key, "otp": int(totp)}
         response = client.post(f"{LOGIN_API}/verify_otp", json=payload)
