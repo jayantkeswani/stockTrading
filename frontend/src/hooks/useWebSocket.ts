@@ -28,13 +28,22 @@ export function useWebSocket() {
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
+    // Close any lingering connection before creating a new one
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.onerror = null;
+      wsRef.current.onmessage = null;
+      wsRef.current.onopen = null;
+      try { wsRef.current.close(); } catch { /* already closed */ }
+    }
+
     const ws = new WebSocket(getWsUrl());
     wsRef.current = ws;
     sharedWs = ws;
 
     ws.onopen = () => {
+      if (ws !== wsRef.current) return;
       setWsConnected(true);
-      // Subscribe to all default symbols
       ws.send(
         JSON.stringify({
           event: "subscribe:symbol",
@@ -53,13 +62,14 @@ export function useWebSocket() {
     };
 
     ws.onclose = () => {
+      if (ws !== wsRef.current) return;
       setWsConnected(false);
       sharedWs = null;
-      // Reconnect after 3 seconds
       reconnectTimerRef.current = setTimeout(connect, 3000);
     };
 
     ws.onerror = () => {
+      if (ws !== wsRef.current) return;
       ws.close();
     };
   }, [setWsConnected]);
