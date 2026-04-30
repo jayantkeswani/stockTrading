@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 # File logging — captures all module loggers via root logger propagation
-_log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+_log_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
 os.makedirs(_log_dir, exist_ok=True)
 _log_file = os.path.join(_log_dir, "app.log")
 
