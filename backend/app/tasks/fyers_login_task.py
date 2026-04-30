@@ -30,7 +30,7 @@ IST = ZoneInfo("Asia/Kolkata")
 scheduler = AsyncIOScheduler(timezone=IST)
 
 _MAX_LOGIN_RETRIES = 10
-_RETRY_INTERVAL_MINUTES = 15
+_RETRY_INTERVAL_MINUTES = 2
 
 
 async def _start_data_feed_after_login() -> None:
