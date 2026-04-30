@@ -200,18 +200,6 @@ async def _deep_backfill_background():
         print(f"Deep backfill failed: {e}")
 
 
-async def _load_symbol_master_background():
-    """Load symbol master in background so it doesn't block startup."""
-    import asyncio
-
-    # Small delay to let the server finish starting
-    await asyncio.sleep(1)
-    try:
-        await symbol_master.refresh()
-        print(f"Symbol master loaded: {symbol_master.count} symbols")
-    except Exception as e:
-        print(f"Symbol master load failed (will retry on first search): {e}")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -253,10 +241,14 @@ async def lifespan(app: FastAPI):
     await start_fo_ban_list_scheduler()
     task_registry.register("fo_ban_list_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 07:00 IST"})
 
-    # --- One-shot startup tasks (tracked via done callback) ---
-    t1 = asyncio.create_task(_load_symbol_master_background(), name="symbol_master_load")
-    task_registry.track_asyncio_task("symbol_master_load", t1, metadata={"description": "Load symbol master into memory"})
+    # --- Symbol master (must complete before data feed so futures resolution uses fresh contracts) ---
+    try:
+        await symbol_master.refresh()
+        print(f"Symbol master loaded: {symbol_master.count} symbols")
+    except Exception as e:
+        print(f"Symbol master refresh failed (will retry on first search): {e}")
 
+    # --- One-shot startup tasks (tracked via done callback) ---
     t2 = asyncio.create_task(_fetch_fundamentals_background(), name="fundamental_data_startup")
     task_registry.track_asyncio_task("fundamental_data_startup", t2, metadata={"description": "Fetch CAN SLIM fundamentals"})
 
