@@ -247,8 +247,13 @@ export const api = {
   getIntradayFuturesAgentLog: (date?: string) =>
     request<S5AgentLogEntry[]>(`/api/v1/intraday-futures/agent-log${date ? `?date=${date}` : ""}`),
 
-  getIntradayFuturesGlobalCues: (date?: string) =>
-    request<S5GlobalCues>(`/api/v1/intraday-futures/global-cues${date ? `?date=${date}` : ""}`),
+  getIntradayFuturesGlobalCues: (date?: string, force?: boolean) => {
+    const params = new URLSearchParams();
+    if (date) params.set("date", date);
+    if (force) params.set("force", "true");
+    const qs = params.toString();
+    return request<S5GlobalCues>(`/api/v1/intraday-futures/global-cues${qs ? `?${qs}` : ""}`);
+  },
 
   getIntradayFuturesBriefing: (date?: string) =>
     request<S5MorningBriefing>(`/api/v1/intraday-futures/morning-briefing${date ? `?date=${date}` : ""}`),

@@ -36,14 +36,15 @@ async def agent_log(date: str | None = None):
 
 
 @router.get("/global-cues")
-async def global_cues(date: str | None = None):
+async def global_cues(date: str | None = None, force: bool = False):
     from app.core.utils import now_ist
 
     date_str = date or str(now_ist().date())
-    result = await get_global_cues(date_str)
-    if not result:
-        return await snapshot_global_cues()
-    return result
+    if not force:
+        result = await get_global_cues(date_str)
+        if result:
+            return result
+    return await snapshot_global_cues(force=force)
 
 
 @router.get("/morning-briefing")

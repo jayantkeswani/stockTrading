@@ -290,10 +290,23 @@ export interface S5GlobalCues {
   usdinr_pct?: number;
   dxy_pct?: number;
   us_vix?: number;
+  india_vix_live?: number;
+  nifty_gap_pct?: number;
+  global_score?: number;
+  overnight_bias?: "BULLISH" | "BEARISH" | "NEUTRAL";
+  preopen_reassessed?: boolean;
   halted?: boolean;
   volatile_open?: boolean;
   flags?: string[];
   date?: string;
+  // Absolute prices (from indicator:global:*_price Redis keys)
+  crude_price?: number;
+  usdinr_price?: number;
+  sp500_price?: number;
+  dow_futures_price?: number;
+  nifty_price?: number;
+  nasdaq_price?: number;
+  dxy_price?: number;
 }
 
 export interface S5MorningBriefing {

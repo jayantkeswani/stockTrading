@@ -1446,24 +1446,35 @@ async def _fyers_history_with_retry(
 # ---------------------------------------------------------------------------
 
 
-async def snapshot_global_cues(today: date | None = None) -> dict:
-    """Package existing global market data into a Strategy 5 snapshot."""
+async def snapshot_global_cues(today: date | None = None, force: bool = False) -> dict:
+    """Package existing global market data into a Strategy 5 snapshot.
+
+    force=True bypasses the Redis cache and re-reads from the indicator:global:*
+    keys (refreshed every 15 min by the global_market_task) so the user gets the
+    latest yfinance values without waiting for the next morning workflow.
+    """
     from app.core.utils import now_ist
 
     today = today or now_ist().date()
     r = get_redis()
 
     key = f"strat5:global_cues:{today}"
-    existing = await r.get(key)
-    if existing:
-        return json.loads(existing)
+    if not force:
+        existing = await r.get(key)
+        if existing:
+            return json.loads(existing)
 
-    fields = [
+    pct_fields = [
         "dow_futures_pct", "sp500_close_pct", "nasdaq_close_pct",
         "nifty_pct", "crude_pct", "usdinr_pct", "dxy_pct", "us_vix",
     ]
+    price_fields = [
+        "crude_price", "usdinr_price", "sp500_price", "dow_futures_price",
+        "nifty_price", "nasdaq_price", "dxy_price",
+    ]
+    all_fields = pct_fields + price_fields
     cues: dict = {}
-    for field in fields:
+    for field in all_fields:
         val = await r.get(f"indicator:global:{field}")
         cues[field] = float(val) if val else None
 
@@ -1483,6 +1494,32 @@ async def snapshot_global_cues(today: date | None = None) -> dict:
         await _append_agent_log(today, "GLOBAL", f"Nifty gap {nifty_pct}% — volatile open expected")
     else:
         cues["volatile_open"] = False
+
+    # Compute derived sentiment fields
+    from app.indicators.global_market import (
+        GlobalCues as GlobalCuesData,
+        combined_global_score,
+        overnight_bias,
+    )
+    from app.core.enums import DayBias
+
+    _gcdata = GlobalCuesData(
+        dow_futures_pct=cues.get("dow_futures_pct"),
+        sp500_close_pct=cues.get("sp500_close_pct"),
+        nasdaq_close_pct=cues.get("nasdaq_close_pct"),
+        nifty_pct=cues.get("nifty_pct"),
+        crude_pct=cues.get("crude_pct"),
+        usdinr_pct=cues.get("usdinr_pct"),
+        dxy_pct=cues.get("dxy_pct"),
+        us_vix=cues.get("us_vix"),
+    )
+    cues["global_score"] = round(combined_global_score(_gcdata), 3)
+    _bias = overnight_bias(
+        cues.get("dow_futures_pct"),
+        cues.get("sp500_close_pct"),
+        cues.get("us_vix"),
+    )
+    cues["overnight_bias"] = _bias.value
 
     cues["date"] = str(today)
     await r.set(key, json.dumps(cues), ex=REDIS_TTL)

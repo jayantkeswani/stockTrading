@@ -116,6 +116,9 @@ cp .env.example .env          # Then fill in Fyers API keys
 cd backend && source .venv/bin/activate
 python scripts/replay_strategy5.py --date 2026-04-28              # all watchlist symbols
 python scripts/replay_strategy5.py --date 2026-04-28 --symbols VEDL,SUNPHARMA  # subset
+
+# One-time morning screener data freshness audit (read-only, no side effects)
+python scripts/audit_screener_data.py
 ```
 
 ## Test Coverage
