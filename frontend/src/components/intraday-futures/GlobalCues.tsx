@@ -17,7 +17,7 @@ function CueItem({ label, value, suffix = "%" }: { label: string; value?: number
   );
 }
 
-export function GlobalCues({ date }: { date: string | null }) {
+export function GlobalCues({ date, refreshKey }: { date: string | null; refreshKey?: number }) {
   const [cues, setCues] = useState<S5GlobalCues>({});
   const [briefing, setBriefing] = useState<S5MorningBriefing | null>(null);
   const [expanded, setExpanded] = useState(true);
@@ -25,7 +25,7 @@ export function GlobalCues({ date }: { date: string | null }) {
   useEffect(() => {
     api.getIntradayFuturesGlobalCues(date ?? undefined).then(setCues).catch(() => {});
     api.getIntradayFuturesBriefing(date ?? undefined).then(setBriefing).catch(() => {});
-  }, [date]);
+  }, [date, refreshKey]);
 
   const hasCues = cues.us_vix != null || cues.nifty_pct != null;
   const hasBriefing = briefing && (briefing.approach || briefing.summary);

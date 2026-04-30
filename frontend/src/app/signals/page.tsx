@@ -248,6 +248,7 @@ export default function SignalsPage() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
   const [hideInformational, setHideInformational] = useState(false);
+  const [strategyFilter, setStrategyFilter] = useState<string>("");
 
   useEffect(() => {
     setLoading(true);
@@ -270,18 +271,49 @@ export default function SignalsPage() {
     return () => { cancelled = true; };
   }, [period]);
 
-  const displayed = hideInformational
-    ? signals.filter(s => s.executable || s.blocked_reason !== "Outside trade window")
-    : signals;
+  const strategies = Array.from(new Set(signals.map(s => s.strategy_name))).sort();
+
+  const displayed = signals.filter(s => {
+    if (hideInformational && !s.executable && s.blocked_reason === "Outside trade window") return false;
+    if (strategyFilter && s.strategy_name !== strategyFilter) return false;
+    return true;
+  });
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
             Signal History
           </h1>
           <PeriodFilter value={period} onChange={setPeriod} />
+          {strategies.length > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setStrategyFilter("")}
+                className={`text-[10px] font-mono px-1.5 py-px rounded border transition-colors ${
+                  strategyFilter === ""
+                    ? "bg-accent/20 text-accent border-accent/30"
+                    : "text-text-muted border-border hover:text-text-primary"
+                }`}
+              >
+                ALL
+              </button>
+              {strategies.map(s => (
+                <button
+                  key={s}
+                  onClick={() => setStrategyFilter(prev => prev === s ? "" : s)}
+                  className={`text-[10px] font-mono px-1.5 py-px rounded border transition-colors ${
+                    strategyFilter === s
+                      ? "bg-accent/20 text-accent border-accent/30"
+                      : "text-text-muted border-border hover:text-text-primary"
+                  }`}
+                >
+                  {STRATEGY_LABELS[s] ?? s}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <label className="flex items-center gap-1.5 cursor-pointer select-none">
           <input

@@ -248,7 +248,7 @@ async def run_screener():
 @router.post("/briefing/run")
 async def run_briefing():
     try:
-        briefing = await run_morning_briefing()
+        briefing = await run_morning_briefing(force=True)
         return {"status": "ok", "briefing": briefing}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

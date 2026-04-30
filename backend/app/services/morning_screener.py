@@ -48,21 +48,23 @@ TOP_N_FOR_CONFIDENCE = 20
 # ---------------------------------------------------------------------------
 
 
-async def run_morning_briefing(as_of: date | None = None) -> dict:
+async def run_morning_briefing(as_of: date | None = None, force: bool = False) -> dict:
     """Synthesize yesterday's performance into today's trading approach.
 
     Gathers trade history, computes stats, and asks the LLM for a briefing.
+    Pass force=True to re-run even if a cached result exists (e.g. manual trigger).
     """
     from app.core.utils import now_ist
 
     today = as_of or now_ist().date()
     r = get_redis()
 
-    # Check if already run today
+    # Check if already run today (skip when force=True so manual trigger always re-runs)
     key = f"strat5:morning_briefing:{today}"
-    existing = await r.get(key)
-    if existing:
-        return json.loads(existing)
+    if not force:
+        existing = await r.get(key)
+        if existing:
+            return json.loads(existing)
 
     data = await _gather_briefing_data(today)
 
@@ -356,11 +358,12 @@ Respond in JSON:
 }}"""
 
     try:
-        result = await llm.generate_json(prompt=prompt, system=system, max_tokens=1024)
+        result = await llm.generate_json(prompt=prompt, system=system, max_tokens=2048)
         result.setdefault("approach", "normal")
-        result.setdefault("summary", "No briefing available.")
         result.setdefault("flags", [])
         result.setdefault("max_lots_recommendation", 1 if data.get("consecutive_losses", 0) >= 3 else 2)
+        if not result.get("summary"):
+            result["summary"] = "No briefing available."
         return result
     except Exception as e:
         logger.warning("Morning briefing LLM failed: %s", e)

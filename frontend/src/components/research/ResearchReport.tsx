@@ -25,7 +25,7 @@ const SECTION_ORDER = [
   "valuation",
 ];
 
-export function ResearchReport({ report }: { report: ResearchReportType }) {
+export function ResearchReport({ report, onClose }: { report: ResearchReportType; onClose?: () => void }) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
   const toggleSection = (name: string) => {
@@ -74,10 +74,24 @@ export function ResearchReport({ report }: { report: ResearchReportType }) {
               )}
             </div>
           </div>
-          <RecommendationBadge
-            recommendation={report.recommendation}
-            confidence={report.confidence_score}
-          />
+          <div className="flex items-center gap-2">
+            <RecommendationBadge
+              recommendation={report.recommendation}
+              confidence={report.confidence_score}
+            />
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="text-text-muted hover:text-text-primary transition-colors p-0.5"
+                title="Close (Esc)"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <line x1="2" y1="2" x2="12" y2="12" />
+                  <line x1="12" y1="2" x2="2" y2="12" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Executive Summary */}

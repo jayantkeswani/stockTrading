@@ -7,7 +7,7 @@ import { pnlColor } from "@/lib/formatters";
 import { subscribeSymbols } from "@/hooks/useWebSocket";
 import type { S5WatchlistItem } from "@/lib/types";
 
-export function Watchlist({ date }: { date: string | null }) {
+export function Watchlist({ date = null }: { date?: string | null }) {
   const [items, setItems] = useState<S5WatchlistItem[]>([]);
   const [sortKey, setSortKey] = useState<"composite_score" | "rs_percentile">("composite_score");
   const prices = useStore((s) => s.prices);
@@ -42,8 +42,11 @@ export function Watchlist({ date }: { date: string | null }) {
   return (
     <div className="border border-border rounded bg-bg-secondary">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border">
-        <span className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
-          Watchlist ({items.length})
+        <span className="flex items-center gap-1.5 text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
+          <svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" />
+          </svg>
+          Futures Watchlist ({items.length})
         </span>
         <select
           value={sortKey}

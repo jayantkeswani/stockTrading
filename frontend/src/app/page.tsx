@@ -6,6 +6,7 @@ import { ScannerHeader } from "@/components/dashboard/ScannerHeader";
 import { ActivePositions } from "@/components/positions/ActivePositions";
 import { PnLCard } from "@/components/dashboard/PnLCard";
 import { Watchlist } from "@/components/dashboard/Watchlist";
+import { Watchlist as FuturesWatchlist } from "@/components/intraday-futures/Watchlist";
 import { ScanFeed } from "@/components/dashboard/ScanFeed";
 import { AgentFeed } from "@/components/dashboard/AgentFeed";
 import { ChartModal } from "@/components/charts/ChartModal";
@@ -28,7 +29,7 @@ export default function DashboardPage() {
           api.getSignals({ status: "PENDING", generated_since: startOfDayIST(now).toISOString(), generated_until: endOfDayIST(now).toISOString(), limit: 50 }) as Promise<Signal[]>,
           api.getPositions() as Promise<Position[]>,
           api.getRiskDashboard() as Promise<RiskDashboard>,
-          api.getAgentLogs() as Promise<AgentLog[]>,
+          api.getAgentLogs({ since: startOfDayIST(now).toISOString() }) as Promise<AgentLog[]>,
         ]);
         setSignals(signals);
         setPositions(positions);
@@ -83,6 +84,9 @@ export default function DashboardPage() {
 
           {/* Active Positions */}
           <ActivePositions compact />
+
+          {/* Futures Watchlist (Strategy 5 screener) */}
+          <FuturesWatchlist />
         </div>
 
         {/* RIGHT: Sidebar */}

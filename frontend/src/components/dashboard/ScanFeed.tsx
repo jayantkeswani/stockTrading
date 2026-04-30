@@ -1,6 +1,7 @@
 "use client";
 
 import { useStore } from "@/store";
+import { startOfDayIST } from "@/lib/formatters";
 
 function formatTime(iso: string): string {
   try {
@@ -17,8 +18,10 @@ function formatTime(iso: string): string {
 
 export function ScanFeed() {
   const { scanLogs } = useStore();
+  const todayStart = startOfDayIST(new Date()).getTime();
+  const todayLogs = scanLogs.filter((e) => new Date(e.timestamp).getTime() >= todayStart);
 
-  if (scanLogs.length === 0) return null;
+  if (todayLogs.length === 0) return null;
 
   return (
     <div className="rounded border border-border bg-bg-secondary">
@@ -28,7 +31,7 @@ export function ScanFeed() {
         </h2>
       </div>
       <div className="max-h-[160px] overflow-y-auto">
-        {scanLogs.map((entry) => (
+        {todayLogs.map((entry) => (
           <div key={entry.id} className="px-3 py-1 flex items-center gap-1.5 border-b border-border/20 last:border-0">
             {entry.type === "start" ? (
               <>

@@ -6,11 +6,11 @@ import { usePathname } from "next/navigation";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: "grid" },
+  { href: "/intraday-futures", label: "Futures", icon: "trending" },
+  { href: "/research", label: "Research", icon: "search" },
   { href: "/trades", label: "Trades", icon: "list" },
   { href: "/signals", label: "Signals", icon: "zap" },
-  { href: "/research", label: "Research", icon: "search" },
   { href: "/agent", label: "Agent", icon: "bot" },
-  { href: "/intraday-futures", label: "Futures", icon: "bolt" },
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
@@ -40,9 +40,9 @@ const icons: Record<string, ReactNode> = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
     </svg>
   ),
-  bolt: (
+  trending: (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" />
     </svg>
   ),
   settings: (

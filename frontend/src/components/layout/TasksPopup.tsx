@@ -55,6 +55,11 @@ export function TasksPopup() {
     }
   }, []);
 
+  // Fetch once on mount so the dot color is accurate before popup is opened
+  useEffect(() => {
+    fetchTasks();
+  }, [fetchTasks]);
+
   // Fetch on open, then poll every 5s while open
   useEffect(() => {
     if (!open) return;

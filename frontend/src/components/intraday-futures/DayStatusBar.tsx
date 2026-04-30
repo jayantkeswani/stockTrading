@@ -17,9 +17,11 @@ const PHASE_COLORS: Record<string, string> = {
 export function DayStatusBar({
   date,
   onDateChange,
+  onBriefingRun,
 }: {
   date: string | null;
   onDateChange: (date: string | null) => void;
+  onBriefingRun?: () => void;
 }) {
   const [phase, setPhase] = useState("—");
   const [agentStatus, setAgentStatus] = useState("ACTIVE");
@@ -69,6 +71,7 @@ export function DayStatusBar({
     setLoading(true);
     try {
       await api.runIntradayFuturesBriefing();
+      onBriefingRun?.();
     } finally {
       setLoading(false);
     }

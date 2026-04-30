@@ -24,8 +24,8 @@ from app.research.agents.base import ResearchContext
 
 logger = logging.getLogger(__name__)
 
-# Consider data stale if older than 24 hours
-STALE_THRESHOLD_HOURS = 24
+# Consider data stale if older than 12 hours
+STALE_THRESHOLD_HOURS = 12
 
 
 async def gather_context(symbol: str, db: AsyncSession) -> ResearchContext:

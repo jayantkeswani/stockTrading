@@ -97,6 +97,20 @@ export default function ResearchPage() {
     [setSelectedResearchId]
   );
 
+  const handleCloseReport = useCallback(() => {
+    setFullReport(null);
+    setSelectedResearchId(null);
+  }, [setSelectedResearchId]);
+
+  // Escape key to close report
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && fullReport) handleCloseReport();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [fullReport, handleCloseReport]);
+
   const handleDeleteReport = useCallback(
     async (id: string) => {
       try {
@@ -145,7 +159,7 @@ export default function ResearchPage() {
 
       {/* Full report */}
       {fullReport && (
-        <ResearchReport report={fullReport} />
+        <ResearchReport report={fullReport} onClose={handleCloseReport} />
       )}
 
       {/* Empty state */}
