@@ -8,6 +8,7 @@ On success: stores token in Redis and sends Telegram notification.
 On failure: schedules retries every 15 min (up to 10 attempts) before alerting.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -167,8 +168,23 @@ async def start_fyers_login_scheduler() -> None:
         await _start_data_feed_after_login()
         return
 
-    logger.info("No Fyers token in Redis — running auto-login on startup...")
-    await run_fyers_auto_login()
+    # No token — block startup until login succeeds or retries are exhausted
+    logger.info("No Fyers token in Redis — startup blocked until login succeeds")
+    for attempt in range(1, _MAX_LOGIN_RETRIES + 1):
+        try:
+            await auto_login_and_store()
+            await _start_data_feed_after_login()
+            await send_telegram("✅ Fyers connected — market data live")
+            logger.info("Fyers startup login succeeded on attempt %d", attempt)
+            return
+        except Exception as e:
+            logger.error("Fyers startup login attempt %d/%d failed: %s", attempt, _MAX_LOGIN_RETRIES, e)
+            if attempt < _MAX_LOGIN_RETRIES:
+                logger.info("Retrying in %d minutes...", _RETRY_INTERVAL_MINUTES)
+                await asyncio.sleep(_RETRY_INTERVAL_MINUTES * 60)
+
+    await send_telegram("❌ <b>Fyers login failed after all retries — startup aborted</b>")
+    raise RuntimeError(f"Fyers login failed after {_MAX_LOGIN_RETRIES} attempts — cannot start without a valid token")
 
 
 async def stop_fyers_login_scheduler() -> None:
