@@ -1,7 +1,28 @@
 import logging
+import logging.handlers
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+
+# File logging — captures all module loggers via root logger propagation
+_log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+os.makedirs(_log_dir, exist_ok=True)
+_log_file = os.path.join(_log_dir, "app.log")
+
+_file_handler = logging.handlers.RotatingFileHandler(
+    _log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+)
+_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s %(levelname)-8s %(name)s — %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logging.getLogger().addHandler(_file_handler)
 
 logger = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
