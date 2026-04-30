@@ -158,8 +158,16 @@ async def start_fyers_login_scheduler() -> None:
     scheduler.start()
     logger.info("Fyers login scheduler started (daily at 7:45 AM IST)")
 
-    # Run immediately on startup
-    logger.info("Running Fyers auto-login on startup...")
+    # Skip TOTP login on startup if a valid token already exists in Redis
+    from app.core.redis import get_redis
+    r = get_redis()
+    existing_token = await r.get("fyers:access_token")
+    if existing_token:
+        logger.info("Valid Fyers token found in Redis — skipping startup login, starting data feed")
+        await _start_data_feed_after_login()
+        return
+
+    logger.info("No Fyers token in Redis — running auto-login on startup...")
     await run_fyers_auto_login()
 
 
