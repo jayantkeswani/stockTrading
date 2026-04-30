@@ -207,7 +207,7 @@ async def _load_symbol_master_background():
     # Small delay to let the server finish starting
     await asyncio.sleep(1)
     try:
-        await symbol_master.load()
+        await symbol_master.refresh()
         print(f"Symbol master loaded: {symbol_master.count} symbols")
     except Exception as e:
         print(f"Symbol master load failed (will retry on first search): {e}")
