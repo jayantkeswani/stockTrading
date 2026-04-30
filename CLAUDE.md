@@ -127,6 +127,22 @@ python scripts/backfill_daily_candles.py --days 90    # longer lookback
 python scripts/backfill_daily_candles.py --symbols TCS,RELIANCE  # subset
 ```
 
+## Known Cleanup Tasks
+
+Deferred work that is safe to do but not urgent. Each entry has a **why it's deferred** and **what to run**.
+
+### 1. Purge stale daily-bar rows from `market_data_1m`
+- **What**: ~9,600 rows stored at midnight UTC (hour=0, minute=0) — the old daily candle hack that predates `market_data_daily`. Nothing reads them anymore.
+- **Why deferred**: Soak period — let `market_data_daily` run for a week to confirm it's being populated correctly before destroying the only fallback evidence.
+- **When ready** (after ~2026-05-08): run directly against the DB:
+  ```sql
+  DELETE FROM market_data_1m
+  WHERE EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC') = 0
+    AND EXTRACT(MINUTE FROM timestamp AT TIME ZONE 'UTC') = 0;
+  ```
+
+---
+
 ## Test Coverage
 Tests live in `backend/tests/`. 786 tests, all passing. Currently covered:
 - `test_core/` - IST timezone utils, market hour checks
