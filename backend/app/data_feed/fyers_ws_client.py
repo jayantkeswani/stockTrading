@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 FYERS_TOKEN_KEY = "fyers:access_token"
 
+# Watchdog: check every 30s; fire restart after 90s without a tick during market hours.
+_WATCHDOG_INTERVAL_SEC = 30
+_WATCHDOG_THRESHOLD_SEC = 90
+
 
 class FyersWSClient:
     def __init__(self):
@@ -39,6 +43,8 @@ class FyersWSClient:
         # Reconnect tracking for gap backfill
         self._was_ever_connected: bool = False
         self._last_disconnect_at: datetime | None = None
+        # Liveness watchdog task (created in start(), cancelled in stop())
+        self._watchdog_task: asyncio.Task | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -179,11 +185,22 @@ class FyersWSClient:
                 "Fyers WebSocket connecting for symbols: %s",
                 [s.split(":")[-1] for s in self._symbols],
             )
+
+            # Start liveness watchdog — detects silent hangs where no error
+            # callback fires but ticks stop arriving.
+            if self._watchdog_task and not self._watchdog_task.done():
+                self._watchdog_task.cancel()
+            self._watchdog_task = asyncio.create_task(
+                self._watchdog_loop(), name="ws_liveness_watchdog",
+            )
         except Exception:
             logger.exception("Failed to start Fyers WebSocket")
 
     async def stop(self):
         """Stop the Fyers WebSocket connection."""
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+        self._watchdog_task = None
         if self._ws:
             try:
                 self._ws.close_connection()
@@ -440,6 +457,60 @@ class FyersWSClient:
             await self.start(symbols=self._symbols)
         except Exception:
             logger.exception("Reauth + WS restart failed")
+
+    async def _watchdog_loop(self) -> None:
+        """Detect a silently frozen WebSocket by monitoring tick freshness.
+
+        The Fyers SDK _on_error callback only fires when the server sends an
+        explicit error frame. A silent hang (network partition, server-side
+        freeze) produces no error frame — ticks simply stop arriving. This loop
+        catches that scenario.
+
+        Logic:
+        - Polls every 30s; only active during market hours.
+        - Tracks when market hours began in the current session to provide a
+          90s grace period before the first tick check (avoids false positives
+          at open or after a mid-session restart).
+        - Fires a reauth + reconnect if no tick has arrived in 90s.
+        - Exits after scheduling the restart; start() creates a fresh watchdog.
+        """
+        _market_open_since: datetime | None = None
+
+        while True:
+            try:
+                await asyncio.sleep(_WATCHDOG_INTERVAL_SEC)
+            except asyncio.CancelledError:
+                return
+
+            if not is_market_open():
+                _market_open_since = None  # reset for next market session
+                continue
+
+            now = now_ist()
+
+            if _market_open_since is None:
+                _market_open_since = now
+                continue  # start the grace-period clock
+
+            if (now - _market_open_since).total_seconds() < _WATCHDOG_THRESHOLD_SEC:
+                continue  # still within grace window
+
+            from app.data_feed.feed_manager import feed_manager
+
+            last_tick = feed_manager._last_tick_at
+            elapsed = (now - last_tick).total_seconds() if last_tick else float("inf")
+
+            if elapsed > _WATCHDOG_THRESHOLD_SEC:
+                logger.warning(
+                    "Liveness watchdog: no tick for %.0fs during market hours"
+                    " — scheduling WS restart",
+                    elapsed,
+                )
+                asyncio.create_task(
+                    self._trigger_reauth_and_restart(),
+                    name="ws_watchdog_restart",
+                )
+                return  # start() will create a fresh watchdog after reconnect
 
     def _fyers_to_internal(self, fyers_symbol: str) -> str | None:
         """Convert Fyers symbol format to our internal symbol name.

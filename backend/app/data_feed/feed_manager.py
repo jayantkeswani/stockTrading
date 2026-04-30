@@ -38,6 +38,9 @@ class FeedManager:
         # Fyers sends cumulative daily volume — we compute the delta to get
         # the actual volume traded since the previous tick.
         self._last_vol_today: dict[str, int] = {}
+        # Timestamp of the most recent tick (WS or REST). Used by the liveness
+        # watchdog in FyersWSClient to detect a silently frozen WS connection.
+        self._last_tick_at: datetime | None = None
 
     @property
     def db_semaphore(self) -> asyncio.Semaphore:
@@ -75,8 +78,9 @@ class FeedManager:
                          under this name so that watchlist/positions (which use
                          Fyers symbols) can look up prices.
         """
+        self._last_tick_at = datetime.now(IST)
         ltp = tick_data.get("ltp", 0)
-        timestamp = datetime.now(IST).isoformat()
+        timestamp = self._last_tick_at.isoformat()
 
         price_data = {
             "symbol": symbol,
