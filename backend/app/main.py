@@ -138,6 +138,16 @@ async def _get_open_position_symbols() -> list[str]:
         return []
 
 
+async def _fetch_global_market_background():
+    """Fetch global market data on startup (background, non-blocking)."""
+    try:
+        from app.tasks.global_market_task import fetch_global_market_data
+        await fetch_global_market_data()
+        logger.info("Global market data: initial fetch complete")
+    except Exception as e:
+        logger.error("Global market startup fetch failed: %s", e, exc_info=True)
+
+
 async def _fetch_fundamentals_background():
     """Fetch CAN SLIM fundamental data on startup (background, non-blocking)."""
     import asyncio
@@ -225,6 +235,12 @@ async def lifespan(app: FastAPI):
     # --- One-shot startup tasks (tracked via done callback) ---
     t1 = asyncio.create_task(_load_symbol_master_background(), name="symbol_master_load")
     task_registry.track_asyncio_task("symbol_master_load", t1, metadata={"description": "Load symbol master into memory"})
+
+    t2 = asyncio.create_task(_fetch_fundamentals_background(), name="fundamental_data_startup")
+    task_registry.track_asyncio_task("fundamental_data_startup", t2, metadata={"description": "Fetch CAN SLIM fundamentals"})
+
+    t3 = asyncio.create_task(_fetch_global_market_background(), name="global_market_startup")
+    task_registry.track_asyncio_task("global_market_startup", t3, metadata={"description": "Initial global market data fetch"})
 
     # --- Data feed (service) ---
     await _start_data_feed_if_authenticated()

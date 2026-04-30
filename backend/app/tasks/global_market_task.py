@@ -2,17 +2,13 @@
 
 Data flow:
     scheduler -> fetch_global_market_data()
-        -> httpx → Yahoo Finance v8 chart API (no curl_cffi, uses system SSL)
+        -> yfinance: Dow futures, S&P 500, Nasdaq, Nifty proxy, crude, USD/INR, DXY, US VIX
         -> write to Redis (TTL 20 min) for hot-path MarketContext reads
         -> insert GlobalMarketSnapshot row for history / backtest replay
 
 Data is intentionally lightweight (8 tickers, daily/intraday) and cached in Redis so
-strategy_runner never waits on this task. If Yahoo Finance is unreachable, the previous
+strategy_runner never waits on this task. If yfinance is unreachable, the previous
 Redis values are used until they expire.
-
-httpx is used instead of yfinance because yfinance 1.0+ mandates curl_cffi whose
-bundled libcurl has TLS handshake failures on macOS 15.2. httpx uses Python's native
-SecureTransport SSL stack which works on all macOS versions.
 """
 
 import asyncio
@@ -25,9 +21,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.constants import IST
-from app.data_sources.yahoo_finance_http import YF_HEADERS as _YF_HEADERS
-from app.data_sources.yahoo_finance_http import fetch_chart as _fetch_chart_raw
-from app.data_sources.yahoo_finance_http import get_crumb as _get_crumb
 from app.indicators.global_market import GlobalCues, combined_global_score
 
 logger = logging.getLogger(__name__)
@@ -37,7 +30,9 @@ _scheduler: AsyncIOScheduler | None = None
 FETCH_INTERVAL_MINUTES = 15
 REDIS_TTL_SECONDS = 20 * 60  # 20 min — survives a missed tick
 
-# Yahoo Finance tickers. DX-Y.NYB = ICE US Dollar Index (more stable than DX=F futures).
+# yfinance tickers to fetch.
+# DXY: "DX-Y.NYB" is the ICE US Dollar Index on the NYB exchange — more reliable
+# than the futures contract "DX=F" which rolls and can disappear.
 _TICKERS = {
     "dow_futures": "YM=F",
     "sp500": "^GSPC",
@@ -50,41 +45,42 @@ _TICKERS = {
 }
 
 
-def _fetch_ticker(client, ticker: str, crumb: str | None) -> tuple[float | None, float | None]:
-    """Fetch last two daily closes for one ticker via shared httpx helper."""
-    result = _fetch_chart_raw(client, ticker, crumb, interval="1d", range_="5d")
-    if not result:
-        return None, None
+def _fetch_one_ticker_sync(ticker: str) -> tuple[float | None, float | None]:
+    """Fetch the last two daily closes for a single ticker. Returns (latest, prev)."""
+    import yfinance as yf
 
-    closes = result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
-    closes = [c for c in closes if c is not None]
-    if not closes:
+    try:
+        t = yf.Ticker(ticker)
+        hist = t.history(period="5d", interval="1d", auto_adjust=True)
+        if hist is None or hist.empty:
+            return None, None
+        closes = hist["Close"].dropna()
+        if len(closes) == 0:
+            return None, None
+        latest = float(closes.iloc[-1])
+        prev = float(closes.iloc[-2]) if len(closes) >= 2 else None
+        return latest, prev
+    except Exception:
         return None, None
-
-    latest = float(closes[-1])
-    prev = float(closes[-2]) if len(closes) >= 2 else None
-    return latest, prev
 
 
 def _fetch_global_data_sync() -> dict[str, float | None]:
-    """Fetch latest prices for all global tickers via Yahoo Finance chart API (httpx)."""
-    import httpx
+    """Fetch latest prices for all global tickers synchronously (yfinance).
 
+    Fetches each ticker individually so one bad symbol never blocks the others.
+    """
     data: dict[str, float | None] = {}
     prices: dict[str, float] = {}
     prev_prices: dict[str, float] = {}
 
-    with httpx.Client(headers=_YF_HEADERS, follow_redirects=True, timeout=10) as client:
-        crumb = _get_crumb(client)
-
-        for i, (key, ticker) in enumerate(_TICKERS.items()):
-            latest, prev = _fetch_ticker(client, ticker, crumb)
-            if latest is not None:
-                prices[key] = latest
-            if prev is not None:
-                prev_prices[key] = prev
-            if i < len(_TICKERS) - 1:
-                time.sleep(0.5)
+    for i, (key, ticker) in enumerate(_TICKERS.items()):
+        latest, prev = _fetch_one_ticker_sync(ticker)
+        if latest is not None:
+            prices[key] = latest
+        if prev is not None:
+            prev_prices[key] = prev
+        if i < len(_TICKERS) - 1:
+            time.sleep(1.5)
 
     data["dow_futures_price"] = prices.get("dow_futures")
     data["sp500_price"] = prices.get("sp500")

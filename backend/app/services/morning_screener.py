@@ -987,29 +987,71 @@ async def _get_confidence_briefing(today: date) -> dict:
 
 
 async def _get_confidence_fundamentals(symbols: list[str]) -> dict[str, dict]:
-    """Fetch fundamental quality data for candidates from stock_fundamentals."""
+    """Fetch fundamental quality data for candidates from stock_fundamentals.
+
+    Fetches on demand for symbols that are missing or older than 12 hours so
+    Strategy 5 watchlist symbols stay fresh without a dedicated scheduler.
+    """
+    from datetime import timedelta
+
     from sqlalchemy import select
 
     from app.core.database import async_session_factory
+    from app.core.utils import now_ist
     from app.models.fundamental_data import StockFundamental
+    from app.tasks.fundamental_data_task import _fetch_and_store_symbol
+
+    def _row_to_dict(row: StockFundamental) -> dict:
+        return {
+            "market_cap_cr": float(row.market_cap_cr) if row.market_cap_cr else None,
+            "eps_growth_qtr_pct": float(row.latest_qtr_eps_growth_pct) if row.latest_qtr_eps_growth_pct else None,
+            "roe_pct": float(row.roe_pct) if row.roe_pct else None,
+            "debt_to_equity": float(row.debt_to_equity) if row.debt_to_equity else None,
+            "fii_pct": float(row.fii_pct) if row.fii_pct else None,
+            "fii_change_qoq": float(row.fii_change_qoq) if row.fii_change_qoq else None,
+            "mf_pct": float(row.mf_pct) if row.mf_pct else None,
+            "mf_change_qoq": float(row.mf_change_qoq) if row.mf_change_qoq else None,
+        }
 
     result_map: dict[str, dict] = {}
+    stale_cutoff = now_ist() - timedelta(hours=12)
+
     try:
         async with async_session_factory() as session:
             result = await session.execute(
                 select(StockFundamental).where(StockFundamental.symbol.in_(symbols))
             )
-            for row in result.scalars():
-                result_map[row.symbol] = {
-                    "market_cap_cr": float(row.market_cap_cr) if row.market_cap_cr else None,
-                    "eps_growth_qtr_pct": float(row.latest_qtr_eps_growth_pct) if row.latest_qtr_eps_growth_pct else None,
-                    "roe_pct": float(row.roe_pct) if row.roe_pct else None,
-                    "debt_to_equity": float(row.debt_to_equity) if row.debt_to_equity else None,
-                    "fii_pct": float(row.fii_pct) if row.fii_pct else None,
-                    "fii_change_qoq": float(row.fii_change_qoq) if row.fii_change_qoq else None,
-                    "mf_pct": float(row.mf_pct) if row.mf_pct else None,
-                    "mf_change_qoq": float(row.mf_change_qoq) if row.mf_change_qoq else None,
-                }
+            rows = {row.symbol: row for row in result.scalars()}
+
+        # Populate fresh rows; collect symbols that are missing or stale
+        needs_fetch: list[str] = []
+        for symbol in symbols:
+            row = rows.get(symbol)
+            if row is None:
+                needs_fetch.append(symbol)
+            elif row.last_refreshed_at is None or row.last_refreshed_at < stale_cutoff:
+                needs_fetch.append(symbol)
+            else:
+                result_map[symbol] = _row_to_dict(row)
+
+        if needs_fetch:
+            logger.info(
+                "Fetching fundamentals on demand for %d symbols: %s",
+                len(needs_fetch), needs_fetch,
+            )
+            await asyncio.gather(
+                *[_fetch_and_store_symbol(sym) for sym in needs_fetch],
+                return_exceptions=True,
+            )
+
+            # Re-read newly fetched rows from DB
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(StockFundamental).where(StockFundamental.symbol.in_(needs_fetch))
+                )
+                for row in result.scalars():
+                    result_map[row.symbol] = _row_to_dict(row)
+
     except Exception:
         logger.debug("Could not fetch fundamentals for confidence check")
     return result_map
