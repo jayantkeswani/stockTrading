@@ -11,6 +11,7 @@ from app.models.fundamental_data import FundamentalHistory, StockFundamental
 from app.models.research_report import ResearchAgentRun, ResearchReport
 from app.models.trading_config import TradingConfig
 from app.models.global_market_snapshot import GlobalMarketSnapshot
+from app.models.market_data_daily import MarketDataDaily
 
 __all__ = [
     "Base",
@@ -28,4 +29,5 @@ __all__ = [
     "ResearchAgentRun",
     "TradingConfig",
     "GlobalMarketSnapshot",
+    "MarketDataDaily",
 ]

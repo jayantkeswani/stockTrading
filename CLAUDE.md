@@ -37,13 +37,13 @@ stockTrading/
 │   ├── strategies/        # One MD per strategy with full trading rules. Includes arjun-liquide-study.md — a full reverse-engineering study (signal parser, independent backtest of 630 trades, feature-importance analysis, implied strategy + edge filters). Not yet a registered strategy; precursor to strategy_5_breakout_momentum.
 │   ├── backtest/          # Backtest harness docs (harness.md, option-data.md)
 │   └── ai/                # AI agent docs (signal-confidence-agent.md)
-├── scripts/               # dev.sh, stop.sh, reset.sh, backfill_for_backtest.py, backtest.py, replay_strategy5.py
+├── scripts/               # dev.sh, stop.sh, reset.sh, backfill_for_backtest.py, backtest.py, replay_strategy5.py, backfill_daily_candles.py (one-time seed of market_data_daily from Fyers), audit_screener_data.py (read-only freshness check)
 │   └── telegram/          # MTProto client (Telethon) + signal parser + Fyers probe + independent verifier + setup analyzer. list_dialogs.py (discover chat IDs), fetch_history.py (pull signal-channel history to JSON), parse_signals.py (classifies messages into ENTRY / EXIT_FULL (Book Profit) / EXIT_FORCED (cost-to-cost or "at current price" — deliberately separate from EXIT_FULL so channel-claimed wins aren't inflated) / EXIT_PARTIAL / WATCHLIST / HOLD_OVERNIGHT / REPORT / UPDATE / CANCEL / OTHER; stdlib-only), probe_fyers_history.py (one-shot diagnostic: Fyers free plan serves 1m history only while contract is actively listed; expired contracts return s="error"), verify_signals.py (hybrid backtest: accurate mode for currently-live contracts via real option 1m bars, delta-approx for expired contracts via underlying spot 1m × moneyness-derived delta; channel's stated T1-then-C2C rule; NSE F&O lot sizing from the master CSV; outputs per-trade + aggregate hit rate / expectancy / profit factor in JSON + stdout), analyze_setups.py (reverse-engineers the implied strategy: fetches underlying 1m bars up to each entry minute, reuses backend.app.indicators (VWAP, CPR, previous_day, candle_patterns) to compute features at entry time, aggregates CE vs PE distributional stats — time-of-day buckets, VWAP/PDH/PDL/CPR position, candle patterns, volume ratio, moneyness — and prints an evidence-backed hypothesis; also dumps feature CSV + JSON), analyze_edge.py (feature-importance pass: joins setups_*.json with verification_*.json on msg_id, bucketizes each feature (bool/categorical/numeric-quartile), ranks by win-rate lift with min-bucket-size guard, then stress-tests top-3 filter combinations per direction — finds "filters that beat Arjun at his own strategy"; multiple win definitions via --win-def). Fetched JSON, symbol master cache, candle cache all in scripts/telegram/data/ (gitignored). Session files + data/ gitignored. Uses TELEGRAM_API_ID/API_HASH/PHONE/SESSION_NAME from .env
 ├── backend/               # Python FastAPI backend (see backend/CLAUDE.md)
 │   ├── app/
 │   │   ├── api/v1/        # REST endpoints (11 routers, incl. watchlist, strategies, tasks, research)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
-│   │   ├── models/        # SQLAlchemy ORM models (13 tables incl. global_market_snapshots; signals has ai_* columns)
+│   │   ├── models/        # SQLAlchemy ORM models (14 tables incl. market_data_daily, global_market_snapshots; signals has ai_* columns)
 │   │   ├── schemas/       # Pydantic request/response schemas
 │   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill, strategy_params, morning_screener)
 │   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
@@ -119,6 +119,12 @@ python scripts/replay_strategy5.py --date 2026-04-28 --symbols VEDL,SUNPHARMA  #
 
 # One-time morning screener data freshness audit (read-only, no side effects)
 python scripts/audit_screener_data.py
+
+# One-time backfill of market_data_daily from Fyers (run once to seed historical daily candles)
+# After this, nse_bhav_copy_task keeps the table current daily at 7:30 AM
+python scripts/backfill_daily_candles.py              # last 60 days, all F&O stocks
+python scripts/backfill_daily_candles.py --days 90    # longer lookback
+python scripts/backfill_daily_candles.py --symbols TCS,RELIANCE  # subset
 ```
 
 ## Test Coverage

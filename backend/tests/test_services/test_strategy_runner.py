@@ -175,9 +175,10 @@ class TestEvaluateManual:
     @patch("app.services.strategy_runner.strategy_runner._build_market_context", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._load_todays_candles", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._get_current_price", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._resolve_option", new_callable=AsyncMock)
     @patch("app.strategies.registry.get_strategy")
     async def test_generates_signal_on_manual_scan(
-        self, mock_get_strategy, mock_price, mock_candles, mock_ctx, mock_risk, mock_params, mock_handle
+        self, mock_get_strategy, mock_resolve_option, mock_price, mock_candles, mock_ctx, mock_risk, mock_params, mock_handle
     ):
         """Manual evaluation should call strategy.evaluate and handle the signal."""
         from app.services.strategy_runner import strategy_runner
@@ -195,6 +196,7 @@ class TestEvaluateManual:
         mock_strategy = MagicMock()
         mock_strategy.evaluate.return_value = signal
         mock_get_strategy.return_value = mock_strategy
+        mock_resolve_option.return_value = (signal, True, None)
 
         result = await strategy_runner.evaluate_manual("NIFTY", StrategyName.VWAP_PULLBACK)
 

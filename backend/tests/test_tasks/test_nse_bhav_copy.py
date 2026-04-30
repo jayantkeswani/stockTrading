@@ -122,9 +122,10 @@ class TestFetchBhavCopy:
     @pytest.mark.asyncio
     async def test_stores_in_redis_with_correct_key(self):
         trade_date = date(2026, 4, 24)
+        # Full OHLCV format returned by _download_bhav_copy (post-parse)
         parsed_data = {
-            "RELIANCE": {"delivery_pct": 50.0, "close": 2470.0, "prev_close": 2440.0},
-            "TCS": {"delivery_pct": 60.0, "close": 3520.0, "prev_close": 3490.0},
+            "RELIANCE": {"open": 2450.0, "high": 2480.0, "low": 2430.0, "close": 2470.0, "volume": 5000000, "delivery_pct": 50.0, "prev_close": 2440.0},
+            "TCS": {"open": 3500.0, "high": 3530.0, "low": 3490.0, "close": 3520.0, "volume": 1000000, "delivery_pct": 60.0, "prev_close": 3490.0},
         }
 
         mock_redis = AsyncMock()
@@ -138,6 +139,10 @@ class TestFetchBhavCopy:
                 "app.core.redis.get_redis",
                 return_value=mock_redis,
             ),
+            patch(
+                "app.tasks.nse_bhav_copy_task._persist_daily_to_db",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await fetch_bhav_copy(trade_date)
 
@@ -150,9 +155,11 @@ class TestFetchBhavCopy:
 
         assert key == "nse:bhav_copy:2026-04-24"
         assert ttl == 90 * 86400
+        # Redis stores slim payload (delivery_pct, close, prev_close only)
         stored = json.loads(stored_json)
         assert stored["RELIANCE"]["delivery_pct"] == 50.0
         assert stored["TCS"]["close"] == 3520.0
+        assert "open" not in stored["RELIANCE"]
 
     @pytest.mark.asyncio
     async def test_retries_on_failure(self):
@@ -166,7 +173,7 @@ class TestFetchBhavCopy:
             call_count += 1
             if call_count < 3:
                 return None
-            return {"TCS": {"delivery_pct": 60.0, "close": 3520.0, "prev_close": 3490.0}}
+            return {"TCS": {"open": 3500.0, "high": 3530.0, "low": 3490.0, "close": 3520.0, "volume": 1000000, "delivery_pct": 60.0, "prev_close": 3490.0}}
 
         mock_redis = AsyncMock()
 
@@ -180,6 +187,10 @@ class TestFetchBhavCopy:
                 return_value=mock_redis,
             ),
             patch("app.tasks.nse_bhav_copy_task.asyncio.sleep", new_callable=AsyncMock),
+            patch(
+                "app.tasks.nse_bhav_copy_task._persist_daily_to_db",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await fetch_bhav_copy(trade_date)
 
@@ -201,7 +212,7 @@ class TestFetchBhavCopy:
 
     @pytest.mark.asyncio
     async def test_uses_previous_trading_day_when_no_date(self):
-        parsed_data = {"INFY": {"delivery_pct": 30.0, "close": 1410.0, "prev_close": 1395.0}}
+        parsed_data = {"INFY": {"open": 1400.0, "high": 1420.0, "low": 1395.0, "close": 1410.0, "volume": 800000, "delivery_pct": 30.0, "prev_close": 1395.0}}
         mock_redis = AsyncMock()
 
         with (
@@ -216,6 +227,10 @@ class TestFetchBhavCopy:
             patch(
                 "app.core.utils.now_ist",
                 return_value=MagicMock(date=MagicMock(return_value=date(2026, 4, 28))),
+            ),
+            patch(
+                "app.tasks.nse_bhav_copy_task._persist_daily_to_db",
+                new_callable=AsyncMock,
             ),
         ):
             result = await fetch_bhav_copy(None)

@@ -525,7 +525,8 @@ Strategy 5 signals render with strategy-aware context in `ScannerPanel.tsx`:
 | `backend/app/indicators/stock_trend.py` | Multi-day trend direction + strength |
 | `backend/app/api/v1/intraday_futures.py` | API router: watchlist, agent log, global cues, setup performance, phase, screener/briefing triggers, agent control |
 | `backend/app/tasks/morning_workflow_task.py` | Scheduled task: orchestrates screener → briefing → pre-open reassessment |
-| `backend/app/tasks/nse_bhav_copy_task.py` | Daily NSE bhav copy download for delivery % data |
+| `backend/app/tasks/nse_bhav_copy_task.py` | Daily NSE bhav copy download (7:30 AM IST) — writes full OHLCV to `market_data_daily` table + slim `{delivery_pct, close, prev_close}` to Redis for delivery % scoring |
+| `backend/app/models/market_data_daily.py` | `MarketDataDaily` table: one OHLCV row per symbol per date, primary source for all 8 quantitative scoring factors in Stage 1 |
 | `backend/app/tasks/oi_snapshot_task.py` | Stock futures OI snapshot for screener OI scoring |
 | `backend/app/data/sector_classification.json` | Static F&O stocks → sectors mapping |
 | `backend/app/services/strategy_params.py` | `INTRADAY_FUTURES_DEFAULTS` dict |

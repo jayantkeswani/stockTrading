@@ -72,7 +72,7 @@ def _parse_bhav_csv(csv_text: str) -> dict[str, dict]:
     HIGH_PRICE, LOW_PRICE, LAST_PRICE, CLOSE_PRICE, AVG_PRICE, TTL_TRD_QNTY,
     TURNOVER_LACS, NO_OF_TRADES, DELIV_QTY, DELIV_PER
 
-    Returns {symbol: {"delivery_pct": float, "close": float, "prev_close": float}}
+    Returns {symbol: {open, high, low, close, volume, delivery_pct, prev_close}}
     """
     result: dict[str, dict] = {}
     reader = csv.DictReader(io.StringIO(csv_text))
@@ -88,16 +88,27 @@ def _parse_bhav_csv(csv_text: str) -> dict[str, dict]:
             continue
 
         try:
-            delivery_pct = float(row.get("DELIV_PER", 0) or 0)
+            open_price = float(row.get("OPEN_PRICE", 0) or 0)
+            high_price = float(row.get("HIGH_PRICE", 0) or 0)
+            low_price = float(row.get("LOW_PRICE", 0) or 0)
             close = float(row.get("CLOSE_PRICE", 0) or 0)
             prev_close = float(row.get("PREV_CLOSE", 0) or 0)
+            volume = int(float(row.get("TTL_TRD_QNTY", 0) or 0))
+            delivery_pct = float(row.get("DELIV_PER", 0) or 0)
         except (ValueError, TypeError):
             logger.debug("Skipping %s — invalid numeric data", symbol)
             continue
 
+        if close <= 0:
+            continue
+
         result[symbol] = {
-            "delivery_pct": delivery_pct,
+            "open": open_price,
+            "high": high_price,
+            "low": low_price,
             "close": close,
+            "volume": volume,
+            "delivery_pct": delivery_pct,
             "prev_close": prev_close,
         }
 
@@ -144,6 +155,58 @@ def _download_and_parse(url: str) -> dict[str, dict] | None:
         return None
 
 
+async def _persist_daily_to_db(data: dict[str, dict], trade_date: date) -> int:
+    """Upsert OHLCV rows from a parsed bhav copy dict into market_data_daily.
+
+    Inserts fresh data straight from the downloaded CSV — never reads the Redis
+    bhav copy cache (which only stores 3 fields for delivery % scoring).
+    Returns the number of rows upserted.
+    """
+    from decimal import Decimal
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.core.database import async_session_factory
+    from app.models.market_data_daily import MarketDataDaily
+
+    rows = [
+        {
+            "symbol": sym,
+            "date": trade_date,
+            "open": Decimal(str(v["open"])),
+            "high": Decimal(str(v["high"])),
+            "low": Decimal(str(v["low"])),
+            "close": Decimal(str(v["close"])),
+            "volume": int(v["volume"]),
+            "delivery_pct": Decimal(str(v["delivery_pct"])) if v.get("delivery_pct") is not None else None,
+        }
+        for sym, v in data.items()
+        if v.get("close", 0) > 0
+    ]
+
+    if not rows:
+        return 0
+
+    async with async_session_factory() as session:
+        stmt = pg_insert(MarketDataDaily).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_market_data_daily_symbol_date",
+            set_={
+                "open": stmt.excluded.open,
+                "high": stmt.excluded.high,
+                "low": stmt.excluded.low,
+                "close": stmt.excluded.close,
+                "volume": stmt.excluded.volume,
+                "delivery_pct": stmt.excluded.delivery_pct,
+            },
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+    logger.info("market_data_daily: upserted %d rows for %s", len(rows), trade_date)
+    return len(rows)
+
+
 async def _download_bhav_copy(trade_date: date) -> dict[str, dict] | None:
     """Download and parse NSE CM bhav copy for the given date.
 
@@ -186,17 +249,25 @@ async def fetch_bhav_copy(trade_date: date | None = None) -> dict[str, dict] | N
         logger.error("Failed to download bhav copy for %s after %d attempts", trade_date, max_retries)
         return None
 
-    # Store in Redis
+    # Store delivery_pct/close/prev_close in Redis (screener delivery % scoring)
     from app.core.redis import get_redis
 
     r = get_redis()
     key = f"{_REDIS_KEY_PREFIX}:{trade_date}"
-    ttl = _REDIS_TTL_DAYS * 86400  # 90 days in seconds
-    await r.setex(key, ttl, json.dumps(data))
+    ttl = _REDIS_TTL_DAYS * 86400
+    redis_payload = {
+        sym: {"delivery_pct": v["delivery_pct"], "close": v["close"], "prev_close": v["prev_close"]}
+        for sym, v in data.items()
+    }
+    await r.setex(key, ttl, json.dumps(redis_payload))
     logger.info(
         "Bhav copy for %s stored in Redis (%d stocks, key=%s, TTL=%dd)",
         trade_date, len(data), key, _REDIS_TTL_DAYS,
     )
+
+    # Persist full OHLCV to market_data_daily (fresh from CSV, not from Redis)
+    await _persist_daily_to_db(data, trade_date)
+
     return data
 
 

@@ -1244,37 +1244,78 @@ async def _provision_watchlist_symbols(symbols: list[str], today: date) -> None:
 async def _fetch_daily_data_batch(
     symbols: list[str], today: date, days: int = 60
 ) -> dict[str, list[Candle]]:
-    """Fetch daily candle data — Postgres first, Fyers for gaps only.
+    """Load daily candle data from market_data_daily for the screener's 8-factor scoring.
 
-    Daily candles are stored in market_data_1m with timestamp at midnight IST
-    (00:00:00+05:30), distinguishing them from intraday candles (09:15+).
-    On first run for a symbol this fetches from Fyers and persists to Postgres.
-    Subsequent runs read from Postgres with no API calls needed.
+    Primary source: market_data_daily table, populated daily by nse_bhav_copy_task.
+    Fallback: Fyers resolution="D" for symbols with no rows at all (e.g. newly listed
+    stocks not yet seen by the bhav copy task). Fallback data is written to
+    market_data_daily so subsequent runs are DB-only.
+
+    Logs a warning if the latest date for any symbol is older than yesterday — the
+    bhav copy task is responsible for keeping this table current; stale data here
+    means that task failed.
     """
-    from_date = today - timedelta(days=days + 10)
-    min_candles = days - 15  # tolerate weekends/holidays
+    from sqlalchemy import select, func
+    from app.core.database import async_session_factory
+    from app.models.market_data_daily import MarketDataDaily
 
-    # Step 1: Load whatever we already have in Postgres
-    result, db_counts = await _load_daily_candles_from_db(symbols, from_date, today)
+    from_date = today - timedelta(days=days + 10)
+    yesterday = today - timedelta(days=1)
+    # Tolerate weekends/holidays: require at least days-15 rows
+    min_candles = days - 15
+
+    result: dict[str, list[Candle]] = {}
+    latest_dates: dict[str, date] = {}
+
+    # Step 1: Load from market_data_daily
+    async with async_session_factory() as session:
+        stmt = (
+            select(MarketDataDaily)
+            .where(
+                MarketDataDaily.symbol.in_(symbols),
+                MarketDataDaily.date >= from_date,
+                MarketDataDaily.date <= yesterday,
+            )
+            .order_by(MarketDataDaily.symbol, MarketDataDaily.date)
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+
+    for row in rows:
+        result.setdefault(row.symbol, []).append(
+            Candle(
+                open=float(row.open), high=float(row.high),
+                low=float(row.low), close=float(row.close),
+                volume=int(row.volume),
+            )
+        )
+        latest_dates[row.symbol] = max(latest_dates.get(row.symbol, row.date), row.date)
+
+    sufficient = sum(1 for s in symbols if len(result.get(s, [])) >= min_candles)
     logger.info(
-        "Daily candles from DB: %d / %d symbols have sufficient data",
-        sum(1 for c in db_counts.values() if c >= min_candles), len(symbols),
+        "market_data_daily: %d / %d symbols have sufficient data (>=%d rows)",
+        sufficient, len(symbols), min_candles,
     )
 
-    # Step 2: Identify symbols that need Fyers fetch
-    need_fetch = [s for s in symbols if db_counts.get(s, 0) < min_candles]
+    # Warn on stale data — bhav copy task should have updated this
+    stale = [s for s, d in latest_dates.items() if d < yesterday]
+    if stale:
+        logger.warning(
+            "Daily candles stale for %d symbols (latest < %s) — bhav copy task may have failed: %s",
+            len(stale), yesterday, stale[:10],
+        )
+
+    # Step 2: Fyers fallback for symbols with zero rows only
+    need_fetch = [s for s in symbols if s not in result]
     if not need_fetch:
         return result
 
-    # Step 3: Fetch missing symbols from Fyers (throttled)
     r = get_redis()
     token = await r.get("fyers:access_token")
     if not token:
-        logger.error("No Fyers token — cannot fetch daily data for screener")
+        logger.error("No Fyers token — %d symbols have no daily data and cannot be fetched", len(need_fetch))
         return result
 
     sem = asyncio.Semaphore(FYERS_SEMAPHORE_LIMIT)
-    fyers_fetched: dict[str, list[dict]] = {}
 
     async def _fetch_one(symbol: str) -> None:
         async with sem:
@@ -1283,127 +1324,67 @@ async def _fetch_daily_data_batch(
             try:
                 fyers_symbol = f"NSE:{symbol}-EQ"
                 raw = await _fyers_history_with_retry(
-                    client, fyers_symbol, "D", from_date, today - timedelta(days=1),
+                    client, fyers_symbol, "D", from_date, yesterday,
                 )
-                if raw:
-                    fyers_fetched[symbol] = raw
-                    result[symbol] = [
-                        Candle(
-                            open=c["open"], high=c["high"],
-                            low=c["low"], close=c["close"],
-                            volume=c["volume"],
-                        )
-                        for c in raw
-                    ]
+                if not raw:
+                    return
+                result[symbol] = [
+                    Candle(open=c["open"], high=c["high"], low=c["low"], close=c["close"], volume=c["volume"])
+                    for c in raw
+                ]
+                await _persist_fyers_daily_to_db(symbol, raw)
             except Exception as e:
-                logger.debug("Daily data fetch failed for %s: %s", symbol, e)
+                logger.debug("Fyers daily fallback failed for %s: %s", symbol, e)
             finally:
                 await client.close()
 
-    logger.info("Fetching daily candles from Fyers for %d symbols", len(need_fetch))
+    logger.info("Fyers fallback: fetching daily candles for %d new symbols", len(need_fetch))
     await asyncio.gather(*[_fetch_one(s) for s in need_fetch], return_exceptions=True)
-
-    # Step 4: Persist newly fetched data to Postgres
-    if fyers_fetched:
-        saved = await _save_daily_candles_to_db(fyers_fetched)
-        logger.info(
-            "Daily data batch: %d from DB, %d from Fyers (%d candles saved)",
-            len(result) - len(fyers_fetched), len(fyers_fetched), saved,
-        )
-    else:
-        logger.info("Daily data batch: %d from DB, 0 from Fyers", len(result))
 
     return result
 
 
-async def _load_daily_candles_from_db(
-    symbols: list[str], from_date: date, to_date: date,
-) -> tuple[dict[str, list[Candle]], dict[str, int]]:
-    """Load daily candles from Postgres. Returns (candle_dict, count_dict).
+async def _persist_fyers_daily_to_db(symbol: str, raw_candles: list[dict]) -> None:
+    """Write Fyers resolution='D' candles into market_data_daily.
 
-    Daily candles are stored at their Fyers timestamp: 05:30 IST (midnight UTC).
-    We filter by extract(hour from timestamp AT TIME ZONE 'UTC') = 0 to
-    distinguish them from intraday 1m candles (09:15–15:30 IST).
+    Only called as a fallback for symbols not yet in market_data_daily.
+    Subsequent days will be populated by the bhav copy task instead.
     """
-    from sqlalchemy import extract, select
-
-    from app.core.constants import IST
-    from app.core.database import async_session_factory
-    from app.models.market_data import MarketData1m
-
-    # Fyers daily candle timestamp = midnight UTC = 05:30 IST
-    start_ts = datetime.combine(from_date, datetime.min.time(), tzinfo=IST)
-    end_ts = datetime.combine(to_date, datetime.min.time(), tzinfo=IST)
-
-    result: dict[str, list[Candle]] = {}
-    counts: dict[str, int] = {}
-
-    async with async_session_factory() as session:
-        for sym in symbols:
-            stmt = (
-                select(MarketData1m)
-                .where(
-                    MarketData1m.symbol == sym,
-                    MarketData1m.timestamp >= start_ts,
-                    MarketData1m.timestamp <= end_ts,
-                    # Daily candles: stored at midnight UTC (hour=0 in UTC)
-                    # Intraday candles: 03:45–10:00 UTC (09:15–15:30 IST)
-                    extract("hour", MarketData1m.timestamp) == 0,
-                    extract("minute", MarketData1m.timestamp) == 0,
-                )
-                .order_by(MarketData1m.timestamp)
-            )
-            rows = (await session.execute(stmt)).scalars().all()
-            counts[sym] = len(rows)
-
-            if rows:
-                result[sym] = [
-                    Candle(
-                        open=float(r.open), high=float(r.high),
-                        low=float(r.low), close=float(r.close),
-                        volume=int(r.volume),
-                    )
-                    for r in rows
-                ]
-
-    return result, counts
-
-
-async def _save_daily_candles_to_db(fetched: dict[str, list[dict]]) -> int:
-    """Persist daily candles to Postgres at their Fyers timestamp (midnight UTC)."""
     from datetime import timezone
     from decimal import Decimal
 
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     from app.core.database import async_session_factory
-    from app.models.market_data import MarketData1m
+    from app.models.market_data_daily import MarketDataDaily
 
-    total = 0
+    rows = []
+    for c in raw_candles:
+        # Fyers daily timestamp is midnight UTC
+        candle_date = date.fromtimestamp(c["timestamp"])
+        if c.get("close", 0) <= 0:
+            continue
+        rows.append({
+            "symbol": symbol,
+            "date": candle_date,
+            "open": Decimal(str(c["open"])),
+            "high": Decimal(str(c["high"])),
+            "low": Decimal(str(c["low"])),
+            "close": Decimal(str(c["close"])),
+            "volume": int(c["volume"]),
+            "delivery_pct": None,
+        })
+
+    if not rows:
+        return
+
     async with async_session_factory() as session:
-        for symbol, raw_candles in fetched.items():
-            rows = []
-            for c in raw_candles:
-                # Fyers daily timestamp is already midnight UTC — use as-is
-                ts = datetime.fromtimestamp(c["timestamp"], tz=timezone.utc)
-                rows.append({
-                    "symbol": symbol,
-                    "timestamp": ts,
-                    "open": Decimal(str(c["open"])),
-                    "high": Decimal(str(c["high"])),
-                    "low": Decimal(str(c["low"])),
-                    "close": Decimal(str(c["close"])),
-                    "volume": int(c["volume"]),
-                })
-            if rows:
-                stmt = pg_insert(MarketData1m).values(rows)
-                stmt = stmt.on_conflict_do_nothing(
-                    constraint="uq_market_data_symbol_time",
-                )
-                await session.execute(stmt)
-                total += len(rows)
+        stmt = pg_insert(MarketDataDaily).values(rows)
+        stmt = stmt.on_conflict_do_nothing(constraint="uq_market_data_daily_symbol_date")
+        await session.execute(stmt)
         await session.commit()
-    return total
+
+    logger.info("Fyers fallback: persisted %d daily rows for %s", len(rows), symbol)
 
 
 async def _fyers_history_with_retry(

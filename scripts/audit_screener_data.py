@@ -94,45 +94,32 @@ async def audit():
         async with AsyncSessionLocal() as session:
 
             # ----------------------------------------------------------------
-            # 1. Daily candles (market_data_1m, hour=0, minute=0 UTC)
+            # 1. Daily candles (market_data_daily — source of truth)
             # ----------------------------------------------------------------
             _section("1. Daily Candles  (RS / ADR / volume trend / stock trend / 52w high / range position)")
 
-            # Latest candle date across all symbols
             latest_candle_q = sa.text("""
-                SELECT
-                    MAX(timestamp AT TIME ZONE 'UTC') AS latest_ts,
-                    COUNT(DISTINCT symbol) AS symbol_count
-                FROM market_data_1m
-                WHERE EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC') = 0
-                  AND EXTRACT(MINUTE FROM timestamp AT TIME ZONE 'UTC') = 0
+                SELECT MAX(date) AS latest_date, COUNT(DISTINCT symbol) AS symbol_count
+                FROM market_data_daily
             """)
             row = (await session.execute(latest_candle_q)).one()
-            latest_ts = row.latest_ts
-            symbol_count = row.symbol_count
 
-            if latest_ts is None:
-                print(_fail("No daily candles found in market_data_1m"))
+            if row.latest_date is None:
+                print(_fail("No rows in market_data_daily — run scripts/backfill_daily_candles.py first"))
             else:
-                latest_date = latest_ts.date()
-                age_days = (yesterday - latest_date).days
-                msg = f"Latest daily candle: {latest_date}  ({symbol_count} symbols)"
+                age_days = (yesterday - row.latest_date).days
+                msg = f"Latest daily candle: {row.latest_date}  ({row.symbol_count} symbols)"
                 if age_days == 0:
                     print(_ok(msg + "  — current ✓"))
                 elif age_days == 1:
-                    print(_warn(msg + f"  — 1 day stale (may be holiday/weekend)"))
+                    print(_warn(msg + "  — 1 day stale (may be holiday/weekend)"))
                 else:
-                    print(_fail(msg + f"  — {age_days} days stale ✗"))
+                    print(_fail(msg + f"  — {age_days} days stale ✗  (bhav copy task may have failed)"))
 
-            # Per-symbol breakdown: how many are missing yesterday's candle?
+            # Per-symbol breakdown
             per_sym_q = sa.text("""
-                SELECT
-                    symbol,
-                    MAX(timestamp AT TIME ZONE 'UTC')::date AS latest_date,
-                    COUNT(*) AS candle_count
-                FROM market_data_1m
-                WHERE EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC') = 0
-                  AND EXTRACT(MINUTE FROM timestamp AT TIME ZONE 'UTC') = 0
+                SELECT symbol, MAX(date) AS latest_date, COUNT(*) AS candle_count
+                FROM market_data_daily
                 GROUP BY symbol
                 ORDER BY latest_date ASC
             """)
@@ -141,29 +128,27 @@ async def audit():
             stale_symbols = [r for r in sym_rows if r.latest_date < yesterday]
             current_symbols = [r for r in sym_rows if r.latest_date >= yesterday]
 
-            print(f"       Symbols with data up to {yesterday}: {len(current_symbols)}")
+            print(f"       Symbols current (up to {yesterday}): {len(current_symbols)}")
             if stale_symbols:
-                print(_warn(f"  Symbols with stale daily candles ({len(stale_symbols)} total):"))
+                print(_warn(f"  Stale symbols ({len(stale_symbols)} total):"))
                 for s in stale_symbols[:15]:
                     print(f"       {s.symbol:<20} latest={s.latest_date}  count={s.candle_count}")
                 if len(stale_symbols) > 15:
                     print(f"       ... and {len(stale_symbols) - 15} more")
 
-            # Symbols with < 20 candles (RS requires 20; will default to 50th percentile)
+            # Symbols with < 20 rows (RS requires 20; will default to 50th percentile)
             thin_q = sa.text("""
                 SELECT symbol, COUNT(*) AS cnt
-                FROM market_data_1m
-                WHERE EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC') = 0
-                  AND EXTRACT(MINUTE FROM timestamp AT TIME ZONE 'UTC') = 0
+                FROM market_data_daily
                 GROUP BY symbol
                 HAVING COUNT(*) < 20
                 ORDER BY cnt
             """)
             thin_rows = (await session.execute(thin_q)).all()
             if thin_rows:
-                print(_warn(f"  Symbols with < 20 daily candles (RS will default to 50.0): {len(thin_rows)}"))
+                print(_warn(f"  Symbols with < 20 rows (RS will default to 50.0): {len(thin_rows)}"))
                 for t in thin_rows[:10]:
-                    print(f"       {t.symbol:<20} candles={t.cnt}")
+                    print(f"       {t.symbol:<20} rows={t.cnt}")
 
             # ----------------------------------------------------------------
             # 2. OI snapshots — FUT rows
