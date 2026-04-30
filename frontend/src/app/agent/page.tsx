@@ -1,32 +1,109 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { api } from "@/lib/api";
-import { formatTime } from "@/lib/formatters";
+import { formatTime, formatDate, startOfDayIST, endOfDayIST } from "@/lib/formatters";
+import { STRATEGY_LABELS } from "@/lib/constants";
 import type { AgentLog } from "@/lib/types";
+import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
+
+function defaultPeriod(): Period {
+  const now = new Date();
+  return { start: startOfDayIST(now), end: endOfDayIST(now), label: "Today" };
+}
+
+const ACTION_COLORS: Record<string, string> = {
+  SL_TRIGGERED: "text-loss",
+  SL_HIT: "text-loss",
+  DRAWDOWN_HALT: "text-loss",
+  PROFIT_BOOK_REQUEST: "text-warning",
+  TIME_EXIT: "text-warning",
+  EXPIRY_ROLL: "text-warning",
+  PROFIT_BOOKED: "text-profit",
+  TARGET_HIT: "text-profit",
+  AUTO_EXECUTED: "text-accent",
+  MANUAL_EXECUTED: "text-accent",
+  SHADOW_EXECUTED: "text-text-muted",
+};
 
 export default function AgentPage() {
   const { agentStatus, setAgentStatus } = useStore();
   const [logs, setLogs] = useState<AgentLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<Period>(defaultPeriod);
+
+  // Filters
+  const [actionFilter, setActionFilter] = useState<string>("");
+  const [strategyFilter, setStrategyFilter] = useState<string>("");
+  const [symbolQuery, setSymbolQuery] = useState<string>("");
+  const [pendingOnly, setPendingOnly] = useState(false);
 
   useEffect(() => {
-    async function load() {
+    async function loadStatus() {
       try {
-        const [status, agentLogs] = await Promise.all([
-          api.getAgentStatus(),
-          api.getAgentLogs(),
-        ]);
+        const status = await api.getAgentStatus();
         setAgentStatus(status as never);
-        setLogs(agentLogs as AgentLog[]);
       } catch {
         // API not running yet
       }
-      setLoading(false);
     }
-    load();
+    loadStatus();
   }, [setAgentStatus]);
+
+  useEffect(() => {
+    setLoading(true);
+    let cancelled = false;
+    async function loadLogs() {
+      try {
+        const agentLogs = await api.getAgentLogs({
+          since: period.start.toISOString(),
+          until: period.end.toISOString(),
+        });
+        if (!cancelled) setLogs(agentLogs as AgentLog[]);
+      } catch {
+        if (!cancelled) setLogs([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    loadLogs();
+    return () => { cancelled = true; };
+  }, [period]);
+
+  // Reset filters when period changes so stale filter pills don't orphan
+  useEffect(() => {
+    setActionFilter("");
+    setStrategyFilter("");
+    setSymbolQuery("");
+    setPendingOnly(false);
+  }, [period]);
+
+  const actionTypes = useMemo(() => {
+    const s = new Set<string>();
+    for (const l of logs) if (l.action_type) s.add(l.action_type);
+    return Array.from(s).sort();
+  }, [logs]);
+
+  const strategies = useMemo(() => {
+    const s = new Set<string>();
+    for (const l of logs) {
+      const name = l.details?.strategy_name as string | undefined;
+      if (name) s.add(name);
+    }
+    return Array.from(s).sort();
+  }, [logs]);
+
+  const displayed = useMemo(() => {
+    const q = symbolQuery.trim().toUpperCase();
+    return logs.filter((l) => {
+      if (actionFilter && l.action_type !== actionFilter) return false;
+      if (strategyFilter && (l.details?.strategy_name as string | undefined) !== strategyFilter) return false;
+      if (q && !String(l.details?.symbol ?? "").toUpperCase().includes(q)) return false;
+      if (pendingOnly && l.confirmation_status !== "PENDING") return false;
+      return true;
+    });
+  }, [logs, actionFilter, strategyFilter, symbolQuery, pendingOnly]);
 
   const handleToggle = async () => {
     try {
@@ -71,13 +148,7 @@ export default function AgentPage() {
     }
   };
 
-  const actionTypeColors: Record<string, string> = {
-    SL_TRIGGERED: "text-loss",
-    PROFIT_BOOK_REQUEST: "text-warning",
-    PROFIT_BOOKED: "text-profit",
-    TIME_EXIT: "text-text-secondary",
-    DRAWDOWN_HALT: "text-loss",
-  };
+  const hasActiveFilters = actionFilter || strategyFilter || symbolQuery.trim() || pendingOnly;
 
   return (
     <div className="space-y-2">
@@ -178,50 +249,155 @@ export default function AgentPage() {
           <div className="text-sm font-mono font-bold">
             {agentStatus?.uptime_seconds
               ? `${Math.floor(agentStatus.uptime_seconds / 60)}m`
-              : "\u2014"}
+              : "—"}
           </div>
         </div>
       </div>
 
       {/* Agent Logs */}
       <div className="rounded border border-border bg-bg-secondary">
-        <div className="px-3 py-1.5 border-b border-border">
+        {/* Header: title + period filter */}
+        <div className="px-3 py-1.5 border-b border-border flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
             Activity Log
           </h2>
+          <PeriodFilter value={period} onChange={setPeriod} />
         </div>
+
+        {/* Filter bar */}
+        <div className="px-3 py-1.5 border-b border-border/60 flex items-center gap-2 flex-wrap">
+          {/* Action type pills */}
+          {actionTypes.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap">
+              <button
+                onClick={() => setActionFilter("")}
+                className={`text-[10px] font-mono px-1.5 py-px rounded border transition-colors ${
+                  actionFilter === ""
+                    ? "bg-accent/20 text-accent border-accent/30"
+                    : "text-text-muted border-border hover:text-text-primary"
+                }`}
+              >
+                ALL
+              </button>
+              {actionTypes.map((a) => (
+                <button
+                  key={a}
+                  onClick={() => setActionFilter((prev) => (prev === a ? "" : a))}
+                  className={`text-[10px] font-mono px-1.5 py-px rounded border transition-colors ${
+                    actionFilter === a
+                      ? "bg-accent/20 text-accent border-accent/30"
+                      : `border-border hover:text-text-primary ${ACTION_COLORS[a] ?? "text-text-muted"}`
+                  }`}
+                >
+                  {a.replace(/_/g, " ")}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Divider */}
+          {actionTypes.length > 0 && strategies.length > 0 && (
+            <div className="w-px h-4 bg-border shrink-0" />
+          )}
+
+          {/* Strategy pills */}
+          {strategies.length > 1 && (
+            <div className="flex items-center gap-1">
+              {strategies.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setStrategyFilter((prev) => (prev === s ? "" : s))}
+                  className={`text-[10px] font-mono px-1.5 py-px rounded border transition-colors ${
+                    strategyFilter === s
+                      ? "bg-accent/20 text-accent border-accent/30"
+                      : "text-text-muted border-border hover:text-text-primary"
+                  }`}
+                >
+                  {STRATEGY_LABELS[s] ?? s}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Symbol search */}
+          <input
+            type="text"
+            value={symbolQuery}
+            onChange={(e) => setSymbolQuery(e.target.value)}
+            placeholder="symbol…"
+            className="ml-auto text-[10px] font-mono bg-bg-tertiary border border-border rounded px-1.5 py-px text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 w-20"
+          />
+
+          {/* Pending only */}
+          <label className="flex items-center gap-1 cursor-pointer select-none shrink-0">
+            <input
+              type="checkbox"
+              checked={pendingOnly}
+              onChange={(e) => setPendingOnly(e.target.checked)}
+              className="accent-accent w-3 h-3"
+            />
+            <span className="text-[10px] font-mono text-text-muted">Pending</span>
+          </label>
+
+          {/* Count */}
+          {!loading && (
+            <span className="text-[10px] font-mono text-text-muted shrink-0">
+              {hasActiveFilters ? `${displayed.length} / ${logs.length}` : `${logs.length}`}
+            </span>
+          )}
+        </div>
+
+        {/* Log rows */}
         {loading ? (
           <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
-        ) : logs.length === 0 ? (
-          <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">no activity yet</div>
+        ) : displayed.length === 0 ? (
+          <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">
+            {hasActiveFilters ? "no matching entries" : "no activity yet"}
+          </div>
         ) : (
-          <div className="divide-y divide-border/30 max-h-[400px] overflow-y-auto">
-            {logs.map((log) => (
-              <div key={log.id} className="px-3 py-1.5 hover:bg-bg-tertiary/30">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`text-xs font-mono font-bold ${
-                        actionTypeColors[log.action_type] || "text-text-secondary"
-                      }`}
-                    >
-                      {log.action_type}
+          <div className="divide-y divide-border/30 max-h-[calc(100vh-340px)] overflow-y-auto">
+            {displayed.map((log) => {
+              const symbol = log.details?.symbol != null ? String(log.details.symbol) : null;
+              const strategyKey = log.details?.strategy_name as string | undefined;
+              const pnl = log.details?.pnl != null ? Number(log.details.pnl) : null;
+
+              return (
+                <div key={log.id} className="px-3 py-1.5 hover:bg-bg-tertiary/30">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className={`text-xs font-mono font-bold ${
+                          ACTION_COLORS[log.action_type] ?? "text-text-secondary"
+                        }`}
+                      >
+                        {log.action_type.replace(/_/g, " ")}
+                      </span>
+                      {symbol && (
+                        <span className="text-xs font-mono text-text-primary">{symbol}</span>
+                      )}
+                      {strategyKey && (
+                        <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent">
+                          {STRATEGY_LABELS[strategyKey] ?? strategyKey}
+                        </span>
+                      )}
+                      {pnl != null && (
+                        <span className={`text-xs font-mono ${pnl >= 0 ? "text-profit" : "text-loss"}`}>
+                          {pnl >= 0 ? "+" : ""}{pnl.toFixed(0)}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-text-muted font-mono shrink-0">
+                      {formatDate(log.created_at)} {formatTime(log.created_at)}
                     </span>
-                    {log.details?.symbol != null && (
-                      <span className="text-xs font-mono">{String(log.details.symbol)}</span>
-                    )}
                   </div>
-                  <span className="text-[10px] text-text-muted font-mono">
-                    {formatTime(log.created_at)}
-                  </span>
-                </div>
-                {log.details?.message != null && (
-                  <p className="text-xs font-mono text-text-muted mt-0.5">
-                    {String(log.details.message)}
-                  </p>
-                )}
-                {log.requires_confirmation &&
-                  log.confirmation_status === "PENDING" && (
+
+                  {log.details?.message != null && (
+                    <p className="text-[10px] font-mono text-text-muted mt-0.5 leading-relaxed">
+                      {String(log.details.message)}
+                    </p>
+                  )}
+
+                  {log.requires_confirmation && log.confirmation_status === "PENDING" && (
                     <div className="mt-1 flex gap-1.5">
                       <button
                         onClick={() => handleConfirm(log.id, true)}
@@ -237,19 +413,19 @@ export default function AgentPage() {
                       </button>
                     </div>
                   )}
-                {log.confirmation_status && log.confirmation_status !== "PENDING" && (
-                  <span
-                    className={`text-[10px] font-mono mt-0.5 inline-block ${
-                      log.confirmation_status === "APPROVED"
-                        ? "text-profit"
-                        : "text-loss"
-                    }`}
-                  >
-                    {log.confirmation_status}
-                  </span>
-                )}
-              </div>
-            ))}
+
+                  {log.confirmation_status && log.confirmation_status !== "PENDING" && (
+                    <span
+                      className={`text-[10px] font-mono mt-0.5 inline-block ${
+                        log.confirmation_status === "APPROVED" ? "text-profit" : "text-loss"
+                      }`}
+                    >
+                      {log.confirmation_status}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

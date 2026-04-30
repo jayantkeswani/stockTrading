@@ -1,4 +1,6 @@
 import uuid
+from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select, func
@@ -77,16 +79,18 @@ async def toggle_yolo(body: YoloToggleRequest):
 
 @router.get("/logs", response_model=list[AgentLogResponse])
 async def agent_logs(
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=100, le=500),
     offset: int = 0,
+    since: Optional[datetime] = Query(default=None),
+    until: Optional[datetime] = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(AgentLog)
-        .order_by(desc(AgentLog.created_at))
-        .offset(offset)
-        .limit(limit)
-    )
+    q = select(AgentLog).order_by(desc(AgentLog.created_at)).offset(offset).limit(limit)
+    if since is not None:
+        q = q.where(AgentLog.created_at >= since)
+    if until is not None:
+        q = q.where(AgentLog.created_at <= until)
+    result = await db.execute(q)
     return result.scalars().all()
 
 

@@ -137,7 +137,12 @@ export const api = {
   getAgentStatus: () => request(`/api/v1/agent/status`),
   startAgent: () => request(`/api/v1/agent/start`, { method: "POST" }),
   stopAgent: () => request(`/api/v1/agent/stop`, { method: "POST" }),
-  getAgentLogs: (limit = 50) => request(`/api/v1/agent/logs?limit=${limit}`),
+  getAgentLogs: (opts?: { limit?: number; since?: string; until?: string }) => {
+    const params = new URLSearchParams({ limit: String(opts?.limit ?? 100) });
+    if (opts?.since) params.set("since", opts.since);
+    if (opts?.until) params.set("until", opts.until);
+    return request(`/api/v1/agent/logs?${params}`);
+  },
   confirmAction: (logId: string, approved: boolean) =>
     request(`/api/v1/agent/confirm/${logId}`, {
       method: "POST",

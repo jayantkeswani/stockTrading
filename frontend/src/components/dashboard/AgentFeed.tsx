@@ -1,6 +1,5 @@
 "use client";
 
-import { useState, useMemo } from "react";
 import { useStore } from "@/store";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { formatINR } from "@/lib/formatters";
@@ -24,36 +23,6 @@ const ACTION_COLORS: Record<string, string> = {
 
 export function AgentFeed() {
   const { agentLogs } = useStore();
-  const [filterStrategy, setFilterStrategy] = useState<string>("ALL");
-  const [filterAction, setFilterAction] = useState<string>("ALL");
-
-  const strategyNames = useMemo(() => {
-    const names = new Set<string>();
-    for (const log of agentLogs) {
-      const s = (log.details?.strategy_name as string) || "";
-      if (s) names.add(s);
-    }
-    return Array.from(names);
-  }, [agentLogs]);
-
-  const actionTypes = useMemo(() => {
-    const types = new Set<string>();
-    for (const log of agentLogs) {
-      if (log.action_type) types.add(log.action_type);
-    }
-    return Array.from(types);
-  }, [agentLogs]);
-
-  const filtered = useMemo(() => {
-    let list = agentLogs;
-    if (filterStrategy !== "ALL") {
-      list = list.filter((log) => (log.details?.strategy_name as string) === filterStrategy);
-    }
-    if (filterAction !== "ALL") {
-      list = list.filter((log) => log.action_type === filterAction);
-    }
-    return list;
-  }, [agentLogs, filterStrategy, filterAction]);
 
   const formatLogTime = (ts: string) => {
     try {
@@ -71,49 +40,19 @@ export function AgentFeed() {
   return (
     <div className="rounded border border-border bg-bg-secondary">
       <div className="px-3 py-1.5 border-b border-border">
-        <div className="flex items-center justify-between mb-1.5">
-          <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
-            Agent Feed
-          </h2>
-        </div>
-
-        {/* Filter bar */}
-        <div className="flex gap-1.5">
-          <select
-            value={filterStrategy}
-            onChange={(e) => setFilterStrategy(e.target.value)}
-            className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1.5 py-0.5 text-text-secondary focus:outline-none focus:border-accent/50"
-          >
-            <option value="ALL">All</option>
-            {strategyNames.map((s) => (
-              <option key={s} value={s}>
-                {STRATEGY_LABELS[s] || s}
-              </option>
-            ))}
-          </select>
-          <select
-            value={filterAction}
-            onChange={(e) => setFilterAction(e.target.value)}
-            className="text-xs font-mono bg-bg-tertiary border border-border rounded px-1.5 py-0.5 text-text-secondary focus:outline-none focus:border-accent/50"
-          >
-            <option value="ALL">All</option>
-            {actionTypes.map((a) => (
-              <option key={a} value={a}>
-                {a.replace(/_/g, " ")}
-              </option>
-            ))}
-          </select>
-        </div>
+        <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
+          Agent Feed
+        </h2>
       </div>
 
       <div className="max-h-[300px] overflow-y-auto">
-        {filtered.length === 0 ? (
+        {agentLogs.length === 0 ? (
           <div className="px-3 py-4 text-center text-text-muted text-xs font-mono">
             no activity
           </div>
         ) : (
           <div className="divide-y divide-border/30">
-            {filtered.map((log) => {
+            {agentLogs.map((log) => {
               const pnl = log.details?.pnl as number | undefined;
               const symbol = log.details?.symbol as string | undefined;
               const strategyKey = (log.details?.strategy_name as string) || "";
