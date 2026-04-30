@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { api } from "@/lib/api";
-import { startOfMonthIST, endOfMonthIST, isoDateIST } from "@/lib/formatters";
+import { startOfDayIST, endOfDayIST, subDaysIST, isoDateIST } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import type { Trade } from "@/lib/types";
 import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
@@ -14,7 +14,7 @@ type TradeMode = "REAL" | "SHADOW";
 
 function defaultPeriod(): Period {
   const now = new Date();
-  return { start: startOfMonthIST(now), end: endOfMonthIST(now), label: "This Month" };
+  return { start: startOfDayIST(subDaysIST(now, 30)), end: endOfDayIST(now), label: "Last 30D" };
 }
 
 export default function TradesPage() {

@@ -113,9 +113,9 @@ export default function AgentPage() {
 
           {/* Autonomy level badge */}
           <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded uppercase ${
-            agentStatus?.autonomy_level === "yolo"
+            agentStatus?.autonomy_level?.toLowerCase() === "yolo"
               ? "bg-warning/15 text-warning"
-              : agentStatus?.autonomy_level === "semi"
+              : agentStatus?.autonomy_level?.toLowerCase() === "semi"
                 ? "bg-accent/15 text-accent"
                 : "bg-bg-tertiary text-text-muted"
           }`}>

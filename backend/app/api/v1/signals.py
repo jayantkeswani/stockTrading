@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
@@ -27,6 +28,8 @@ router = APIRouter()
 async def list_signals(
     status: str | None = None,
     strategy: str | None = None,
+    generated_since: datetime | None = None,
+    generated_until: datetime | None = None,
     limit: int = Query(default=50, le=200),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -36,6 +39,10 @@ async def list_signals(
         query = query.where(Signal.status == status)
     if strategy:
         query = query.where(Signal.strategy_name == strategy)
+    if generated_since is not None:
+        query = query.where(Signal.generated_at >= generated_since)
+    if generated_until is not None:
+        query = query.where(Signal.generated_at <= generated_until)
     query = query.offset(offset).limit(limit)
     result = await db.execute(query)
     return result.scalars().all()

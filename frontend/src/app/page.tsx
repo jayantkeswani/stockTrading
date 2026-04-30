@@ -11,6 +11,7 @@ import { AgentFeed } from "@/components/dashboard/AgentFeed";
 import { ChartModal } from "@/components/charts/ChartModal";
 import { useStore } from "@/store";
 import { api } from "@/lib/api";
+import { startOfDayIST, endOfDayIST } from "@/lib/formatters";
 import type { AgentLog, Position, Signal, RiskDashboard } from "@/lib/types";
 
 export default function DashboardPage() {
@@ -22,8 +23,9 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadData() {
       try {
+        const now = new Date();
         const [signals, positions, risk, agentLogs] = await Promise.all([
-          api.getSignals({ status: "PENDING" }) as Promise<Signal[]>,
+          api.getSignals({ status: "PENDING", generated_since: startOfDayIST(now).toISOString(), generated_until: endOfDayIST(now).toISOString(), limit: 50 }) as Promise<Signal[]>,
           api.getPositions() as Promise<Position[]>,
           api.getRiskDashboard() as Promise<RiskDashboard>,
           api.getAgentLogs() as Promise<AgentLog[]>,

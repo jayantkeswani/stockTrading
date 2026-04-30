@@ -110,9 +110,13 @@ export const api = {
     }),
 
   // Signals
-  getSignals: (params?: { status?: string }) => {
+  getSignals: (params?: { status?: string; generated_since?: string; generated_until?: string; strategy?: string; limit?: number }) => {
     const query = new URLSearchParams();
     if (params?.status) query.set("status", params.status);
+    if (params?.generated_since) query.set("generated_since", params.generated_since);
+    if (params?.generated_until) query.set("generated_until", params.generated_until);
+    if (params?.strategy) query.set("strategy", params.strategy);
+    if (params?.limit) query.set("limit", params.limit.toString());
     return request(`/api/v1/signals?${query}`);
   },
   getActiveSignals: () => request(`/api/v1/signals/active`),

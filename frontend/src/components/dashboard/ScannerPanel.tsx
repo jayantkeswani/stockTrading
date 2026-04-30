@@ -2,11 +2,26 @@
 
 import { useState } from "react";
 import { useStore } from "@/store";
-import { formatINR } from "@/lib/formatters";
+import { formatINR, isoDateIST } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
 import type { Signal } from "@/lib/types";
 import { ExecuteSignalModal } from "./ExecuteSignalModal";
+
+function WindowBadge({ windowState }: { windowState?: string }) {
+  if (!windowState) return null;
+  const cfg: Record<string, { label: string; cls: string }> = {
+    IN_WINDOW:     { label: "IN WINDOW",  cls: "bg-profit/10 text-profit border-profit/30" },
+    DEAD_ZONE:     { label: "DEAD ZONE",  cls: "bg-warning/10 text-warning border-warning/30" },
+    OUT_OF_WINDOW: { label: "OFF WINDOW", cls: "bg-border/30 text-text-muted border-border/50" },
+  };
+  const c = cfg[windowState] ?? cfg["OUT_OF_WINDOW"];
+  return (
+    <span className={`text-[9px] font-mono px-1 py-px rounded border ${c.cls}`}>
+      {c.label}
+    </span>
+  );
+}
 
 function formatSignalTime(isoString: string): string {
   try {
@@ -30,7 +45,10 @@ function formatSignalTime(isoString: string): string {
 
 export function ScannerPanel() {
   const { signals, updateSignal, removeSignal } = useStore();
-  const pendingSignals = signals.filter((s) => s.status === "PENDING");
+  const today = isoDateIST(new Date());
+  const pendingSignals = signals.filter(
+    (s) => s.status === "PENDING" && isoDateIST(new Date(s.generated_at)) === today
+  );
 
   const [execSignal, setExecSignal] = useState<Signal | null>(null);
   const [execError, setExecError] = useState<string | null>(null);
@@ -161,6 +179,7 @@ function SignalCard({
 
   // indicators from JSONB — guard against null (old signals or pre-Phase-2 rows)
   const ind = (signal.indicators ?? {}) as Record<string, number | string | null>;
+  const windowState = typeof ind.window_state === "string" ? ind.window_state : undefined;
   const vwap = typeof ind.vwap === "number" ? ind.vwap : null;
   const vwapDist =
     typeof ind.vwap_distance_pct === "number" ? ind.vwap_distance_pct : null;
@@ -220,6 +239,7 @@ function SignalCard({
           <span className="text-[10px] font-mono text-text-muted shrink-0 hidden sm:inline">
             {formatSignalTime(signal.generated_at)}
           </span>
+          <WindowBadge windowState={windowState} />
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {signal.confidence != null && (

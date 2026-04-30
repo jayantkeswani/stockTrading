@@ -5,8 +5,7 @@ import {
   startOfDayIST,
   endOfDayIST,
   startOfWeekIST,
-  startOfMonthIST,
-  endOfMonthIST,
+  subDaysIST,
   subMonthsIST,
   isoDateIST,
 } from "@/lib/formatters";
@@ -32,11 +31,11 @@ function buildPreset(preset: Preset, customStart?: Date, customEnd?: Date): Peri
     case "week":
       return { start: startOfWeekIST(now), end: endOfDayIST(now), label: "This Week" };
     case "month":
-      return { start: startOfMonthIST(now), end: endOfMonthIST(now), label: "This Month" };
+      return { start: startOfDayIST(subDaysIST(now, 30)), end: endOfDayIST(now), label: "Last 30D" };
     case "3m":
       return {
-        start: startOfMonthIST(subMonthsIST(now, 2)),
-        end: endOfMonthIST(now),
+        start: startOfDayIST(subMonthsIST(now, 3)),
+        end: endOfDayIST(now),
         label: "Last 3M",
       };
     case "custom":
@@ -51,13 +50,22 @@ function buildPreset(preset: Preset, customStart?: Date, customEnd?: Date): Peri
 const PRESETS: { key: Preset; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "week", label: "Week" },
-  { key: "month", label: "Month" },
+  { key: "month", label: "30D" },
   { key: "3m", label: "3M" },
   { key: "custom", label: "Custom" },
 ];
 
+function labelToPreset(label: string): Preset {
+  if (label === "Today") return "today";
+  if (label === "This Week") return "week";
+  if (label === "Last 30D") return "month";
+  if (label === "Last 3M") return "3m";
+  if (label === "Custom") return "custom";
+  return "week";
+}
+
 export function PeriodFilter({ value, onChange }: Props) {
-  const [active, setActive] = useState<Preset>("month");
+  const [active, setActive] = useState<Preset>(() => labelToPreset(value.label));
   const [customFrom, setCustomFrom] = useState(isoDateIST(value.start));
   const [customTo, setCustomTo] = useState(isoDateIST(value.end));
 

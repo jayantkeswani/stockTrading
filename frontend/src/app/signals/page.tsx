@@ -2,9 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { formatINR, formatTime, formatDate } from "@/lib/formatters";
+import { formatINR, formatTime, formatDate, startOfWeekIST, endOfDayIST } from "@/lib/formatters";
 import { STRATEGY_LABELS, STATUS_COLORS } from "@/lib/constants";
 import type { Signal } from "@/lib/types";
+import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
+
+function defaultPeriod(): Period {
+  const now = new Date();
+  return { start: startOfWeekIST(now), end: endOfDayIST(now), label: "This Week" };
+}
 
 const CONFIDENCE_FACTOR_LABELS: Record<string, string> = {
   bias_alignment:       "Bias",
@@ -238,22 +244,31 @@ function SignalCard({ signal }: { signal: Signal }) {
 }
 
 export default function SignalsPage() {
+  const [period, setPeriod] = useState<Period>(defaultPeriod);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [hideInformational, setHideInformational] = useState(true);
+  const [hideInformational, setHideInformational] = useState(false);
 
   useEffect(() => {
+    setLoading(true);
+    let cancelled = false;
     async function load() {
       try {
-        const data = (await api.getSignals()) as Signal[];
-        setSignals(data);
+        const data = (await api.getSignals({
+          generated_since: period.start.toISOString(),
+          generated_until: period.end.toISOString(),
+          limit: 200,
+        })) as Signal[];
+        if (!cancelled) setSignals(data);
       } catch {
-        // API not running yet
+        if (!cancelled) setSignals([]);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      setLoading(false);
     }
     load();
-  }, []);
+    return () => { cancelled = true; };
+  }, [period]);
 
   const displayed = hideInformational
     ? signals.filter(s => s.executable || s.blocked_reason !== "Outside trade window")
@@ -261,10 +276,13 @@ export default function SignalsPage() {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
-          Signal History
-        </h1>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
+            Signal History
+          </h1>
+          <PeriodFilter value={period} onChange={setPeriod} />
+        </div>
         <label className="flex items-center gap-1.5 cursor-pointer select-none">
           <input
             type="checkbox"
