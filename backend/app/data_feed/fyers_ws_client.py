@@ -375,11 +375,26 @@ class FyersWSClient:
         """Called on Fyers WebSocket error."""
         logger.error("Fyers WebSocket error: %s", error)
 
-        # Detect Fyers auth failures and trigger automatic re-login
-        error_str = str(error).lower() if error else ""
-        auth_signals = ("invalid token", "token expired", "code -16", "code -17", "unauthoriz")
-        if any(s in error_str for s in auth_signals) and self._loop:
-            logger.warning("Auth failure on WS error — scheduling reauth + restart")
+        # Detect Fyers auth failures and trigger automatic re-login.
+        # Errors arrive either as plain strings ("Connection to remote host was lost.")
+        # or as dicts ({"code": -99, "message": "Token is expired"}).  Check both
+        # the numeric code (authoritative) and message text (fallback for string errors).
+        _AUTH_CODES = {-16, -17, -99, -300}
+        _AUTH_STRINGS = ("invalid token", "token is expired", "token expired",
+                         "provide valid token", "unauthoriz")
+
+        is_auth_error = False
+        if isinstance(error, dict):
+            is_auth_error = error.get("code") in _AUTH_CODES
+        elif error:
+            error_str = str(error).lower()
+            is_auth_error = any(s in error_str for s in _AUTH_STRINGS)
+
+        if is_auth_error and self._loop:
+            logger.warning(
+                "Auth failure on WS error (code=%s) — scheduling reauth + restart",
+                error.get("code") if isinstance(error, dict) else "N/A",
+            )
             self._loop.call_soon_threadsafe(
                 asyncio.ensure_future,
                 self._trigger_reauth_and_restart(),
