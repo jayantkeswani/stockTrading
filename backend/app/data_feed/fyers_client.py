@@ -21,7 +21,8 @@ API_URL = "https://api-t1.fyers.in/api/v3"
 DATA_URL = "https://api-t1.fyers.in/data"
 
 # Fyers JSON error codes that indicate an expired/invalid token
-_FYERS_AUTH_ERROR_CODES = {-16, -17, -300}
+# _FYERS_AUTH_ERROR_CODES = {-16, -17, -300}
+_FYERS_AUTH_ERROR_CODES = {-16, -17}
 FYERS_TOKEN_KEY = "fyers:access_token"
 
 

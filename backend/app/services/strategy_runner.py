@@ -412,6 +412,7 @@ class StrategyRunner:
             vwap=vwap_result,
             current_price=current_price,
             global_cues=global_cues,
+            as_of=now_ist(),
         )
 
         return MarketContext(
@@ -626,6 +627,7 @@ class StrategyRunner:
                     vwap=nifty_vwap,
                     current_price=nifty_price,
                     global_cues=global_cues,
+                    as_of=now_ist(),
                 )
                 params["_nifty_bias"] = nifty_bias
         except Exception:
@@ -1558,6 +1560,12 @@ class StrategyRunner:
             logger.exception("Error checking open position for %s", signal.symbol)
             return False
 
+    # Thresholds for deciding whether a price change is meaningful enough
+    # to update an existing PENDING signal vs. treating it as noise.
+    _DEDUP_ENTRY_CHANGE_PCT = 0.3   # 0.3% move in entry price
+    _DEDUP_CONF_CHANGE = 5.0        # 5-point confidence shift
+    _DEDUP_AGE_MINUTES = 15.0       # always refresh after 15 min regardless
+
     async def _dedup_signal(
         self,
         signal: StrategySignal,
@@ -1567,11 +1575,21 @@ class StrategyRunner:
     ) -> str | Signal | None:
         """Check for duplicate PENDING signals and handle accordingly.
 
+        Three cases:
+          Case 1 — pure noise (tiny price move, <15 min old, no execution):
+                   return "skip" — caller does nothing.
+          Case 2 — meaningful change, not yet executed:
+                   update existing signal in place, return it.
+          Case 3 — existing signal was acted on (shadow or real trade exists):
+                   return None — caller creates a brand-new signal and preserves
+                   the original as an immutable audit record.
         Returns:
-            "skip"  — identical PENDING signal exists, do nothing
-            Signal  — existing signal was updated with new values
-            None    — no match, caller should create a new signal
+            "skip"  — suppress; no write
+            Signal  — updated existing record
+            None    — create new signal
         """
+        from app.models.trade import Trade as TradeModel
+
         try:
             async with async_session_factory() as session:
                 result = await session.execute(
@@ -1591,8 +1609,50 @@ class StrategyRunner:
                 if existing is None:
                     return None
 
-                # Compare key values to determine if anything changed
+                # Case 3: existing signal has been executed (real or shadow trade).
+                # Preserve it as an immutable audit record; caller creates a new signal.
+                has_execution = existing.executed_trade_id is not None
+                if not has_execution:
+                    trade_check = await session.execute(
+                        select(TradeModel.id)
+                        .where(TradeModel.signal_id == existing.id)
+                        .limit(1)
+                    )
+                    has_execution = trade_check.scalar_one_or_none() is not None
+
+                if has_execution:
+                    logger.debug(
+                        "Dedup Case 3: %s %s has execution — creating new signal",
+                        signal.symbol, signal.signal_type,
+                    )
+                    return None
+
+                # Case 1 / 2: no execution yet. Decide whether the change is meaningful.
                 new_entry = Decimal(str(signal.entry_price))
+                new_conf = Decimal(str(signal.confidence))
+
+                entry_change_pct = (
+                    abs(float(new_entry - existing.entry_price)) / float(existing.entry_price) * 100
+                    if existing.entry_price
+                    else 100.0
+                )
+                conf_change = abs(float(new_conf - (existing.confidence or 0)))
+
+                existing_at = existing.generated_at
+                now_cmp = now.replace(tzinfo=None) if existing_at.tzinfo is None else now
+                age_minutes = (now_cmp - existing_at).total_seconds() / 60
+
+                is_meaningful = (
+                    entry_change_pct > self._DEDUP_ENTRY_CHANGE_PCT
+                    or conf_change > self._DEDUP_CONF_CHANGE
+                    or age_minutes > self._DEDUP_AGE_MINUTES
+                )
+
+                if not is_meaningful:
+                    # Case 1: pure noise — suppress
+                    return "skip"
+
+                # Case 2: meaningful update — refresh in place
                 new_sl = Decimal(str(signal.stop_loss))
                 new_target = (
                     Decimal(str(signal.target_price))
@@ -1600,20 +1660,10 @@ class StrategyRunner:
                     else None
                 )
 
-                entry_same = existing.entry_price == new_entry
-                sl_same = existing.stop_loss == new_sl
-                target_same = existing.target_price == new_target
-                confidence_same = existing.confidence == Decimal(str(signal.confidence))
-
-                if entry_same and sl_same and target_same and confidence_same:
-                    # Identical — skip
-                    return "skip"
-
-                # Values changed — update the existing PENDING signal
                 existing.entry_price = new_entry
                 existing.stop_loss = new_sl
                 existing.target_price = new_target
-                existing.confidence = Decimal(str(signal.confidence))
+                existing.confidence = new_conf
                 existing.reason = signal.reason
                 existing.indicators = signal.indicators
                 existing.executable = executable
@@ -1635,9 +1685,11 @@ class StrategyRunner:
                 await session.refresh(existing)
 
                 logger.info(
-                    "Signal updated (dedup): %s %s %s — entry=%.2f→%.2f",
+                    "Signal updated (dedup): %s %s %s — entry=%.2f→%.2f "
+                    "(Δ%.2f%%, conf_Δ%.1f, age %.1fmin)",
                     signal.strategy_name, signal.symbol, signal.signal_type,
                     float(existing.entry_price), float(new_entry),
+                    entry_change_pct, conf_change, age_minutes,
                 )
                 return existing
 

@@ -65,15 +65,13 @@ async def add_to_watchlist(body: WatchlistAddRequest):
     await r.hset(WATCHLIST_KEY, body.symbol, json.dumps(meta))
     logger.info("Added to watchlist: %s (%s)", body.symbol, body.display)
 
-    # Subscribe on live data feed so watchlist gets real-time ticks
+    # Subscribe on live data feed so watchlist gets real-time ticks.
+    # body.symbol is already a full Fyers symbol (e.g. "NSE:RELIANCE26MAYFUT")
+    # stored as the Redis hash key — use it directly, don't reconstruct.
     from app.data_feed.fyers_ws_client import fyers_ws_client
     if fyers_ws_client.is_connected:
-        segment_suffix = {
-            "EQ": "-EQ", "FUT": "FUT", "CE": "CE", "PE": "PE",
-        }.get(body.segment, "-EQ")
-        fyers_sym = f"NSE:{body.symbol}{segment_suffix}"
         await fyers_ws_client.subscribe_symbols(
-            [fyers_sym], symbol_map={body.symbol: fyers_sym},
+            [body.symbol], symbol_map={body.symbol: body.symbol},
         )
 
     return {"status": "added", "symbol": body.symbol}

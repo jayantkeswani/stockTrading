@@ -5,31 +5,39 @@ Each factor returns a 0-1 float; the weighted sum is scaled to 0-100.
 
 Factor weights (total = 1.0)
 -----------------------------
-bias_alignment         0.20   How strongly intraday_bias matches signal direction
-vwap_slope_alignment   0.10   VWAP slope direction matches signal
-reversal_quality       0.15   Candle reversal magnitude (body size, wick ratio)
+bias_alignment         0.25   How strongly intraday_bias matches signal direction
+vwap_slope_alignment   0.15   VWAP slope direction matches signal
+reversal_quality       0.20   Candle reversal magnitude (body size, wick ratio)
 volume_quality         0.10   Pullback volume is below average (healthy pullback)
 rr_ratio_quality       0.10   Index-level R:R ratio (from market structure SL/target)
 oi_support             0.10   OI walls confirm the trade direction
 cpr_narrow_trending    0.05   Narrow CPR = trending day = better for directional trades
 vix_regime             0.05   VIX in 10-18 range = cheap options + stable regime
-global_alignment       0.10   Global overnight cues match direction
 time_of_day            0.05   In primary trade window = full weight; outside = half
+
+NOTE: global_alignment was removed — global sentiment already enters via
+intraday_bias (10% of bias → bias_alignment). Its 10% was redistributed to
+bias_alignment (+5%), vwap_slope (+5%), and reversal_quality (+5%).
 
 The score from compute_confidence() is the DETERMINISTIC base.
 The LLM overlay in signal_confidence.py may adjust it by ±15.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from app.core.constants import POSITION_CLOSE_DEADLINE, WINDOW_1_END, WINDOW_1_START, WINDOW_2_END, WINDOW_2_START
 from app.core.enums import DayBias
 from app.indicators.candle_patterns import Candle, average_volume
-from app.indicators.global_market import GlobalCues, global_alignment_factor
 from app.indicators.intraday_bias import IntradayBias
 from app.indicators.open_interest import OIAnalysis
 from app.indicators.vwap import VWAPResult
 from app.indicators.cpr import CPRResult
+
+if TYPE_CHECKING:
+    from app.indicators.global_market import GlobalCues
 
 
 @dataclass
@@ -40,15 +48,14 @@ class ConfidenceResult:
 
 
 _WEIGHTS = {
-    "bias_alignment":       0.20,
-    "vwap_slope_alignment": 0.10,
-    "reversal_quality":     0.15,
+    "bias_alignment":       0.25,
+    "vwap_slope_alignment": 0.15,
+    "reversal_quality":     0.20,
     "volume_quality":       0.10,
     "rr_ratio_quality":     0.10,
     "oi_support":           0.10,
     "cpr_narrow_trending":  0.05,
     "vix_regime":           0.05,
-    "global_alignment":     0.10,
     "time_of_day":          0.05,
 }
 
@@ -194,15 +201,7 @@ def compute_confidence(
         factors["vix_regime"] = 0.5
 
     # ------------------------------------------------------------------
-    # 9. global_alignment — overnight cues match direction
-    # ------------------------------------------------------------------
-    if global_cues is not None:
-        factors["global_alignment"] = global_alignment_factor(global_cues, signal_direction)
-    else:
-        factors["global_alignment"] = 0.5
-
-    # ------------------------------------------------------------------
-    # 10. time_of_day — primary windows get full credit
+    # 9. time_of_day — primary windows get full credit
     # ------------------------------------------------------------------
     try:
         if window_state is not None:

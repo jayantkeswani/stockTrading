@@ -12,7 +12,7 @@ function defaultPeriod(): Period {
   return { start: startOfWeekIST(now), end: endOfDayIST(now), label: "This Week" };
 }
 
-const CONFIDENCE_FACTOR_LABELS: Record<string, string> = {
+const VWAP_CONFIDENCE_FACTOR_LABELS: Record<string, string> = {
   bias_alignment:       "Bias",
   vwap_slope_alignment: "Slope",
   reversal_quality:     "Reversal",
@@ -25,10 +25,15 @@ const CONFIDENCE_FACTOR_LABELS: Record<string, string> = {
   time_of_day:          "Window",
 };
 
-const FACTOR_WEIGHTS: Record<string, number> = {
-  bias_alignment: 0.20, vwap_slope_alignment: 0.10, reversal_quality: 0.15,
-  volume_quality: 0.10, rr_ratio_quality: 0.10, oi_support: 0.10,
-  cpr_narrow_trending: 0.05, vix_regime: 0.05, global_alignment: 0.10, time_of_day: 0.05,
+const S5_CONFIDENCE_FACTOR_LABELS: Record<string, string> = {
+  vol_factor:   "Volume",
+  rvol_factor:  "RVOL",
+  bias_factor:  "Nifty",
+  phase_factor: "Phase",
+  setup_factor: "Setup",
+  rank_factor:  "Rank",
+  gap_factor:   "Gap",
+  trend_factor: "Trend",
 };
 
 function SignalTypeBadge({ signalType }: { signalType: Signal["signal_type"] }) {
@@ -57,8 +62,8 @@ function WindowBadge({ windowState }: { windowState?: string }) {
   );
 }
 
-function ConfidenceFactorsBar({ factors }: { factors: Record<string, number> }) {
-  const keys = Object.keys(CONFIDENCE_FACTOR_LABELS).filter(k => factors[k] !== undefined);
+function ConfidenceFactorsBar({ factors, labelMap }: { factors: Record<string, number>; labelMap: Record<string, string> }) {
+  const keys = Object.keys(labelMap).filter(k => factors[k] !== undefined);
   if (keys.length === 0) return null;
   return (
     <div className="mt-2">
@@ -66,14 +71,12 @@ function ConfidenceFactorsBar({ factors }: { factors: Record<string, number> }) 
       <div className="flex flex-col gap-0.5">
         {keys.map(k => {
           const val = factors[k] as number;
-          const weight = FACTOR_WEIGHTS[k] ?? 0.1;
-          const contribution = val * weight * 100;
           const pct = Math.round(val * 100);
           const color = val >= 0.7 ? "bg-profit/60" : val >= 0.4 ? "bg-accent/60" : "bg-loss/60";
           return (
             <div key={k} className="flex items-center gap-2">
               <span className="text-[9px] font-mono text-text-muted w-14 shrink-0">
-                {CONFIDENCE_FACTOR_LABELS[k]}
+                {labelMap[k]}
               </span>
               <div className="flex-1 h-1 bg-border/40 rounded-full overflow-hidden">
                 <div className={`h-full ${color} rounded-full`} style={{ width: `${pct}%` }} />
@@ -95,6 +98,7 @@ function SignalCard({ signal }: { signal: Signal }) {
   const intradayBias = indicators?.intraday_bias as Record<string, unknown> | undefined;
   const aiKeySupports = indicators?.ai_key_supports as string[] | undefined;
   const aiKeyRisks = indicators?.ai_key_risks as string[] | undefined;
+  const confLabelMap = signal.strategy_name === "intraday_futures" ? S5_CONFIDENCE_FACTOR_LABELS : VWAP_CONFIDENCE_FACTOR_LABELS;
 
   const isInformational = !signal.executable && signal.blocked_reason === "Outside trade window";
 
@@ -229,7 +233,7 @@ function SignalCard({ signal }: { signal: Signal }) {
           ) : null}
 
           {/* Confidence factor bar */}
-          {confFactors && <ConfidenceFactorsBar factors={confFactors} />}
+          {confFactors && <ConfidenceFactorsBar factors={confFactors} labelMap={confLabelMap} />}
 
           {/* Blocked reason */}
           {signal.blocked_reason && (

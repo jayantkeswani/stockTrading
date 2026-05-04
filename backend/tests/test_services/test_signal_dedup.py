@@ -50,21 +50,28 @@ def _make_db_signal(**overrides) -> MagicMock:
 
 
 class TestDedupSignal:
+    def _no_trade_result(self):
+        """Mock execute result that returns None (no trade found)."""
+        r = MagicMock()
+        r.scalar_one_or_none.return_value = None
+        return r
+
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.async_session_factory")
     async def test_skip_identical_pending_signal(self, mock_sf):
-        """If an identical PENDING signal exists, return 'skip'."""
+        """If an identical PENDING signal exists with no trade, return 'skip'."""
         from app.services.strategy_runner import strategy_runner
 
-        existing = _make_db_signal()
+        existing = _make_db_signal(executed_trade_id=None)
         mock_session = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = existing
-        mock_session.execute = AsyncMock(return_value=mock_result)
+        signal_result = MagicMock()
+        signal_result.scalar_one_or_none.return_value = existing
+        # Two execute calls: (1) find existing signal, (2) check for trades
+        mock_session.execute = AsyncMock(side_effect=[signal_result, self._no_trade_result()])
         mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        signal = _make_signal()  # Same values as existing
+        signal = _make_signal()  # Same values as existing, 5 min old → noise
         now = datetime(2026, 4, 17, 10, 5)
 
         result = await strategy_runner._dedup_signal(signal, now, True, None)
@@ -73,29 +80,27 @@ class TestDedupSignal:
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.async_session_factory")
     async def test_update_when_values_changed(self, mock_sf):
-        """If a PENDING signal exists but entry/SL/target changed, update it."""
+        """If a PENDING signal exists but entry price moved ≥0.3%, update it."""
         from app.services.strategy_runner import strategy_runner
 
-        existing = _make_db_signal()
+        existing = _make_db_signal(executed_trade_id=None)
         mock_session = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = existing
-        mock_session.execute = AsyncMock(return_value=mock_result)
+        signal_result = MagicMock()
+        signal_result.scalar_one_or_none.return_value = existing
+        mock_session.execute = AsyncMock(side_effect=[signal_result, self._no_trade_result()])
         mock_session.commit = AsyncMock()
         mock_session.refresh = AsyncMock()
         mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        # Signal with different entry price
+        # 4% entry move — clearly meaningful
         signal = _make_signal(entry_price=260.0, stop_loss=182.0, target_price=375.0)
         now = datetime(2026, 4, 17, 10, 5)
 
         result = await strategy_runner._dedup_signal(signal, now, True, None)
 
-        # Should return the updated Signal object, not "skip"
         assert result is not None
         assert result != "skip"
-        # Verify the existing record was updated
         assert existing.entry_price == Decimal("260.0")
         assert existing.stop_loss == Decimal("182.0")
         assert existing.target_price == Decimal("375.0")
@@ -123,20 +128,20 @@ class TestDedupSignal:
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.async_session_factory")
     async def test_update_on_confidence_change(self, mock_sf):
-        """If only confidence changed, update the signal."""
+        """If confidence changed ≥5 pts with no trade, update the signal."""
         from app.services.strategy_runner import strategy_runner
 
-        existing = _make_db_signal()
+        existing = _make_db_signal(executed_trade_id=None)
         mock_session = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = existing
-        mock_session.execute = AsyncMock(return_value=mock_result)
+        signal_result = MagicMock()
+        signal_result.scalar_one_or_none.return_value = existing
+        mock_session.execute = AsyncMock(side_effect=[signal_result, self._no_trade_result()])
         mock_session.commit = AsyncMock()
         mock_session.refresh = AsyncMock()
         mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        signal = _make_signal(confidence=85.0)  # Same prices, different confidence
+        signal = _make_signal(confidence=85.0)  # 10-point shift — meaningful
         now = datetime(2026, 4, 17, 10, 5)
 
         result = await strategy_runner._dedup_signal(signal, now, True, None)

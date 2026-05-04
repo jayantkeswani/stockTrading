@@ -22,7 +22,7 @@ from app.strategies.base import MarketContext, StrategySignal
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """You are a senior Indian-index options trader reviewing a VWAP Pullback signal before execution. You receive complete technical, macro, and derivatives context as JSON.
+_SYSTEM_PROMPT = """You are a senior Indian derivatives trader reviewing a signal before execution. You receive complete technical, macro, and derivatives context as JSON.
 
 Your role:
 1. Explain concisely WHY this signal fired — cite actual values from the input, not generalities.
@@ -30,12 +30,17 @@ Your role:
 3. Judge whether the deterministic confidence captured the setup quality and adjust by -15..+15. Use the full range only for strong disagreement; most adjustments will be |x| <= 5.
 4. Produce a one-sentence summary for a trader glancing at an alert, and a 3-5 sentence rationale for post-trade review.
 
+CRITICAL — value accuracy:
+- Every number you write in summary, rationale, key_supports, and key_risks MUST appear EXACTLY in the input JSON. Do not round, interpolate, or reconstruct values. If VWAP is 1455.38 in the input, write 1455.38, not 1455 or 1444.
+- If a field is null or missing, do not reference it or guess its value.
+- Cross-check: before writing any number, verify it matches a value in the input.
+
 Rules:
-- Never invent data. If a field is null, do not reference it.
 - Counter-bias trades (direction opposite to intraday_bias.bias): reduce adjustment unless bias is WEAK and reversal_quality > 0.7.
-- VIX > 22 or global_alignment < 0.3: treat as major risks.
+- VIX > 22: treat as major risk.
 - Pre-open gap > 0.5% opposite the trade direction: major risk.
 - Narrow CPR + trending VWAP slope matching direction: major support.
+- Global sentiment (global_score) is already reflected in intraday_bias. Do NOT cite individual global tickers (Dow, Nasdaq, S&P) as primary supports or risks unless |global_score| > 0.5 (strong conviction). Focus on the setup's structural factors: VWAP position, candle patterns, OI walls, R:R ratio.
 - Output ONLY strict JSON matching the schema below. No prose outside JSON.
 
 Schema:
@@ -89,8 +94,11 @@ async def score_signal(
 
     try:
         context_json = _build_context_json(signal, ctx)
+        indicators = signal.indicators or {}
+        strategy_name = signal.strategy_name if hasattr(signal, "strategy_name") else "unknown"
+        setup_type = indicators.get("setup_type", "unknown")
         result = await asyncio.wait_for(
-            _call_llm(context_json),
+            _call_llm(context_json, strategy_name=strategy_name, setup_type=setup_type),
             timeout=settings.ai_confidence_timeout_seconds,
         )
         return result
@@ -108,8 +116,6 @@ def _build_context_json(signal: StrategySignal, ctx: MarketContext) -> str:
     bias_info = indicators.get("intraday_bias", {})
     conf_factors = indicators.get("confidence_factors", {})
 
-    is_ce = signal.signal_type.value.endswith("CE")
-
     # Compute R:R ratio from index levels
     rr_ratio = None
     index_sl = signal.index_sl or indicators.get("index_sl")
@@ -120,7 +126,14 @@ def _build_context_json(signal: StrategySignal, ctx: MarketContext) -> str:
         if risk > 0:
             rr_ratio = round(reward / risk, 2)
 
+    strategy_name = signal.strategy_name if hasattr(signal, "strategy_name") else "unknown"
+    setup_type = indicators.get("setup_type", "unknown")
+
     payload = {
+        "strategy": {
+            "name": strategy_name,
+            "setup_type": setup_type,
+        },
         "signal": {
             "symbol": signal.symbol,
             "direction": signal.signal_type.value,
@@ -146,7 +159,6 @@ def _build_context_json(signal: StrategySignal, ctx: MarketContext) -> str:
             "pdh": indicators.get("pdh"),
             "pdl": indicators.get("pdl"),
             "pdc": indicators.get("pdc"),
-            "bias": indicators.get("day_bias"),
         },
         "cpr": {
             "pivot": indicators.get("cpr_pivot"),
@@ -162,17 +174,9 @@ def _build_context_json(signal: StrategySignal, ctx: MarketContext) -> str:
             "oi_confirmed": indicators.get("oi_confirmed"),
         } if indicators.get("pcr") is not None else None,
         "india_vix": indicators.get("india_vix"),
-        "global_cues": {
+        "global_sentiment": {
             "global_score": indicators.get("global_score"),
-            **({
-                "dow_futures_pct": ctx.global_cues.dow_futures_pct,
-                "sp500_close_pct": ctx.global_cues.sp500_close_pct,
-                "nasdaq_close_pct": ctx.global_cues.nasdaq_close_pct,
-                "crude_pct": ctx.global_cues.crude_pct,
-                "usdinr_pct": ctx.global_cues.usdinr_pct,
-                "us_vix": ctx.global_cues.us_vix,
-                "pre_open_gap_pct": ctx.global_cues.pre_open_gap_pct,
-            } if ctx.global_cues else {}),
+            "note": "Already reflected in intraday_bias at 10% weight. Only cite if |global_score| > 0.5.",
         },
         "deterministic_confidence": {
             "score": float(signal.confidence) if signal.confidence else 0,
@@ -201,7 +205,8 @@ def _candles_snapshot(ctx: MarketContext) -> list[dict]:
     ]
 
 
-_USER_PROMPT_TEMPLATE = """=== VWAP PULLBACK SIGNAL FOR REVIEW ===
+_USER_PROMPT_TEMPLATE = """=== {strategy_label} SIGNAL FOR REVIEW ===
+Strategy: {strategy_name} | Setup: {setup_type}
 
 {context_json}
 
@@ -211,16 +216,16 @@ Produce a JSON object with EXACTLY these fields:
 
 {{
   "confidence_adjustment": <integer -15 to +15 — how much to adjust the deterministic score above>,
-  "summary": "<One sentence ≤ 200 chars. Lead with direction + symbol + key reason. Cite at least two specific values from the input (e.g., VWAP dist, OI wall, gap %). Example: 'PE on NIFTY after -0.45% gap reverses bullish yesterday; VWAP slope -0.12, CE OI +12% wall at 24400.'>",
-  "rationale": "<3-5 sentences. Explain the full confluence: intraday bias drivers → candle pattern quality → OI walls → global cues. Each sentence must cite a specific value. Last sentence should name the biggest risk to this trade.>",
+  "summary": "<One sentence ≤ 200 chars. Lead with direction + symbol + key reason. Cite at least two specific values EXACTLY as they appear in the input JSON above.>",
+  "rationale": "<3-5 sentences. Focus on setup quality: VWAP position, candle pattern, OI walls, R:R ratio. Each sentence must cite a specific value from the input. Last sentence should name the biggest risk.>",
   "key_supports": [
-    "<Support 1: specific factor + value from input, e.g., 'Bearish engulfing on 1.41× avg volume at VWAP 24358'>",
+    "<Support 1: specific factor + EXACT value from input>",
     "<Support 2>",
     "<Support 3 (optional)>",
     "<Support 4 (optional)>"
   ],
   "key_risks": [
-    "<Risk 1: specific factor + value, e.g., 'Counter-trend vs yesterday BULLISH close_position 0.68'>",
+    "<Risk 1: specific factor + EXACT value from input>",
     "<Risk 2>",
     "<Risk 3 (optional)>",
     "<Risk 4 (optional)>"
@@ -229,18 +234,42 @@ Produce a JSON object with EXACTLY these fields:
   "suggested_lot_adjustment": "<Exactly one of: NONE, REDUCE_50_PCT, SKIP>"
 }}
 
-Field-by-field guidance:
-- confidence_adjustment: Use +5 to +10 for strong multi-factor confirmation. Use -5 to -10 for counter-bias or weak reversal. Use ±15 only for extreme disagreement with the deterministic score.
-- recommended_action: PROCEED if adjustment >= 0 and no major risk. PROCEED_WITH_CAUTION if adjustment is negative or one major risk present. RECONSIDER if adjustment <= -10 or multiple major risks.
+=== EXAMPLES (for value accuracy) ===
+
+GOOD summary (values match input):
+  Input has: vwap=24358.42, vwap_distance_pct=-0.12, pcr=0.49, max_ce_oi_strike=24400
+  Output: "PE on NIFTY pulling back to VWAP 24358.42 (dist -0.12%); PCR 0.49 with CE OI wall at 24400 confirms resistance."
+
+BAD summary (values fabricated):
+  Input has: vwap=24358.42, pdh=24400.5
+  Output: "PE on NIFTY after pullback to VWAP 24350 near PDH 24395" ← WRONG: 24350 and 24395 do not appear in the input. Must write 24358.42 and 24400.5 exactly.
+
+=== FIELD GUIDANCE ===
+- confidence_adjustment: +5 to +10 for strong multi-factor confirmation. -5 to -10 for counter-bias or weak reversal. ±15 only for extreme disagreement.
+- recommended_action: PROCEED if adjustment >= 0 and no major risk. PROCEED_WITH_CAUTION if negative or one major risk. RECONSIDER if <= -10 or multiple major risks.
 - suggested_lot_adjustment: REDUCE_50_PCT if VIX > 20 or R:R < 1.2 or strong counter-bias. SKIP only if confidence_adjustment <= -12. NONE otherwise."""
 
+_STRATEGY_LABELS = {
+    "vwap_pullback": "VWAP PULLBACK",
+    "intraday_futures": "INTRADAY FUTURES",
+    "can_slim": "CAN SLIM",
+    "orb": "ORB",
+    "gamma_scalping": "GAMMA SCALPING",
+}
 
-async def _call_llm(context_json: str) -> SignalConfidence:
+
+async def _call_llm(context_json: str, strategy_name: str = "unknown", setup_type: str = "unknown") -> SignalConfidence:
     """Call Gemini and parse the structured response."""
     from app.research.llm_client import create_llm_client
 
     llm = create_llm_client()
-    prompt = _USER_PROMPT_TEMPLATE.format(context_json=context_json)
+    strategy_label = _STRATEGY_LABELS.get(strategy_name, strategy_name.upper().replace("_", " "))
+    prompt = _USER_PROMPT_TEMPLATE.format(
+        context_json=context_json,
+        strategy_label=strategy_label,
+        strategy_name=strategy_name,
+        setup_type=setup_type,
+    )
 
     raw = await llm.generate_json(
         prompt=prompt,

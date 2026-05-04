@@ -266,8 +266,10 @@ async def backfill_today():
     now = datetime.now(IST)
     today = now.date()
 
-    # Skip weekends
-    if today.weekday() >= 5:
+    # Skip weekends and NSE holidays
+    from app.core.utils import is_trading_day
+    if not is_trading_day(today):
+        logger.info("Not a trading day (%s) — skipping today's backfill", today)
         return
 
     market_open_dt = datetime.combine(today, MARKET_OPEN, tzinfo=IST)

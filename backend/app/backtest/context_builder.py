@@ -94,6 +94,7 @@ async def build_historical_context(
         vwap=vwap_result,
         current_price=current_price,
         global_cues=global_cues,
+        as_of=as_of,
     )
 
     return MarketContext(

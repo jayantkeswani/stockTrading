@@ -4,26 +4,43 @@ Replaces the yesterday-only hard gate in strategy_2_vwap_pullback.py.
 Yesterday's bias is now one weighted input rather than a binary gate,
 so a bearish gap-down after a bullish yesterday can still trigger PE signals.
 
-Factors and weights
--------------------
+Base weights (at market open 9:15 AM):
+--------------------------------------
 yesterday_close_position   0.25  Primary regime signal, but not decisive alone
 gap_vs_pdc                 0.20  Pre-open / opening gap direction
-vwap_slope                 0.25  Intraday trend revealed by VWAP slope over last 10 candles
+vwap_slope                 0.25  Intraday trend: slope over last 30 1m candles
 price_vs_vwap              0.10  Which side of VWAP price is on right now
-global_overnight            0.10  Dow futures, S&P close, USD/INR overnight cues
-candle_momentum             0.10  Net direction of last 5 candle bodies
+global_overnight           0.10  Dow futures, S&P close, USD/INR overnight cues
+candle_momentum            0.10  Net direction of last 5 candle bodies
+
+Time-decay: static factors (yesterday, gap) decay as the session progresses,
+shifting weight to dynamic factors (VWAP slope, price-vs-VWAP, candle momentum).
+By 3:15 PM, yesterday drops from 0.25→0.10 and gap from 0.20→0.08.
 
 Score in [-1, +1]: positive = bullish bias, negative = bearish bias.
 Strength: STRONG |score|>=0.50, MODERATE >=0.20, WEAK otherwise.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from datetime import datetime, time
 
 from app.core.enums import DayBias
 from app.indicators.candle_patterns import Candle
 from app.indicators.global_market import GlobalCues
 from app.indicators.previous_day import PreviousDayLevels
 from app.indicators.vwap import VWAPResult
+
+_IST = None  # Lazy-loaded
+
+
+def _get_ist():
+    global _IST
+    if _IST is None:
+        from zoneinfo import ZoneInfo
+        _IST = ZoneInfo("Asia/Kolkata")
+    return _IST
 
 
 @dataclass
@@ -37,6 +54,25 @@ class IntradayBias:
 _STRONG_THRESHOLD = 0.50
 _MODERATE_THRESHOLD = 0.20
 
+_MARKET_OPEN = time(9, 15)
+_MARKET_CLOSE = time(15, 15)
+_SESSION_MINUTES = 360.0  # 9:15 → 15:15
+
+_YESTERDAY_DECAY = 0.6   # 0.25 * (1 - 0.6*1.0) = 0.10 at close
+_GAP_DECAY = 0.6          # 0.20 * (1 - 0.6*1.0) = 0.08 at close
+
+
+def _session_progress(as_of: datetime | None) -> float:
+    """0.0 at market open, 1.0 at 15:15. Clamped to [0, 1]."""
+    if as_of is None:
+        return 0.0
+    ist = _get_ist()
+    t = as_of.astimezone(ist).time() if as_of.tzinfo else as_of.time()
+    minutes_since_open = (
+        (t.hour * 60 + t.minute) - (_MARKET_OPEN.hour * 60 + _MARKET_OPEN.minute)
+    )
+    return max(0.0, min(1.0, minutes_since_open / _SESSION_MINUTES))
+
 
 def compute_intraday_bias(
     prev_day: PreviousDayLevels | None,
@@ -44,25 +80,40 @@ def compute_intraday_bias(
     vwap: VWAPResult | None,
     current_price: float,
     global_cues: GlobalCues | None = None,
+    as_of: datetime | None = None,
 ) -> IntradayBias:
     """Compute composite intraday directional bias.
 
     All inputs may be None / empty — the function degrades gracefully by
     using only the available factors and re-normalises weights.
+
+    as_of: current timestamp (IST-aware) for time-decaying static weights.
+    If None, uses base weights (no decay — backwards-compatible).
     """
+    progress = _session_progress(as_of)
+
+    # Time-decayed weights for static factors
+    w_yesterday = 0.25 * (1.0 - _YESTERDAY_DECAY * progress)
+    w_gap = 0.20 * (1.0 - _GAP_DECAY * progress)
+    # Freed weight redistributed to dynamic factors
+    freed = (0.25 - w_yesterday) + (0.20 - w_gap)
+    w_vwap_slope = 0.25 + freed * 0.55
+    w_price_vs_vwap = 0.10 + freed * 0.20
+    w_candle_momentum = 0.10 + freed * 0.25
+    w_global = 0.10  # unchanged — decays naturally via its own staleness
+
     weighted_sum = 0.0
     total_weight = 0.0
-    components: dict[str, float] = {}
+    components: dict[str, float | str | None] = {}
 
     # ------------------------------------------------------------------
-    # 1. Yesterday's close_position (0.25)
+    # 1. Yesterday's close_position (time-decayed)
     # ------------------------------------------------------------------
     if prev_day is not None and prev_day.day_range > 0:
-        close_pos = (prev_day.pdc - prev_day.pdl) / prev_day.day_range  # 0=at low, 1=at high
-        # Map to [-1, +1]: 0→-1, 0.5→0, 1→+1
+        close_pos = (prev_day.pdc - prev_day.pdl) / prev_day.day_range
         yest_signal = (close_pos - 0.5) * 2.0
-        weighted_sum += yest_signal * 0.25
-        total_weight += 0.25
+        weighted_sum += yest_signal * w_yesterday
+        total_weight += w_yesterday
         components["yesterday_close_position"] = round(close_pos, 3)
         components["yesterday_signal"] = round(yest_signal, 3)
         components["yesterday_bias"] = prev_day.bias.value
@@ -70,34 +121,34 @@ def compute_intraday_bias(
         components["yesterday_close_position"] = None
 
     # ------------------------------------------------------------------
-    # 2. Gap vs previous day close (0.20)
+    # 2. Gap vs previous day close (time-decayed)
     # ------------------------------------------------------------------
     if prev_day is not None and prev_day.pdc > 0 and candles_1m:
         today_open = candles_1m[0].open
         gap_pct = (today_open - prev_day.pdc) / prev_day.pdc * 100.0
-        # Normalise: ±0.5% gap = ±1.0 signal (cap at ±2%)
         gap_signal = max(-1.0, min(1.0, gap_pct / 0.5))
-        weighted_sum += gap_signal * 0.20
-        total_weight += 0.20
+        weighted_sum += gap_signal * w_gap
+        total_weight += w_gap
         components["gap_vs_pdc_pct"] = round(gap_pct, 3)
         components["gap_signal"] = round(gap_signal, 3)
     else:
         components["gap_vs_pdc_pct"] = None
 
     # ------------------------------------------------------------------
-    # 3. VWAP slope over last 10 candles (0.25)
+    # 3. VWAP slope over last 30 candles (dynamic, weight increases)
     # ------------------------------------------------------------------
-    if vwap is not None and len(candles_1m) >= 10:
-        # Use close prices of the last 10 candles to estimate slope
-        recent = candles_1m[-10:]
+    slope_window = 30
+    min_candles = 10
+    if vwap is not None and len(candles_1m) >= min_candles:
+        recent = candles_1m[-min(slope_window, len(candles_1m)):]
         first_close = recent[0].close
         last_close = recent[-1].close
         if first_close > 0:
             slope_pct = (last_close - first_close) / first_close * 100.0
-            # Normalise: ±0.3% over 10 candles = ±1.0 signal
-            slope_signal = max(-1.0, min(1.0, slope_pct / 0.3))
-            weighted_sum += slope_signal * 0.25
-            total_weight += 0.25
+            normaliser = 0.3 * (len(recent) / 10.0)
+            slope_signal = max(-1.0, min(1.0, slope_pct / normaliser))
+            weighted_sum += slope_signal * w_vwap_slope
+            total_weight += w_vwap_slope
             components["vwap_slope_last_10"] = round(slope_pct, 4)
             components["vwap_slope_signal"] = round(slope_signal, 3)
         else:
@@ -106,37 +157,37 @@ def compute_intraday_bias(
         components["vwap_slope_last_10"] = None
 
     # ------------------------------------------------------------------
-    # 4. Price vs VWAP sign (0.10)
+    # 4. Price vs VWAP sign (dynamic, weight increases)
     # ------------------------------------------------------------------
     if vwap is not None:
         price_sign = 1.0 if current_price > vwap.vwap else -1.0
-        weighted_sum += price_sign * 0.10
-        total_weight += 0.10
+        weighted_sum += price_sign * w_price_vs_vwap
+        total_weight += w_price_vs_vwap
         components["price_vs_vwap_sign"] = "above" if price_sign > 0 else "below"
     else:
         components["price_vs_vwap_sign"] = None
 
     # ------------------------------------------------------------------
-    # 5. Global overnight cues (0.10)
+    # 5. Global overnight cues (0.10, unchanged)
     # ------------------------------------------------------------------
     if global_cues is not None and global_cues.global_score is not None:
         global_signal = max(-1.0, min(1.0, global_cues.global_score))
-        weighted_sum += global_signal * 0.10
-        total_weight += 0.10
+        weighted_sum += global_signal * w_global
+        total_weight += w_global
         components["global_overnight_score"] = round(global_signal, 3)
     else:
         components["global_overnight_score"] = None
 
     # ------------------------------------------------------------------
-    # 6. Candle momentum — net body direction of last 5 candles (0.10)
+    # 6. Candle momentum — net body direction of last 5 candles (dynamic)
     # ------------------------------------------------------------------
     if len(candles_1m) >= 5:
         recent5 = candles_1m[-5:]
         bullish_body = sum(1 for c in recent5 if c.close > c.open)
         bearish_body = sum(1 for c in recent5 if c.close < c.open)
-        momentum_score = (bullish_body - bearish_body) / 5.0  # [-1, +1]
-        weighted_sum += momentum_score * 0.10
-        total_weight += 0.10
+        momentum_score = (bullish_body - bearish_body) / 5.0
+        weighted_sum += momentum_score * w_candle_momentum
+        total_weight += w_candle_momentum
         components["candle_momentum_last_5"] = round(momentum_score, 2)
     else:
         components["candle_momentum_last_5"] = None
@@ -147,7 +198,7 @@ def compute_intraday_bias(
     if total_weight == 0:
         score = 0.0
     else:
-        score = weighted_sum / total_weight  # Normalise to [-1, +1]
+        score = weighted_sum / total_weight
 
     score = max(-1.0, min(1.0, score))
 

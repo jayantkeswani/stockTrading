@@ -47,7 +47,8 @@ OI_SYMBOLS = {
 
 OI_FETCH_INTERVAL_MINUTES = 3
 FYERS_QUOTES_BATCH_SIZE = 50  # Fyers get_quotes supports up to 50 symbols per call
-FYERS_SEMAPHORE_LIMIT = 5    # Max concurrent Fyers API calls for stock futures OI
+FYERS_SEMAPHORE_LIMIT = 2    # Max concurrent Fyers API calls — keeps us under rate limit
+FYERS_INTER_REQUEST_DELAY = 0.3  # seconds between requests within each semaphore slot
 
 
 async def fetch_oi_snapshots():
@@ -238,6 +239,7 @@ async def fetch_stock_futures_oi():
                     resolutions[sym] = (result.fyers_symbol, result.expiry_date)
             except Exception:
                 logger.debug("Failed to resolve futures for %s", sym, exc_info=True)
+            await asyncio.sleep(FYERS_INTER_REQUEST_DELAY)
 
     await asyncio.gather(*[_resolve(sym) for sym in lot_sizes])
 
@@ -272,6 +274,7 @@ async def fetch_stock_futures_oi():
                 logger.exception("Failed to fetch quotes batch")
             finally:
                 await client.close()
+            await asyncio.sleep(FYERS_INTER_REQUEST_DELAY)
 
     await asyncio.gather(*[_fetch_batch(b) for b in batches])
 

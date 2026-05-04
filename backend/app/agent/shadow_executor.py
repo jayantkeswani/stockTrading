@@ -54,6 +54,25 @@ async def _do_shadow_execute(signal_id) -> None:
             logger.debug("Shadow execute: signal %s is %s, skipping", signal_id, signal.status)
             return
 
+        # Hard deadline — past 3:15 PM IST, markets are closed
+        from app.core.utils import is_past_close_deadline
+        if is_past_close_deadline():
+            logger.debug("Shadow skip: past close deadline for signal %s", signal_id)
+            return
+
+        # F&O ban list — legally blocked instrument, no point simulating
+        if signal.blocked_reason and "F&O ban" in signal.blocked_reason:
+            logger.debug("Shadow skip: %s is on F&O ban list", signal.symbol)
+            return
+
+        # Resolution failure — no valid contract to trade against
+        if signal.instrument_type == "OPTION" and not signal.fyers_option_symbol:
+            logger.debug("Shadow skip: option contract not resolved for %s", signal.symbol)
+            return
+        if signal.instrument_type == "FUTURE" and not signal.fyers_futures_symbol:
+            logger.debug("Shadow skip: futures contract not resolved for %s", signal.symbol)
+            return
+
         # Confidence gate — skip shadow trades for low-confidence signals
         from app.services.strategy_params import get_strategy_params
         params = await get_strategy_params(signal.strategy_name)

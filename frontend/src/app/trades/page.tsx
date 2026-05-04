@@ -107,7 +107,7 @@ export default function TradesPage() {
                   : "text-text-muted hover:text-text-secondary"
               }`}
             >
-              Signal Test
+              Ghost
             </button>
           </div>
         </div>
@@ -119,7 +119,7 @@ export default function TradesPage() {
       {mode === "SHADOW" && (
         <div className="px-3 py-1.5 rounded border border-purple-500/20 bg-purple-500/5">
           <p className="text-[10px] font-mono text-purple-400/70">
-            Signal Test mode — showing ghost trades that execute every signal (including blocked ones) to measure raw signal accuracy. These do not affect P&amp;L, risk, or active positions.
+            Ghost mode — showing ghost trades that execute every signal (including blocked ones) to measure raw signal accuracy. These do not affect P&amp;L, risk, or active positions.
           </p>
         </div>
       )}

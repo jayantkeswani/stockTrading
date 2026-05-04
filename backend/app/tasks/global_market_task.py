@@ -134,6 +134,12 @@ async def fetch_global_market_data() -> None:
         usdinr_price=raw.get("usdinr_price"),
         dxy_price=raw.get("dxy_price"),
     )
+
+    # yfinance ^NSEI has a 1-day lag for NSE data — the "latest" daily close
+    # it returns is actually the previous session's close. Override with the
+    # live Fyers price from Redis, which is always the most recent tick.
+    await _override_nifty_from_fyers(cues)
+
     cues.global_score = combined_global_score(cues)
 
     await _write_to_redis(cues)
@@ -145,6 +151,34 @@ async def fetch_global_market_data() -> None:
         cues.us_vix or 0,
         cues.global_score or 0,
     )
+
+
+async def _override_nifty_from_fyers(cues: GlobalCues) -> None:
+    """Override NIFTY price/pct with live Fyers data from Redis.
+
+    yfinance ^NSEI consistently returns the previous session's close as the
+    "latest" daily bar. The Fyers WS feed stores the actual last traded price
+    under price:NIFTY with change_pct already computed vs prev close.
+    """
+    import json
+
+    from app.core.redis import get_redis
+
+    try:
+        r = get_redis()
+        raw = await r.get("price:NIFTY")
+        if not raw:
+            return
+        data = json.loads(raw)
+        ltp = data.get("ltp")
+        change_pct = data.get("change_pct")
+        if ltp:
+            cues.nifty_price = float(ltp)
+        if change_pct is not None:
+            cues.nifty_pct = float(change_pct)
+        logger.debug("NIFTY overridden from Fyers: price=%.2f pct=%.2f%%", ltp or 0, change_pct or 0)
+    except Exception:
+        logger.warning("Could not override NIFTY from Fyers Redis price — using yfinance value")
 
 
 async def _write_to_redis(cues: GlobalCues) -> None:

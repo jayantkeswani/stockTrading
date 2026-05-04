@@ -379,13 +379,21 @@ class FyersWSClient:
         # Errors arrive either as plain strings ("Connection to remote host was lost.")
         # or as dicts ({"code": -99, "message": "Token is expired"}).  Check both
         # the numeric code (authoritative) and message text (fallback for string errors).
-        _AUTH_CODES = {-16, -17, -99, -300}
+        # -300 is reused by Fyers for two distinct errors:
+        #   auth:   {"code": -300, "message": "Please provide valid token"}
+        #   symbol: {"code": -300, "message": "...", "invalid_symbols": [...]}
+        # Only treat -300 as auth when there is no invalid_symbols field.
+        _AUTH_CODES = {-16, -17, -99}
         _AUTH_STRINGS = ("invalid token", "token is expired", "token expired",
                          "provide valid token", "unauthoriz")
 
         is_auth_error = False
         if isinstance(error, dict):
-            is_auth_error = error.get("code") in _AUTH_CODES
+            code = error.get("code")
+            if code in _AUTH_CODES:
+                is_auth_error = True
+            elif code == -300 and not error.get("invalid_symbols"):
+                is_auth_error = True
         elif error:
             error_str = str(error).lower()
             is_auth_error = any(s in error_str for s in _AUTH_STRINGS)

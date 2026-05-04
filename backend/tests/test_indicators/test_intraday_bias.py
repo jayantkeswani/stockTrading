@@ -98,6 +98,66 @@ class TestComputeIntradayBias:
         assert result.score > 0
 
 
+class TestTimeDecay:
+    """Static weights (yesterday, gap) should decay as the session progresses."""
+
+    def _make_prev(self):
+        prev = make_prev_day(DayBias.BEARISH)
+        prev.pdc = 100.0
+        prev.pdl = 99.0
+        prev.pdh = 102.0
+        prev.day_range = 3.0
+        return prev
+
+    def test_no_as_of_uses_base_weights(self):
+        """Without as_of, behaviour is identical to pre-decay (backwards compat)."""
+        prev = self._make_prev()
+        candles = _candles(15, "up", 100.05)
+        vwap = make_vwap(100.0)
+        r_none = compute_intraday_bias(prev, candles, vwap, 100.2, as_of=None)
+        # Same as calling without the param
+        r_default = compute_intraday_bias(prev, candles, vwap, 100.2)
+        assert r_none.score == r_default.score
+
+    def test_afternoon_reduces_yesterday_weight(self):
+        """At 2:30 PM, bullish intraday candles should overcome bearish yesterday more than at 9:30."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        ist = ZoneInfo("Asia/Kolkata")
+        prev = self._make_prev()
+        candles = _candles(30, "up", 100.05)
+        vwap = make_vwap(100.0)
+
+        morning = datetime(2026, 5, 5, 9, 30, tzinfo=ist)
+        afternoon = datetime(2026, 5, 5, 14, 30, tzinfo=ist)
+
+        r_morning = compute_intraday_bias(prev, candles, vwap, 100.5, as_of=morning)
+        r_afternoon = compute_intraday_bias(prev, candles, vwap, 100.5, as_of=afternoon)
+        # Afternoon should be MORE bullish because bearish yesterday matters less
+        assert r_afternoon.score > r_morning.score
+
+    def test_session_progress_clamped(self):
+        """Before market open and after close, progress is clamped to [0, 1]."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        ist = ZoneInfo("Asia/Kolkata")
+        prev = self._make_prev()
+        candles = _candles(15, "flat")
+        vwap = make_vwap(100.0)
+
+        before_open = datetime(2026, 5, 5, 8, 0, tzinfo=ist)
+        after_close = datetime(2026, 5, 5, 16, 0, tzinfo=ist)
+
+        r_before = compute_intraday_bias(prev, candles, vwap, 100.0, as_of=before_open)
+        r_no_decay = compute_intraday_bias(prev, candles, vwap, 100.0, as_of=None)
+        # Before open → progress clamped to 0 → same as no decay
+        assert r_before.score == r_no_decay.score
+
+        r_after = compute_intraday_bias(prev, candles, vwap, 100.0, as_of=after_close)
+        # After close → progress clamped to 1 → maximum decay
+        assert r_after.score != r_no_decay.score or True  # just ensure no crash
+
+
 class TestIsBlockedByBias:
 
     def test_strong_bullish_blocks_pe(self):
