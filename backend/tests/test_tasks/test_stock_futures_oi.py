@@ -1,5 +1,6 @@
-"""Tests for stock futures EOD OI snapshot task."""
+"""Tests for stock futures EOD OI snapshot task and S5 intraday OI job."""
 
+import json
 import pytest
 from datetime import date, datetime
 from decimal import Decimal
@@ -8,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.tasks.oi_snapshot_task import (
     FYERS_QUOTES_BATCH_SIZE,
     fetch_stock_futures_oi,
+    fetch_s5_watchlist_oi,
 )
 
 
@@ -380,3 +382,132 @@ class TestFetchStockFuturesOI:
         assert len(captured_stmts) == 1
         params = captured_stmts[0].compile().params
         assert params.get("open_interest_m0") == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests for fetch_s5_watchlist_oi (intraday 15-min job)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchS5WatchlistOI:
+    """Tests for fetch_s5_watchlist_oi()."""
+
+    @pytest.mark.asyncio
+    @patch("app.tasks.oi_snapshot_task.is_market_open", return_value=False)
+    async def test_skips_when_market_closed(self, mock_market_open):
+        """Should return early when market is closed."""
+        await fetch_s5_watchlist_oi()
+        # No Redis or Fyers calls needed — market closed guard fires first
+
+    @pytest.mark.asyncio
+    @patch("app.tasks.oi_snapshot_task.is_market_open", return_value=True)
+    @patch("app.core.redis.get_redis")
+    async def test_skips_without_token(self, mock_get_redis, _):
+        """Should return early when no Fyers token is available."""
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=None)
+        mock_get_redis.return_value = mock_redis
+
+        await fetch_s5_watchlist_oi()
+
+    @pytest.mark.asyncio
+    @patch("app.tasks.oi_snapshot_task.is_market_open", return_value=True)
+    @patch("app.core.redis.get_redis")
+    async def test_skips_when_no_watchlist(self, mock_get_redis, _):
+        """Should return early when S5 watchlist key is absent."""
+        mock_redis = AsyncMock()
+
+        async def _get(key):
+            if "fyers:access_token" in key:
+                return "test-token"
+            return None  # No watchlist
+
+        mock_redis.get = AsyncMock(side_effect=_get)
+        mock_get_redis.return_value = mock_redis
+
+        await fetch_s5_watchlist_oi()
+
+    @pytest.mark.asyncio
+    @patch("app.tasks.oi_snapshot_task.is_market_open", return_value=True)
+    @patch("app.core.database.async_session_factory")
+    @patch("app.data_feed.fyers_client.FyersClient")
+    @patch("app.services.futures_resolver.resolve_futures_contract")
+    @patch("app.core.redis.get_redis")
+    async def test_persists_oi_for_watchlist_symbols(
+        self,
+        mock_get_redis,
+        mock_resolve,
+        mock_fyers_cls,
+        mock_session_factory,
+        _,
+    ):
+        """Should fetch OI for watchlist symbols and persist with option_type=FUT."""
+        watchlist = [{"symbol": "VEDL"}, {"symbol": "SUNPHARMA"}]
+        mock_redis = AsyncMock()
+
+        async def _get(key):
+            if "fyers:access_token" in key:
+                return "test-token"
+            if "strat5:watchlist" in key:
+                return json.dumps(watchlist)
+            return None
+
+        mock_redis.get = AsyncMock(side_effect=_get)
+        mock_get_redis.return_value = mock_redis
+
+        expiry = date(2026, 5, 29)
+
+        async def _resolve(symbol, entry_price):
+            return _make_futures_resolution(symbol, f"NSE:{symbol}26MAYFUT", expiry)
+
+        mock_resolve.side_effect = _resolve
+
+        mock_client = AsyncMock()
+        mock_client.get_quotes = AsyncMock(return_value={
+            "s": "ok",
+            "d": [
+                _make_quote("NSE:VEDL26MAYFUT", oi=200000),
+                _make_quote("NSE:SUNPHARMA26MAYFUT", oi=150000),
+            ],
+        })
+        mock_client.close = AsyncMock()
+        mock_fyers_cls.return_value = mock_client
+
+        captured_stmts = []
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(side_effect=lambda s: captured_stmts.append(s))
+        mock_session.commit = AsyncMock()
+        mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await fetch_s5_watchlist_oi()
+
+        assert len(captured_stmts) == 1
+        params = captured_stmts[0].compile().params
+        # Both rows should be FUT with strike_price=0
+        assert params.get("option_type_m0") == "FUT"
+        assert params.get("strike_price_m0") == Decimal("0")
+        assert params.get("oi_change_m0") == 0
+
+    @pytest.mark.asyncio
+    @patch("app.tasks.oi_snapshot_task.is_market_open", return_value=True)
+    @patch("app.services.futures_resolver.resolve_futures_contract")
+    @patch("app.core.redis.get_redis")
+    async def test_skips_when_all_resolutions_fail(self, mock_get_redis, mock_resolve, _):
+        """Should return without DB call when no symbols can be resolved."""
+        watchlist = [{"symbol": "VEDL"}]
+        mock_redis = AsyncMock()
+
+        async def _get(key):
+            if "fyers:access_token" in key:
+                return "test-token"
+            if "strat5:watchlist" in key:
+                return json.dumps(watchlist)
+            return None
+
+        mock_redis.get = AsyncMock(side_effect=_get)
+        mock_get_redis.return_value = mock_redis
+        mock_resolve.return_value = None
+
+        await fetch_s5_watchlist_oi()
+        # No error, no DB call

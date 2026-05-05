@@ -1607,9 +1607,9 @@ async def run_preopen_reassessment(as_of: date | None = None) -> dict:
         cues["preopen_reassessed"] = True
         await r.set(cues_key, json.dumps(cues), ex=REDIS_TTL)
 
-    # Update VIX in Redis price cache
+    # Update VIX in Redis price cache (JSON dict — same format as feed_manager.cache_price)
     if live_vix > 0:
-        await r.set("price:INDIA VIX", str(live_vix), ex=86400)
+        await r.set("price:INDIA VIX", json.dumps({"ltp": live_vix}), ex=86400)
 
     # Reassess each watchlist item
     changes: list[str] = []

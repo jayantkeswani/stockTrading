@@ -80,6 +80,22 @@ async def _get_all_backfill_symbols() -> dict[str, str]:
     except Exception:
         logger.exception("Failed to load strategy symbols for backfill")
 
+    # Strategy 5 dynamic watchlist — populated by the morning screener at 8:30 AM.
+    # These symbols are not in strategy_configs.symbols so they'd be missed on reconnect.
+    try:
+        from datetime import datetime as _dt
+        today_str = _dt.now(IST).strftime("%Y-%m-%d")
+        r = get_redis()
+        raw = await r.get(f"strat5:watchlist:{today_str}")
+        if raw:
+            import json as _json
+            for item in _json.loads(raw):
+                sym = item.get("symbol")
+                if sym and sym not in symbols:
+                    symbols[sym] = _resolve_fyers_symbol(sym)
+    except Exception:
+        logger.exception("Failed to load S5 watchlist symbols for backfill")
+
     # Near-month index futures for VWAP volume sourcing.
     # Internal key "{INDEX}_FUT" matches strategy_runner._init_index_futures().
     try:

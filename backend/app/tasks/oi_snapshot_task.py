@@ -517,6 +517,131 @@ async def _fill_stock_futures_oi_gaps() -> None:
     logger.info("FUT OI gap-fill complete: %d/%d days filled", filled, len(missing))
 
 
+S5_OI_INTERVAL_MINUTES = 15
+
+
+async def fetch_s5_watchlist_oi():
+    """Fetch intraday OI for Strategy 5 watchlist futures (every 15 minutes).
+
+    Reads today's screened watchlist from Redis, resolves each symbol to its
+    near-month futures contract, and batch-fetches live quotes to capture
+    current open_interest. Persists to oi_snapshots with option_type="FUT".
+
+    This is targeted (10-15 symbols vs ~180 for the EOD job) so it runs
+    cheaply every 15 minutes. The EOD job at 3:25 PM covers the full F&O
+    universe for the morning screener's OI scoring.
+    """
+    if not is_market_open():
+        return
+
+    from app.core.redis import get_redis
+
+    r = get_redis()
+    token = await r.get("fyers:access_token")
+    if not token:
+        return
+
+    # Load today's S5 watchlist
+    import json
+    from datetime import datetime as _dt
+    today_str = _dt.now(IST).strftime("%Y-%m-%d")
+    raw = await r.get(f"strat5:watchlist:{today_str}")
+    if not raw:
+        return
+
+    watchlist = json.loads(raw)
+    symbols = [item["symbol"] for item in watchlist if item.get("symbol")]
+    if not symbols:
+        return
+
+    # Resolve each symbol to its near-month futures contract
+    from app.services.futures_resolver import resolve_futures_contract
+
+    semaphore = asyncio.Semaphore(FYERS_SEMAPHORE_LIMIT)
+    resolutions: dict[str, tuple[str, object]] = {}
+
+    async def _resolve(sym: str):
+        async with semaphore:
+            try:
+                result = await resolve_futures_contract(sym, entry_price=0)
+                if result:
+                    resolutions[sym] = (result.fyers_symbol, result.expiry_date)
+            except Exception:
+                logger.debug("S5 OI: failed to resolve futures for %s", sym, exc_info=True)
+            await asyncio.sleep(FYERS_INTER_REQUEST_DELAY)
+
+    await asyncio.gather(*[_resolve(sym) for sym in symbols])
+
+    if not resolutions:
+        return
+
+    # Batch-fetch quotes (all symbols fit in one call for typical watchlist sizes)
+    from app.data_feed.fyers_client import FyersClient
+
+    fyers_symbols = [fs for fs, _ in resolutions.values()]
+    batches = [
+        fyers_symbols[i: i + FYERS_QUOTES_BATCH_SIZE]
+        for i in range(0, len(fyers_symbols), FYERS_QUOTES_BATCH_SIZE)
+    ]
+
+    all_quotes: dict[str, dict] = {}
+
+    async def _fetch_batch(batch: list[str]):
+        async with semaphore:
+            client = FyersClient(access_token=token)
+            try:
+                result = await client.get_quotes(batch)
+                if result and result.get("s") == "ok":
+                    for q in result.get("d", []):
+                        sym = q.get("n", "")
+                        if sym:
+                            all_quotes[sym] = q.get("v", {})
+            except Exception:
+                logger.exception("S5 OI: failed to fetch quotes batch")
+            finally:
+                await client.close()
+            await asyncio.sleep(FYERS_INTER_REQUEST_DELAY)
+
+    await asyncio.gather(*[_fetch_batch(b) for b in batches])
+
+    # Persist to oi_snapshots
+    from decimal import Decimal
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.core.database import async_session_factory
+    from app.models.oi_snapshot import OISnapshot
+
+    now = datetime.now(IST).replace(second=0, microsecond=0)
+
+    rows = []
+    for symbol, (fyers_symbol, expiry_date) in resolutions.items():
+        quote = all_quotes.get(fyers_symbol, {})
+        oi = int(quote.get("open_interest", 0) or 0)
+        rows.append({
+            "symbol": symbol,
+            "expiry_date": expiry_date,
+            "strike_price": Decimal("0"),
+            "option_type": "FUT",
+            "open_interest": oi,
+            "oi_change": 0,
+            "volume": int(quote.get("volume", 0) or 0),
+            "timestamp": now,
+        })
+
+    if not rows:
+        return
+
+    async with async_session_factory() as session:
+        stmt = pg_insert(OISnapshot).values(rows)
+        stmt = stmt.on_conflict_do_nothing(constraint="uq_oi_snapshot")
+        await session.execute(stmt)
+        await session.commit()
+
+    logger.info(
+        "S5 watchlist OI snapshot: %d symbols at %s",
+        len(rows), now.strftime("%H:%M"),
+    )
+
+
 async def start_oi_snapshot_scheduler():
     """Start the periodic OI snapshot scheduler and fill any gaps."""
     global _scheduler
@@ -535,9 +660,17 @@ async def start_oi_snapshot_scheduler():
         name="Fetch stock futures OI (EOD)",
         replace_existing=True,
     )
+    _scheduler.add_job(
+        fetch_s5_watchlist_oi,
+        trigger=IntervalTrigger(minutes=S5_OI_INTERVAL_MINUTES, timezone=IST),
+        id="s5_watchlist_oi_fetch",
+        name="Fetch S5 watchlist futures OI (intraday)",
+        replace_existing=True,
+    )
     _scheduler.start()
     logger.info("OI snapshot scheduler started (every %d minutes)", OI_FETCH_INTERVAL_MINUTES)
     logger.info("Stock futures OI scheduler started (daily at 15:25 IST)")
+    logger.info("S5 watchlist OI scheduler started (every %d minutes)", S5_OI_INTERVAL_MINUTES)
 
     # Fill gaps from missed days (non-blocking background task)
     task = asyncio.create_task(_fill_stock_futures_oi_gaps(), name="fut_oi_gap_fill")

@@ -706,11 +706,12 @@ class StrategyRunner:
             logger.debug("Could not load screener score for %s", symbol)
 
         # India VIX (for position sizing cap)
+        # Uses get_cached_price() — same JSON dict format as feed_manager.cache_price()
+        # and run_preopen_reassessment(). Raw r.get() broke when formats diverged.
         try:
-            r = get_redis()
-            vix_raw = await r.get("price:INDIA VIX")
-            if vix_raw:
-                params["_india_vix"] = float(vix_raw)
+            vix_cached = await get_cached_price("INDIA VIX")
+            if vix_cached:
+                params["_india_vix"] = float(vix_cached["ltp"])
         except Exception:
             logger.debug("Could not load India VIX for Strategy 5")
 
