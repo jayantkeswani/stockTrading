@@ -56,3 +56,6 @@ graphify-out/
 scripts/telegram/*.session
 scripts/telegram/*.session-journal
 scripts/telegram/data/
+
+# Intraday Hunter — generated transcripts, extractions, candle cache
+scripts/intraday_hunter/data/
