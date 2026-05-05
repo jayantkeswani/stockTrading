@@ -63,6 +63,7 @@ def _make_trade(pos, status=TradeStatus.OPEN):
     trade = MagicMock()
     trade.id = pos.trade_id
     trade.entry_price = pos.entry_price
+    trade.stop_loss = pos.stop_loss
     trade.quantity = pos.quantity
     trade.status = status.value
     trade.pnl = None
