@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import { api } from "@/lib/api";
 import { useStore } from "@/store";
 import { pnlColor } from "@/lib/formatters";
@@ -134,9 +134,8 @@ export function Watchlist({ date = null }: { date?: string | null }) {
                 : undefined;
 
               return (
-                <>
+                <Fragment key={item.symbol}>
                   <tr
-                    key={item.symbol}
                     className="border-t border-border/50 hover:bg-bg-tertiary"
                   >
                     <td className="px-2 py-1 text-text-primary">{item.symbol}</td>
@@ -240,7 +239,7 @@ export function Watchlist({ date = null }: { date?: string | null }) {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
             {items.length === 0 && (
