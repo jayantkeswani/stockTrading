@@ -58,6 +58,10 @@ export function AgentFeed() {
               const strategyKey = (log.details?.strategy_name as string) || "";
               const strategyLabel = STRATEGY_LABELS[strategyKey] || strategyKey;
 
+              const isTrailingSL = log.action_type === "SL_TRIGGERED" && log.details?.reason === "TRAILING_SL";
+              const displayLabel = isTrailingSL ? "TRAILING SL" : (log.action_type ?? "UNKNOWN").replace(/_/g, " ");
+              const colorClass = isTrailingSL ? "text-warning" : (ACTION_COLORS[log.action_type] || "text-text-secondary");
+
               return (
                 <div
                   key={log.id}
@@ -67,9 +71,9 @@ export function AgentFeed() {
                     {formatLogTime(log.created_at)}
                   </span>
                   <span
-                    className={`text-xs font-mono font-medium shrink-0 ${ACTION_COLORS[log.action_type] || "text-text-secondary"}`}
+                    className={`text-xs font-mono font-medium shrink-0 ${colorClass}`}
                   >
-                    {(log.action_type ?? "UNKNOWN").replace(/_/g, " ")}
+                    {displayLabel}
                   </span>
                   {symbol && (
                     <span className="text-xs font-mono text-text-primary">{symbol}</span>

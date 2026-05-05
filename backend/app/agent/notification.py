@@ -153,9 +153,12 @@ async def notify_sl_hit(
     pnl: float,
     lots: int,
     instrument_type: str = "OPTION",
+    is_trailing: bool = False,
 ) -> None:
+    emoji = "🟡" if is_trailing else "🔴"
+    title = "Trailing Stop Hit" if is_trailing else "Stop Loss Hit"
     msg = (
-        f"{_paper()}🔴 <b>Stop Loss Hit</b>\n"
+        f"{_paper()}{emoji} <b>{title}</b>\n"
         f"{symbol}  ·  {_strategy_label(strategy_name)}\n"
         f"Entry ₹{entry:.0f}  →  Exit ₹{exit_price:.0f}\n"
         f"P&L  {_pnl_str(pnl, entry, exit_price)}  ·  {lots} lot{'s' if lots > 1 else ''}"

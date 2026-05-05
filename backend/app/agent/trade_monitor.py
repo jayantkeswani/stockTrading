@@ -105,8 +105,15 @@ async def _check_position(
     # 1. Check SL — AUTO CLOSE (no confirmation needed in SEMI or YOLO)
     sl_hit = current_price >= pos.stop_loss if is_short_pos else current_price <= pos.stop_loss
     if sl_hit:
+        trade_result = await db.execute(select(Trade).where(Trade.id == pos.trade_id))
+        sl_trade = trade_result.scalar_one_or_none()
+        exit_reason = (
+            ExitReason.TRAILING_SL
+            if sl_trade and sl_trade.stop_loss != pos.stop_loss
+            else ExitReason.AGENT_SL
+        )
         return await _close_position(
-            db, pos, current_price, ExitReason.AGENT_SL,
+            db, pos, current_price, exit_reason,
             AgentActionType.SL_TRIGGERED, requires_confirmation=False,
         )
 
@@ -281,7 +288,7 @@ async def _close_position(
         inst = getattr(pos, "instrument_type", "OPTION") or "OPTION"
 
         if action_type == AgentActionType.SL_TRIGGERED:
-            await notify_sl_hit(sym, strat, entry, exit_f, pnl_val, lots, inst)
+            await notify_sl_hit(sym, strat, entry, exit_f, pnl_val, lots, inst, is_trailing=exit_reason == ExitReason.TRAILING_SL)
         elif action_type in (AgentActionType.AUTO_PROFIT_BOOKED, AgentActionType.PROFIT_BOOKED):
             await notify_profit_booked(sym, strat, entry, exit_f, pnl_val, lots)
         elif action_type == AgentActionType.TIME_EXIT:

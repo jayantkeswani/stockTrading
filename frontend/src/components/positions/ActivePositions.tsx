@@ -237,7 +237,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                         <span className="ml-1.5 text-text-muted/40">{durationMin}m</span>
                       )}
                     </span>
-                    <span className="text-[9px] font-mono text-text-muted/50">
+                    <span className={`text-[9px] font-mono ${t.exit_reason === "TRAILING_SL" ? "text-warning" : "text-text-muted/50"}`}>
                       {t.exit_reason?.replace(/_/g, " ") ?? "—"}
                     </span>
                   </div>
