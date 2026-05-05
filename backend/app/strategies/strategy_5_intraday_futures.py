@@ -302,7 +302,15 @@ class IntradayFuturesStrategy(BaseStrategy):
 
         orb_high = orb["high"]
         orb_low = orb["low"]
-        price = ctx.current_price
+
+        # Use confirmed 5-minute candle close for breakout detection — not the
+        # live tick.  The ORB itself is defined on 5-min candles, so the breakout
+        # should be confirmed on the same timeframe to avoid false breakouts from
+        # intra-candle spikes.
+        if not ctx.candles_5m:
+            return None
+        last_5m = ctx.candles_5m[-1]
+        price = last_5m.close
 
         # Need a clear breakout
         if orb_low <= price <= orb_high:
@@ -311,6 +319,18 @@ class IntradayFuturesStrategy(BaseStrategy):
         is_long = price > orb_high
         signal_type = SignalType.BUY_FUT if is_long else SignalType.SELL_FUT
         direction = "LONG" if is_long else "SHORT"
+
+        # ORB range validation — reject noise (too narrow) and oversize risk (too wide)
+        orb_range = orb_high - orb_low
+        orb_range_pct = (orb_range / price) * 100 if price > 0 else 0
+        min_range = params.get("min_orb_range_pct", 0.4)
+        max_range = params.get("max_orb_range_pct", 2.0)
+        if orb_range_pct < min_range:
+            self._skip(ctx.symbol, f"ORB range {orb_range_pct:.2f}% < min {min_range}% ({direction})")
+            return None
+        if orb_range_pct > max_range:
+            self._skip(ctx.symbol, f"ORB range {orb_range_pct:.2f}% > max {max_range}% ({direction})")
+            return None
 
         # ADR filter
         if ctx.candles_daily:
@@ -373,7 +393,6 @@ class IntradayFuturesStrategy(BaseStrategy):
             return None
 
         # SL/Target calculation
-        orb_range = orb_high - orb_low
         if is_long:
             stop_loss = orb_low
             risk = price - stop_loss
@@ -872,11 +891,13 @@ class IntradayFuturesStrategy(BaseStrategy):
             rvol_factor = min(1.0, (rvol - threshold) / threshold)
             rvol_factor = max(0.0, rvol_factor)
 
-        # 3. Nifty bias alignment (0.12)
+        # 3. Nifty bias alignment (0.12) — direction-aware, same pattern as
+        #    Strategy 2's confidence.py bias_alignment factor.
         nifty_bias = params.get("_nifty_bias")
         if nifty_bias is not None:
-            strength = getattr(nifty_bias, "strength", "WEAK")
-            bias_factor = {"STRONG": 1.0, "MODERATE": 0.7, "WEAK": 0.4}.get(strength, 0.4)
+            score = getattr(nifty_bias, "score", 0.0)
+            alignment = score if is_long else -score
+            bias_factor = (alignment + 1.0) / 2.0
         else:
             bias_factor = 0.0
 
@@ -930,17 +951,27 @@ class IntradayFuturesStrategy(BaseStrategy):
                 trend_factor = min(1.0, 0.5 - trend_score)
             trend_factor = max(0.0, trend_factor)
 
-        # 9. Intraday FUT OI direction (0.10) — building confirms, unwinding warns
+        # 9. Intraday FUT OI direction (0.10) — 4-way classification,
+        #    direction-aware (same pattern as morning screener OI scoring).
         oi_direction = params.get("_oi_direction")
         oi_change_pct = params.get("_oi_change_pct", 0.0)
+        abs_oi = abs(oi_change_pct)
         oi_factor = 0.2  # neutral default (missing data penalty)
         if oi_direction is not None:
-            if oi_direction == "building":
-                # OI building in trade direction = strong confirmation
-                oi_factor = min(1.0, 0.6 + abs(oi_change_pct) * 0.02)
-            elif oi_direction == "unwinding":
-                # OI unwinding = weaker signal
-                oi_factor = max(0.0, 0.4 - abs(oi_change_pct) * 0.02)
+            if oi_direction == "long_buildup":
+                # New longs entering — bullish for LONG, bearish for SHORT
+                raw = min(1.0, 0.6 + abs_oi * 0.02)
+                oi_factor = raw if is_long else max(0.0, 1.0 - raw)
+            elif oi_direction == "short_buildup":
+                # New shorts entering — bearish for LONG, bullish for SHORT
+                raw = min(1.0, 0.6 + abs_oi * 0.02)
+                oi_factor = raw if not is_long else max(0.0, 1.0 - raw)
+            elif oi_direction == "short_covering":
+                # Shorts exiting — mildly bullish
+                oi_factor = 0.6 if is_long else 0.4
+            elif oi_direction == "long_unwinding":
+                # Longs exiting — mildly bearish
+                oi_factor = 0.4 if is_long else 0.6
             else:
                 oi_factor = 0.5  # flat — neutral
 

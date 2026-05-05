@@ -764,7 +764,10 @@ class StrategyRunner:
         except Exception:
             logger.debug("Could not check global cues mid-day shift for Strategy 5")
 
-        # Intraday FUT OI direction — compare latest two snapshots for this symbol
+        # Intraday FUT OI direction — 4-way classification (same logic as
+        # morning screener _compute_stock_score): correlate OI change with
+        # price change to distinguish long_buildup / short_buildup /
+        # short_covering / long_unwinding.
         try:
             async with async_session_factory() as session:
                 rows = await session.execute(
@@ -784,12 +787,28 @@ class StrategyRunner:
                 prev_oi = snapshots[1].open_interest
                 if prev_oi and prev_oi > 0:
                     oi_change_pct = (latest_oi - prev_oi) / prev_oi * 100
-                    if oi_change_pct > 1.0:
-                        oi_direction = "building"
-                    elif oi_change_pct < -1.0:
-                        oi_direction = "unwinding"
+                    oi_up = oi_change_pct > 1.0
+                    oi_down = oi_change_pct < -1.0
+
+                    # Price direction: compare current candle to candle ~10 min ago
+                    buffer = self._candle_buffers.get(symbol, [])
+                    price_up = True  # default if insufficient data
+                    if len(buffer) >= 10:
+                        price_up = buffer[-1]["c"] > buffer[-10]["c"]
+                    elif len(buffer) >= 2:
+                        price_up = buffer[-1]["c"] > buffer[0]["c"]
+
+                    if oi_up and price_up:
+                        oi_direction = "long_buildup"
+                    elif oi_up and not price_up:
+                        oi_direction = "short_buildup"
+                    elif oi_down and price_up:
+                        oi_direction = "short_covering"
+                    elif oi_down and not price_up:
+                        oi_direction = "long_unwinding"
                     else:
                         oi_direction = "flat"
+
                     params["_oi_change_pct"] = oi_change_pct
                     params["_oi_direction"] = oi_direction
             elif len(snapshots) == 1:

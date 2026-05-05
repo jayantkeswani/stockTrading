@@ -181,14 +181,35 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
                       ) : "—"}
                     </td>
                     <td className="px-2 py-1 text-center">
-                      <span className={`text-[10px] px-1 py-px rounded ${
-                        item.bias === "BULLISH" ? "bg-profit/20 text-profit" :
-                        item.bias === "BEARISH" ? "bg-loss/20 text-loss" :
-                        "bg-text-muted/20 text-text-muted"
-                      }`} title={item.bias_source && item.bias_source !== "screener" ? `${item.bias_source} (was ${item.original_bias})` : undefined}>
-                        {item.bias.slice(0, 4)}
-                        {item.bias_source && item.bias_source !== "screener" ? "•" : ""}
-                      </span>
+                      {item.bias_source && item.bias_source !== "screener" ? (
+                        <span className="relative group inline-block">
+                          <span className={`text-[10px] px-1 py-px rounded cursor-default ${
+                            item.bias === "BULLISH" ? "bg-profit/20 text-profit" :
+                            item.bias === "BEARISH" ? "bg-loss/20 text-loss" :
+                            "bg-text-muted/20 text-text-muted"
+                          }`}>
+                            {item.bias.slice(0, 4)}•
+                          </span>
+                          <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-max opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                            <span className="block bg-bg-elevated border border-border rounded px-2 py-1 shadow-lg text-left">
+                              <span className="block text-[9px] font-mono text-accent whitespace-nowrap">
+                                {item.bias_source.replace(/_/g, " ")}
+                              </span>
+                              <span className="block text-[9px] font-mono text-text-muted whitespace-nowrap">
+                                was {item.original_bias ?? "unknown"}
+                              </span>
+                            </span>
+                          </span>
+                        </span>
+                      ) : (
+                        <span className={`text-[10px] px-1 py-px rounded ${
+                          item.bias === "BULLISH" ? "bg-profit/20 text-profit" :
+                          item.bias === "BEARISH" ? "bg-loss/20 text-loss" :
+                          "bg-text-muted/20 text-text-muted"
+                        }`}>
+                          {item.bias.slice(0, 4)}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-1 text-center">
                       <button

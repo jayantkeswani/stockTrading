@@ -194,13 +194,14 @@ If the same stock triggers multiple setups, take the highest-priority one only.
 
 **Rules:**
 - **Opening Range:** High and Low of first 15 minutes (9:15–9:30 AM), recorded per stock in Redis
-- **Breakout:** 5-minute candle closes above ORB high → BUY_FUT. Closes below ORB low → SELL_FUT
+- **Breakout:** Confirmed 5-minute candle close above ORB high → BUY_FUT. Closes below ORB low → SELL_FUT. Uses `candles_5m[-1].close` — not the live tick (`ctx.current_price`) — so intra-candle spikes don't trigger false breakouts
+- **ORB range validation:** Range must be between `min_orb_range_pct` (default 0.4%) and `max_orb_range_pct` (default 2.0%) of price. Too narrow = noise; too wide = excessive risk
 - **Volume confirmation:** Breakout candle volume > 1.2x average 5-minute volume
 - **VWAP filter:** For longs, price must be above VWAP. For shorts, below VWAP
 
 **SL/Target:**
 - **SL:** Opposite side of ORB range (ORB low for longs, ORB high for shorts). If ORB range < 1x ATR(14) on 5-min, widen SL to 1x ATR from entry
-- **Target:** Nearest resistance above entry (PDH, swing high, VWAP upper band) that gives R:R >= 1.5. Fallback: 1.5x risk
+- **Target:** 1.5x risk from entry price (entry + risk × 1.5 for longs, entry - risk × 1.5 for shorts)
 - **R:R validation:** Must be >= 1.5; skip signal if not achievable
 
 **Enhanced ORB:** If price also breaks PDH (for longs) or PDL (for shorts), this is a stronger variant logged as "ORB + PDH Breakout" with higher confidence.
@@ -258,7 +259,7 @@ All sub-setups use **chart-based levels** — not fixed percentages. Each setup 
 
 SL and target are computed directly on the stock futures price. No delta conversion or premium math (unlike Strategy 2's index options).
 
-**Price sourcing convention (important):** PDH/PDL Breakout and Gap Continuation use `last_candle.close` — not the live tick (`ctx.current_price`) — as the reference price for entry, SL, and target computation. The candle close is the *confirmed* breakout price. Using the live tick instead can cause the SL to land on the wrong side of the entry when the tick has moved significantly from the candle close (e.g. BUY at 9533, SL at 9576 — seen in OFSS). PDH/PDL also includes a post-computation SL sanity guard that hard-rejects any signal where the SL lands on the wrong side of the entry price. **ORB** and **VWAP Bounce** use `ctx.current_price` intentionally: ORB's SL is anchored to structural `orb_low`/`orb_high` (always correct regardless of tick); VWAP Bounce's SL is anchored to VWAP (always below/above entry since the live price must be near VWAP to trigger the proximity check).
+**Price sourcing convention (important):** ORB Breakout, PDH/PDL Breakout, and Gap Continuation all use `last_candle.close` — not the live tick (`ctx.current_price`) — as the reference price for entry, SL, and target computation. The candle close is the *confirmed* breakout price. Using the live tick instead can cause the SL to land on the wrong side of the entry when the tick has moved significantly from the candle close (e.g. BUY at 9533, SL at 9576 — seen in OFSS). PDH/PDL also includes a post-computation SL sanity guard that hard-rejects any signal where the SL lands on the wrong side of the entry price. **VWAP Bounce** uses `ctx.current_price` intentionally: its SL is anchored to VWAP (always below/above entry since the live price must be near VWAP to trigger the proximity check).
 
 ---
 
@@ -266,25 +267,35 @@ SL and target are computed directly on the stock futures price. No delta convers
 
 **File:** `backend/app/strategies/strategy_5_intraday_futures.py` — `_compute_confidence()`
 
-An 8-factor weighted composite produces a 0–100 score. The full factor breakdown is persisted to `signal.indicators["confidence_factors"]` for every signal.
+A 9-factor weighted composite produces a 0–100 score. The full factor breakdown is persisted to `signal.indicators["confidence_factors"]` for every signal.
 
 | Factor | Weight | What It Measures |
 |---|---|---|
-| `vol_factor` | 0.15 | Breakout candle volume relative to average; default 0.2 if no data |
+| `vol_factor` | 0.10 | Breakout candle volume relative to average; default 0.2 if no data |
 | `rvol_factor` | 0.15 | Time-of-day normalized volume (RVOL threshold) |
-| `bias_factor` | 0.12 | Nifty intraday bias alignment with signal direction |
+| `bias_factor` | 0.12 | Nifty intraday bias — direction-aware: uses `bias.score` × alignment (same `(alignment+1)/2` pattern as Strategy 2's `confidence.py`). Bullish bias helps LONG, hurts SHORT |
 | `phase_factor` | 0.12 | Current market phase quality (MORNING_ACTIVE > AFTERNOON > CAUTION_ZONE) |
 | `setup_factor` | 0.14 | Setup-specific quality (enhanced ORB, reversal candle strength, breakout magnitude) |
-| `rank_factor` | 0.12 | Stock's screener rank (`score/100`); default 0.0 if no screener data |
+| `rank_factor` | 0.07 | Stock's screener rank (`score/100`); default 0.0 if no screener data |
 | `gap_factor` | 0.10 | Gap alignment with trade direction; default 0.2 if no gap data |
 | `trend_factor` | 0.10 | Stock's multi-day trend alignment from `stock_trend.py`; default 0.2 if no data |
+| `oi_factor` | 0.10 | Intraday FUT OI direction — 4-way classification (long_buildup/short_buildup/short_covering/long_unwinding), direction-aware scoring. Buildup types scale with `abs(oi_change_pct)`. Missing data → 0.2 penalty |
 
 Weights sum to **1.0**. Missing-data defaults are **0.2** (not 0.5) to penalise signals where context is absent, reducing score inflation.
 
+**OI 4-way classification** (from `strategy_runner._enrich_strategy5_params`):
+- **long_buildup**: OI up + price up → bullish for LONG, bearish for SHORT
+- **short_buildup**: OI up + price down → bearish for LONG, bullish for SHORT
+- **short_covering**: OI down + price up → mildly bullish (0.6 LONG / 0.4 SHORT)
+- **long_unwinding**: OI down + price down → mildly bearish (0.4 LONG / 0.6 SHORT)
+- **flat**: OI change < 1% → neutral (0.5)
+
+Price comparison uses the candle buffer (~10 minutes of recent 1m candles).
+
 **Confidence thresholds** (configurable via strategy_params):
 - `min_confidence_to_persist`: 30.0 — below this, signal not saved
-- `min_confidence_for_shadow`: 45.0 — below this, no shadow trade
-- `min_confidence_for_execution`: 60.0 — below this, signal saved but `executable = False`
+- `min_confidence_for_shadow`: 70.0 — below this, no shadow trade
+- `min_confidence_for_execution`: 70.0 — below this, signal saved but `executable = False`
 
 ---
 
@@ -352,14 +363,17 @@ INTRADAY_FUTURES_DEFAULTS = {
     "trailing_sl_breakeven_pct": 0.5,
     "trailing_sl_trail_pct": 0.3,
     "min_confidence_to_persist": 30.0,
-    "min_confidence_for_shadow": 45.0,
-    "min_confidence_for_execution": 60.0,
+    "min_confidence_for_shadow": 70.0,
+    "min_confidence_for_execution": 70.0,
     "max_daily_drawdown_pct": 3.0,
     "max_simultaneous_positions": 3,
     "max_trades_per_day": 5,
     "rvol_threshold": 1.5,
     "rvol_caution_zone_threshold": 2.5,
     "enabled_setups": ["ORB", "VWAP_BOUNCE", "PDH_PDL", "GAP_CONTINUATION"],
+    "min_adr": 1.5,
+    "min_orb_range_pct": 0.4,
+    "max_orb_range_pct": 2.0,
 }
 ```
 
@@ -536,6 +550,8 @@ Strategy 5 signals render with strategy-aware context in `ScannerPanel.tsx`:
 | `frontend/src/app/intraday-futures/page.tsx` | Dedicated Strategy 5 page |
 | `frontend/src/components/intraday-futures/` | 7 components: DayStatusBar, Watchlist, AgentLog, GlobalCues, SetupPerformance, ConfigPanel, DailyStats |
 | `frontend/src/components/dashboard/ScannerPanel.tsx` | Strategy-aware signal card rendering |
+| `scripts/backtest_strategy5.py` | S5 signal exit simulator: queries live signals, walks 1m candles with trailing SL, reports P&L. Supports confidence threshold, date range, setup/symbol filters, lots override, sweep mode |
+| `scripts/replay_strategy5.py` | Signal generation replay: re-generates signals from historical candles (offline, no DB signals needed) |
 | `docs/strategies/strategy-5-intraday-futures.md` | This file |
 
 ---
@@ -555,7 +571,7 @@ Uses existing `futures_resolver.py` for stock → nearest futures contract mappi
 ~22 LLM calls per day, all before 9:00 AM (1 briefing + ~20 news sentiment + 1 screener confidence). Zero LLM calls during market hours — all signal generation, filtering, and exit management is deterministic computation.
 
 ### Confidence factors storage
-`_compute_confidence()` accepts an optional `indicators: dict` parameter. When provided, it injects a `confidence_factors` dict with the 8 factor values into the signal's indicators JSONB. This enables the frontend to render per-factor confidence bars in the AI panel.
+`_compute_confidence()` accepts an optional `indicators: dict` parameter. When provided, it injects a `confidence_factors` dict with the 9 factor values into the signal's indicators JSONB. This enables the frontend to render per-factor confidence bars in the AI panel.
 
 ### Parameter experiments — disable strategy first
 Before changing thresholds for testing, go to Settings → Strategies and disable Strategy 5. Both auto-mode evaluations AND manual evals trigger `shadow_executor`, creating shadow trades. Same caveat as Strategy 2 (see Strategy 2 doc).

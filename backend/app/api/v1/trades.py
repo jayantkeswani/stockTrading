@@ -8,11 +8,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.enums import TradeSource, TradeStatus
 from app.core.utils import now_ist
+from app.models.signal import Signal
 from app.models.trade import Trade
 from app.schemas.trade import TradeCloseRequest, TradeResponse, TradeSummaryResponse
 from app.websocket.manager import ws_manager
 
 router = APIRouter()
+
+
+def _to_response(trade: Trade, signal: Signal | None) -> TradeResponse:
+    resp = TradeResponse.model_validate(trade)
+    if signal:
+        resp.signal_confidence = signal.confidence
+        resp.signal_ai_action = signal.ai_action
+        resp.signal_ai_summary = signal.ai_summary
+        resp.signal_instrument_type = signal.instrument_type
+        resp.signal_type = signal.signal_type
+    return resp
 
 
 @router.get("", response_model=list[TradeResponse])
@@ -23,11 +35,18 @@ async def list_trades(
     closed_since: datetime | None = None,
     entry_since: datetime | None = None,
     entry_until: datetime | None = None,
+    min_confidence: float | None = None,
+    max_confidence: float | None = None,
+    ai_action: str | None = None,
+    instrument_type: str | None = None,
+    signal_type: str | None = None,
+    min_lots: int | None = None,
+    max_lots: int | None = None,
     limit: int = Query(default=50, le=1000),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Trade)
+    query = select(Trade, Signal).outerjoin(Signal, Trade.signal_id == Signal.id)
     # Default: exclude shadow trades; pass source="SHADOW" to see only shadows
     if source:
         query = query.where(Trade.source == source)
@@ -37,6 +56,21 @@ async def list_trades(
         query = query.where(Trade.status == status)
     if strategy:
         query = query.where(Trade.strategy_name == strategy)
+    if min_lots is not None:
+        query = query.where(Trade.lots >= min_lots)
+    if max_lots is not None:
+        query = query.where(Trade.lots <= max_lots)
+    # Signal-level simulation filters (trades with no linked signal are excluded when these are set)
+    if min_confidence is not None:
+        query = query.where(Signal.confidence >= min_confidence)
+    if max_confidence is not None:
+        query = query.where(Signal.confidence <= max_confidence)
+    if ai_action:
+        query = query.where(Signal.ai_action == ai_action)
+    if instrument_type:
+        query = query.where(Signal.instrument_type == instrument_type)
+    if signal_type:
+        query = query.where(Signal.signal_type == signal_type)
     if closed_since is not None:
         query = query.where(Trade.exit_time >= closed_since)
         query = query.order_by(desc(Trade.exit_time))
@@ -48,7 +82,7 @@ async def list_trades(
         query = query.order_by(desc(Trade.entry_time))
     query = query.offset(offset).limit(limit)
     result = await db.execute(query)
-    return result.scalars().all()
+    return [_to_response(trade, signal) for trade, signal in result.all()]
 
 
 @router.get("/summary", response_model=TradeSummaryResponse)

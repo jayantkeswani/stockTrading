@@ -65,6 +65,12 @@ export interface Trade {
   exit_time: string | null;
   notes: string | null;
   created_at: string;
+  // Signal simulation fields (populated via JOIN when signal_id is linked)
+  signal_confidence: number | null;
+  signal_ai_action: string | null;
+  signal_ai_summary: string | null;
+  signal_instrument_type: string | null;
+  signal_type: string | null;
 }
 
 export interface Signal {

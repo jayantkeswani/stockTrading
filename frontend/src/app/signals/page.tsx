@@ -254,6 +254,7 @@ export default function SignalsPage() {
   const [loading, setLoading] = useState(true);
   const [hideInformational, setHideInformational] = useState(false);
   const [strategyFilter, setStrategyFilter] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     setLoading(true);
@@ -278,9 +279,11 @@ export default function SignalsPage() {
 
   const strategies = Array.from(new Set(signals.map(s => s.strategy_name))).sort();
 
+  const q = searchQuery.trim().toLowerCase();
   const displayed = signals.filter(s => {
     if (hideInformational && !s.executable && s.blocked_reason === "Outside trade window") return false;
     if (strategyFilter && s.strategy_name !== strategyFilter) return false;
+    if (q && !s.symbol.toLowerCase().includes(q) && !s.reason.toLowerCase().includes(q) && !(s.ai_summary?.toLowerCase().includes(q))) return false;
     return true;
   });
 
@@ -319,6 +322,23 @@ export default function SignalsPage() {
               ))}
             </div>
           )}
+          <div className="relative flex items-center">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="search symbol / reason…"
+              className="text-[10px] font-mono bg-bg-tertiary border border-border rounded px-2 py-px pr-5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 w-44"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-1 text-text-muted hover:text-text-primary text-[10px] font-mono leading-none"
+              >
+                ✕
+              </button>
+            )}
+          </div>
         </div>
         <label className="flex items-center gap-1.5 cursor-pointer select-none">
           <input

@@ -75,6 +75,15 @@ export const api = {
     limit?: number;
     entry_since?: string;
     entry_until?: string;
+    // Simulation filters (signal-level)
+    min_confidence?: number;
+    max_confidence?: number;
+    ai_action?: string;
+    instrument_type?: string;
+    signal_type?: string;
+    // Trade-level sizing filter
+    min_lots?: number;
+    max_lots?: number;
   }) => {
     const query = new URLSearchParams();
     if (params?.status) query.set("status", params.status);
@@ -83,6 +92,13 @@ export const api = {
     if (params?.limit) query.set("limit", params.limit.toString());
     if (params?.entry_since) query.set("entry_since", params.entry_since);
     if (params?.entry_until) query.set("entry_until", params.entry_until);
+    if (params?.min_confidence != null) query.set("min_confidence", params.min_confidence.toString());
+    if (params?.max_confidence != null) query.set("max_confidence", params.max_confidence.toString());
+    if (params?.ai_action) query.set("ai_action", params.ai_action);
+    if (params?.instrument_type) query.set("instrument_type", params.instrument_type);
+    if (params?.signal_type) query.set("signal_type", params.signal_type);
+    if (params?.min_lots != null) query.set("min_lots", params.min_lots.toString());
+    if (params?.max_lots != null) query.set("max_lots", params.max_lots.toString());
     return request(`/api/v1/trades?${query}`);
   },
   getClosedTradesToday: (source?: string) => {

@@ -180,16 +180,19 @@ class TestORBFormation:
 
 
 class TestORBBreakout:
-    def _setup_strategy_with_orb(self, orb_high=510, orb_low=490):
+    # ORB range ~1.6% at price ~500 — within default min_orb_range_pct (0.4%)
+    # and max_orb_range_pct (2.0%)
+    def _setup_strategy_with_orb(self, orb_high=504, orb_low=496):
         s = IntradayFuturesStrategy()
         s._orb_levels = {"TCS": {"high": orb_high, "low": orb_low}}
         return s
 
     def test_long_breakout(self):
-        s = self._setup_strategy_with_orb(510, 490)
-        # target = price + risk*1.5 = 515 + 25*1.5 = 552.5, R:R = 37.5/25 = 1.5 ✓
-        candles = [Candle(open=510, high=516, low=509, close=515, volume=150000)]
-        ctx = _make_ctx(price=515, vwap_val=505, candles_5m=candles, volume_avg_20d=7_500_000)
+        s = self._setup_strategy_with_orb()
+        # 5m candle close=507 > orb_high=504 → LONG breakout
+        # risk = 507 - 496 = 11, target = 507 + 11*1.5 = 523.5
+        candles = [Candle(open=504, high=508, low=503, close=507, volume=150000)]
+        ctx = _make_ctx(price=507, vwap_val=502, candles_5m=candles, volume_avg_20d=7_500_000)
         with patch(
             "app.strategies.strategy_5_intraday_futures.get_current_phase",
             return_value="MORNING_ACTIVE",
@@ -198,14 +201,16 @@ class TestORBBreakout:
         assert signal is not None
         assert signal.signal_type == SignalType.BUY_FUT
         assert signal.instrument_type == InstrumentType.FUTURE
-        assert signal.stop_loss == 490
-        assert signal.target_price == 515 + 25 * 1.5
+        assert signal.stop_loss == 496
+        assert signal.entry_price == 507
+        assert signal.target_price == 507 + 11 * 1.5
 
     def test_short_breakdown(self):
-        s = self._setup_strategy_with_orb(510, 490)
-        # risk = 510-485 = 25, target = 485 - 25*1.5 = 447.5, R:R = 1.5 ✓
-        candles = [Candle(open=490, high=491, low=484, close=485, volume=150000)]
-        ctx = _make_ctx(price=485, vwap_val=495, candles_5m=candles, volume_avg_20d=7_500_000)
+        s = self._setup_strategy_with_orb()
+        # 5m candle close=493 < orb_low=496 → SHORT breakdown
+        # risk = 504 - 493 = 11, target = 493 - 11*1.5 = 476.5
+        candles = [Candle(open=496, high=497, low=492, close=493, volume=150000)]
+        ctx = _make_ctx(price=493, vwap_val=498, candles_5m=candles, volume_avg_20d=7_500_000)
         with patch(
             "app.strategies.strategy_5_intraday_futures.get_current_phase",
             return_value="MORNING_ACTIVE",
@@ -213,12 +218,14 @@ class TestORBBreakout:
             signal = s.evaluate(ctx)
         assert signal is not None
         assert signal.signal_type == SignalType.SELL_FUT
-        assert signal.stop_loss == 510
-        assert signal.target_price == 485 - 25 * 1.5
+        assert signal.stop_loss == 504
+        assert signal.entry_price == 493
+        assert signal.target_price == 493 - 11 * 1.5
 
     def test_no_signal_inside_range(self):
-        s = self._setup_strategy_with_orb(510, 490)
-        ctx = _make_ctx(price=500, vwap_val=500)
+        s = self._setup_strategy_with_orb()
+        candles = [Candle(open=498, high=502, low=497, close=500, volume=100000)]
+        ctx = _make_ctx(price=500, vwap_val=500, candles_5m=candles)
         with patch(
             "app.strategies.strategy_5_intraday_futures.get_current_phase",
             return_value="MORNING_ACTIVE",
@@ -227,8 +234,9 @@ class TestORBBreakout:
         assert signal is None
 
     def test_no_signal_during_closing(self):
-        s = self._setup_strategy_with_orb(510, 490)
-        ctx = _make_ctx(price=515, vwap_val=505)
+        s = self._setup_strategy_with_orb()
+        candles = [Candle(open=504, high=508, low=503, close=507, volume=150000)]
+        ctx = _make_ctx(price=507, vwap_val=502, candles_5m=candles)
         with patch(
             "app.strategies.strategy_5_intraday_futures.get_current_phase",
             return_value="CLOSING",
@@ -237,8 +245,9 @@ class TestORBBreakout:
         assert signal is None
 
     def test_vwap_filter_blocks_long_below_vwap(self):
-        s = self._setup_strategy_with_orb(510, 490)
-        ctx = _make_ctx(price=515, vwap_val=520)  # price below VWAP
+        s = self._setup_strategy_with_orb()
+        candles = [Candle(open=504, high=508, low=503, close=507, volume=150000)]
+        ctx = _make_ctx(price=507, vwap_val=520, candles_5m=candles)  # price below VWAP
         with patch(
             "app.strategies.strategy_5_intraday_futures.get_current_phase",
             return_value="MORNING_ACTIVE",
@@ -247,13 +256,13 @@ class TestORBBreakout:
         assert signal is None
 
     def test_adr_filter_blocks_low_adr(self):
-        s = self._setup_strategy_with_orb(510, 490)
-        # Daily candles with zero range → ADR = 0
+        s = self._setup_strategy_with_orb()
+        candles = [Candle(open=504, high=508, low=503, close=507, volume=150000)]
         flat_candles = [
             Candle(open=500, high=500, low=500, close=500, volume=100000)
             for _ in range(25)
         ]
-        ctx = _make_ctx(price=515, vwap_val=505, candles_daily=flat_candles)
+        ctx = _make_ctx(price=507, vwap_val=502, candles_5m=candles, candles_daily=flat_candles)
         with patch(
             "app.strategies.strategy_5_intraday_futures.get_current_phase",
             return_value="MORNING_ACTIVE",
@@ -262,8 +271,11 @@ class TestORBBreakout:
         assert signal is None
 
     def test_price_filter_blocks_penny(self):
-        s = self._setup_strategy_with_orb(60, 40)
-        ctx = _make_ctx(price=65, vwap_val=55)
+        # ORB at 59-61 (~3.3% range on ~60 price — would also be blocked by range filter)
+        # Use range that passes range filter but fails price filter
+        s = self._setup_strategy_with_orb(60.5, 59.5)
+        candles = [Candle(open=60, high=61.5, low=60, close=61, volume=150000)]
+        ctx = _make_ctx(price=61, vwap_val=55, candles_5m=candles)
         with patch(
             "app.strategies.strategy_5_intraday_futures.get_current_phase",
             return_value="MORNING_ACTIVE",
@@ -272,20 +284,16 @@ class TestORBBreakout:
         assert signal is None
 
     def test_rr_check_blocks_zero_risk(self):
-        s = self._setup_strategy_with_orb(500, 500)  # zero ORB range
-        ctx = _make_ctx(price=501, vwap_val=499)
+        # Zero ORB range → rejected by min_orb_range_pct filter
+        s = self._setup_strategy_with_orb(500, 500)
+        candles = [Candle(open=500, high=502, low=499, close=501, volume=150000)]
+        ctx = _make_ctx(price=501, vwap_val=499, candles_5m=candles)
         with patch(
             "app.strategies.strategy_5_intraday_futures.get_current_phase",
             return_value="MORNING_ACTIVE",
         ):
             signal = s.evaluate(ctx)
-        # price == orb_high == orb_low → inside range check: 500 <= 501 <= 500 is False
-        # so breakout detected, but SL = orb_low = 500, risk = 1, reward = 1.5 → R:R = 1.5
-        # Actually this passes. Use a case where price is at the boundary.
-        # With equal ORB boundaries, the breakout condition (price > orb_high) triggers,
-        # so the real guard is risk <= 0. That happens if price == stop_loss.
-        # Test with no candles_5m for the volume check path
-        assert signal is not None or signal is None  # allowed either way
+        assert signal is None  # blocked by ORB range validation
 
     def test_no_signal_without_orb_levels(self):
         s = IntradayFuturesStrategy()  # no _orb_levels set
@@ -380,7 +388,7 @@ class TestPositionSizing:
 class TestConfidence:
     def _max_params(self):
         bias = MagicMock()
-        bias.strength = "STRONG"
+        bias.score = 0.8  # strongly bullish — aligns with is_long=True default
         return {
             "_nifty_bias": bias,
             "_screener_score": 90,
@@ -388,7 +396,7 @@ class TestConfidence:
             "_gap_direction": "UP",
             "_relative_gap_pct": 2.0,
             "_stock_trend_score": 0.5,
-            "_oi_direction": "building",
+            "_oi_direction": "long_buildup",
             "_oi_change_pct": 20.0,
         }
 
@@ -918,17 +926,17 @@ class TestCautionZoneConfirmation:
 class TestStockTrendFilter:
     """Tests for stock trend direction filtering across sub-setups."""
 
-    def _setup_strategy_with_orb(self, orb_high=510, orb_low=490):
+    def _setup_strategy_with_orb(self, orb_high=504, orb_low=496):
         s = IntradayFuturesStrategy()
         s._orb_levels = {"TCS": {"high": orb_high, "low": orb_low}}
         return s
 
     def test_strong_bearish_blocks_long(self):
         """STRONG BEARISH trend should block a LONG ORB breakout."""
-        s = self._setup_strategy_with_orb(510, 490)
-        candles = [Candle(open=510, high=516, low=509, close=515, volume=150000)]
+        s = self._setup_strategy_with_orb()
+        candles = [Candle(open=504, high=508, low=503, close=507, volume=150000)]
         ctx = _make_ctx(
-            price=515, vwap_val=505, candles_5m=candles, volume_avg_20d=7_500_000,
+            price=507, vwap_val=502, candles_5m=candles, volume_avg_20d=7_500_000,
             params={"_stock_trend_strength": "STRONG", "_stock_bias": "BEARISH"},
         )
         with patch(
@@ -940,10 +948,10 @@ class TestStockTrendFilter:
 
     def test_strong_bullish_blocks_short(self):
         """STRONG BULLISH trend should block a SHORT ORB breakdown."""
-        s = self._setup_strategy_with_orb(510, 490)
-        candles = [Candle(open=490, high=491, low=484, close=485, volume=150000)]
+        s = self._setup_strategy_with_orb()
+        candles = [Candle(open=496, high=497, low=492, close=493, volume=150000)]
         ctx = _make_ctx(
-            price=485, vwap_val=495, candles_5m=candles, volume_avg_20d=7_500_000,
+            price=493, vwap_val=498, candles_5m=candles, volume_avg_20d=7_500_000,
             params={"_stock_trend_strength": "STRONG", "_stock_bias": "BULLISH"},
         )
         with patch(
@@ -955,10 +963,10 @@ class TestStockTrendFilter:
 
     def test_moderate_allows_with_risk_warning(self):
         """MODERATE opposing trend should allow signal but add risk_warning."""
-        s = self._setup_strategy_with_orb(510, 490)
-        candles = [Candle(open=510, high=516, low=509, close=515, volume=150000)]
+        s = self._setup_strategy_with_orb()
+        candles = [Candle(open=504, high=508, low=503, close=507, volume=150000)]
         ctx = _make_ctx(
-            price=515, vwap_val=505, candles_5m=candles, volume_avg_20d=7_500_000,
+            price=507, vwap_val=502, candles_5m=candles, volume_avg_20d=7_500_000,
             params={"_stock_trend_strength": "MODERATE", "_stock_bias": "BEARISH"},
         )
         with patch(
@@ -971,10 +979,10 @@ class TestStockTrendFilter:
 
     def test_neutral_does_not_filter(self):
         """NEUTRAL trend should not filter any direction."""
-        s = self._setup_strategy_with_orb(510, 490)
-        candles = [Candle(open=510, high=516, low=509, close=515, volume=150000)]
+        s = self._setup_strategy_with_orb()
+        candles = [Candle(open=504, high=508, low=503, close=507, volume=150000)]
         ctx = _make_ctx(
-            price=515, vwap_val=505, candles_5m=candles, volume_avg_20d=7_500_000,
+            price=507, vwap_val=502, candles_5m=candles, volume_avg_20d=7_500_000,
             params={"_stock_trend_strength": "WEAK", "_stock_bias": "NEUTRAL"},
         )
         with patch(
@@ -986,10 +994,10 @@ class TestStockTrendFilter:
 
     def test_no_trend_data_does_not_filter(self):
         """Missing trend data should not block signals."""
-        s = self._setup_strategy_with_orb(510, 490)
-        candles = [Candle(open=510, high=516, low=509, close=515, volume=150000)]
+        s = self._setup_strategy_with_orb()
+        candles = [Candle(open=504, high=508, low=503, close=507, volume=150000)]
         ctx = _make_ctx(
-            price=515, vwap_val=505, candles_5m=candles, volume_avg_20d=7_500_000,
+            price=507, vwap_val=502, candles_5m=candles, volume_avg_20d=7_500_000,
             params={},
         )
         with patch(
@@ -1001,10 +1009,10 @@ class TestStockTrendFilter:
 
     def test_strong_trend_aligned_allows(self):
         """STRONG BULLISH trend should allow LONG signals."""
-        s = self._setup_strategy_with_orb(510, 490)
-        candles = [Candle(open=510, high=516, low=509, close=515, volume=150000)]
+        s = self._setup_strategy_with_orb()
+        candles = [Candle(open=504, high=508, low=503, close=507, volume=150000)]
         ctx = _make_ctx(
-            price=515, vwap_val=505, candles_5m=candles, volume_avg_20d=7_500_000,
+            price=507, vwap_val=502, candles_5m=candles, volume_avg_20d=7_500_000,
             params={"_stock_trend_strength": "STRONG", "_stock_bias": "BULLISH"},
         )
         with patch(
@@ -1021,7 +1029,7 @@ class TestStockTrendConfidence:
 
     def _base_params(self):
         bias = MagicMock()
-        bias.strength = "STRONG"
+        bias.score = 0.8
         return {
             "_nifty_bias": bias,
             "_screener_score": 90,
@@ -1067,3 +1075,283 @@ class TestStockTrendConfidence:
         ctx = _make_ctx(candles_5m=candles, params=params)
         conf = s._compute_confidence(ctx, "MORNING_ACTIVE", ctx.strategy_params, "ORB", rvol=3.0, is_long=True)
         assert 0 <= conf <= 100
+
+
+# ── Fix-specific tests: ORB 5-min candle close confirmation ─────────────
+
+class TestORB5mCandleClose:
+    """ORB breakout uses 5m candle close, not ctx.current_price."""
+
+    def _setup(self, orb_high=504, orb_low=496):
+        s = IntradayFuturesStrategy()
+        s._orb_levels = {"TCS": {"high": orb_high, "low": orb_low}}
+        return s
+
+    def test_live_tick_above_but_candle_close_inside_no_signal(self):
+        """Live tick (current_price) above ORB high, but 5m candle close is inside range — no signal."""
+        s = self._setup()
+        candles = [Candle(open=500, high=507, low=499, close=502, volume=150000)]
+        ctx = _make_ctx(price=507, vwap_val=502, candles_5m=candles, volume_avg_20d=7_500_000)
+        with patch(
+            "app.strategies.strategy_5_intraday_futures.get_current_phase",
+            return_value="MORNING_ACTIVE",
+        ), patch("app.core.utils.now_ist", return_value=datetime(2026, 4, 28, 9, 45)):
+            signal = s.evaluate(ctx)
+        assert signal is None
+
+    def test_candle_close_above_orb_high_signals(self):
+        """5m candle close above ORB high → signal, even if live price retraced."""
+        s = self._setup()
+        candles = [Candle(open=503, high=509, low=502, close=506, volume=150000)]
+        ctx = _make_ctx(price=505, vwap_val=502, candles_5m=candles, volume_avg_20d=7_500_000)
+        with patch(
+            "app.strategies.strategy_5_intraday_futures.get_current_phase",
+            return_value="MORNING_ACTIVE",
+        ), patch("app.core.utils.now_ist", return_value=datetime(2026, 4, 28, 9, 45)):
+            signal = s.evaluate(ctx)
+        assert signal is not None
+        assert signal.signal_type == SignalType.BUY_FUT
+        assert signal.entry_price == 506  # candle close, not ctx.current_price
+
+    def test_entry_price_is_candle_close_not_live_tick(self):
+        """Entry price must equal the confirmed 5m candle close."""
+        s = self._setup()
+        candles = [Candle(open=497, high=498, low=490, close=493, volume=150000)]
+        ctx = _make_ctx(price=491, vwap_val=498, candles_5m=candles, volume_avg_20d=7_500_000)
+        with patch(
+            "app.strategies.strategy_5_intraday_futures.get_current_phase",
+            return_value="MORNING_ACTIVE",
+        ), patch("app.core.utils.now_ist", return_value=datetime(2026, 4, 28, 9, 45)):
+            signal = s.evaluate(ctx)
+        assert signal is not None
+        assert signal.entry_price == 493  # candle close
+        assert signal.entry_price != 491  # not live tick
+
+    def test_no_candles_5m_returns_none(self):
+        """No 5m candles available → cannot confirm breakout."""
+        s = self._setup()
+        ctx = _make_ctx(price=507, vwap_val=502, candles_5m=[], volume_avg_20d=7_500_000)
+        with patch(
+            "app.strategies.strategy_5_intraday_futures.get_current_phase",
+            return_value="MORNING_ACTIVE",
+        ), patch("app.core.utils.now_ist", return_value=datetime(2026, 4, 28, 9, 45)):
+            signal = s.evaluate(ctx)
+        assert signal is None
+
+
+# ── Fix-specific tests: ORB range validation ────────────────────────────
+
+class TestORBRangeValidation:
+    """ORB range filter rejects ranges below min_orb_range_pct or above max_orb_range_pct."""
+
+    def _setup(self, orb_high, orb_low):
+        s = IntradayFuturesStrategy()
+        s._orb_levels = {"TCS": {"high": orb_high, "low": orb_low}}
+        return s
+
+    def test_range_too_narrow_rejected(self):
+        """ORB range 0.2% < min 0.4% → no signal."""
+        # 501/500 on a ~501 price = 0.2%
+        s = self._setup(501, 500)
+        candles = [Candle(open=501, high=503, low=500, close=502, volume=150000)]
+        ctx = _make_ctx(price=502, vwap_val=499, candles_5m=candles, volume_avg_20d=7_500_000)
+        with patch(
+            "app.strategies.strategy_5_intraday_futures.get_current_phase",
+            return_value="MORNING_ACTIVE",
+        ), patch("app.core.utils.now_ist", return_value=datetime(2026, 4, 28, 9, 45)):
+            signal = s.evaluate(ctx)
+        assert signal is None
+
+    def test_range_too_wide_rejected(self):
+        """ORB range 4% > max 2% → no signal."""
+        # 520/500 on ~525 price = 3.8%
+        s = self._setup(520, 500)
+        candles = [Candle(open=520, high=530, low=519, close=525, volume=150000)]
+        ctx = _make_ctx(price=525, vwap_val=515, candles_5m=candles, volume_avg_20d=7_500_000)
+        with patch(
+            "app.strategies.strategy_5_intraday_futures.get_current_phase",
+            return_value="MORNING_ACTIVE",
+        ), patch("app.core.utils.now_ist", return_value=datetime(2026, 4, 28, 9, 45)):
+            signal = s.evaluate(ctx)
+        assert signal is None
+
+    def test_range_within_bounds_passes(self):
+        """ORB range comfortably within min/max bounds should not be blocked by range filter."""
+        # 503/497 on ~504 price = ~1.19% — well within 0.4%-2.0%
+        s = self._setup(503, 497)
+        candles = [Candle(open=503, high=506, low=502, close=505, volume=150000)]
+        ctx = _make_ctx(price=505, vwap_val=501, candles_5m=candles, volume_avg_20d=7_500_000)
+        with patch(
+            "app.strategies.strategy_5_intraday_futures.get_current_phase",
+            return_value="MORNING_ACTIVE",
+        ), patch("app.core.utils.now_ist", return_value=datetime(2026, 4, 28, 9, 45)):
+            signal = s.evaluate(ctx)
+        assert signal is not None
+        assert signal.signal_type == SignalType.BUY_FUT
+
+    def test_custom_range_params_respected(self):
+        """Custom min/max range from strategy params overrides defaults."""
+        # 506/494 = 2.4% range on ~507 — normally blocked by default max (2.0%)
+        s = self._setup(506, 494)
+        candles = [Candle(open=506, high=510, low=505, close=508, volume=150000)]
+        params = {"max_orb_range_pct": 3.0, "min_orb_range_pct": 0.2}
+        ctx = _make_ctx(price=508, vwap_val=502, candles_5m=candles,
+                        volume_avg_20d=7_500_000, params=params)
+        with patch(
+            "app.strategies.strategy_5_intraday_futures.get_current_phase",
+            return_value="MORNING_ACTIVE",
+        ), patch("app.core.utils.now_ist", return_value=datetime(2026, 4, 28, 9, 45)):
+            signal = s.evaluate(ctx)
+        assert signal is not None
+        assert signal.signal_type == SignalType.BUY_FUT
+
+
+# ── Fix-specific tests: Direction-aware Nifty bias confidence factor ────
+
+class TestBiasDirectionAwareConfidence:
+    """Nifty bias confidence factor uses score-based direction alignment."""
+
+    def _base_params(self, bias_score):
+        bias = MagicMock()
+        bias.score = bias_score
+        return {
+            "_nifty_bias": bias,
+            "_screener_score": 80,
+            "rvol_threshold": 1.5,
+        }
+
+    def test_bullish_bias_helps_long(self):
+        """Positive bias score should give higher bias_factor for LONG."""
+        s = IntradayFuturesStrategy()
+        candles = [Candle(open=500, high=510, low=495, close=505, volume=200000)] * 10
+        indicators: dict = {}
+        params = self._base_params(0.8)
+        ctx = _make_ctx(candles_5m=candles, params=params)
+        s._compute_confidence(ctx, "MORNING_ACTIVE", ctx.strategy_params, "ORB",
+                              rvol=3.0, is_long=True, indicators=indicators)
+        assert indicators["confidence_factors"]["bias_factor"] == round((0.8 + 1.0) / 2.0, 3)
+
+    def test_bullish_bias_hurts_short(self):
+        """Positive bias score should give lower bias_factor for SHORT."""
+        s = IntradayFuturesStrategy()
+        candles = [Candle(open=500, high=510, low=495, close=505, volume=200000)] * 10
+        indicators: dict = {}
+        params = self._base_params(0.8)
+        ctx = _make_ctx(candles_5m=candles, params=params)
+        s._compute_confidence(ctx, "MORNING_ACTIVE", ctx.strategy_params, "ORB",
+                              rvol=3.0, is_long=False, indicators=indicators)
+        # alignment = -0.8 for SHORT → factor = (-0.8 + 1.0) / 2.0 = 0.1
+        assert indicators["confidence_factors"]["bias_factor"] == round((-0.8 + 1.0) / 2.0, 3)
+
+    def test_bearish_bias_helps_short(self):
+        """Negative bias score should give higher bias_factor for SHORT."""
+        s = IntradayFuturesStrategy()
+        candles = [Candle(open=500, high=510, low=495, close=505, volume=200000)] * 10
+        indicators: dict = {}
+        params = self._base_params(-0.7)
+        ctx = _make_ctx(candles_5m=candles, params=params)
+        s._compute_confidence(ctx, "MORNING_ACTIVE", ctx.strategy_params, "ORB",
+                              rvol=3.0, is_long=False, indicators=indicators)
+        # alignment = -(-0.7) = 0.7 for SHORT → factor = (0.7 + 1.0) / 2.0 = 0.85
+        assert indicators["confidence_factors"]["bias_factor"] == round((0.7 + 1.0) / 2.0, 3)
+
+    def test_neutral_bias_gives_half(self):
+        """Zero bias score → factor = 0.5 for either direction."""
+        s = IntradayFuturesStrategy()
+        candles = [Candle(open=500, high=510, low=495, close=505, volume=200000)] * 10
+        indicators: dict = {}
+        params = self._base_params(0.0)
+        ctx = _make_ctx(candles_5m=candles, params=params)
+        s._compute_confidence(ctx, "MORNING_ACTIVE", ctx.strategy_params, "ORB",
+                              rvol=3.0, is_long=True, indicators=indicators)
+        assert indicators["confidence_factors"]["bias_factor"] == 0.5
+
+    def test_missing_bias_gives_zero(self):
+        """No bias object → factor = 0.0 (missing data penalty)."""
+        s = IntradayFuturesStrategy()
+        candles = [Candle(open=500, high=510, low=495, close=505, volume=200000)] * 10
+        indicators: dict = {}
+        params = {"_screener_score": 80, "rvol_threshold": 1.5}
+        ctx = _make_ctx(candles_5m=candles, params=params)
+        s._compute_confidence(ctx, "MORNING_ACTIVE", ctx.strategy_params, "ORB",
+                              rvol=3.0, is_long=True, indicators=indicators)
+        assert indicators["confidence_factors"]["bias_factor"] == 0.0
+
+
+# ── Fix-specific tests: 4-way OI direction confidence factor ────────────
+
+class TestOIDirectionAwareConfidence:
+    """OI confidence factor uses 4-way classification: long_buildup, short_buildup,
+    short_covering, long_unwinding — direction-aware scoring."""
+
+    def _base_params(self, oi_direction, oi_change_pct=5.0):
+        bias = MagicMock()
+        bias.score = 0.5
+        return {
+            "_nifty_bias": bias,
+            "_screener_score": 80,
+            "rvol_threshold": 1.5,
+            "_oi_direction": oi_direction,
+            "_oi_change_pct": oi_change_pct,
+        }
+
+    def _get_oi_factor(self, oi_direction, is_long, oi_change_pct=5.0):
+        s = IntradayFuturesStrategy()
+        candles = [Candle(open=500, high=510, low=495, close=505, volume=200000)] * 10
+        indicators: dict = {}
+        params = self._base_params(oi_direction, oi_change_pct)
+        ctx = _make_ctx(candles_5m=candles, params=params)
+        s._compute_confidence(ctx, "MORNING_ACTIVE", ctx.strategy_params, "ORB",
+                              rvol=3.0, is_long=is_long, indicators=indicators)
+        return indicators["confidence_factors"]["oi_factor"]
+
+    def test_long_buildup_helps_long(self):
+        factor = self._get_oi_factor("long_buildup", is_long=True)
+        assert factor > 0.6
+
+    def test_long_buildup_hurts_short(self):
+        factor = self._get_oi_factor("long_buildup", is_long=False)
+        assert factor < 0.5
+
+    def test_short_buildup_helps_short(self):
+        factor = self._get_oi_factor("short_buildup", is_long=False)
+        assert factor > 0.6
+
+    def test_short_buildup_hurts_long(self):
+        factor = self._get_oi_factor("short_buildup", is_long=True)
+        assert factor < 0.5
+
+    def test_short_covering_mildly_bullish(self):
+        factor_long = self._get_oi_factor("short_covering", is_long=True)
+        factor_short = self._get_oi_factor("short_covering", is_long=False)
+        assert factor_long == 0.6
+        assert factor_short == 0.4
+
+    def test_long_unwinding_mildly_bearish(self):
+        factor_long = self._get_oi_factor("long_unwinding", is_long=True)
+        factor_short = self._get_oi_factor("long_unwinding", is_long=False)
+        assert factor_long == 0.4
+        assert factor_short == 0.6
+
+    def test_flat_is_neutral(self):
+        factor = self._get_oi_factor("flat", is_long=True)
+        assert factor == 0.5
+
+    def test_missing_oi_penalised(self):
+        """No OI data → factor = 0.2 (missing data penalty, not neutral 0.5)."""
+        s = IntradayFuturesStrategy()
+        candles = [Candle(open=500, high=510, low=495, close=505, volume=200000)] * 10
+        indicators: dict = {}
+        bias = MagicMock()
+        bias.score = 0.5
+        params = {"_nifty_bias": bias, "_screener_score": 80, "rvol_threshold": 1.5}
+        ctx = _make_ctx(candles_5m=candles, params=params)
+        s._compute_confidence(ctx, "MORNING_ACTIVE", ctx.strategy_params, "ORB",
+                              rvol=3.0, is_long=True, indicators=indicators)
+        assert indicators["confidence_factors"]["oi_factor"] == 0.2
+
+    def test_higher_oi_change_boosts_buildup_factor(self):
+        """Larger OI change % should increase the raw factor for buildup types."""
+        small = self._get_oi_factor("long_buildup", is_long=True, oi_change_pct=2.0)
+        large = self._get_oi_factor("long_buildup", is_long=True, oi_change_pct=15.0)
+        assert large > small

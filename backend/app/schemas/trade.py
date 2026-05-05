@@ -30,6 +30,12 @@ class TradeResponse(BaseModel):
     exit_time: datetime | None = None
     notes: str | None = None
     created_at: datetime
+    # Signal simulation fields (populated via LEFT JOIN on signal_id)
+    signal_confidence: Decimal | None = None
+    signal_ai_action: str | None = None
+    signal_ai_summary: str | None = None
+    signal_instrument_type: str | None = None
+    signal_type: str | None = None
 
     model_config = {"from_attributes": True}
 

@@ -8,9 +8,19 @@ interface Props {
   trades: Trade[];
   loading: boolean;
   showSource?: boolean;
+  showSignalData?: boolean;
+  simLots?: number | null;
 }
 
-export function TradesTable({ trades, loading, showSource = false }: Props) {
+function confidenceColor(conf: number | null): string {
+  if (conf == null) return "text-text-muted";
+  if (conf >= 80) return "text-profit";
+  if (conf >= 70) return "text-accent";
+  if (conf >= 50) return "text-text-secondary";
+  return "text-loss";
+}
+
+export function TradesTable({ trades, loading, showSource = false, showSignalData = false, simLots = null }: Props) {
   if (loading) {
     return (
       <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
@@ -35,8 +45,14 @@ export function TradesTable({ trades, loading, showSource = false }: Props) {
             <th className="text-left px-3 py-1.5">Type</th>
             <th className="text-right px-3 py-1.5">Entry</th>
             <th className="text-right px-3 py-1.5">Exit</th>
-            <th className="text-right px-3 py-1.5">P&amp;L</th>
+            <th className="text-right px-3 py-1.5">
+              P&amp;L{simLots != null && (
+                <span className="normal-case font-normal text-accent/60 ml-1">sim {simLots}L</span>
+              )}
+            </th>
             <th className="text-left px-3 py-1.5">Strategy</th>
+            {showSignalData && <th className="text-right px-3 py-1.5">Conf</th>}
+            {showSignalData && <th className="text-left px-3 py-1.5">AI</th>}
             <th className="text-left px-3 py-1.5">Exit Reason</th>
             <th className="text-left px-3 py-1.5">Status</th>
           </tr>
@@ -81,6 +97,28 @@ export function TradesTable({ trades, loading, showSource = false }: Props) {
                   {STRATEGY_LABELS[trade.strategy_name] || trade.strategy_name}
                 </span>
               </td>
+              {showSignalData && (
+                <td className={`px-3 py-1.5 text-right font-mono text-xs ${confidenceColor(trade.signal_confidence)}`}>
+                  {trade.signal_confidence != null ? Math.round(Number(trade.signal_confidence)) : "—"}
+                </td>
+              )}
+              {showSignalData && (
+                <td className="px-3 py-1.5">
+                  {trade.signal_ai_action ? (
+                    <span className={`text-[9px] font-mono px-1 py-px rounded ${
+                      trade.signal_ai_action === "PROCEED"
+                        ? "bg-profit/10 text-profit"
+                        : trade.signal_ai_action === "SKIP"
+                        ? "bg-loss/10 text-loss"
+                        : "bg-warning/10 text-warning"
+                    }`}>
+                      {trade.signal_ai_action}
+                    </span>
+                  ) : (
+                    <span className="text-text-muted text-xs font-mono">—</span>
+                  )}
+                </td>
+              )}
               <td className="px-3 py-1.5 text-xs font-mono text-text-muted">
                 {trade.exit_reason || "—"}
               </td>

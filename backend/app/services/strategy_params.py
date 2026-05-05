@@ -71,6 +71,8 @@ INTRADAY_FUTURES_DEFAULTS: dict = {
     "rvol_caution_zone_threshold": 2.5,
     "enabled_setups": ["ORB", "VWAP_BOUNCE", "PDH_PDL", "GAP_CONTINUATION"],
     "min_adr": 1.5,
+    "min_orb_range_pct": 0.4,
+    "max_orb_range_pct": 2.0,
 }
 
 _STRATEGY_DEFAULTS: dict[str, dict] = {

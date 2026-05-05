@@ -103,6 +103,25 @@ interface AppState {
   intradayBias: { symbol: string; bias: string; strength: string; score: number; updated_at: string } | null;
   setIntradayBias: (bias: { symbol: string; bias: string; strength: string; score: number; updated_at: string }) => void;
 
+  // Trades page filters (persisted across navigation)
+  tradesPeriodLabel: string;
+  tradesPeriodStart: string;
+  tradesPeriodEnd: string;
+  tradesStrategy: string;
+  tradesSimOpen: boolean;
+  tradesSim: {
+    min_confidence: number;
+    ai_action: string;
+    instrument_type: string;
+    signal_types: string[];
+    sim_lots: number | null;
+  };
+  setTradesPeriod: (label: string, start: Date, end: Date) => void;
+  setTradesStrategy: (strategy: string) => void;
+  setTradesSimOpen: (open: boolean) => void;
+  setTradesSim: (updates: Partial<AppState["tradesSim"]>) => void;
+  resetTradesSim: () => void;
+
   // UI
   selectedSymbol: string;
   setSelectedSymbol: (symbol: string) => void;
@@ -266,6 +285,19 @@ export const useStore = create<AppState>()(
       intradayBias: null,
       setIntradayBias: (bias) => set({ intradayBias: bias }),
 
+      // Trades page filters
+      tradesPeriodLabel: "Last 30D",
+      tradesPeriodStart: "",
+      tradesPeriodEnd: "",
+      tradesStrategy: "",
+      tradesSimOpen: false,
+      tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null },
+      setTradesPeriod: (label, start, end) => set({ tradesPeriodLabel: label, tradesPeriodStart: start.toISOString(), tradesPeriodEnd: end.toISOString() }),
+      setTradesStrategy: (strategy) => set({ tradesStrategy: strategy }),
+      setTradesSimOpen: (open) => set({ tradesSimOpen: open }),
+      setTradesSim: (updates) => set((state) => ({ tradesSim: { ...state.tradesSim, ...updates } })),
+      resetTradesSim: () => set({ tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null } }),
+
       selectedSymbol: "NIFTY",
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
       activeTimeframe: "5m",
@@ -274,7 +306,17 @@ export const useStore = create<AppState>()(
     {
       name: "scan-logs-storage",
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ scanLogs: state.scanLogs, activeTimeframe: state.activeTimeframe, positionViewMode: state.positionViewMode }),
+      partialize: (state) => ({
+        scanLogs: state.scanLogs,
+        activeTimeframe: state.activeTimeframe,
+        positionViewMode: state.positionViewMode,
+        tradesPeriodLabel: state.tradesPeriodLabel,
+        tradesPeriodStart: state.tradesPeriodStart,
+        tradesPeriodEnd: state.tradesPeriodEnd,
+        tradesStrategy: state.tradesStrategy,
+        tradesSimOpen: state.tradesSimOpen,
+        tradesSim: state.tradesSim,
+      }),
     }
   )
 );
