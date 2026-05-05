@@ -187,7 +187,7 @@ export const useStore = create<AppState>()(
       agentLogs: [],
       setAgentLogs: (logs) => set({ agentLogs: logs }),
       addAgentLog: (log) =>
-        set((state) => ({ agentLogs: [log, ...state.agentLogs] })),
+        set((state) => ({ agentLogs: [log, ...state.agentLogs].slice(0, 200) })),
 
       // WebSocket
       wsConnected: false,

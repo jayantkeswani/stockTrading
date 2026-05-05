@@ -614,6 +614,12 @@ class IntradayFuturesStrategy(BaseStrategy):
             self._skip(ctx.symbol, f"PDH/PDL SL sanity fail: SL {stop_loss:.2f} <= entry {price:.2f}")
             return None
 
+        # Fallback target: if measured move gives R:R < 1.5, use risk × 1.5.
+        # SHORT signals anchored to pdl + sl_buffer often have wide risk vs a narrow
+        # measured move, so the fallback ensures the signal isn't silently dropped.
+        if risk > 0 and abs(target - price) / risk < 1.5:
+            target = price + risk * 1.5 if is_long else price - risk * 1.5
+
         # R:R check
         reward = abs(target - price)
         if risk <= 0 or reward / risk < 1.5:

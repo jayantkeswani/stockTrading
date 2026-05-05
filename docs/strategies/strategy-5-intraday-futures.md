@@ -231,9 +231,10 @@ If the same stock triggers multiple setups, take the highest-priority one only.
 - **VWAP alignment:** Price must be on the correct side of VWAP
 
 **SL/Target:**
-- **SL:** Below breakout level by `max(0.5%, 0.5 x ATR(14))` buffer
-- **Target:** Measured move = (PDH - PDL) range projected from breakout point. If R:R < 1.5, look for next structure level. Skip if no valid target
-- **R:R validation:** Must be >= 1.5
+- **SL (long):** Below PDH by `max(0.5%, 0.5 × ATR(14))` — exits if price falls back below the breakout level
+- **SL (short):** Above PDL by `max(0.5%, 0.5 × ATR(14))` — exits if price bounces back above the breakdown level
+- **Target:** Measured move = (PDH − PDL) projected from breakout point. If measured move gives R:R < 1.5 (common for shorts where SL-to-PDL distance is wide), falls back to `entry ± risk × 1.5` to guarantee minimum R:R
+- **R:R validation:** Must be >= 1.5 after fallback
 
 ### Setup 4: Gap Continuation
 

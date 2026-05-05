@@ -69,7 +69,7 @@ export function AgentFeed() {
                   <span
                     className={`text-xs font-mono font-medium shrink-0 ${ACTION_COLORS[log.action_type] || "text-text-secondary"}`}
                   >
-                    {log.action_type.replace(/_/g, " ")}
+                    {(log.action_type ?? "UNKNOWN").replace(/_/g, " ")}
                   </span>
                   {symbol && (
                     <span className="text-xs font-mono text-text-primary">{symbol}</span>

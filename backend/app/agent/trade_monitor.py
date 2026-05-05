@@ -289,9 +289,14 @@ async def _close_position(
         # EXPIRY_ROLL close notification is handled by _roll_futures_position
 
     action = {
+        "id": str(log.id),
         "action_type": action_type.value,
-        "symbol": pos.symbol,
-        "pnl": pnl_val,
+        "trade_id": str(pos.trade_id) if pos.trade_id else None,
+        "details": log.details,
+        "requires_confirmation": False,
+        "confirmation_status": None,
+        "confirmed_at": None,
+        "created_at": now_ist().isoformat(),
     }
     logger.info("Position closed: %s", action)
     return action
@@ -354,9 +359,14 @@ async def _request_profit_confirmation(
     )
 
     return {
+        "id": str(log.id),
         "action_type": AgentActionType.PROFIT_BOOK_REQUEST.value,
-        "symbol": pos.symbol,
-        "log_id": str(log.id),
+        "trade_id": str(pos.trade_id) if pos.trade_id else None,
+        "details": log.details,
+        "requires_confirmation": True,
+        "confirmation_status": ConfirmationStatus.PENDING.value,
+        "confirmed_at": None,
+        "created_at": now_ist().isoformat(),
     }
 
 

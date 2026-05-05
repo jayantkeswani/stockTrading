@@ -291,12 +291,12 @@ function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, isS
                     {pos.option_type}
                   </span>
                 )}
-                {compact && (
+                {compact && !isFutures && (
                   <span className="ml-1 text-[10px] text-text-muted font-mono">{pos.strike_price}</span>
                 )}
               </td>
               {!compact && (
-                <td className="px-3 py-1.5 font-mono text-text-secondary">{pos.strike_price}</td>
+                <td className="px-3 py-1.5 font-mono text-text-secondary">{isFutures ? "—" : pos.strike_price}</td>
               )}
               <td className="px-3 py-1.5 text-right font-mono">{formatINR(pos.entry_price)}</td>
               <td className="px-3 py-1.5 text-right font-mono">

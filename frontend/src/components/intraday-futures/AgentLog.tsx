@@ -115,14 +115,14 @@ export function AgentLog({ date }: { date: string | null }) {
           <div className="divide-y divide-border/30">
             {filtered.map((entry, i) => (
               <div key={i} className="px-3 py-1.5 hover:bg-bg-tertiary">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-text-muted shrink-0">
+                <div className="flex items-start gap-2">
+                  <span className="text-[10px] font-mono text-text-muted shrink-0 pt-px">
                     {formatTime(entry.timestamp)}
                   </span>
                   <span className={`text-[10px] font-mono px-1 py-px rounded shrink-0 ${CATEGORY_COLORS[entry.category] || "bg-bg-tertiary text-text-muted"}`}>
                     {entry.category}
                   </span>
-                  <span className="text-xs font-mono text-text-secondary truncate">
+                  <span className="text-xs font-mono text-text-secondary break-all">
                     {entry.message}
                   </span>
                 </div>
