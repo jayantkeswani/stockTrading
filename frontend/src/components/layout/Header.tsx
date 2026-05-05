@@ -7,6 +7,30 @@ import type { MarketStatus } from "@/lib/types";
 import { AgentPopup } from "./AgentPopup";
 import { TasksPopup } from "./TasksPopup";
 
+function BiasIndicator() {
+  const { intradayBias } = useStore();
+  if (!intradayBias) return null;
+
+  const staleMs = Date.now() - new Date(intradayBias.updated_at).getTime();
+  const isStale = staleMs > 5 * 60 * 1000;
+
+  const colorClass =
+    intradayBias.bias === "BULLISH"
+      ? "text-profit"
+      : intradayBias.bias === "BEARISH"
+      ? "text-loss"
+      : "text-text-muted";
+
+  return (
+    <span className={`text-[10px] font-mono flex items-center gap-1 ${isStale ? "opacity-40" : ""}`}>
+      <span className={colorClass}>
+        {intradayBias.bias} {intradayBias.strength}
+      </span>
+      {isStale && <span className="text-text-muted/50">~</span>}
+    </span>
+  );
+}
+
 export function Header() {
   const { wsConnected, marketStatus, setMarketStatus, setAgentStatus, updatePrice } = useStore();
   const [time, setTime] = useState("");
@@ -82,6 +106,7 @@ export function Header() {
         {marketStatus?.in_dead_zone && (
           <span className="text-xs font-mono text-warning">DEAD ZONE</span>
         )}
+        <BiasIndicator />
       </div>
 
       <div className="flex items-center gap-3">

@@ -23,6 +23,7 @@ export function useWebSocket() {
     startResearchSession,
     updateResearchAgent,
     completeResearch,
+    setIntradayBias,
   } = useStore();
 
   const connect = useCallback(() => {
@@ -152,6 +153,11 @@ export function useWebSocket() {
         case "research:failed":
           completeResearch(msg.data.report_id as string, "failed");
           break;
+        case "market:bias_update":
+          if (msg.data.symbol === "NIFTY") {
+            setIntradayBias(msg.data as never);
+          }
+          break;
       }
     },
     [
@@ -166,6 +172,7 @@ export function useWebSocket() {
       startResearchSession,
       updateResearchAgent,
       completeResearch,
+      setIntradayBias,
     ]
   );
 

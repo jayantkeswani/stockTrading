@@ -99,6 +99,10 @@ interface AppState {
   addWatchlistItem: (item: { symbol: string; display: string; segment: string }) => void;
   removeWatchlistItem: (symbol: string) => void;
 
+  // Intraday bias (NIFTY market direction, broadcast via WS)
+  intradayBias: { symbol: string; bias: string; strength: string; score: number; updated_at: string } | null;
+  setIntradayBias: (bias: { symbol: string; bias: string; strength: string; score: number; updated_at: string }) => void;
+
   // UI
   selectedSymbol: string;
   setSelectedSymbol: (symbol: string) => void;
@@ -259,6 +263,9 @@ export const useStore = create<AppState>()(
           watchlistItems: state.watchlistItems.filter((w) => w.symbol !== symbol),
         })),
 
+      intradayBias: null,
+      setIntradayBias: (bias) => set({ intradayBias: bias }),
+
       selectedSymbol: "NIFTY",
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
       activeTimeframe: "5m",
@@ -267,7 +274,7 @@ export const useStore = create<AppState>()(
     {
       name: "scan-logs-storage",
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ scanLogs: state.scanLogs, activeTimeframe: state.activeTimeframe }),
+      partialize: (state) => ({ scanLogs: state.scanLogs, activeTimeframe: state.activeTimeframe, positionViewMode: state.positionViewMode }),
     }
   )
 );

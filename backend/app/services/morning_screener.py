@@ -809,6 +809,11 @@ async def _stage2_news_sentiment(candidates: list[dict]) -> list[dict]:
                     "risk_events": findings.get("risk_events", []),
                     "catalyst_events": findings.get("catalyst_events", []),
                     "articles_count": len(findings.get("articles", [])),
+                    "headlines": [
+                        a["headline"]
+                        for a in findings.get("articles", [])[:3]
+                        if a.get("headline")
+                    ],
                 }
 
                 # Flag severe negative news

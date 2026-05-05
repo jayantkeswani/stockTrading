@@ -257,6 +257,7 @@ export interface S5WatchlistItem {
     catalyst_events?: string[];
     articles_count?: number;
     flagged?: boolean;
+    headlines?: string[];
   };
   pdh: number | null;
   pdl: number | null;

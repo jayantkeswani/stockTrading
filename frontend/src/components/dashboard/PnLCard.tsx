@@ -54,11 +54,21 @@ export function PnLCard() {
         </span>
       )}
 
-      {/* P&L */}
+      {/* Unrealized P&L */}
       <div className="flex items-center gap-2">
-        <span className="text-xs text-text-muted font-mono uppercase">P&L</span>
-        <span className={`text-sm font-bold font-mono ${pnlColor(pnl)}`}>
-          {formatINR(pnl)}
+        <span className="text-xs text-text-muted font-mono uppercase">Unrlzd</span>
+        <span className={`text-sm font-bold font-mono ${pnlColor(liveUnrealizedPnl)}`}>
+          {formatINR(liveUnrealizedPnl)}
+        </span>
+      </div>
+
+      <div className="w-px h-4 bg-border" />
+
+      {/* Realized P&L */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-text-muted font-mono uppercase">Rlzd</span>
+        <span className={`text-sm font-bold font-mono ${pnlColor(closedPnl)}`}>
+          {formatINR(closedPnl)}
         </span>
       </div>
 

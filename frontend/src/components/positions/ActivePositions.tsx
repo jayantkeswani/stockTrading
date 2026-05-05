@@ -178,72 +178,72 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
 
       {/* Closed Today (real or ghost) */}
       {activeClosed.length > 0 && (
-        <div className="border-t border-border">
-          <div className="px-3 py-1.5 border-b border-border/50 flex items-center gap-2">
+        <div className="border-t border-border/50">
+          <div className="px-3 py-1.5 border-b border-border/30 flex items-center gap-2">
             <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
               {isShadow ? "Ghost Closed Today" : "Closed Today"}
             </span>
             <span className="text-[10px] font-mono text-text-muted">({activeClosed.length})</span>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs" style={{ tableLayout: "fixed" }}>
-              <colgroup>
-                <col />
-                {!compact && <col style={{ width: "80px" }} />}
-                <col style={{ width: "85px" }} />
-                <col style={{ width: "85px" }} />
-                <col style={{ width: "110px" }} />
-                <col style={{ width: "90px" }} />
-                {!compact && <col style={{ width: "70px" }} />}
-              </colgroup>
-              <thead>
-                <tr className="text-[10px] text-text-muted uppercase font-mono tracking-wider">
-                  <th className="text-left px-3 py-1">Symbol</th>
-                  {!compact && <th className="text-left px-3 py-1">Strike</th>}
-                  <th className="text-right px-3 py-1">Entry</th>
-                  <th className="text-right px-3 py-1">Exit</th>
-                  <th className="text-right px-3 py-1">P&L</th>
-                  <th className="text-right px-3 py-1">Reason</th>
-                  {!compact && <th className="text-right px-3 py-1">Time</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {activeClosed.map((t) => (
-                  <tr key={t.id} className="border-t border-border/30">
-                    <td className="px-3 py-1.5">
-                      <span className="font-mono font-medium">{t.symbol}</span>
-                      <span className={`ml-1 text-[10px] font-mono ${t.option_type === "CE" ? "text-profit" : "text-loss"}`}>
+          <div className="divide-y divide-border/20">
+            {activeClosed.map((t) => {
+              const durationMin = t.entry_time && t.exit_time
+                ? Math.round((new Date(t.exit_time).getTime() - new Date(t.entry_time).getTime()) / 60000)
+                : null;
+              const isFutures = !t.option_type;
+              return (
+                <div key={t.id} className="px-3 py-2 opacity-60 hover:opacity-80 transition-opacity">
+                  {/* Row 1: symbol + side + lots + P&L */}
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-medium text-xs">{t.symbol}</span>
+                    {!isFutures && (
+                      <span className={`text-[10px] font-mono ${t.option_type === "CE" ? "text-profit" : "text-loss"}`}>
                         {t.option_type}
                       </span>
-                      {compact && (
-                        <span className="ml-1 text-[10px] text-text-muted font-mono">{t.strike_price}</span>
-                      )}
-                    </td>
-                    {!compact && (
-                      <td className="px-3 py-1.5 font-mono text-text-secondary">{t.strike_price}</td>
                     )}
-                    <td className="px-3 py-1.5 text-right font-mono text-text-secondary">{formatINR(t.entry_price)}</td>
-                    <td className="px-3 py-1.5 text-right font-mono text-text-secondary">
+                    {t.strike_price > 0 && (
+                      <span className="text-[10px] font-mono text-text-muted">{t.strike_price}</span>
+                    )}
+                    <span className={`text-[9px] font-mono px-1 py-px rounded border ${
+                      t.side === "BUY"
+                        ? "border-profit/30 text-profit"
+                        : "border-loss/30 text-loss"
+                    }`}>
+                      {t.side}
+                    </span>
+                    <span className="text-[10px] font-mono text-text-muted">{t.lots}L</span>
+                    <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent ml-auto">
+                      {STRATEGY_LABELS[t.strategy_name] || t.strategy_name}
+                    </span>
+                  </div>
+                  {/* Row 2: entry→exit prices + P&L + times + duration */}
+                  <div className="flex items-center gap-3 mt-0.5">
+                    <span className="text-[10px] font-mono text-text-muted">
+                      {formatINR(t.entry_price)}
+                      <span className="mx-1 text-text-muted/40">→</span>
                       {t.exit_price ? formatINR(t.exit_price) : "—"}
-                    </td>
-                    <td className={`px-3 py-1.5 text-right font-mono font-medium ${pnlColor(t.pnl ?? 0)}`}>
-                      <div>{formatINR(t.pnl ?? 0)}</div>
+                    </span>
+                    <span className={`text-[10px] font-mono font-medium ${pnlColor(t.pnl ?? 0)}`}>
+                      {formatINR(t.pnl ?? 0)}
                       {t.pnl_percent != null && (
-                        <div className="text-[10px]">{formatPercent(t.pnl_percent)}</div>
+                        <span className="ml-1 opacity-70">{formatPercent(t.pnl_percent)}</span>
                       )}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono text-text-muted text-[10px]">
+                    </span>
+                    <span className="text-[9px] font-mono text-text-muted/60 ml-auto">
+                      {formatISTTime(t.entry_time)}
+                      <span className="mx-1">–</span>
+                      {formatISTTime(t.exit_time)}
+                      {durationMin != null && (
+                        <span className="ml-1.5 text-text-muted/40">{durationMin}m</span>
+                      )}
+                    </span>
+                    <span className="text-[9px] font-mono text-text-muted/50">
                       {t.exit_reason?.replace(/_/g, " ") ?? "—"}
-                    </td>
-                    {!compact && (
-                      <td className="px-3 py-1.5 text-right font-mono text-text-muted text-[10px]">
-                        {formatISTTime(t.exit_time)}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

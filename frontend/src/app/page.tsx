@@ -70,8 +70,10 @@ export default function DashboardPage() {
 
   return (
     <>
-      {/* P&L strip — full width at top */}
-      <PnLCard />
+      {/* P&L strip — sticky at top of content area */}
+      <div className="sticky top-0 z-10 pb-2 bg-bg-primary">
+        <PnLCard />
+      </div>
 
       <div className="grid grid-cols-12 gap-2 mt-2 h-[calc(100vh-96px)]">
         {/* LEFT: Main content */}

@@ -415,6 +415,26 @@ class StrategyRunner:
             as_of=now_ist(),
         )
 
+        # Publish bias to Redis + WS for index symbols so the dashboard header can display it
+        if symbol in INDEX_SYMBOLS and intraday_bias is not None:
+            try:
+                r = get_redis()
+                updated_at = now_ist().isoformat()
+                await r.setex(
+                    f"indicator:intraday_bias:{symbol}",
+                    600,
+                    f"{intraday_bias.bias.value}|{intraday_bias.strength}|{intraday_bias.score:.4f}|{updated_at}",
+                )
+                await ws_manager.broadcast("market:bias_update", {
+                    "symbol": symbol,
+                    "bias": intraday_bias.bias.value,
+                    "strength": intraday_bias.strength,
+                    "score": round(intraday_bias.score, 4),
+                    "updated_at": updated_at,
+                })
+            except Exception:
+                pass
+
         return MarketContext(
             symbol=symbol,
             current_price=current_price,

@@ -9,8 +9,7 @@ import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
 import { SummaryStrip } from "@/components/trades/SummaryStrip";
 import { PnLHeatmap } from "@/components/trades/PnLHeatmap";
 import { TradesTable } from "@/components/trades/TradesTable";
-
-type TradeMode = "REAL" | "SHADOW";
+import { useStore } from "@/store";
 
 function defaultPeriod(): Period {
   const now = new Date();
@@ -18,11 +17,13 @@ function defaultPeriod(): Period {
 }
 
 export default function TradesPage() {
+  const { positionViewMode, setPositionViewMode } = useStore();
   const [period, setPeriod] = useState<Period>(defaultPeriod);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [mode, setMode] = useState<TradeMode>("REAL");
+  const mode = positionViewMode === "SHADOW" ? "SHADOW" : "REAL";
+  const setMode = (m: "REAL" | "SHADOW") => setPositionViewMode(m);
   const [strategyFilter, setStrategyFilter] = useState<string>("");
 
   useEffect(() => {
