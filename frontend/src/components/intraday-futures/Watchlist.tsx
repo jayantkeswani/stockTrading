@@ -50,6 +50,7 @@ export function Watchlist({ date = null }: { date?: string | null }) {
   const [sortKey, setSortKey] = useState<"composite_score" | "rs_percentile">("composite_score");
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const prices = useStore((s) => s.prices);
+  const updatePrice = useStore((s) => s.updatePrice);
 
   const isHistorical = date != null;
 
@@ -57,6 +58,13 @@ export function Watchlist({ date = null }: { date?: string | null }) {
     try {
       const data = await api.getIntradayFuturesWatchlist(date ?? undefined);
       setItems(data);
+      if (!isHistorical && data.length > 0) {
+        const fyersSymbols = data.map((d: S5WatchlistItem) => `NSE:${d.symbol}-EQ`);
+        const priceData = await api.fetchBatchPrices(fyersSymbols);
+        for (const [sym, pd] of Object.entries(priceData)) {
+          updatePrice(sym, pd as never);
+        }
+      }
     } catch {
       /* silent */
     }
