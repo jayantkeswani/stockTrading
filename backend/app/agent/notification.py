@@ -4,6 +4,7 @@ All public functions take plain scalars — no ORM imports here.
 Callers are responsible for extracting the fields they need from models.
 """
 
+import html
 import logging
 
 import httpx
@@ -98,7 +99,7 @@ async def notify_signal_generated(
     elif instrument_type == "FUTURE" and expiry:
         strike_line = f"\nExpiry {expiry}"
 
-    blocked_line = f"\n⚠️ <i>{blocked_reason}</i>" if blocked_reason else ""
+    blocked_line = f"\n⚠️ <i>{html.escape(blocked_reason)}</i>" if blocked_reason else ""
 
     msg = (
         f"{_paper()}📊 <b>Signal: {direction}</b>\n"
@@ -161,7 +162,7 @@ async def notify_sl_hit(
         f"{_paper()}{emoji} <b>{title}</b>\n"
         f"{symbol}  ·  {_strategy_label(strategy_name)}\n"
         f"Entry ₹{entry:.0f}  →  Exit ₹{exit_price:.0f}\n"
-        f"P&L  {_pnl_str(pnl, entry, exit_price)}  ·  {lots} lot{'s' if lots > 1 else ''}"
+        f"PnL  {_pnl_str(pnl, entry, exit_price)}  ·  {lots} lot{'s' if lots > 1 else ''}"
     )
     await send_telegram(msg)
 
@@ -178,7 +179,7 @@ async def notify_profit_booked(
         f"{_paper()}🟢 <b>Profit Booked</b>\n"
         f"{symbol}  ·  {_strategy_label(strategy_name)}\n"
         f"Entry ₹{entry:.0f}  →  Exit ₹{exit_price:.0f}\n"
-        f"P&L  {_pnl_str(pnl, entry, exit_price)}  ·  {lots} lot{'s' if lots > 1 else ''}"
+        f"PnL  {_pnl_str(pnl, entry, exit_price)}  ·  {lots} lot{'s' if lots > 1 else ''}"
     )
     await send_telegram(msg)
 
@@ -195,7 +196,7 @@ async def notify_time_exit(
         f"{_paper()}🕐 <b>EOD Exit</b>\n"
         f"{symbol}  ·  {_strategy_label(strategy_name)}\n"
         f"Entry ₹{entry:.0f}  →  Exit ₹{exit_price:.0f}\n"
-        f"P&L  {_pnl_str(pnl, entry, exit_price)}  ·  {lots} lot{'s' if lots > 1 else ''}"
+        f"PnL  {_pnl_str(pnl, entry, exit_price)}  ·  {lots} lot{'s' if lots > 1 else ''}"
     )
     await send_telegram(msg)
 
@@ -212,7 +213,7 @@ async def notify_confirmation_request(
         f"🎯 <b>Target Reached — Confirm?</b>\n"
         f"{symbol}  ·  {_strategy_label(strategy_name)}\n"
         f"Entry ₹{entry:.0f}  →  Current ₹{current_price:.0f}\n"
-        f"P&L  {_pnl_str(pnl, entry, current_price)}\n"
+        f"PnL  {_pnl_str(pnl, entry, current_price)}\n"
         f"Open the dashboard to confirm."
     )
     await send_telegram(msg)
@@ -233,7 +234,7 @@ async def notify_expiry_roll(
     msg = (
         f"{_paper()}🔄 <b>Expiry Roll</b>\n"
         f"{symbol}  {old_expiry}  →  {new_expiry}\n"
-        f"Closed P&L  {pnl_sign}₹{old_pnl:,.0f}\n"
+        f"Closed PnL  {pnl_sign}₹{old_pnl:,.0f}\n"
         f"New entry ₹{new_entry:.0f}  ·  SL ₹{new_sl:.0f}  ·  Target ₹{new_target:.0f}"
     )
     await send_telegram(msg)
@@ -254,7 +255,7 @@ async def notify_drawdown_halt(daily_pnl: float, limit: float) -> None:
     pct = abs(daily_pnl) / limit * 5 if limit else 0  # approximate
     msg = (
         f"🚨 <b>Trading Halted — Drawdown Limit Hit</b>\n"
-        f"Daily P&L  −₹{abs(daily_pnl):,.0f}\n"
+        f"Daily PnL  −₹{abs(daily_pnl):,.0f}\n"
         f"Limit  ₹{limit:,.0f}  ({pct:.1f}%)\n"
         f"No new trades today."
     )
@@ -278,7 +279,7 @@ async def notify_daily_summary(
     lines = [
         f"{emoji} <b>Daily Summary</b>  {_paper().strip()}",
         f"Trades {total}  ·  W {wins}  L {losses}",
-        f"Net P&L  {sign}₹{net_pnl:,.0f}",
+        f"Net PnL  {sign}₹{net_pnl:,.0f}",
     ]
     if best_symbol and best_pnl is not None:
         lines.append(f"Best   {best_symbol}  +₹{best_pnl:,.0f}")

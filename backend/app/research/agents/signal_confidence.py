@@ -18,8 +18,10 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from app.config import settings
+from app.core.utils import now_ist
 from app.strategies.base import MarketContext, StrategySignal
 
 logger = logging.getLogger(__name__)
@@ -79,6 +81,12 @@ class SignalConfidence:
     suggested_lot_adjustment: str    # NONE | REDUCE_50_PCT | SKIP
 
 
+# Per-symbol cooldown after timeout: key = "SYMBOL:SIGNAL_TYPE", value = cooldown-until datetime.
+# Prevents repeated Gemini calls when a symbol is generating signals every minute and the API
+# starts rate-limiting (observed: 19 consecutive timeouts for VEDL BUY_FUT on 2026-05-05).
+_TIMEOUT_COOLDOWN: dict[str, datetime] = {}
+_TIMEOUT_COOLDOWN_MINUTES = 5
+
 _FALLBACK = SignalConfidence(
     confidence_adjustment=0,
     summary="",
@@ -107,6 +115,16 @@ async def score_signal(
         logger.debug("google_api_key not set — skipping AI confidence overlay")
         return _FALLBACK
 
+    # Skip if this symbol+direction is in post-timeout cooldown.
+    cooldown_key = f"{signal.symbol}:{signal.signal_type}"
+    cooldown_until = _TIMEOUT_COOLDOWN.get(cooldown_key)
+    if cooldown_until and now_ist() < cooldown_until:
+        logger.debug(
+            "AI confidence overlay skipped for %s %s (cooldown until %s)",
+            signal.symbol, signal.signal_type, cooldown_until.strftime("%H:%M"),
+        )
+        return _FALLBACK
+
     try:
         context_json = _build_context_json(signal, ctx, prior_signals=prior_signals)
         indicators = signal.indicators or {}
@@ -116,9 +134,14 @@ async def score_signal(
             _call_llm(context_json, strategy_name=strategy_name, setup_type=setup_type),
             timeout=settings.ai_confidence_timeout_seconds,
         )
+        _TIMEOUT_COOLDOWN.pop(cooldown_key, None)
         return result
     except asyncio.TimeoutError:
-        logger.warning("AI confidence overlay timed out for %s %s", signal.symbol, signal.signal_type)
+        _TIMEOUT_COOLDOWN[cooldown_key] = now_ist() + timedelta(minutes=_TIMEOUT_COOLDOWN_MINUTES)
+        logger.warning(
+            "AI confidence overlay timed out for %s %s — cooling down for %d min",
+            signal.symbol, signal.signal_type, _TIMEOUT_COOLDOWN_MINUTES,
+        )
         return _FALLBACK
     except Exception:
         logger.exception("AI confidence overlay failed for %s %s", signal.symbol, signal.signal_type)

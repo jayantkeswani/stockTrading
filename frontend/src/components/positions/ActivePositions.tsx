@@ -192,10 +192,10 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                 : null;
               const isFutures = !t.option_type;
               return (
-                <div key={t.id} className="px-3 py-2 opacity-60 hover:opacity-80 transition-opacity">
-                  {/* Row 1: symbol + side + lots + P&L */}
+                <div key={t.id} className="px-3 py-2 hover:bg-bg-tertiary/30 transition-colors">
+                  {/* Row 1: symbol + side + lots + strategy */}
                   <div className="flex items-center gap-2">
-                    <span className="font-mono font-medium text-xs">{t.symbol}</span>
+                    <span className="font-mono font-medium text-xs text-text-secondary">{t.symbol}</span>
                     {!isFutures && (
                       <span className={`text-[10px] font-mono ${t.option_type === "CE" ? "text-profit" : "text-loss"}`}>
                         {t.option_type}
@@ -216,28 +216,28 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                       {STRATEGY_LABELS[t.strategy_name] || t.strategy_name}
                     </span>
                   </div>
-                  {/* Row 2: entry→exit prices + P&L + times + duration */}
+                  {/* Row 2: entry→exit prices + P&L + times + duration + exit reason */}
                   <div className="flex items-center gap-3 mt-0.5">
                     <span className="text-[10px] font-mono text-text-muted">
                       {formatINR(t.entry_price)}
-                      <span className="mx-1 text-text-muted/40">→</span>
+                      <span className="mx-1 text-text-muted/60">→</span>
                       {t.exit_price ? formatINR(t.exit_price) : "—"}
                     </span>
                     <span className={`text-[10px] font-mono font-medium ${pnlColor(t.pnl ?? 0)}`}>
                       {formatINR(t.pnl ?? 0)}
                       {t.pnl_percent != null && (
-                        <span className="ml-1 opacity-70">{formatPercent(t.pnl_percent)}</span>
+                        <span className="ml-1 opacity-80">{formatPercent(t.pnl_percent)}</span>
                       )}
                     </span>
-                    <span className="text-[9px] font-mono text-text-muted/60 ml-auto">
+                    <span className="text-[9px] font-mono text-text-muted ml-auto">
                       {formatISTTime(t.entry_time)}
-                      <span className="mx-1">–</span>
+                      <span className="mx-1 text-text-muted/60">–</span>
                       {formatISTTime(t.exit_time)}
                       {durationMin != null && (
-                        <span className="ml-1.5 text-text-muted/40">{durationMin}m</span>
+                        <span className="ml-1.5 text-text-muted/60">{durationMin}m</span>
                       )}
                     </span>
-                    <span className={`text-[9px] font-mono ${t.exit_reason === "TRAILING_SL" ? "text-warning" : "text-text-muted/50"}`}>
+                    <span className={`text-[9px] font-mono ${t.exit_reason === "TRAILING_SL" ? "text-warning" : "text-text-muted"}`}>
                       {t.exit_reason?.replace(/_/g, " ") ?? "—"}
                     </span>
                   </div>
