@@ -290,12 +290,11 @@ function SignalCard({
         <div className="space-y-1 mb-2">
           <div className="flex items-center gap-2 text-[10px] font-mono text-text-muted flex-wrap">
             {ind.setup_type && (
-              <span className="px-1.5 py-px rounded bg-accent/15 text-accent">
-                {String(ind.setup_type).replace("_", " ")}
+              <span className={`px-1.5 py-px rounded ${ind.enhanced_orb ? "bg-profit/15 text-profit" : "bg-accent/15 text-accent"}`}>
+                {ind.enhanced_orb && String(ind.setup_type) === "orb"
+                  ? "Enhanced ORB"
+                  : String(ind.setup_type).replace(/_/g, " ")}
               </span>
-            )}
-            {ind.enhanced_orb && (
-              <span className="px-1 py-px rounded bg-profit/15 text-profit">Enhanced</span>
             )}
             {ind.phase && (
               <span className="text-text-secondary">{String(ind.phase).replace("_", " ")}</span>

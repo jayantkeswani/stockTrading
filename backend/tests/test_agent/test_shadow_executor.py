@@ -20,9 +20,10 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_live_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
     @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_creates_trade_and_position(
-        self, mock_params, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_params, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """A PENDING signal — even executable=False — produces Trade(SHADOW) + Position(is_shadow=True)."""
         signal_id = uuid.uuid4()
@@ -59,9 +60,10 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_live_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
     @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_fires_for_executable_signal_too(
-        self, mock_params, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_params, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Shadow also runs when executable=True (normal case)."""
         signal_id = uuid.uuid4()
@@ -109,9 +111,10 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_live_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
     @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_no_dedup_two_calls_same_symbol(
-        self, mock_params, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_params, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Two signals on the same symbol both produce shadow trades — no dedup."""
         signal_id_1 = uuid.uuid4()
@@ -153,9 +156,10 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_live_price", side_effect=Exception("timeout"))
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
     @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_falls_back_to_signal_price_on_live_price_failure(
-        self, mock_params, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_params, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Falls back to signal.entry_price if get_live_price raises."""
         signal_id = uuid.uuid4()
@@ -192,9 +196,10 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_live_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
     @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value={"min_confidence_for_shadow": 45.0})
     async def test_shadow_fires_at_exact_threshold(
-        self, mock_params, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_params, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Signal at exactly min_confidence_for_shadow should still fire."""
         signal_id = uuid.uuid4()

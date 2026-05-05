@@ -16,7 +16,7 @@ import logging
 from app.core.constants import LOT_SIZES
 from app.core.database import async_session_factory
 from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
-from app.core.utils import now_ist
+from app.core.utils import is_past_close_deadline, now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
 from app.models.signal import Signal
@@ -55,7 +55,6 @@ async def _do_shadow_execute(signal_id) -> None:
             return
 
         # Hard deadline — past 3:15 PM IST, markets are closed
-        from app.core.utils import is_past_close_deadline
         if is_past_close_deadline():
             logger.debug("Shadow skip: past close deadline for signal %s", signal_id)
             return

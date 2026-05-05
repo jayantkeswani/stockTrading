@@ -1467,7 +1467,35 @@ class StrategyRunner:
             return {}
         try:
             from app.research.agents.signal_confidence import score_signal
-            result = await score_signal(signal, ctx)
+
+            # Fetch today's prior signals for the same symbol to give the LLM repetition context
+            prior_signals: list[dict] = []
+            try:
+                today_start = now_ist().replace(hour=0, minute=0, second=0, microsecond=0)
+                async with async_session_factory() as _session:
+                    _result = await _session.execute(
+                        select(Signal)
+                        .where(
+                            Signal.symbol == signal.symbol,
+                            Signal.strategy_name == signal.strategy_name,
+                            Signal.generated_at >= today_start,
+                        )
+                        .order_by(Signal.generated_at.desc())
+                        .limit(5)
+                    )
+                    for s in _result.scalars().all():
+                        prior_signals.append({
+                            "time_ist": s.generated_at.astimezone(IST).strftime("%H:%M"),
+                            "direction": s.signal_type,
+                            "entry_price": float(s.entry_price) if s.entry_price else None,
+                            "raw_confidence": float(s.confidence) if s.confidence else None,
+                            "ai_adjustment": float(s.ai_adjustment) if s.ai_adjustment is not None else None,
+                            "ai_summary": s.ai_summary,
+                        })
+            except Exception:
+                logger.debug("Could not fetch prior signals for AI overlay — proceeding without history")
+
+            result = await score_signal(signal, ctx, prior_signals=prior_signals or None)
             if result.confidence_adjustment != 0:
                 old = float(signal.confidence) if signal.confidence else 0.0
                 new_conf = max(0.0, min(100.0, old + result.confidence_adjustment))

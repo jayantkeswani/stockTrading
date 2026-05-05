@@ -4,12 +4,14 @@ Called once per signal, after all deterministic gates pass and after option/futu
 resolution, but before _persist_signal. Never blocks a signal — if the LLM call
 times out or fails, the deterministic score is used as-is.
 
-Input: complete indicator snapshot + deterministic confidence breakdown.
-Output: confidence_adjustment ±15, ai_summary, ai_rationale, key_supports,
+Input: complete indicator snapshot + deterministic confidence breakdown + today's
+       prior signals for the same symbol (up to 5, for repetition detection).
+Output: confidence_adjustment ±30, ai_summary, ai_rationale, key_supports,
         key_risks, recommended_action, suggested_lot_adjustment.
 
-The LLM adjustment is clamped to ±15 so the deterministic composite stays the
-anchor — the LLM can refine but not override.
+The LLM adjustment is clamped to ±30. Adjustments below -20 indicate the LLM
+believes the signal is fundamentally flawed and should not be traded. Most
+adjustments will be |x| <= 10.
 """
 
 import asyncio
@@ -27,13 +29,24 @@ _SYSTEM_PROMPT = """You are a senior Indian derivatives trader reviewing a signa
 Your role:
 1. Explain concisely WHY this signal fired — cite actual values from the input, not generalities.
 2. Identify 2-4 concrete supports (factors strengthening the trade, with specific values) and 2-4 concrete risks (factors weakening it, with specific values).
-3. Judge whether the deterministic confidence captured the setup quality and adjust by -15..+15. Use the full range only for strong disagreement; most adjustments will be |x| <= 5.
+3. Judge whether the deterministic confidence captured the setup quality and adjust by -30..+30. Scale guide:
+   -30 to -20: Fundamental flaw — direct repeat with no new structural context, strong counter-setup, or multiple adverse signals today. This signal has no merit.
+   -20 to -10: Significant concern — weak setup, recent identical signal at similar price, or poor history today.
+   -10 to +10: Normal range. Most adjustments fall here.
+   +10 to +20: Strong multi-factor confirmation (bias + VWAP + OI + pattern all aligned).
+   +20 to +30: Exceptional convergence — rare. Requires citing 3+ independent supporting factors.
+   Do NOT go to ±20 or beyond without citing at least two independent reasons.
 4. Produce a one-sentence summary for a trader glancing at an alert, and a 3-5 sentence rationale for post-trade review.
 
 CRITICAL — value accuracy:
 - Every number you write in summary, rationale, key_supports, and key_risks MUST appear EXACTLY in the input JSON. Do not round, interpolate, or reconstruct values. If VWAP is 1455.38 in the input, write 1455.38, not 1455 or 1444.
 - If a field is null or missing, do not reference it or guess its value.
 - Cross-check: before writing any number, verify it matches a value in the input.
+
+Prior signals today (when prior_signals_today is non-empty):
+- If a prior signal for the same symbol/direction fired within 30 minutes at a similar price (within 0.5%), apply -15 to -25 unless the new signal shows a meaningfully different structure (new candle pattern, price broke through a key level).
+- If prior signals today had ai_adjustment of -10 or worse, treat the current signal as elevated risk; increase your downward adjustment accordingly.
+- A new entry point that broke through a key structural level since the last signal warrants independent evaluation.
 
 Rules:
 - Counter-bias trades (direction opposite to intraday_bias.bias): reduce adjustment unless bias is WEAK and reversal_quality > 0.7.
@@ -45,7 +58,7 @@ Rules:
 
 Schema:
 {
-  "confidence_adjustment": <integer -15 to +15>,
+  "confidence_adjustment": <integer -30 to +30>,
   "summary": "<one sentence, ≤ 200 chars, cite specific indicator values>",
   "rationale": "<3-5 sentences explaining the confluence, regime, and quality>",
   "key_supports": ["<specific factor with value>", ...],
@@ -57,7 +70,7 @@ Schema:
 
 @dataclass
 class SignalConfidence:
-    confidence_adjustment: int       # -15 to +15
+    confidence_adjustment: int       # -30 to +30
     summary: str
     rationale: str
     key_supports: list[str]
@@ -80,10 +93,12 @@ _FALLBACK = SignalConfidence(
 async def score_signal(
     signal: StrategySignal,
     ctx: MarketContext,
+    prior_signals: list[dict] | None = None,
 ) -> SignalConfidence:
     """Call the LLM to review a signal and return a confidence overlay.
 
     Returns _FALLBACK on any error or timeout so the caller is never blocked.
+    prior_signals: up to 5 prior signals today for the same symbol, most recent first.
     """
     if not settings.ai_confidence_enabled:
         return _FALLBACK
@@ -93,7 +108,7 @@ async def score_signal(
         return _FALLBACK
 
     try:
-        context_json = _build_context_json(signal, ctx)
+        context_json = _build_context_json(signal, ctx, prior_signals=prior_signals)
         indicators = signal.indicators or {}
         strategy_name = signal.strategy_name if hasattr(signal, "strategy_name") else "unknown"
         setup_type = indicators.get("setup_type", "unknown")
@@ -110,7 +125,11 @@ async def score_signal(
         return _FALLBACK
 
 
-def _build_context_json(signal: StrategySignal, ctx: MarketContext) -> str:
+def _build_context_json(
+    signal: StrategySignal,
+    ctx: MarketContext,
+    prior_signals: list[dict] | None = None,
+) -> str:
     """Build the complete indicator snapshot to send to the LLM."""
     indicators = signal.indicators or {}
     bias_info = indicators.get("intraday_bias", {})
@@ -190,6 +209,9 @@ def _build_context_json(signal: StrategySignal, ctx: MarketContext) -> str:
         },
     }
 
+    if prior_signals:
+        payload["prior_signals_today"] = prior_signals
+
     return json.dumps(payload, default=str)
 
 
@@ -215,7 +237,7 @@ Strategy: {strategy_name} | Setup: {setup_type}
 Produce a JSON object with EXACTLY these fields:
 
 {{
-  "confidence_adjustment": <integer -15 to +15 — how much to adjust the deterministic score above>,
+  "confidence_adjustment": <integer -30 to +30 — how much to adjust the deterministic score above>,
   "summary": "<One sentence ≤ 200 chars. Lead with direction + symbol + key reason. Cite at least two specific values EXACTLY as they appear in the input JSON above.>",
   "rationale": "<3-5 sentences. Focus on setup quality: VWAP position, candle pattern, OI walls, R:R ratio. Each sentence must cite a specific value from the input. Last sentence should name the biggest risk.>",
   "key_supports": [
@@ -245,9 +267,9 @@ BAD summary (values fabricated):
   Output: "PE on NIFTY after pullback to VWAP 24350 near PDH 24395" ← WRONG: 24350 and 24395 do not appear in the input. Must write 24358.42 and 24400.5 exactly.
 
 === FIELD GUIDANCE ===
-- confidence_adjustment: +5 to +10 for strong multi-factor confirmation. -5 to -10 for counter-bias or weak reversal. ±15 only for extreme disagreement.
-- recommended_action: PROCEED if adjustment >= 0 and no major risk. PROCEED_WITH_CAUTION if negative or one major risk. RECONSIDER if <= -10 or multiple major risks.
-- suggested_lot_adjustment: REDUCE_50_PCT if VIX > 20 or R:R < 1.2 or strong counter-bias. SKIP only if confidence_adjustment <= -12. NONE otherwise."""
+- confidence_adjustment: -10 to +10 for most signals. -20 to -30 only for fundamental flaws (direct repeat with no new context, strong counter-setup). +15 to +30 for rare multi-factor convergence (cite ≥3 independent factors). Do not exceed ±20 without two independent reasons.
+- recommended_action: PROCEED if adjustment >= 0 and no major risk. PROCEED_WITH_CAUTION if -15 to 0 or one major risk. RECONSIDER if <= -15 or multiple major risks.
+- suggested_lot_adjustment: REDUCE_50_PCT if VIX > 20 or R:R < 1.2 or strong counter-bias. SKIP if adjustment <= -20. NONE otherwise."""
 
 _STRATEGY_LABELS = {
     "vwap_pullback": "VWAP PULLBACK",
@@ -283,7 +305,7 @@ async def _call_llm(context_json: str, strategy_name: str = "unknown", setup_typ
     adj = raw.get("confidence_adjustment", 0)
     try:
         adj = int(adj)
-        adj = max(-15, min(15, adj))
+        adj = max(-30, min(30, adj))
     except (TypeError, ValueError):
         adj = 0
 
