@@ -385,6 +385,11 @@ class TestConfidence:
             "_nifty_bias": bias,
             "_screener_score": 90,
             "rvol_threshold": 1.5,
+            "_gap_direction": "UP",
+            "_relative_gap_pct": 2.0,
+            "_stock_trend_score": 0.5,
+            "_oi_direction": "building",
+            "_oi_change_pct": 20.0,
         }
 
     def _min_params(self):

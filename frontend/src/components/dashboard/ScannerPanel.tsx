@@ -143,6 +143,7 @@ const S5_CONFIDENCE_FACTOR_LABELS: Record<string, string> = {
   rank_factor:  "Rank",
   gap_factor:   "Gap",
   trend_factor: "Trend",
+  oi_factor:    "OI",
 };
 
 function SignalCard({

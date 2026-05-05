@@ -19,15 +19,16 @@ const SCORE_TOOLTIP = `Composite Score — 8 quant factors:
 
 Adjusted ±10 pts by Stage 2 news sentiment.`;
 
-const CONF_TOOLTIP = `Signal Confidence — 8 factors at trade time:
-• Volume quality     15%  (breakout candle vs avg)
+const CONF_TOOLTIP = `Signal Confidence — 9 factors at trade time:
 • RVOL strength      15%  (relative volume normalised)
 • Setup quality      14%  (ORB 80%, PDH/PDL & VWAP 70%, Gap 60%)
 • Nifty bias         12%  (STRONG 100%, MODERATE 70%, WEAK 40%)
 • Phase timing       12%  (Morning 100%, Afternoon 70%, Caution 40%)
-• Screener rank      12%  (composite score / 100)
+• Volume quality     10%  (breakout candle vs avg)
 • Gap alignment      10%  (signal direction vs stock gap)
 • Stock trend        10%  (multi-day trend direction)
+• OI direction       10%  (futures OI building vs unwinding)
+• Screener rank       7%  (composite score / 100)
 
 Missing-data default: 0.2 (penalises low-context signals).
 This score drives the confidence bar on each signal card.`;

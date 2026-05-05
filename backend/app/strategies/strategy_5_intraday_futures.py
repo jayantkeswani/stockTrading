@@ -930,15 +930,30 @@ class IntradayFuturesStrategy(BaseStrategy):
                 trend_factor = min(1.0, 0.5 - trend_score)
             trend_factor = max(0.0, trend_factor)
 
+        # 9. Intraday FUT OI direction (0.10) — building confirms, unwinding warns
+        oi_direction = params.get("_oi_direction")
+        oi_change_pct = params.get("_oi_change_pct", 0.0)
+        oi_factor = 0.2  # neutral default (missing data penalty)
+        if oi_direction is not None:
+            if oi_direction == "building":
+                # OI building in trade direction = strong confirmation
+                oi_factor = min(1.0, 0.6 + abs(oi_change_pct) * 0.02)
+            elif oi_direction == "unwinding":
+                # OI unwinding = weaker signal
+                oi_factor = max(0.0, 0.4 - abs(oi_change_pct) * 0.02)
+            else:
+                oi_factor = 0.5  # flat — neutral
+
         composite = (
-            vol_factor * 0.15
+            vol_factor * 0.10
             + rvol_factor * 0.15
             + bias_factor * 0.12
             + phase_factor * 0.12
             + setup_factor * 0.14
-            + rank_factor * 0.12
+            + rank_factor * 0.07
             + gap_factor * 0.10
             + trend_factor * 0.10
+            + oi_factor * 0.10
         ) * 100
 
         if indicators is not None:
@@ -951,6 +966,7 @@ class IntradayFuturesStrategy(BaseStrategy):
                 "rank_factor": round(rank_factor, 3),
                 "gap_factor": round(gap_factor, 3),
                 "trend_factor": round(trend_factor, 3),
+                "oi_factor": round(oi_factor, 3),
             }
 
         return round(max(0, min(100, composite)), 1)

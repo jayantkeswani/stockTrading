@@ -517,7 +517,7 @@ async def _fill_stock_futures_oi_gaps() -> None:
     logger.info("FUT OI gap-fill complete: %d/%d days filled", filled, len(missing))
 
 
-S5_OI_INTERVAL_MINUTES = 15
+S5_OI_INTERVAL_MINUTES = 10  # kept for log message; actual trigger uses CronTrigger below
 
 
 async def fetch_s5_watchlist_oi():
@@ -662,7 +662,7 @@ async def start_oi_snapshot_scheduler():
     )
     _scheduler.add_job(
         fetch_s5_watchlist_oi,
-        trigger=IntervalTrigger(minutes=S5_OI_INTERVAL_MINUTES, timezone=IST),
+        trigger=CronTrigger(minute="*/10", hour="9-15", timezone=IST),
         id="s5_watchlist_oi_fetch",
         name="Fetch S5 watchlist futures OI (intraday)",
         replace_existing=True,
@@ -670,7 +670,7 @@ async def start_oi_snapshot_scheduler():
     _scheduler.start()
     logger.info("OI snapshot scheduler started (every %d minutes)", OI_FETCH_INTERVAL_MINUTES)
     logger.info("Stock futures OI scheduler started (daily at 15:25 IST)")
-    logger.info("S5 watchlist OI scheduler started (every %d minutes)", S5_OI_INTERVAL_MINUTES)
+    logger.info("S5 watchlist OI scheduler started (every 10 min from 9:20 IST)")
 
     # Fill gaps from missed days (non-blocking background task)
     task = asyncio.create_task(_fill_stock_futures_oi_gaps(), name="fut_oi_gap_fill")

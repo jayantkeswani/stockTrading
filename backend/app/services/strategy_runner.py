@@ -764,6 +764,40 @@ class StrategyRunner:
         except Exception:
             logger.debug("Could not check global cues mid-day shift for Strategy 5")
 
+        # Intraday FUT OI direction — compare latest two snapshots for this symbol
+        try:
+            async with async_session_factory() as session:
+                rows = await session.execute(
+                    select(OISnapshot.open_interest, OISnapshot.timestamp)
+                    .where(
+                        and_(
+                            OISnapshot.symbol == symbol,
+                            OISnapshot.option_type == "FUT",
+                        )
+                    )
+                    .order_by(OISnapshot.timestamp.desc())
+                    .limit(2)
+                )
+                snapshots = rows.all()
+            if len(snapshots) == 2:
+                latest_oi = snapshots[0].open_interest
+                prev_oi = snapshots[1].open_interest
+                if prev_oi and prev_oi > 0:
+                    oi_change_pct = (latest_oi - prev_oi) / prev_oi * 100
+                    if oi_change_pct > 1.0:
+                        oi_direction = "building"
+                    elif oi_change_pct < -1.0:
+                        oi_direction = "unwinding"
+                    else:
+                        oi_direction = "flat"
+                    params["_oi_change_pct"] = oi_change_pct
+                    params["_oi_direction"] = oi_direction
+            elif len(snapshots) == 1:
+                params["_oi_direction"] = "flat"
+                params["_oi_change_pct"] = 0.0
+        except Exception:
+            logger.debug("Could not load intraday FUT OI for %s", symbol)
+
     async def _flush_strategy_logs(self, strategy: BaseStrategy) -> None:
         """Drain pending log entries, ORB writes, and phase updates from Strategy 5."""
         today = now_ist().date()
