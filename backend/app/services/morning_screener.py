@@ -1438,6 +1438,11 @@ async def snapshot_global_cues(today: date | None = None, force: bool = False) -
     force=True bypasses the Redis cache and re-reads from the indicator:global:*
     keys (refreshed every 15 min by the global_market_task) so the user gets the
     latest yfinance values without waiting for the next morning workflow.
+
+    When force=True, IST-specific fields set by run_preopen_reassessment() are
+    preserved (nifty_gap_pct, preopen_reassessed) since yfinance has no equivalent.
+    india_vix_live is re-read from the live Fyers price cache instead of being
+    carried forward, so the UI always shows the current VIX on manual refresh.
     """
     from app.core.utils import now_ist
 
@@ -1449,6 +1454,10 @@ async def snapshot_global_cues(today: date | None = None, force: bool = False) -
         existing = await r.get(key)
         if existing:
             return json.loads(existing)
+
+    # On force refresh, preserve IST pre-open fields that yfinance cannot supply.
+    existing_raw = await r.get(key)
+    existing_cues = json.loads(existing_raw) if existing_raw else {}
 
     pct_fields = [
         "dow_futures_pct", "sp500_close_pct", "nasdaq_close_pct",
@@ -1463,6 +1472,21 @@ async def snapshot_global_cues(today: date | None = None, force: bool = False) -
     for field in all_fields:
         val = await r.get(f"indicator:global:{field}")
         cues[field] = float(val) if val else None
+
+    # Carry forward pre-open IST fields (computed from Fyers quotes at 9:08 AM,
+    # not available from yfinance).
+    for field in ("nifty_gap_pct", "preopen_reassessed"):
+        if field in existing_cues:
+            cues[field] = existing_cues[field]
+
+    # Re-read India VIX live from Fyers price cache (continuously updated by WS feed).
+    # Use r directly (same patched client as the rest of this function in tests).
+    vix_raw = await r.get("price:INDIA VIX")
+    if vix_raw:
+        try:
+            cues["india_vix_live"] = round(float(json.loads(vix_raw)["ltp"]), 2)
+        except (KeyError, ValueError, TypeError):
+            pass
 
     # VIX halt check
     vix = cues.get("us_vix")
