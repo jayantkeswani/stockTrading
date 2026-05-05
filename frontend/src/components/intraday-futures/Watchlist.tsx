@@ -45,7 +45,7 @@ function InfoTip({ content }: { content: string }) {
   );
 }
 
-export function Watchlist({ date = null }: { date?: string | null }) {
+export function Watchlist({ date = null, onOpenChart }: { date?: string | null; onOpenChart?: (symbol: string) => void }) {
   const [items, setItems] = useState<S5WatchlistItem[]>([]);
   const [sortKey, setSortKey] = useState<"composite_score" | "rs_percentile">("composite_score");
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
@@ -142,7 +142,18 @@ export function Watchlist({ date = null }: { date?: string | null }) {
                   <tr
                     className="border-t border-border/50 hover:bg-bg-tertiary"
                   >
-                    <td className="px-2 py-1 text-text-primary">{item.symbol}</td>
+                    <td className="px-2 py-1">
+                      {onOpenChart ? (
+                        <button
+                          onClick={() => onOpenChart(item.symbol)}
+                          className="text-text-primary hover:text-accent transition-colors cursor-pointer"
+                        >
+                          {item.symbol}
+                        </button>
+                      ) : (
+                        <span className="text-text-primary">{item.symbol}</span>
+                      )}
+                    </td>
                     <td className="px-2 py-1 text-right text-accent">{item.composite_score}</td>
                     <td className="px-2 py-1 text-right">{item.factors.rs_percentile}</td>
                     <td className="px-2 py-1 text-right">{item.factors.adr_pct.toFixed(1)}</td>
