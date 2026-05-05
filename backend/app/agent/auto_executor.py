@@ -68,6 +68,18 @@ async def auto_execute_signal(signal_id) -> dict | None:
             )
             return None
 
+        # Confidence gate — only execute signals above the strategy's execution threshold
+        from app.services.strategy_params import get_strategy_params
+        params = await get_strategy_params(signal.strategy_name)
+        min_exec_conf = params.get("min_confidence_for_execution")
+        if min_exec_conf is not None and signal.confidence is not None:
+            if float(signal.confidence) < min_exec_conf:
+                logger.info(
+                    "Auto-execute: confidence %.0f < execution threshold %.0f for %s, skipping",
+                    float(signal.confidence), min_exec_conf, signal.symbol,
+                )
+                return None
+
         # Check for existing open position on the same symbol + direction
         direction = signal.signal_type.replace("BUY_", "") if signal.instrument_type == "OPTION" else None
         pos_query = select(Position).where(Position.symbol == signal.symbol)

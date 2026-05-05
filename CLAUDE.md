@@ -50,7 +50,7 @@ stockTrading/
 │   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels, global_market, intraday_bias, confidence, ATR, gap_analysis, stock_trend)
 │   │   ├── data_feed/     # Fyers API (auth, REST via API_URL/DATA_URL, WebSocket, feed manager, symbol master)
 │   │   ├── research/      # AI research agent system (orchestrator, 6 sub-agents, LLM client, data gatherer)
-│   │   ├── agent/         # AI trading agent (monitor, execute, notify, shadow_executor)
+│   │   ├── agent/         # AI trading agent (monitor, execute, notify, shadow_executor, telegram_bot, telegram_commands)
 │   │   ├── backtest/      # Backtest module (context_builder, harness, exit_simulator, option_data_fetcher, strike_selector, report)
 │   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP, NSE_HOLIDAYS), enums, utils, task_registry
 │   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh, global_market every 15m, Strategy 5 morning workflow, NSE bhav copy daily, F&O ban list 7:00 AM)

@@ -46,6 +46,7 @@ from app.tasks.morning_workflow_task import start_morning_workflow_scheduler, st
 from app.tasks.nse_bhav_copy_task import start_nse_bhav_copy_scheduler, stop_nse_bhav_copy_scheduler
 from app.tasks.fo_ban_list_task import start_fo_ban_list_scheduler, stop_fo_ban_list_scheduler
 from app.agent.agent_runner import agent_runner
+from app.agent.telegram_bot import start_telegram_bot, stop_telegram_bot
 from app.services import trading_config as _trading_config_svc
 from app.websocket.manager import ws_manager
 
@@ -267,9 +268,15 @@ async def lifespan(app: FastAPI):
     await agent_runner.start()
     task_registry.register("agent_runner", TaskType.SERVICE, metadata={"description": "Trade monitor — SL/target/EOD exits (SEMI mode)"})
 
+    # --- Telegram bot (inbound command polling) ---
+    t_tg = start_telegram_bot()
+    if t_tg:
+        task_registry.track_asyncio_task("telegram_bot_poll", t_tg, metadata={"description": "Telegram bot long-polling (/shadow)"})
+
     yield
 
     # Shutdown — mark services/schedulers as stopped
+    await stop_telegram_bot()
     await agent_runner.stop()
     await fyers_ws_client.stop()
     task_registry.update_status("fyers_data_feed", TaskStatus.STOPPED)

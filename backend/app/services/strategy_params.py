@@ -40,8 +40,8 @@ VWAP_DEFAULTS: dict = {
     "sl_pct_unaligned": 0.35,
     "default_target_multiplier": DEFAULT_TARGET_MULTIPLIER,
     "vix_extreme": VIX_EXTREME,
-    "min_confidence_for_shadow": 45.0,
-    "min_confidence_for_execution": 60.0,
+    "min_confidence_for_shadow": 70.0,
+    "min_confidence_for_execution": 70.0,
 }
 
 CANSLIM_DEFAULTS: dict = {
@@ -53,8 +53,8 @@ CANSLIM_DEFAULTS: dict = {
     "max_positional_lots": CANSLIM_MAX_POSITIONAL_LOTS,
     "trailing_sl_activation_pct": CANSLIM_TRAILING_SL_ACTIVATION_PCT,
     "min_confidence_to_persist": 25.0,
-    "min_confidence_for_shadow": 40.0,
-    "min_confidence_for_execution": 55.0,
+    "min_confidence_for_shadow": 70.0,
+    "min_confidence_for_execution": 70.0,
 }
 
 INTRADAY_FUTURES_DEFAULTS: dict = {
@@ -62,8 +62,8 @@ INTRADAY_FUTURES_DEFAULTS: dict = {
     "trailing_sl_breakeven_pct": 0.5,
     "trailing_sl_trail_pct": 0.3,
     "min_confidence_to_persist": 30.0,
-    "min_confidence_for_shadow": 45.0,
-    "min_confidence_for_execution": 60.0,
+    "min_confidence_for_shadow": 70.0,
+    "min_confidence_for_execution": 70.0,
     "max_daily_drawdown_pct": 3.0,
     "max_simultaneous_positions": 3,
     "max_trades_per_day": 5,
@@ -177,13 +177,13 @@ async def _load_from_db(strategy_name: str, session=None) -> dict:
 
 
 def _validate_confidence_tiers(params: dict, strategy_name: str, defaults: dict) -> None:
-    """Ensure min_confidence_to_persist < min_confidence_for_shadow < min_confidence_for_execution."""
+    """Ensure min_confidence_to_persist < min_confidence_for_shadow <= min_confidence_for_execution."""
     persist = params.get("min_confidence_to_persist")
     shadow = params.get("min_confidence_for_shadow")
     execution = params.get("min_confidence_for_execution")
 
     if persist is not None and shadow is not None and execution is not None:
-        if not (persist < shadow < execution):
+        if not (persist < shadow <= execution):
             logger.warning(
                 "Strategy %s: confidence tiers out of order (persist=%.1f, shadow=%.1f, exec=%.1f) — using defaults",
                 strategy_name, persist, shadow, execution,
