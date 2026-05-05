@@ -4,7 +4,6 @@ import { useEffect, useState, Fragment } from "react";
 import { api } from "@/lib/api";
 import { useStore } from "@/store";
 import { pnlColor } from "@/lib/formatters";
-import { subscribeSymbols } from "@/hooks/useWebSocket";
 import type { S5WatchlistItem } from "@/lib/types";
 
 const SCORE_TOOLTIP = `Composite Score — 8 quant factors:
@@ -58,10 +57,6 @@ export function Watchlist({ date = null }: { date?: string | null }) {
     try {
       const data = await api.getIntradayFuturesWatchlist(date ?? undefined);
       setItems(data);
-      if (!isHistorical && data.length > 0) {
-        const syms = data.map((d: S5WatchlistItem) => `NSE:${d.symbol}-EQ`);
-        subscribeSymbols(syms);
-      }
     } catch {
       /* silent */
     }

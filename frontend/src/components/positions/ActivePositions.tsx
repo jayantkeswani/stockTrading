@@ -5,7 +5,6 @@ import { useStore } from "@/store";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
-import { subscribeSymbols } from "@/hooks/useWebSocket";
 import type { Position } from "@/lib/types";
 
 interface ActivePositionsProps {
@@ -77,12 +76,6 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     return () => clearInterval(id);
   }, [isShadow, fetchShadowData]);
 
-  // Subscribe position price symbols for live ticks
-  useEffect(() => {
-    const active = isShadow ? shadowPositions : positions;
-    const symbols = active.map((p) => p.fyers_option_symbol || p.symbol).filter(Boolean);
-    if (symbols.length > 0) subscribeSymbols(symbols);
-  }, [positions, shadowPositions, isShadow]);
 
   const handleClose = async (positionId: string) => {
     if (!confirm("Close this position?")) return;
