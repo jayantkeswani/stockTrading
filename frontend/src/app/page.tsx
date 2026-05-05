@@ -88,7 +88,7 @@ export default function DashboardPage() {
           <ActivePositions compact />
 
           {/* Futures Watchlist (Strategy 5 screener) */}
-          <FuturesWatchlist />
+          <FuturesWatchlist onOpenChart={handleOpenChart} />
         </div>
 
         {/* RIGHT: Sidebar */}

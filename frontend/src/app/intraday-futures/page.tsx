@@ -35,9 +35,11 @@ export default function IntradayFuturesPage() {
         </div>
       </div>
 
-      {chartSymbol && (
-        <ChartModal symbol={chartSymbol} onClose={() => setChartSymbol(null)} />
-      )}
+      <ChartModal
+        isOpen={chartSymbol !== null}
+        onClose={() => setChartSymbol(null)}
+        initialSymbol={chartSymbol ?? undefined}
+      />
     </div>
   );
 }
