@@ -235,8 +235,9 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
                             <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 z-50 opacity-0 group-hover:opacity-100 transition-none">
                               <span className="block bg-bg-elevated border border-border rounded px-2.5 py-2 shadow-xl w-72 text-left">
                                 {headlines.map((h, i) => (
-                                  <span key={i} className="block text-[10px] font-mono text-text-secondary leading-snug mb-1.5 last:mb-0">
-                                    {h}
+                                  <span key={i} className="flex gap-1.5 text-[10px] font-mono text-text-secondary leading-snug mb-1.5 last:mb-0">
+                                    <span className="text-text-muted shrink-0">•</span>
+                                    <span>{h}</span>
                                   </span>
                                 ))}
                               </span>
