@@ -29,11 +29,11 @@ def _make_futures_resolution(symbol: str, fyers_symbol: str, expiry: date):
 
 
 def _make_quote(fyers_symbol: str, oi: int = 50000, volume: int = 10000) -> dict:
-    """Build a Fyers quote response entry."""
+    """Build a Fyers quote response entry. Fyers REST quotes API uses "oi" field."""
     return {
         "n": fyers_symbol,
         "v": {
-            "open_interest": oi,
+            "oi": oi,
             "volume": volume,
             "lp": 100.0,
         },

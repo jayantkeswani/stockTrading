@@ -291,7 +291,8 @@ async def fetch_stock_futures_oi():
     rows = []
     for symbol, (fyers_symbol, expiry_date) in resolutions.items():
         quote = all_quotes.get(fyers_symbol, {})
-        oi = int(quote.get("open_interest", 0) or 0)
+        # Fyers REST quotes API returns "oi" for open interest (not "open_interest")
+        oi = int(quote.get("oi", 0) or quote.get("open_interest", 0) or 0)
 
         rows.append({
             "symbol": symbol,
@@ -615,7 +616,8 @@ async def fetch_s5_watchlist_oi():
     rows = []
     for symbol, (fyers_symbol, expiry_date) in resolutions.items():
         quote = all_quotes.get(fyers_symbol, {})
-        oi = int(quote.get("open_interest", 0) or 0)
+        # Fyers REST quotes API returns "oi" for open interest (not "open_interest")
+        oi = int(quote.get("oi", 0) or quote.get("open_interest", 0) or 0)
         rows.append({
             "symbol": symbol,
             "expiry_date": expiry_date,
