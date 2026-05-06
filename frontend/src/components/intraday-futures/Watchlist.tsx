@@ -133,9 +133,7 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
           <tbody>
             {sorted.map((item) => {
               const isExpanded = expandedSymbol === item.symbol;
-              const headlinesTooltip = item.news?.headlines?.length
-                ? item.news.headlines.join("\n\n")
-                : undefined;
+              const headlines = item.news?.headlines?.length ? item.news.headlines : [];
 
               return (
                 <Fragment key={item.symbol}>
@@ -226,16 +224,26 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
                     </td>
                     <td className="px-2 py-1 text-center">
                       {item.news ? (
-                        <span
-                          className={`text-[10px] ${sentimentColor(item.news.score)}`}
-                          title={headlinesTooltip}
-                        >
-                          {sentimentLabel(item.news.sentiment)}{" "}
-                          <span className="opacity-70">
-                            ({item.news.score > 0 ? "+" : ""}{item.news.score.toFixed(1)})
+                        <span className="relative group inline-block">
+                          <span className={`text-[10px] cursor-default ${sentimentColor(item.news.score)}`}>
+                            {sentimentLabel(item.news.sentiment)}{" "}
+                            <span className="opacity-70">
+                              ({item.news.score > 0 ? "+" : ""}{item.news.score.toFixed(1)})
+                            </span>
                           </span>
+                          {headlines.length > 0 && (
+                            <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 z-50 opacity-0 group-hover:opacity-100 transition-none">
+                              <span className="block bg-bg-elevated border border-border rounded px-2.5 py-2 shadow-xl w-72 text-left">
+                                {headlines.map((h, i) => (
+                                  <span key={i} className="block text-[10px] font-mono text-text-secondary leading-snug mb-1.5 last:mb-0">
+                                    {h}
+                                  </span>
+                                ))}
+                              </span>
+                            </span>
+                          )}
                         </span>
-                      ) : "—"}
+                      ) : <span className="text-text-muted">—</span>}
                     </td>
                     <td className="px-2 py-1 text-right">
                       {(() => {
