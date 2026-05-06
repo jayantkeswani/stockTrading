@@ -238,6 +238,12 @@ class StrategyRunner:
                 signal, executable, blocked_reason = await self._resolve_futures(
                     signal, ctx, executable, blocked_reason,
                 )
+
+            # Skip AI overlay when the signal is identical to the existing PENDING
+            # one — entry and confidence haven't moved meaningfully.
+            if await self._is_dedup_skip(signal):
+                return signal
+
             ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
 
             # Confidence gating — execution threshold
@@ -1394,6 +1400,10 @@ class StrategyRunner:
                             signal, ctx, strat_executable, strat_blocked,
                         )
 
+                    # Skip AI overlay when nothing meaningful changed
+                    if await self._is_dedup_skip(signal):
+                        continue
+
                     # LLM confidence overlay — after resolve, ctx still in scope
                     ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
 
@@ -1745,6 +1755,67 @@ class StrategyRunner:
     # to update an existing PENDING signal vs. treating it as noise.
     _DEDUP_ENTRY_CHANGE_PCT = 0.3   # 0.3% move in entry price
     _DEDUP_CONF_CHANGE = 5.0        # 5-point confidence shift
+
+    async def _is_dedup_skip(self, signal: StrategySignal) -> bool:
+        """Read-only pre-check: return True when an existing PENDING signal exists
+        and nothing meaningful has changed (entry Δ < 0.3% AND confidence Δ < 5 pts).
+
+        Called BEFORE the AI overlay so we skip the Gemini call entirely for
+        signals that are just re-firing with the same price/confidence.
+        Returns False on any error so the full pipeline runs as a fallback.
+        """
+        from app.models.trade import Trade as TradeModel
+
+        try:
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(Signal).where(
+                        and_(
+                            Signal.strategy_name == signal.strategy_name.value,
+                            Signal.symbol == signal.symbol,
+                            Signal.signal_type == signal.signal_type.value,
+                            Signal.status == SignalStatus.PENDING.value,
+                        )
+                    )
+                    .order_by(Signal.generated_at.desc())
+                    .limit(1)
+                )
+                existing = result.scalar_one_or_none()
+
+                if existing is None:
+                    return False  # new signal — proceed
+
+                # Case 3: has execution — caller needs a new signal
+                has_execution = existing.executed_trade_id is not None
+                if not has_execution:
+                    trade_check = await session.execute(
+                        select(TradeModel.id)
+                        .where(TradeModel.signal_id == existing.id)
+                        .limit(1)
+                    )
+                    has_execution = trade_check.scalar_one_or_none() is not None
+
+                if has_execution:
+                    return False  # Case 3 — proceed
+
+                if not existing.entry_price:
+                    return False
+
+                entry_change_pct = (
+                    abs(float(signal.entry_price) - float(existing.entry_price))
+                    / float(existing.entry_price)
+                    * 100
+                )
+                conf_change = abs(
+                    signal.confidence - float(existing.confidence or 0)
+                )
+                return (
+                    entry_change_pct <= self._DEDUP_ENTRY_CHANGE_PCT
+                    and conf_change <= self._DEDUP_CONF_CHANGE
+                )
+        except Exception:
+            logger.debug("_is_dedup_skip failed for %s — proceeding", signal.symbol)
+            return False
 
     async def _dedup_signal(
         self,
