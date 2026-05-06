@@ -15,6 +15,7 @@ from app.services.morning_screener import (
     snapshot_global_cues,
 )
 from app.strategies.strategy_5_intraday_futures import get_current_phase
+from app.services.strategy_runner import strategy_runner
 
 router = APIRouter()
 
@@ -241,6 +242,7 @@ async def backfill_symbols(symbols: list[str] | None = None):
 async def run_screener():
     try:
         watchlist = await run_morning_screener()
+        strategy_runner.clear_s5_session_cache()
         return {"status": "ok", "watchlist_count": len(watchlist)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -250,6 +252,7 @@ async def run_screener():
 async def run_briefing():
     try:
         briefing = await run_morning_briefing(force=True)
+        strategy_runner.clear_s5_session_cache()
         return {"status": "ok", "briefing": briefing}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

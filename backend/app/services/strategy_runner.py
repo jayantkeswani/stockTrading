@@ -82,6 +82,37 @@ class StrategyRunner:
         self._index_futures_info: dict[str, tuple[str, date, str]] = {}
         self._futures_init_done: bool = False
 
+        # --- Per-candle performance caches ---
+
+        # Daily candles from market_data_daily — keyed symbol → (cache_date, candles).
+        # Populated once per symbol per trading day; never changes intraday.
+        self._daily_candles_cache: dict[str, tuple[date, list]] = {}
+
+        # _is_canslim_symbol result — keyed symbol → (cache_date, bool).
+        # CAN SLIM config doesn't change during a session.
+        self._canslim_symbol_cache: dict[str, tuple[date, bool]] = {}
+
+        # OI analysis for index symbols — keyed symbol → (last_fetched, OIAnalysis|None).
+        # TTL: 180 seconds (matches the 3-min OI snapshot task frequency).
+        self._oi_analysis_cache: dict[str, tuple[datetime, object]] = {}
+
+        # S5 static enrichment — keyed symbol → dict of briefing + screener fields.
+        # Populated once per symbol per trading day from Redis; never changes intraday.
+        # Each entry includes a "_cache_date" key for invalidation.
+        self._s5_session_cache: dict[str, dict] = {}
+
+        # S5 FUT OI direction — keyed symbol → (last_fetched, oi_direction, oi_change_pct).
+        # TTL: 600 seconds (matches the 10-min fetch_s5_watchlist_oi schedule).
+        self._s5_oi_cache: dict[str, tuple[datetime, str, float]] = {}
+
+        # S5 global-cues shift detection — keyed symbol → last_checked datetime.
+        # Throttled to one Redis read per 5 minutes per symbol.
+        self._s5_shift_last_checked: dict[str, datetime] = {}
+
+        # S5 position/trade counts — (last_fetched, active_pos_count, daily_trade_count).
+        # Shared across all symbols; TTL 60 seconds, also invalidated on new signal.
+        self._s5_counts_cache: tuple[datetime, int, int] | None = None
+
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -181,7 +212,7 @@ class StrategyRunner:
         # Load per-strategy params
         params = await get_strategy_params(strategy_name.value)
         if strategy_name == StrategyName.INTRADAY_FUTURES:
-            await self._enrich_strategy5_params(symbol, params)
+            await self._enrich_strategy5_params(symbol, params, india_vix=ctx.india_vix)
         ctx.strategy_params = params
 
         # Per-strategy risk limits (windows, VIX)
@@ -372,8 +403,13 @@ class StrategyRunner:
                 close=prev_day_levels.pdc,
             )
 
-        # OI analysis from latest snapshot
-        oi_analysis = await self._get_oi_analysis(symbol)
+        # OI analysis only applies to index symbols (CE/PE option chains).
+        # Stock symbols only have FUT rows in oi_snapshots which _get_oi_analysis ignores,
+        # and Strategy 5 reads OI direction from _enrich_strategy5_params instead.
+        if symbol in INDEX_SYMBOLS:
+            oi_analysis = await self._get_oi_analysis(symbol)
+        else:
+            oi_analysis = None
 
         # India VIX
         india_vix = await self._get_india_vix()
@@ -384,9 +420,11 @@ class StrategyRunner:
         relative_strength = None
         canslim_data = None
 
-        needs_daily = await self._is_canslim_symbol(symbol) or await self._is_strategy5_symbol(symbol)
+        is_canslim = await self._is_canslim_symbol(symbol)
+        is_s5 = await self._is_strategy5_symbol(symbol)
+        needs_daily = is_canslim or is_s5
 
-        if await self._is_canslim_symbol(symbol):
+        if is_canslim:
             canslim_data = await self._get_canslim_fundamentals(symbol)
             if canslim_data and canslim_data.relative_strength_rating is not None:
                 relative_strength = float(canslim_data.relative_strength_rating)
@@ -479,6 +517,11 @@ class StrategyRunner:
 
     async def _is_canslim_symbol(self, symbol: str) -> bool:
         """Check if this symbol is configured for the CAN SLIM strategy."""
+        today = now_ist().date()
+        cached = self._canslim_symbol_cache.get(symbol)
+        if cached is not None and cached[0] == today:
+            return cached[1]
+
         from app.models.strategy_config import StrategyConfig
 
         async with async_session_factory() as session:
@@ -492,7 +535,9 @@ class StrategyRunner:
             )
             symbols = result.scalar_one_or_none()
 
-        return symbol in (symbols or [])
+        result_bool = symbol in (symbols or [])
+        self._canslim_symbol_cache[symbol] = (today, result_bool)
+        return result_bool
 
     async def _is_strategy5_symbol(self, symbol: str) -> bool:
         """Check if this symbol is on today's Strategy 5 watchlist."""
@@ -517,77 +562,54 @@ class StrategyRunner:
             return result.scalar_one_or_none()
 
     async def _get_daily_candles(self, symbol: str) -> list[Candle] | None:
-        """Get last 90 days of daily bars from MarketData1m (aggregated).
+        """Get last 90 days of daily bars from market_data_daily (pre-built rows).
 
-        Fetches raw 1m candles and aggregates to daily bars in Python
-        (avoids mixing window functions with GROUP BY in SQL).
+        Uses the dedicated daily table (69 rows per symbol) instead of aggregating
+        from market_data_1m (up to 35,000 rows per symbol), eliminating the root
+        cause of per-candle CPU spikes. Result is cached for the trading day.
         """
+        from app.models.market_data_daily import MarketDataDaily
+
         today = now_ist().date()
-        start_date = today - timedelta(days=120)
-        start_ts = datetime.combine(start_date, MARKET_OPEN, tzinfo=IST)
+
+        # Return cached result if still valid for today
+        cached = self._daily_candles_cache.get(symbol)
+        if cached is not None and cached[0] == today:
+            return cached[1]
+
+        start_date = today - timedelta(days=90)
 
         async with async_session_factory() as session:
             result = await session.execute(
-                select(
-                    MarketData1m.open,
-                    MarketData1m.high,
-                    MarketData1m.low,
-                    MarketData1m.close,
-                    MarketData1m.volume,
-                    MarketData1m.timestamp,
-                )
+                select(MarketDataDaily)
                 .where(
                     and_(
-                        MarketData1m.symbol == symbol,
-                        MarketData1m.timestamp >= start_ts,
+                        MarketDataDaily.symbol == symbol,
+                        MarketDataDaily.date >= start_date,
                     )
                 )
-                .order_by(MarketData1m.timestamp)
+                .order_by(MarketDataDaily.date)
             )
-            rows = result.all()
+            rows = result.scalars().all()
 
-        if not rows:
+        if len(rows) < 10:
             return None
 
-        # Aggregate 1m candles into daily bars
-        from collections import defaultdict
-        daily: dict[date, dict] = {}
-        for row in rows:
-            day = row.timestamp.date()
-            if day not in daily:
-                daily[day] = {
-                    "open": float(row.open),
-                    "high": float(row.high),
-                    "low": float(row.low),
-                    "close": float(row.close),
-                    "volume": int(row.volume or 0),
-                }
-            else:
-                d = daily[day]
-                d["high"] = max(d["high"], float(row.high))
-                d["low"] = min(d["low"], float(row.low))
-                d["close"] = float(row.close)  # Last candle's close
-                d["volume"] += int(row.volume or 0)
-
-        if len(daily) < 10:
-            return None
-
-        daily_candles: list[Candle] = []
-        for day_key in sorted(daily.keys()):
-            d = daily[day_key]
-            daily_candles.append(
-                Candle(
-                    open=d["open"],
-                    high=d["high"],
-                    low=d["low"],
-                    close=d["close"],
-                    volume=d["volume"],
-                )
+        candles: list[Candle] = [
+            Candle(
+                open=float(row.open),
+                high=float(row.high),
+                low=float(row.low),
+                close=float(row.close),
+                volume=int(row.volume),
             )
+            for row in rows
+        ]
 
-        return daily_candles[-90:]
+        self._daily_candles_cache[symbol] = (today, candles)
+        return candles
 
-    async def _enrich_strategy5_params(self, symbol: str, params: dict) -> None:
+    async def _enrich_strategy5_params(self, symbol: str, params: dict, india_vix: float | None = None) -> None:
         """Load RVOL baseline + Nifty bias from Redis and inject into strategy_params."""
         # RVOL profile
         if params.get("_rvol_profile") is None:
@@ -600,34 +622,42 @@ class StrategyRunner:
             except Exception:
                 logger.debug("Could not load RVOL profile for %s", symbol)
 
-        # Cross-position counts for soft enforcement
-        try:
-            async with async_session_factory() as session:
-                from app.models.trade import Trade
-                from app.models.position import Position
-                from sqlalchemy import func
+        # Cross-position counts — cached 60s, also invalidated on new signal
+        _counts_cached = self._s5_counts_cache
+        if _counts_cached and (now_ist() - _counts_cached[0]).total_seconds() < 60:
+            params["_active_position_count"] = _counts_cached[1]
+            params["_daily_trade_count"] = _counts_cached[2]
+        else:
+            try:
+                async with async_session_factory() as session:
+                    from app.models.trade import Trade
+                    from app.models.position import Position
+                    from sqlalchemy import func
 
-                today = now_ist().date()
-                pos_count = await session.scalar(
-                    select(func.count()).where(
-                        and_(
-                            Position.strategy_name == "intraday_futures",
-                            Position.status == "OPEN",
+                    today = now_ist().date()
+                    pos_count = await session.scalar(
+                        select(func.count()).where(
+                            and_(
+                                Position.strategy_name == "intraday_futures",
+                                Position.status == "OPEN",
+                            )
                         )
                     )
-                )
-                trade_count = await session.scalar(
-                    select(func.count()).where(
-                        and_(
-                            Trade.strategy_name == "intraday_futures",
-                            func.date(Trade.entry_time) == today,
+                    trade_count = await session.scalar(
+                        select(func.count()).where(
+                            and_(
+                                Trade.strategy_name == "intraday_futures",
+                                func.date(Trade.entry_time) == today,
+                            )
                         )
                     )
-                )
-                params["_active_position_count"] = pos_count or 0
-                params["_daily_trade_count"] = trade_count or 0
-        except Exception:
-            logger.debug("Could not fetch Strategy 5 position/trade counts")
+                    pos_count = pos_count or 0
+                    trade_count = trade_count or 0
+                    params["_active_position_count"] = pos_count
+                    params["_daily_trade_count"] = trade_count
+                    self._s5_counts_cache = (now_ist(), pos_count, trade_count)
+            except Exception:
+                logger.debug("Could not fetch Strategy 5 position/trade counts")
 
         # Nifty intraday bias (for alignment gate)
         try:
@@ -668,154 +698,189 @@ class StrategyRunner:
         except Exception:
             logger.debug("Could not load ORB levels from Redis for %s", symbol)
 
-        # Morning briefing output (approach + max_lots cap)
-        try:
-            r = get_redis()
-            today = now_ist().date()
-            raw = await r.get(f"strat5:morning_briefing:{today}")
-            if raw:
+        # --- Static session data (briefing + screener) — cached per symbol per day ---
+        today = now_ist().date()
+        session_entry = self._s5_session_cache.get(symbol)
+        session_cached = session_entry is not None and session_entry.get("_cache_date") == today
+
+        if session_cached:
+            # Inject from cache — no Redis reads needed
+            for key in (
+                "_briefing_approach", "_briefing_max_lots", "_briefing_sector_bias",
+                "_briefing_sector_avoid", "_screener_score", "_stock_gap_pct",
+                "_relative_gap_pct", "_gap_direction", "_stock_bias", "_stock_bias_source",
+                "_stock_trend_strength", "_stock_trend_score",
+            ):
+                if key in session_entry:
+                    params[key] = session_entry[key]
+        else:
+            # Build cache entry from Redis
+            entry: dict = {"_cache_date": today}
+
+            try:
+                r = get_redis()
                 import json as _json
-                briefing = _json.loads(raw)
-                params["_briefing_approach"] = briefing.get("approach", "normal")
-                params["_briefing_max_lots"] = briefing.get("max_lots_recommendation", 2)
-                params["_briefing_sector_bias"] = briefing.get("sector_bias", "none")
-                params["_briefing_sector_avoid"] = briefing.get("sector_avoid", "none")
-        except Exception:
-            logger.debug("Could not load morning briefing for Strategy 5")
+                raw = await r.get(f"strat5:morning_briefing:{today}")
+                if raw:
+                    briefing = _json.loads(raw)
+                    entry["_briefing_approach"] = briefing.get("approach", "normal")
+                    entry["_briefing_max_lots"] = briefing.get("max_lots_recommendation", 2)
+                    entry["_briefing_sector_bias"] = briefing.get("sector_bias", "none")
+                    entry["_briefing_sector_avoid"] = briefing.get("sector_avoid", "none")
+            except Exception:
+                logger.debug("Could not load morning briefing for Strategy 5")
 
-        # Screener composite score + gap data (for position sizing + confidence)
-        try:
-            r = get_redis()
-            today = now_ist().date()
-            wl_raw = await r.get(f"strat5:watchlist:{today}")
-            if wl_raw:
+            try:
+                r = get_redis()
                 import json as _json
-                watchlist = _json.loads(wl_raw)
-                for item in watchlist:
-                    if item.get("symbol") == symbol:
-                        params["_screener_score"] = item.get("composite_score", 0)
-                        params["_stock_gap_pct"] = item.get("gap_pct")
-                        params["_relative_gap_pct"] = item.get("relative_gap_pct")
-                        params["_gap_direction"] = item.get("gap_direction")
-                        params["_stock_bias"] = item.get("bias")
-                        params["_stock_bias_source"] = item.get("bias_source")
-                        params["_stock_trend_strength"] = item.get("trend_strength")
-                        params["_stock_trend_score"] = item.get("trend_score")
-                        break
-        except Exception:
-            logger.debug("Could not load screener score for %s", symbol)
+                wl_raw = await r.get(f"strat5:watchlist:{today}")
+                if wl_raw:
+                    watchlist = _json.loads(wl_raw)
+                    for item in watchlist:
+                        if item.get("symbol") == symbol:
+                            entry["_screener_score"] = item.get("composite_score", 0)
+                            entry["_stock_gap_pct"] = item.get("gap_pct")
+                            entry["_relative_gap_pct"] = item.get("relative_gap_pct")
+                            entry["_gap_direction"] = item.get("gap_direction")
+                            entry["_stock_bias"] = item.get("bias")
+                            entry["_stock_bias_source"] = item.get("bias_source")
+                            entry["_stock_trend_strength"] = item.get("trend_strength")
+                            entry["_stock_trend_score"] = item.get("trend_score")
+                            break
+            except Exception:
+                logger.debug("Could not load screener score for %s", symbol)
 
-        # India VIX (for position sizing cap)
-        # Uses get_cached_price() — same JSON dict format as feed_manager.cache_price()
-        # and run_preopen_reassessment(). Raw r.get() broke when formats diverged.
-        try:
-            vix_cached = await get_cached_price("INDIA VIX")
-            if vix_cached:
-                params["_india_vix"] = float(vix_cached["ltp"])
-        except Exception:
-            logger.debug("Could not load India VIX for Strategy 5")
+            self._s5_session_cache[symbol] = entry
+            # Inject into params
+            for key in (
+                "_briefing_approach", "_briefing_max_lots", "_briefing_sector_bias",
+                "_briefing_sector_avoid", "_screener_score", "_stock_gap_pct",
+                "_relative_gap_pct", "_gap_direction", "_stock_bias", "_stock_bias_source",
+                "_stock_trend_strength", "_stock_trend_score",
+            ):
+                if key in entry:
+                    params[key] = entry[key]
 
-        # Global cues mid-day shift detection
-        try:
-            r = get_redis()
-            today = now_ist().date()
-            import json as _json
+        # India VIX — use value already fetched in _build_market_context
+        if india_vix is not None:
+            params["_india_vix"] = india_vix
 
-            morning_raw = await r.get(f"strat5:global_cues:{today}")
-            if morning_raw:
-                morning_cues = _json.loads(morning_raw)
-                current_cues = await _get_global_cues_from_redis()
-                if current_cues is not None:
-                    shifts: list[tuple[str, str]] = []
+        # Global cues mid-day shift detection — throttled to once per 5 min per symbol
+        _now = now_ist()
+        _last_shift_check = self._s5_shift_last_checked.get(symbol)
+        if _last_shift_check is None or (_now - _last_shift_check).total_seconds() >= 300:
+            self._s5_shift_last_checked[symbol] = _now
+            try:
+                r = get_redis()
+                today = now_ist().date()
+                import json as _json
 
-                    # Crude shift: +-2% from morning snapshot
-                    morning_crude = morning_cues.get("crude_pct")
-                    if morning_crude is not None and current_cues.crude_pct is not None:
-                        crude_delta = current_cues.crude_pct - morning_crude
-                        if abs(crude_delta) >= 2.0:
-                            direction = "up" if crude_delta > 0 else "down"
-                            shifts.append((
-                                "crude",
-                                f"Crude shifted {direction} {abs(crude_delta):.1f}% since morning "
-                                f"({morning_crude:.1f}% -> {current_cues.crude_pct:.1f}%)",
-                            ))
+                morning_raw = await r.get(f"strat5:global_cues:{today}")
+                if morning_raw:
+                    morning_cues = _json.loads(morning_raw)
+                    current_cues = await _get_global_cues_from_redis()
+                    if current_cues is not None:
+                        shifts: list[tuple[str, str]] = []
 
-                    # VIX shift: +-2 absolute from morning snapshot
-                    morning_vix = morning_cues.get("us_vix")
-                    if morning_vix is not None and current_cues.us_vix is not None:
-                        vix_delta = current_cues.us_vix - morning_vix
-                        if abs(vix_delta) >= 2.0:
-                            direction = "up" if vix_delta > 0 else "down"
-                            shifts.append((
-                                "vix",
-                                f"VIX shifted {direction} {abs(vix_delta):.1f} since morning "
-                                f"({morning_vix:.1f} -> {current_cues.us_vix:.1f})",
-                            ))
+                        # Crude shift: +-2% from morning snapshot
+                        morning_crude = morning_cues.get("crude_pct")
+                        if morning_crude is not None and current_cues.crude_pct is not None:
+                            crude_delta = current_cues.crude_pct - morning_crude
+                            if abs(crude_delta) >= 2.0:
+                                direction = "up" if crude_delta > 0 else "down"
+                                shifts.append((
+                                    "crude",
+                                    f"Crude shifted {direction} {abs(crude_delta):.1f}% since morning "
+                                    f"({morning_crude:.1f}% -> {current_cues.crude_pct:.1f}%)",
+                                ))
 
-                    # Log each shift with debounce (60-min TTL per shift key)
-                    if shifts:
-                        from app.services.morning_screener import _append_agent_log
-                        for shift_key, message in shifts:
-                            debounce_key = f"strat5:global_shift_logged:{today}:{shift_key}"
-                            already_logged = await r.get(debounce_key)
-                            if not already_logged:
-                                await _append_agent_log(today, "GLOBAL_SHIFT", message)
-                                await r.set(debounce_key, "1", ex=3600)  # 60-min TTL
-        except Exception:
-            logger.debug("Could not check global cues mid-day shift for Strategy 5")
+                        # VIX shift: +-2 absolute from morning snapshot
+                        morning_vix = morning_cues.get("us_vix")
+                        if morning_vix is not None and current_cues.us_vix is not None:
+                            vix_delta = current_cues.us_vix - morning_vix
+                            if abs(vix_delta) >= 2.0:
+                                direction = "up" if vix_delta > 0 else "down"
+                                shifts.append((
+                                    "vix",
+                                    f"VIX shifted {direction} {abs(vix_delta):.1f} since morning "
+                                    f"({morning_vix:.1f} -> {current_cues.us_vix:.1f})",
+                                ))
 
-        # Intraday FUT OI direction — 4-way classification (same logic as
-        # morning screener _compute_stock_score): correlate OI change with
-        # price change to distinguish long_buildup / short_buildup /
-        # short_covering / long_unwinding.
-        try:
-            async with async_session_factory() as session:
-                rows = await session.execute(
-                    select(OISnapshot.open_interest, OISnapshot.timestamp)
-                    .where(
-                        and_(
-                            OISnapshot.symbol == symbol,
-                            OISnapshot.option_type == "FUT",
+                        # Log each shift with debounce (60-min TTL per shift key)
+                        if shifts:
+                            from app.services.morning_screener import _append_agent_log
+                            for shift_key, message in shifts:
+                                debounce_key = f"strat5:global_shift_logged:{today}:{shift_key}"
+                                already_logged = await r.get(debounce_key)
+                                if not already_logged:
+                                    await _append_agent_log(today, "GLOBAL_SHIFT", message)
+                                    await r.set(debounce_key, "1", ex=3600)  # 60-min TTL
+            except Exception:
+                logger.debug("Could not check global cues mid-day shift for Strategy 5")
+
+        # Intraday FUT OI direction — cached 10 min (matches fetch_s5_watchlist_oi schedule)
+        _s5_oi_cached = self._s5_oi_cache.get(symbol)
+        if _s5_oi_cached and (now_ist() - _s5_oi_cached[0]).total_seconds() < 600:
+            params["_oi_direction"] = _s5_oi_cached[1]
+            params["_oi_change_pct"] = _s5_oi_cached[2]
+        else:
+            try:
+                async with async_session_factory() as session:
+                    rows = await session.execute(
+                        select(OISnapshot.open_interest, OISnapshot.timestamp)
+                        .where(
+                            and_(
+                                OISnapshot.symbol == symbol,
+                                OISnapshot.option_type == "FUT",
+                            )
                         )
+                        .order_by(OISnapshot.timestamp.desc())
+                        .limit(2)
                     )
-                    .order_by(OISnapshot.timestamp.desc())
-                    .limit(2)
-                )
-                snapshots = rows.all()
-            if len(snapshots) == 2:
-                latest_oi = snapshots[0].open_interest
-                prev_oi = snapshots[1].open_interest
-                if prev_oi and prev_oi > 0:
-                    oi_change_pct = (latest_oi - prev_oi) / prev_oi * 100
-                    oi_up = oi_change_pct > 1.0
-                    oi_down = oi_change_pct < -1.0
+                    snapshots = rows.all()
+                if len(snapshots) == 2:
+                    latest_oi = snapshots[0].open_interest
+                    prev_oi = snapshots[1].open_interest
+                    if prev_oi and prev_oi > 0:
+                        oi_change_pct = (latest_oi - prev_oi) / prev_oi * 100
+                        oi_up = oi_change_pct > 1.0
+                        oi_down = oi_change_pct < -1.0
 
-                    # Price direction: compare current candle to candle ~10 min ago
-                    buffer = self._candle_buffers.get(symbol, [])
-                    price_up = True  # default if insufficient data
-                    if len(buffer) >= 10:
-                        price_up = buffer[-1]["c"] > buffer[-10]["c"]
-                    elif len(buffer) >= 2:
-                        price_up = buffer[-1]["c"] > buffer[0]["c"]
+                        # Price direction: compare current candle to candle ~10 min ago
+                        buffer = self._candle_buffers.get(symbol, [])
+                        price_up = True  # default if insufficient data
+                        if len(buffer) >= 10:
+                            price_up = buffer[-1]["c"] > buffer[-10]["c"]
+                        elif len(buffer) >= 2:
+                            price_up = buffer[-1]["c"] > buffer[0]["c"]
 
-                    if oi_up and price_up:
-                        oi_direction = "long_buildup"
-                    elif oi_up and not price_up:
-                        oi_direction = "short_buildup"
-                    elif oi_down and price_up:
-                        oi_direction = "short_covering"
-                    elif oi_down and not price_up:
-                        oi_direction = "long_unwinding"
-                    else:
-                        oi_direction = "flat"
+                        if oi_up and price_up:
+                            oi_direction = "long_buildup"
+                        elif oi_up and not price_up:
+                            oi_direction = "short_buildup"
+                        elif oi_down and price_up:
+                            oi_direction = "short_covering"
+                        elif oi_down and not price_up:
+                            oi_direction = "long_unwinding"
+                        else:
+                            oi_direction = "flat"
 
-                    params["_oi_change_pct"] = oi_change_pct
-                    params["_oi_direction"] = oi_direction
-            elif len(snapshots) == 1:
-                params["_oi_direction"] = "flat"
-                params["_oi_change_pct"] = 0.0
-        except Exception:
-            logger.debug("Could not load intraday FUT OI for %s", symbol)
+                        params["_oi_change_pct"] = oi_change_pct
+                        params["_oi_direction"] = oi_direction
+                        self._s5_oi_cache[symbol] = (now_ist(), oi_direction, oi_change_pct)
+                elif len(snapshots) == 1:
+                    params["_oi_direction"] = "flat"
+                    params["_oi_change_pct"] = 0.0
+                    self._s5_oi_cache[symbol] = (now_ist(), "flat", 0.0)
+            except Exception:
+                logger.debug("Could not load intraday FUT OI for %s", symbol)
+
+    def clear_s5_session_cache(self, symbol: str | None = None) -> None:
+        """Invalidate S5 static session cache. Call after force-run screener/briefing."""
+        if symbol is None:
+            self._s5_session_cache.clear()
+        else:
+            self._s5_session_cache.pop(symbol, None)
 
     async def _flush_strategy_logs(self, strategy: BaseStrategy) -> None:
         """Drain pending log entries, ORB writes, and phase updates from Strategy 5."""
@@ -943,6 +1008,13 @@ class StrategyRunner:
 
     async def _get_oi_analysis(self, symbol: str) -> OIAnalysis | None:
         """Build OI analysis from the most recent oi_snapshots."""
+        # Serve from cache if data is < 3 minutes old (OI snapshot task runs every 3 min)
+        cached = self._oi_analysis_cache.get(symbol)
+        if cached is not None:
+            cache_ts, cached_result = cached
+            if (now_ist() - cache_ts).total_seconds() < 180:
+                return cached_result
+
         async with async_session_factory() as session:
             # Get the latest snapshot timestamp for this symbol
             ts_result = await session.execute(
@@ -952,6 +1024,7 @@ class StrategyRunner:
             )
             latest_ts = ts_result.scalar_one_or_none()
             if latest_ts is None:
+                self._oi_analysis_cache[symbol] = (now_ist(), None)
                 return None
 
             # Fetch all strikes for that snapshot
@@ -965,6 +1038,7 @@ class StrategyRunner:
             )
             snapshots = rows.scalars().all()
             if not snapshots:
+                self._oi_analysis_cache[symbol] = (now_ist(), None)
                 return None
 
         # Pivot into the format expected by analyze_option_chain:
@@ -987,7 +1061,9 @@ class StrategyRunner:
                 entry["pe_volume"] = snap.volume
 
         strikes = list(strike_map.values())
-        return analyze_option_chain(strikes)
+        result = analyze_option_chain(strikes)
+        self._oi_analysis_cache[symbol] = (now_ist(), result)
+        return result
 
     # ------------------------------------------------------------------
     # Candle buffer management
@@ -1279,7 +1355,7 @@ class StrategyRunner:
                 # Load per-strategy params and set on context
                 params = await get_strategy_params(strategy.name.value)
                 if strategy.name == StrategyName.INTRADAY_FUTURES:
-                    await self._enrich_strategy5_params(symbol, params)
+                    await self._enrich_strategy5_params(symbol, params, india_vix=ctx.india_vix)
                 ctx.strategy_params = params
 
                 # Per-strategy risk limits (windows, VIX) — may override executable
@@ -1622,6 +1698,9 @@ class StrategyRunner:
         if signal_record is None:
             return
 
+        # Invalidate S5 counts cache so the next candle sees fresh position/trade counts
+        self.invalidate_s5_counts_cache()
+
         # Track daily count (only count executable signals toward limit)
         if executable:
             count = self._daily_signal_count.get(signal.symbol, 0)
@@ -1908,6 +1987,10 @@ class StrategyRunner:
         except Exception:
             logger.exception("Failed to persist signal for %s", signal.symbol)
             return None
+
+    def invalidate_s5_counts_cache(self) -> None:
+        """Invalidate S5 position/trade count cache. Called when a new trade is created."""
+        self._s5_counts_cache = None
 
     async def _broadcast_signal(
         self,
