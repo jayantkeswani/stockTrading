@@ -1745,7 +1745,6 @@ class StrategyRunner:
     # to update an existing PENDING signal vs. treating it as noise.
     _DEDUP_ENTRY_CHANGE_PCT = 0.3   # 0.3% move in entry price
     _DEDUP_CONF_CHANGE = 5.0        # 5-point confidence shift
-    _DEDUP_AGE_MINUTES = 15.0       # always refresh after 15 min regardless
 
     async def _dedup_signal(
         self,
@@ -1819,14 +1818,9 @@ class StrategyRunner:
                 )
                 conf_change = abs(float(new_conf - (existing.confidence or 0)))
 
-                existing_at = existing.generated_at
-                now_cmp = now.replace(tzinfo=None) if existing_at.tzinfo is None else now
-                age_minutes = (now_cmp - existing_at).total_seconds() / 60
-
                 is_meaningful = (
                     entry_change_pct > self._DEDUP_ENTRY_CHANGE_PCT
                     or conf_change > self._DEDUP_CONF_CHANGE
-                    or age_minutes > self._DEDUP_AGE_MINUTES
                 )
 
                 if not is_meaningful:
@@ -1867,10 +1861,10 @@ class StrategyRunner:
 
                 logger.info(
                     "Signal updated (dedup): %s %s %s — entry=%.2f→%.2f "
-                    "(Δ%.2f%%, conf_Δ%.1f, age %.1fmin)",
+                    "(Δ%.2f%%, conf_Δ%.1f)",
                     signal.strategy_name, signal.symbol, signal.signal_type,
                     float(existing.entry_price), float(new_entry),
-                    entry_change_pct, conf_change, age_minutes,
+                    entry_change_pct, conf_change,
                 )
                 return existing
 
