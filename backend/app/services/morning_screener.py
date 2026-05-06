@@ -1264,7 +1264,7 @@ async def _fetch_daily_data_batch(
     from app.core.database import async_session_factory
     from app.models.market_data_daily import MarketDataDaily
 
-    from_date = today - timedelta(days=days + 10)
+    from_date = today - timedelta(days=days + 30)
     yesterday = today - timedelta(days=1)
     # Tolerate weekends/holidays: require at least days-15 rows
     min_candles = days - 15
