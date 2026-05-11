@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { api } from "@/lib/api";
 import type { S5AgentLogEntry } from "@/lib/types";
+
+const PAGE_SIZE = 100;
 
 const CATEGORY_COLORS: Record<string, string> = {
   BRIEFING: "bg-accent/20 text-accent",
@@ -29,25 +31,54 @@ function formatTime(ts: number): string {
 
 export function AgentLog({ date }: { date: string | null }) {
   const [entries, setEntries] = useState<S5AgentLogEntry[]>([]);
+  const [total, setTotal] = useState(0);
   const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set());
+  const [loadingMore, setLoadingMore] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const isHistorical = date != null;
+  const hasMore = entries.length < total;
 
-  const fetchLog = async () => {
+  const fetchPage = useCallback(async (offset: number, append: boolean) => {
     try {
-      const data = await api.getIntradayFuturesAgentLog(date ?? undefined);
-      setEntries([...data].reverse());
-    } catch {
-      /* silent */
-    }
-  };
+      const data = await api.getIntradayFuturesAgentLog(date ?? undefined, offset, PAGE_SIZE);
+      setTotal(data.total);
+      setEntries((prev) => append ? [...prev, ...data.entries] : data.entries);
+    } catch { /* silent */ }
+  }, [date]);
+
+  // Reset and load first page on date change
+  useEffect(() => {
+    setEntries([]);
+    setTotal(0);
+    setActiveCategories(new Set());
+    fetchPage(0, false);
+    if (isHistorical) return;
+    // Poll: refresh first page every 10s (picks up new entries)
+    const interval = setInterval(() => fetchPage(0, false), 10_000);
+    return () => clearInterval(interval);
+  }, [date, fetchPage, isHistorical]);
+
+  // Load more when sentinel enters viewport
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    await fetchPage(entries.length, true);
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, entries.length, fetchPage]);
 
   useEffect(() => {
-    fetchLog();
-    if (isHistorical) return;
-    const interval = setInterval(fetchLog, 10_000);
-    return () => clearInterval(interval);
-  }, [date]);
+    const sentinel = sentinelRef.current;
+    const container = scrollRef.current;
+    if (!sentinel || !container) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) loadMore(); },
+      { root: container, rootMargin: "100px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadMore]);
 
   const uniqueCategories = [...new Set(entries.map((e) => e.category))].sort();
   const filtered =
@@ -71,9 +102,9 @@ export function AgentLog({ date }: { date: string | null }) {
           <span className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
             Agent Log
             {activeCategories.size > 0 ? (
-              <span className="text-text-muted ml-1">({filtered.length}/{entries.length})</span>
+              <span className="text-text-muted ml-1">({filtered.length}/{total})</span>
             ) : (
-              <span className="text-text-muted ml-1">({entries.length})</span>
+              <span className="text-text-muted ml-1">({entries.length}/{total})</span>
             )}
           </span>
           {activeCategories.size > 0 && (
@@ -106,7 +137,7 @@ export function AgentLog({ date }: { date: string | null }) {
           </div>
         )}
       </div>
-      <div className="max-h-[400px] overflow-y-auto">
+      <div ref={scrollRef} className="max-h-[400px] overflow-y-auto">
         {filtered.length === 0 ? (
           <div className="px-3 py-4 text-center text-text-muted text-xs font-mono">
             {entries.length === 0 ? "no agent activity today" : "no matching entries"}
@@ -114,7 +145,7 @@ export function AgentLog({ date }: { date: string | null }) {
         ) : (
           <div className="divide-y divide-border/30">
             {filtered.map((entry, i) => (
-              <div key={i} className="px-3 py-1.5 hover:bg-bg-tertiary">
+              <div key={`${entry.timestamp}-${entry.category}-${i}`} className="px-3 py-1.5 hover:bg-bg-tertiary">
                 <div className="flex items-start gap-2">
                   <span className="text-[10px] font-mono text-text-muted shrink-0 pt-px">
                     {formatTime(entry.timestamp)}
@@ -128,6 +159,12 @@ export function AgentLog({ date }: { date: string | null }) {
                 </div>
               </div>
             ))}
+            <div ref={sentinelRef} className="h-1" />
+          </div>
+        )}
+        {loadingMore && (
+          <div className="px-3 py-2 text-center text-text-muted text-[10px] font-mono">
+            loading…
           </div>
         )}
       </div>

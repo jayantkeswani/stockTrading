@@ -29,10 +29,13 @@ async def watchlist(date: str | None = None):
 
 
 @router.get("/agent-log")
-async def agent_log(date: str | None = None):
+async def agent_log(date: str | None = None, offset: int = 0, limit: int = 0):
     from app.core.utils import now_ist
 
     date_str = date or str(now_ist().date())
+    if limit > 0:
+        entries, total = await get_agent_log(date_str, offset=offset, limit=limit)
+        return {"entries": entries, "total": total}
     return await get_agent_log(date_str)
 
 

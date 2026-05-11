@@ -2,6 +2,7 @@
 
 import { Fragment, useState, useEffect, useRef, useCallback } from "react";
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
@@ -28,12 +29,25 @@ function formatISTTime(isoString: string | null): string {
 }
 
 export function ActivePositions({ compact }: ActivePositionsProps) {
+  // prices separated so price ticks only re-render this component, not
+  // unrelated store slices (agent logs, research, signals, etc.).
+  const prices = useStore((s) => s.prices);
   const {
-    positions, prices, closedToday, setClosedToday,
+    positions, closedToday, setClosedToday,
     positionViewMode, setPositionViewMode,
     shadowPositions, setShadowPositions,
     shadowClosedToday, setShadowClosedToday,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    positions: s.positions,
+    closedToday: s.closedToday,
+    setClosedToday: s.setClosedToday,
+    positionViewMode: s.positionViewMode,
+    setPositionViewMode: s.setPositionViewMode,
+    shadowPositions: s.shadowPositions,
+    setShadowPositions: s.setShadowPositions,
+    shadowClosedToday: s.shadowClosedToday,
+    setShadowClosedToday: s.setShadowClosedToday,
+  })));
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const prevPositionsLen = useRef(positions.length);

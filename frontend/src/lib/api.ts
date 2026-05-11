@@ -262,8 +262,15 @@ export const api = {
   getIntradayFuturesWatchlist: (date?: string) =>
     request<S5WatchlistItem[]>(`/api/v1/intraday-futures/watchlist${date ? `?date=${date}` : ""}`),
 
-  getIntradayFuturesAgentLog: (date?: string) =>
-    request<S5AgentLogEntry[]>(`/api/v1/intraday-futures/agent-log${date ? `?date=${date}` : ""}`),
+  getIntradayFuturesAgentLog: (date?: string, offset = 0, limit = 100) => {
+    const params = new URLSearchParams();
+    if (date) params.set("date", date);
+    params.set("offset", String(offset));
+    params.set("limit", String(limit));
+    return request<{ entries: S5AgentLogEntry[]; total: number }>(
+      `/api/v1/intraday-futures/agent-log?${params.toString()}`
+    );
+  },
 
   getIntradayFuturesGlobalCues: (date?: string, force?: boolean) => {
     const params = new URLSearchParams();

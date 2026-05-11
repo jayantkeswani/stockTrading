@@ -1789,12 +1789,32 @@ async def get_morning_briefing(date_str: str) -> dict:
     return json.loads(raw) if raw else {}
 
 
-async def get_agent_log(date_str: str) -> list[dict]:
-    """Read today's agent log from Redis."""
+async def get_agent_log(
+    date_str: str, *, offset: int = 0, limit: int = 0,
+) -> list[dict] | tuple[list[dict], int]:
+    """Read agent log from Redis.
+
+    Without limit (default): returns all entries oldest-first (legacy).
+    With limit > 0: returns (entries_newest_first, total_count) for pagination.
+    """
     r = get_redis()
     key = f"strat5:agent_log:{date_str}"
-    entries = await r.lrange(key, 0, -1)
-    return [json.loads(e) for e in entries]
+
+    if limit <= 0:
+        entries = await r.lrange(key, 0, -1)
+        return [json.loads(e) for e in entries]
+
+    total = await r.llen(key)
+    if total == 0 or offset >= total:
+        return [], total
+
+    # List is stored chronologically (RPUSH). Slice from the tail for newest-first.
+    start = max(0, total - offset - limit)
+    end = total - offset - 1
+    entries = await r.lrange(key, start, end)
+    parsed = [json.loads(e) for e in entries]
+    parsed.reverse()
+    return parsed, total
 
 
 async def get_global_cues(date_str: str) -> dict:

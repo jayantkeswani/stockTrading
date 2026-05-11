@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import { SYMBOLS } from "@/lib/constants";
 import { formatINR, pnlColor } from "@/lib/formatters";
 import { api } from "@/lib/api";
@@ -29,7 +30,18 @@ interface WatchlistItem {
 }
 
 export function Watchlist({ onOpenChart }: WatchlistProps) {
-  const { prices, updatePrice, watchlistItems, setWatchlistItems, addWatchlistItem, removeWatchlistItem } = useStore();
+  // prices separated so price ticks don't cause unrelated store slices to
+  // trigger re-renders across the whole component.
+  const prices = useStore((s) => s.prices);
+  const { updatePrice, watchlistItems, setWatchlistItems, addWatchlistItem, removeWatchlistItem } = useStore(
+    useShallow((s) => ({
+      updatePrice: s.updatePrice,
+      watchlistItems: s.watchlistItems,
+      setWatchlistItems: s.setWatchlistItems,
+      addWatchlistItem: s.addWatchlistItem,
+      removeWatchlistItem: s.removeWatchlistItem,
+    }))
+  );
   const [inputValue, setInputValue] = useState("");
   const [suggestions, setSuggestions] = useState<SymbolResult[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);

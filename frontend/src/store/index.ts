@@ -129,15 +129,43 @@ interface AppState {
   setActiveTimeframe: (tf: Timeframe) => void;
 }
 
+// RAF batching — accumulates price ticks and flushes once per animation
+// frame so 50+ WS ticks/frame become a single Zustand set() call.
+let _pendingPrices: Record<string, PriceData> = {};
+let _rafScheduled = false;
+
 export const useStore = create<AppState>()(
   persist(
     (set) => ({
       // Prices
       prices: {},
-      updatePrice: (symbol, data) =>
-        set((state) => ({
-          prices: { ...state.prices, [symbol]: data },
-        })),
+      updatePrice: (symbol, data) => {
+        _pendingPrices[symbol] = data;
+        if (!_rafScheduled) {
+          _rafScheduled = true;
+          const flush = () => {
+            _rafScheduled = false;
+            const batch = _pendingPrices;
+            _pendingPrices = {};
+            set((state) => {
+              let changed = false;
+              const next = { ...state.prices };
+              for (const sym in batch) {
+                if ((next[sym] as PriceData | undefined)?.ltp !== batch[sym].ltp) {
+                  next[sym] = batch[sym];
+                  changed = true;
+                }
+              }
+              return changed ? { prices: next } : state;
+            });
+          };
+          if (typeof requestAnimationFrame !== "undefined") {
+            requestAnimationFrame(flush);
+          } else {
+            setTimeout(flush, 0);
+          }
+        }
+      },
 
       // Positions
       positions: [],
