@@ -57,7 +57,8 @@ class LLMClient(ABC):
     ) -> dict:
         """Generate and parse JSON response. Falls back to extracting JSON from text."""
         text = await self.generate(prompt, system=system, json_mode=True, max_tokens=max_tokens)
-        return _extract_json(text)
+        result = _extract_json(text)
+        return result if isinstance(result, dict) else {}
 
 
 class GeminiClient(LLMClient):
