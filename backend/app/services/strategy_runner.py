@@ -113,6 +113,11 @@ class StrategyRunner:
         # Shared across all symbols; TTL 60 seconds, also invalidated on new signal.
         self._s5_counts_cache: tuple[datetime, int, int] | None = None
 
+        # Last computed NIFTY intraday bias score [-1, +1].
+        # Updated each time NIFTY's candle closes; passed to non-NIFTY compute_intraday_bias
+        # calls so other indices and stocks inherit the benchmark market direction.
+        self._last_nifty_bias_score: float | None = None
+
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -457,7 +462,12 @@ class StrategyRunner:
             current_price=current_price,
             global_cues=global_cues,
             as_of=now_ist(),
+            nifty_bias_score=self._last_nifty_bias_score if symbol != "NIFTY" else None,
         )
+
+        # Cache NIFTY's score so other symbols can use it as a benchmark factor
+        if symbol == "NIFTY" and intraday_bias is not None:
+            self._last_nifty_bias_score = intraday_bias.score
 
         # Publish bias to Redis + WS for index symbols so the dashboard header can display it
         if symbol in INDEX_SYMBOLS and intraday_bias is not None:
@@ -1700,6 +1710,14 @@ class StrategyRunner:
                 signal, dedup_result.id, now, executable, blocked_reason,
                 event="signal:updated", ai_fields=ai_fields,
             )
+            # Re-attempt shadow execute. _dedup_signal confirmed no trade exists yet,
+            # so the confidence gate is the only thing that could have skipped it before.
+            try:
+                import asyncio
+                from app.agent.shadow_executor import shadow_execute_signal
+                asyncio.create_task(shadow_execute_signal(dedup_result.id))
+            except Exception:
+                logger.exception("Shadow execute failed for signal %s", dedup_result.id)
             return
 
         # No existing PENDING signal or prior was EXECUTED — create new
@@ -1898,7 +1916,37 @@ class StrategyRunner:
                     # Case 1: pure noise — suppress
                     return "skip"
 
-                # Case 2: meaningful update — refresh in place
+                # Case 2: meaningful update — archive current state, then refresh in place
+                from app.models.signal_history import SignalHistory
+
+                version_result = await session.execute(
+                    select(func.count()).where(SignalHistory.signal_id == existing.id)
+                )
+                next_version = (version_result.scalar() or 0) + 1
+
+                snapshot = SignalHistory(
+                    signal_id=existing.id,
+                    version=next_version,
+                    entry_price=existing.entry_price,
+                    stop_loss=existing.stop_loss,
+                    target_price=existing.target_price,
+                    confidence=existing.confidence,
+                    reason=existing.reason,
+                    indicators=existing.indicators,
+                    executable=existing.executable,
+                    blocked_reason=existing.blocked_reason,
+                    index_entry_price=existing.index_entry_price,
+                    lots=existing.lots,
+                    quantity=existing.quantity,
+                    sizing_meta=existing.sizing_meta,
+                    ai_summary=existing.ai_summary,
+                    ai_rationale=existing.ai_rationale,
+                    ai_adjustment=existing.ai_adjustment,
+                    ai_action=existing.ai_action,
+                    generated_at=existing.generated_at,
+                )
+                session.add(snapshot)
+
                 new_sl = Decimal(str(signal.stop_loss))
                 new_target = (
                     Decimal(str(signal.target_price))
@@ -1931,10 +1979,11 @@ class StrategyRunner:
                 await session.refresh(existing)
 
                 logger.info(
-                    "Signal updated (dedup): %s %s %s — entry=%.2f→%.2f "
+                    "Signal updated (dedup v%d): %s %s %s — entry=%.2f→%.2f "
                     "(Δ%.2f%%, conf_Δ%.1f)",
+                    next_version,
                     signal.strategy_name, signal.symbol, signal.signal_type,
-                    float(existing.entry_price), float(new_entry),
+                    float(snapshot.entry_price), float(new_entry),
                     entry_change_pct, conf_change,
                 )
                 return existing

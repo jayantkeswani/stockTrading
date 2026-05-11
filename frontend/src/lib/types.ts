@@ -103,6 +103,28 @@ export interface Signal {
   ai_action: string | null;
 }
 
+export interface SignalHistory {
+  id: string;
+  signal_id: string;
+  version: number;
+  entry_price: number;
+  stop_loss: number;
+  target_price: number | null;
+  confidence: number | null;
+  reason: string;
+  indicators: Record<string, unknown>;
+  executable: boolean;
+  blocked_reason: string | null;
+  lots: number | null;
+  quantity: number | null;
+  ai_summary: string | null;
+  ai_rationale: string | null;
+  ai_adjustment: number | null;
+  ai_action: string | null;
+  generated_at: string;
+  captured_at: string;
+}
+
 export interface SignalPreview {
   signal_id: string;
   lots: number;

@@ -158,6 +158,77 @@ class TestTimeDecay:
         assert r_after.score != r_no_decay.score or True  # just ensure no crash
 
 
+class TestIntradayDrift:
+    """Factor 7 — intraday price drift from today's open."""
+
+    def test_drift_down_reduces_bullish_score(self):
+        # Flat candles, everything else neutral, but price below today's open
+        candles = _candles(10, "flat", 100.0)  # first candle open = 100.0
+        vwap = make_vwap(100.0)
+        r_below = compute_intraday_bias(None, candles, vwap, 99.5)   # -0.5% drift
+        r_flat  = compute_intraday_bias(None, candles, vwap, 100.0)  # 0% drift
+        assert r_below.score < r_flat.score
+
+    def test_drift_up_boosts_bullish_score(self):
+        candles = _candles(10, "flat", 100.0)
+        vwap = make_vwap(100.0)
+        r_above = compute_intraday_bias(None, candles, vwap, 100.5)  # +0.5% drift
+        r_flat  = compute_intraday_bias(None, candles, vwap, 100.0)
+        assert r_above.score > r_flat.score
+
+    def test_drift_clamped_at_one(self):
+        # -2% drift should clamp to signal = -1.0, not go below
+        candles = _candles(10, "flat", 100.0)
+        vwap = make_vwap(100.0)
+        result = compute_intraday_bias(None, candles, vwap, 98.0)
+        assert result.components.get("intraday_drift_signal") == -1.0
+
+    def test_drift_component_populated(self):
+        candles = _candles(10, "flat", 100.0)
+        vwap = make_vwap(100.0)
+        result = compute_intraday_bias(None, candles, vwap, 99.8)
+        assert "intraday_drift_pct" in result.components
+        assert result.components["intraday_drift_pct"] is not None
+
+    def test_no_candles_drift_component_none(self):
+        result = compute_intraday_bias(None, [], None, 100.0)
+        assert result.components.get("intraday_drift_pct") is None
+
+
+class TestNiftyBiasScore:
+    """Factor 8 — benchmark NIFTY bias injected for non-NIFTY symbols."""
+
+    def test_bullish_nifty_boosts_score(self):
+        candles = _candles(10, "flat", 100.0)
+        vwap = make_vwap(100.0)
+        r_with    = compute_intraday_bias(None, candles, vwap, 100.0, nifty_bias_score=0.8)
+        r_without = compute_intraday_bias(None, candles, vwap, 100.0)
+        assert r_with.score > r_without.score
+
+    def test_bearish_nifty_reduces_score(self):
+        candles = _candles(10, "flat", 100.0)
+        vwap = make_vwap(100.0)
+        r_with    = compute_intraday_bias(None, candles, vwap, 100.0, nifty_bias_score=-0.8)
+        r_without = compute_intraday_bias(None, candles, vwap, 100.0)
+        assert r_with.score < r_without.score
+
+    def test_none_nifty_score_unchanged(self):
+        candles = _candles(10, "flat", 100.0)
+        vwap = make_vwap(100.0)
+        r_none    = compute_intraday_bias(None, candles, vwap, 100.0, nifty_bias_score=None)
+        r_default = compute_intraday_bias(None, candles, vwap, 100.0)
+        assert r_none.score == r_default.score
+
+    def test_nifty_score_component_populated(self):
+        candles = _candles(10, "flat", 100.0)
+        result = compute_intraday_bias(None, candles, None, 100.0, nifty_bias_score=0.5)
+        assert result.components.get("nifty_bias_score") == 0.5
+
+    def test_nifty_score_component_none_when_not_passed(self):
+        result = compute_intraday_bias(None, _candles(10, "flat"), None, 100.0)
+        assert result.components.get("nifty_bias_score") is None
+
+
 class TestIsBlockedByBias:
 
     def test_strong_bullish_blocks_pe(self):

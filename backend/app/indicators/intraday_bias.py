@@ -6,16 +6,18 @@ so a bearish gap-down after a bullish yesterday can still trigger PE signals.
 
 Base weights (at market open 9:15 AM):
 --------------------------------------
-yesterday_close_position   0.25  Primary regime signal, but not decisive alone
-gap_vs_pdc                 0.20  Pre-open / opening gap direction
+yesterday_close_position   0.20  Primary regime signal, but not decisive alone
+gap_vs_pdc                 0.15  Pre-open / opening gap direction
+intraday_drift             0.10  (current_price - today_open) / today_open — captures sustained moves
 vwap_slope                 0.25  Intraday trend: slope over last 30 1m candles
 price_vs_vwap              0.10  Which side of VWAP price is on right now
 global_overnight           0.10  Dow futures, S&P close, USD/INR overnight cues
 candle_momentum            0.10  Net direction of last 5 candle bodies
+nifty_bias_score           0.05  NIFTY bias injected for non-NIFTY symbols (optional)
 
 Time-decay: static factors (yesterday, gap) decay as the session progresses,
-shifting weight to dynamic factors (VWAP slope, price-vs-VWAP, candle momentum).
-By 3:15 PM, yesterday drops from 0.25→0.10 and gap from 0.20→0.08.
+shifting weight to dynamic factors (VWAP slope, intraday_drift, price-vs-VWAP, candle momentum).
+By 3:15 PM, yesterday drops from 0.20→0.08 and gap from 0.15→0.06.
 
 Score in [-1, +1]: positive = bullish bias, negative = bearish bias.
 Strength: STRONG |score|>=0.50, MODERATE >=0.20, WEAK otherwise.
@@ -58,8 +60,8 @@ _MARKET_OPEN = time(9, 15)
 _MARKET_CLOSE = time(15, 15)
 _SESSION_MINUTES = 360.0  # 9:15 → 15:15
 
-_YESTERDAY_DECAY = 0.6   # 0.25 * (1 - 0.6*1.0) = 0.10 at close
-_GAP_DECAY = 0.6          # 0.20 * (1 - 0.6*1.0) = 0.08 at close
+_YESTERDAY_DECAY = 0.6   # 0.20 * (1 - 0.6*1.0) = 0.08 at close
+_GAP_DECAY = 0.6          # 0.15 * (1 - 0.6*1.0) = 0.06 at close
 
 
 def _session_progress(as_of: datetime | None) -> float:
@@ -81,6 +83,7 @@ def compute_intraday_bias(
     current_price: float,
     global_cues: GlobalCues | None = None,
     as_of: datetime | None = None,
+    nifty_bias_score: float | None = None,
 ) -> IntradayBias:
     """Compute composite intraday directional bias.
 
@@ -89,18 +92,24 @@ def compute_intraday_bias(
 
     as_of: current timestamp (IST-aware) for time-decaying static weights.
     If None, uses base weights (no decay — backwards-compatible).
+
+    nifty_bias_score: pass NIFTY's computed score [-1,+1] for non-NIFTY symbols
+    so the broader market direction feeds into stock/other-index bias.
+    Do not pass for NIFTY itself (would be circular).
     """
     progress = _session_progress(as_of)
 
     # Time-decayed weights for static factors
-    w_yesterday = 0.25 * (1.0 - _YESTERDAY_DECAY * progress)
-    w_gap = 0.20 * (1.0 - _GAP_DECAY * progress)
+    w_yesterday = 0.20 * (1.0 - _YESTERDAY_DECAY * progress)
+    w_gap = 0.15 * (1.0 - _GAP_DECAY * progress)
     # Freed weight redistributed to dynamic factors
-    freed = (0.25 - w_yesterday) + (0.20 - w_gap)
-    w_vwap_slope = 0.25 + freed * 0.55
-    w_price_vs_vwap = 0.10 + freed * 0.20
-    w_candle_momentum = 0.10 + freed * 0.25
-    w_global = 0.10  # unchanged — decays naturally via its own staleness
+    freed = (0.20 - w_yesterday) + (0.15 - w_gap)
+    w_vwap_slope = 0.25 + freed * 0.45
+    w_price_vs_vwap = 0.10 + freed * 0.15
+    w_intraday_drift = 0.10 + freed * 0.20
+    w_candle_momentum = 0.10 + freed * 0.20
+    w_global = 0.10
+    w_nifty_bias = 0.05  # only applied when nifty_bias_score is provided  # unchanged — decays naturally via its own staleness
 
     weighted_sum = 0.0
     total_weight = 0.0
@@ -191,6 +200,38 @@ def compute_intraday_bias(
         components["candle_momentum_last_5"] = round(momentum_score, 2)
     else:
         components["candle_momentum_last_5"] = None
+
+    # ------------------------------------------------------------------
+    # 7. Intraday drift — (current_price - today_open) / today_open (dynamic)
+    # Captures sustained intraday moves that gap+yesterday miss entirely.
+    # e.g. NIFTY flat open but -1% by 11:45 AM registers as full bearish signal.
+    # ------------------------------------------------------------------
+    if candles_1m:
+        today_open_price = candles_1m[0].open
+        if today_open_price > 0:
+            drift_pct = (current_price - today_open_price) / today_open_price * 100.0
+            drift_signal = max(-1.0, min(1.0, drift_pct / 0.5))
+            weighted_sum += drift_signal * w_intraday_drift
+            total_weight += w_intraday_drift
+            components["intraday_drift_pct"] = round(drift_pct, 3)
+            components["intraday_drift_signal"] = round(drift_signal, 3)
+        else:
+            components["intraday_drift_pct"] = None
+    else:
+        components["intraday_drift_pct"] = None
+
+    # ------------------------------------------------------------------
+    # 8. NIFTY bias score — benchmark index direction for non-NIFTY symbols
+    # Pass NIFTY's computed score so BANKNIFTY/stocks inherit market context.
+    # Never pass for NIFTY itself (circular).
+    # ------------------------------------------------------------------
+    if nifty_bias_score is not None:
+        nifty_signal = max(-1.0, min(1.0, nifty_bias_score))
+        weighted_sum += nifty_signal * w_nifty_bias
+        total_weight += w_nifty_bias
+        components["nifty_bias_score"] = round(nifty_bias_score, 3)
+    else:
+        components["nifty_bias_score"] = None
 
     # ------------------------------------------------------------------
     # Combine

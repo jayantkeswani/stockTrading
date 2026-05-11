@@ -145,6 +145,8 @@ export const api = {
     }),
   rejectSignal: (id: string) =>
     request(`/api/v1/signals/${id}/reject`, { method: "POST" }),
+  getSignalHistory: (id: string) =>
+    request<import("./types").SignalHistory[]>(`/api/v1/signals/${id}/history`),
 
   // Risk
   getRiskDashboard: () => request(`/api/v1/risk/dashboard`),

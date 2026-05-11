@@ -51,5 +51,31 @@ class SignalPreviewResponse(BaseModel):
     sizing_meta: dict | None = None
 
 
+class SignalHistoryResponse(BaseModel):
+    id: uuid.UUID
+    signal_id: uuid.UUID
+    version: int
+    entry_price: Decimal
+    stop_loss: Decimal
+    target_price: Decimal | None = None
+    confidence: Decimal | None = None
+    reason: str
+    indicators: dict
+    executable: bool
+    blocked_reason: str | None = None
+    index_entry_price: Decimal | None = None
+    lots: int | None = None
+    quantity: int | None = None
+    sizing_meta: dict | None = None
+    ai_summary: str | None = None
+    ai_rationale: str | None = None
+    ai_adjustment: Decimal | None = None
+    ai_action: str | None = None
+    generated_at: datetime
+    captured_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ExecuteSignalRequest(BaseModel):
     lots: int | None = None  # Optional override; uses signal.lots if omitted

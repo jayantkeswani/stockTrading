@@ -7,6 +7,7 @@ import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
 import type { Signal } from "@/lib/types";
 import { ExecuteSignalModal } from "./ExecuteSignalModal";
+import { SignalHistoryPanel } from "@/components/signals/SignalHistoryPanel";
 
 function WindowBadge({ windowState }: { windowState?: string }) {
   if (!windowState) return null;
@@ -445,12 +446,15 @@ function SignalCard({
         </button>
       </div>
 
-      {/* Expanded: raw reason */}
-      {expanded && signal.reason && (
+      {/* Expanded: raw reason + signal history */}
+      {expanded && (
         <div className="mt-2 pt-2 border-t border-border/30 animate-fade-in">
-          <p className="text-[10px] text-text-secondary leading-relaxed font-mono">
-            {signal.reason}
-          </p>
+          {signal.reason && (
+            <p className="text-[10px] text-text-secondary leading-relaxed font-mono mb-1">
+              {signal.reason}
+            </p>
+          )}
+          <SignalHistoryPanel signalId={signal.id} />
         </div>
       )}
 

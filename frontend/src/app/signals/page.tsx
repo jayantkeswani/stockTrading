@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { formatINR, formatTime, formatDate, startOfWeekIST, endOfDayIST } from "@/lib/formatters";
 import { STRATEGY_LABELS, STATUS_COLORS } from "@/lib/constants";
 import type { Signal } from "@/lib/types";
+import { SignalHistoryPanel } from "@/components/signals/SignalHistoryPanel";
 import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
 
 function defaultPeriod(): Period {
@@ -242,6 +243,9 @@ function SignalCard({ signal }: { signal: Signal }) {
               ⊘ {signal.blocked_reason}
             </p>
           )}
+
+          {/* Signal version history */}
+          <SignalHistoryPanel signalId={signal.id} />
         </div>
       )}
     </div>

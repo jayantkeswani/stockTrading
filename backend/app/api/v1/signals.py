@@ -16,7 +16,8 @@ from app.core.utils import now_ist
 from app.models.position import Position
 from app.models.signal import Signal
 from app.models.trade import Trade
-from app.schemas.signal import ExecuteSignalRequest, SignalPreviewResponse, SignalResponse
+from app.models.signal_history import SignalHistory
+from app.schemas.signal import ExecuteSignalRequest, SignalHistoryResponse, SignalPreviewResponse, SignalResponse
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -287,6 +288,17 @@ async def execute_signal(
         "trade_id": str(trade.id),
         "position_id": str(position.id),
     }
+
+
+@router.get("/{signal_id}/history", response_model=list[SignalHistoryResponse])
+async def signal_history(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Return all archived versions for a signal, latest version first."""
+    result = await db.execute(
+        select(SignalHistory)
+        .where(SignalHistory.signal_id == signal_id)
+        .order_by(SignalHistory.version.desc())
+    )
+    return result.scalars().all()
 
 
 @router.post("/{signal_id}/reject")

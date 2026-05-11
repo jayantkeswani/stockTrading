@@ -56,6 +56,12 @@ class TestDedupSignal:
         r.scalar_one_or_none.return_value = None
         return r
 
+    def _version_count_result(self, count: int = 0):
+        """Mock execute result for the SignalHistory version count query."""
+        r = MagicMock()
+        r.scalar.return_value = count
+        return r
+
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.async_session_factory")
     async def test_skip_identical_pending_signal(self, mock_sf):
@@ -87,7 +93,12 @@ class TestDedupSignal:
         mock_session = AsyncMock()
         signal_result = MagicMock()
         signal_result.scalar_one_or_none.return_value = existing
-        mock_session.execute = AsyncMock(side_effect=[signal_result, self._no_trade_result()])
+        # Three execute calls: (1) find existing, (2) check trades, (3) count history versions
+        mock_session.execute = AsyncMock(side_effect=[
+            signal_result,
+            self._no_trade_result(),
+            self._version_count_result(0),
+        ])
         mock_session.commit = AsyncMock()
         mock_session.refresh = AsyncMock()
         mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -104,6 +115,7 @@ class TestDedupSignal:
         assert existing.entry_price == Decimal("260.0")
         assert existing.stop_loss == Decimal("182.0")
         assert existing.target_price == Decimal("375.0")
+        mock_session.add.assert_called_once()  # SignalHistory snapshot was archived
         mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -135,7 +147,12 @@ class TestDedupSignal:
         mock_session = AsyncMock()
         signal_result = MagicMock()
         signal_result.scalar_one_or_none.return_value = existing
-        mock_session.execute = AsyncMock(side_effect=[signal_result, self._no_trade_result()])
+        # Three execute calls: (1) find existing, (2) check trades, (3) count history versions
+        mock_session.execute = AsyncMock(side_effect=[
+            signal_result,
+            self._no_trade_result(),
+            self._version_count_result(0),
+        ])
         mock_session.commit = AsyncMock()
         mock_session.refresh = AsyncMock()
         mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -148,6 +165,7 @@ class TestDedupSignal:
         assert result is not None
         assert result != "skip"
         assert existing.confidence == Decimal("85.0")
+        mock_session.add.assert_called_once()  # SignalHistory snapshot was archived
 
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.async_session_factory")
@@ -210,6 +228,33 @@ class TestHandleSignalDedup:
         # Check it was called with event="signal:updated"
         call_kwargs = mock_broadcast.call_args
         assert call_kwargs.kwargs.get("event") == "signal:updated"
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.strategy_runner._broadcast_signal", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._persist_signal", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._dedup_signal", new_callable=AsyncMock)
+    async def test_shadow_execute_fired_on_case2_update(self, mock_dedup, mock_persist, mock_broadcast):
+        """Case-2 dedup (update in place) must schedule shadow_execute for the updated signal.
+
+        Regression: signals that start below min_confidence_for_shadow (e.g. AI overlay
+        knocks confidence to 44) then improve via Case-2 dedup were never shadow-executed
+        because shadow_execute only fired on new signal creation.
+        """
+        from app.services.strategy_runner import strategy_runner
+        from app.models.signal import Signal
+
+        updated_record = MagicMock(spec=Signal)
+        updated_record.id = "existing-uuid"
+        mock_dedup.return_value = updated_record
+
+        signal = _make_signal()
+        with patch("asyncio.create_task"), \
+             patch("app.agent.shadow_executor.shadow_execute_signal") as mock_shadow:
+            await strategy_runner._handle_signal(signal, True, None)
+
+        mock_persist.assert_not_called()
+        mock_broadcast.assert_called_once()
+        mock_shadow.assert_called_once_with("existing-uuid")
 
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.strategy_runner._broadcast_signal", new_callable=AsyncMock)
