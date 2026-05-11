@@ -301,6 +301,7 @@ export interface S5WatchlistItem {
   orb_high?: number;
   orb_low?: number;
   orb_range?: number;
+  manual?: boolean;
 }
 
 export interface S5AgentLogEntry {

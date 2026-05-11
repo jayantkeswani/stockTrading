@@ -7,6 +7,7 @@ import { AgentLog } from "@/components/intraday-futures/AgentLog";
 import { GlobalCues } from "@/components/intraday-futures/GlobalCues";
 import { SetupPerformance } from "@/components/intraday-futures/SetupPerformance";
 import { ConfigPanel } from "@/components/intraday-futures/ConfigPanel";
+import { PermanentWatchlist } from "@/components/intraday-futures/PermanentWatchlist";
 import { ChartModal } from "@/components/charts/ChartModal";
 import { useStore } from "@/store";
 
@@ -37,6 +38,7 @@ export default function IntradayFuturesPage() {
         {/* Left: Watchlist */}
         <div className="col-span-8 space-y-3">
           <Watchlist date={selectedDate} onOpenChart={handleOpenChart} />
+          <PermanentWatchlist />
         </div>
 
         {/* Right: Agent Log + Global Cues */}

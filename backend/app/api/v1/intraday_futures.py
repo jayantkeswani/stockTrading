@@ -1,6 +1,9 @@
 """API endpoints for Strategy 5 — Intraday Stock Futures."""
 
+import json
+
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from app.services.morning_screener import (
     get_agent_log,
@@ -18,6 +21,93 @@ from app.strategies.strategy_5_intraday_futures import get_current_phase
 from app.services.strategy_runner import strategy_runner
 
 router = APIRouter()
+
+_PERM_WATCHLIST_KEY = "strat5:watchlist:permanent"
+
+
+class _SymbolBody(BaseModel):
+    symbol: str
+
+
+async def _sync_perm_watchlist_to_db(symbols: list[str]) -> None:
+    from sqlalchemy import select
+
+    from app.core.database import async_session_factory
+    from app.models.strategy_config import StrategyConfig
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(StrategyConfig).where(StrategyConfig.strategy_name == "intraday_futures")
+        )
+        config = result.scalar_one_or_none()
+        if config:
+            config.symbols = symbols
+            await session.commit()
+
+
+@router.get("/permanent-watchlist")
+async def get_permanent_watchlist():
+    from app.core.redis import get_redis
+
+    r = get_redis()
+    raw = await r.get(_PERM_WATCHLIST_KEY)
+    if raw:
+        return {"symbols": json.loads(raw)}
+
+    # Fall back to DB and re-hydrate Redis
+    from sqlalchemy import select
+
+    from app.core.database import async_session_factory
+    from app.models.strategy_config import StrategyConfig
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(StrategyConfig).where(StrategyConfig.strategy_name == "intraday_futures")
+        )
+        config = result.scalar_one_or_none()
+        symbols = list(config.symbols or []) if config else []
+
+    await r.set(_PERM_WATCHLIST_KEY, json.dumps(symbols))
+    return {"symbols": symbols}
+
+
+@router.post("/permanent-watchlist")
+async def add_to_permanent_watchlist(body: _SymbolBody):
+    from app.core.redis import get_redis
+    from app.data_sources.nse_client import get_fo_lot_sizes
+
+    symbol = body.symbol.strip().upper()
+
+    lot_sizes = await get_fo_lot_sizes()
+    if symbol not in (lot_sizes or {}):
+        raise HTTPException(status_code=422, detail=f"{symbol} is not an F&O-eligible stock")
+
+    r = get_redis()
+    raw = await r.get(_PERM_WATCHLIST_KEY)
+    symbols: list[str] = json.loads(raw) if raw else []
+
+    if symbol in symbols:
+        return {"symbols": symbols}
+
+    symbols.append(symbol)
+    await r.set(_PERM_WATCHLIST_KEY, json.dumps(symbols))
+    await _sync_perm_watchlist_to_db(symbols)
+    return {"symbols": symbols}
+
+
+@router.delete("/permanent-watchlist/{symbol}")
+async def remove_from_permanent_watchlist(symbol: str):
+    from app.core.redis import get_redis
+
+    symbol = symbol.strip().upper()
+    r = get_redis()
+    raw = await r.get(_PERM_WATCHLIST_KEY)
+    symbols: list[str] = json.loads(raw) if raw else []
+
+    symbols = [s for s in symbols if s != symbol]
+    await r.set(_PERM_WATCHLIST_KEY, json.dumps(symbols))
+    await _sync_perm_watchlist_to_db(symbols)
+    return {"symbols": symbols}
 
 
 @router.get("/watchlist")

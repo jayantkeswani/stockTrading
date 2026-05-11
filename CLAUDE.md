@@ -59,7 +59,7 @@ stockTrading/
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
     └── src/
         ├── app/           # 8 pages (dashboard, trades, signals, research, settings, agent, chart, intraday-futures)
-        ├── components/    # React components by domain (34 components incl. 7 intraday-futures/*, research/ResearchSearch, ResearchProgress, ResearchReport)
+        ├── components/    # React components by domain (37 components incl. 8 intraday-futures/* (+ PermanentWatchlist), shared/SymbolSearchInput, research/ResearchSearch, ResearchProgress, ResearchReport)
         ├── hooks/         # useWebSocket (auto-reconnect, event subscriptions, research events)
         ├── lib/           # API client, types, formatters, constants
         └── store/         # Zustand store (prices, positions, signals, scanLogs, risk, agent, research)

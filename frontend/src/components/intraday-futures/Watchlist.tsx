@@ -48,6 +48,7 @@ function InfoTip({ content }: { content: string }) {
 export function Watchlist({ date = null, onOpenChart }: { date?: string | null; onOpenChart?: (symbol: string) => void }) {
   const [items, setItems] = useState<S5WatchlistItem[]>([]);
   const [sortKey, setSortKey] = useState<"composite_score" | "rs_percentile">("composite_score");
+  const [filterKey, setFilterKey] = useState<"all" | "screened" | "pinned">("all");
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
   const prices = useStore((s) => s.prices);
   const updatePrice = useStore((s) => s.updatePrice);
@@ -77,7 +78,13 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
     return () => clearInterval(interval);
   }, [date]);
 
-  const sorted = [...items].sort((a, b) => {
+  const filtered = filterKey === "pinned"
+    ? items.filter((i) => i.manual)
+    : filterKey === "screened"
+    ? items.filter((i) => !i.manual)
+    : items;
+
+  const sorted = [...filtered].sort((a, b) => {
     if (sortKey === "rs_percentile") return b.factors.rs_percentile - a.factors.rs_percentile;
     return b.composite_score - a.composite_score;
   });
@@ -101,14 +108,25 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
           </svg>
           Futures Watchlist ({items.length})
         </span>
-        <select
-          value={sortKey}
-          onChange={(e) => setSortKey(e.target.value as typeof sortKey)}
-          className="text-[10px] font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-secondary"
-        >
-          <option value="composite_score">Score</option>
-          <option value="rs_percentile">RS</option>
-        </select>
+        <div className="flex items-center gap-1.5">
+          <select
+            value={filterKey}
+            onChange={(e) => setFilterKey(e.target.value as typeof filterKey)}
+            className="text-[10px] font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-secondary"
+          >
+            <option value="all">All</option>
+            <option value="screened">Screened</option>
+            <option value="pinned">Pinned</option>
+          </select>
+          <select
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value as typeof sortKey)}
+            className="text-[10px] font-mono bg-bg-tertiary border border-border rounded px-1 py-0.5 text-text-secondary"
+          >
+            <option value="composite_score">Score</option>
+            <option value="rs_percentile">RS</option>
+          </select>
+        </div>
       </div>
       <div className="max-h-[400px] overflow-y-auto">
         <table className="w-full text-xs font-mono">
@@ -138,7 +156,7 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
               return (
                 <Fragment key={item.symbol}>
                   <tr
-                    className="border-t border-border/50 hover:bg-bg-tertiary"
+                    className={`border-t border-border/50 hover:bg-bg-tertiary${item.manual ? " border-l-2 border-l-accent/60" : ""}`}
                   >
                     <td className="px-2 py-1">
                       {onOpenChart ? (
@@ -151,8 +169,16 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
                       ) : (
                         <span className="text-text-primary">{item.symbol}</span>
                       )}
+                      {item.manual && (
+                        <span
+                          title="Permanent watchlist"
+                          className="text-[9px] border border-accent/40 rounded px-0.5 ml-1 text-accent/70 font-mono"
+                        >P</span>
+                      )}
                     </td>
-                    <td className="px-2 py-1 text-right text-accent">{item.composite_score}</td>
+                    <td className="px-2 py-1 text-right text-accent">
+                      {item.manual && !item.composite_score ? "—" : item.composite_score}
+                    </td>
                     <td className="px-2 py-1 text-right">{item.factors.rs_percentile}</td>
                     <td className="px-2 py-1 text-right">{item.factors.adr_pct.toFixed(1)}</td>
                     <td className="px-2 py-1 text-right">
@@ -287,10 +313,10 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
                 </Fragment>
               );
             })}
-            {items.length === 0 && (
+            {sorted.length === 0 && (
               <tr>
                 <td colSpan={10} className="px-2 py-4 text-center text-text-muted text-xs font-mono">
-                  no watchlist — run screener
+                  {items.length === 0 ? "no watchlist — run screener" : "no results"}
                 </td>
               </tr>
             )}

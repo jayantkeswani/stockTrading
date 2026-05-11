@@ -411,6 +411,49 @@ async def run_morning_screener(as_of: date | None = None) -> list[dict]:
         await r.set(key, json.dumps([]), ex=REDIS_TTL)
         return []
 
+    # Merge permanent watchlist stocks that didn't clear the quant threshold
+    perm_raw = await r.get("strat5:watchlist:permanent")
+    permanent_symbols = set(json.loads(perm_raw)) if perm_raw else set()
+    if permanent_symbols:
+        existing_symbols = {c["symbol"] for c in candidates}
+        injected = 0
+        for sym in permanent_symbols:
+            if sym not in existing_symbols:
+                candidates.append({
+                    "symbol": sym,
+                    "composite_score": 0,
+                    "price": 0,
+                    "bias": "NEUTRAL",
+                    "trend_strength": "WEAK",
+                    "trend_score": 0.0,
+                    "trend_components": {},
+                    "factors": {
+                        "rs_percentile": 0.0,
+                        "range_position": 50.0,
+                        "volume_trend": 50.0,
+                        "oi_change": 50.0,
+                        "adr_pct": 0.0,
+                        "adr_qualifies": False,
+                        "sector": get_sector(sym),
+                        "trend_quality": 50.0,
+                        "delivery_pct": 50.0,
+                        "high_52w_proximity": 50.0,
+                    },
+                    "pdh": None,
+                    "pdl": None,
+                    "pdc": None,
+                    "lot_size": 0,
+                    "manual": True,
+                })
+                injected += 1
+            else:
+                for c in candidates:
+                    if c["symbol"] == sym:
+                        c["manual"] = True
+                        break
+        await _append_agent_log(today, "SCREENER", f"Merged {len(permanent_symbols)} permanent watchlist stock(s)")
+        logger.info("Screener: merged %d permanent symbols (%d injected, %d already present)", len(permanent_symbols), injected, len(permanent_symbols) - injected)
+
     # Stage 2: News & Sentiment
     candidates = await _stage2_news_sentiment(candidates)
     await _append_agent_log(today, "SCREENER", f"Stage 2 complete: {len(candidates)} stocks after news filter")
@@ -836,14 +879,16 @@ async def _stage2_news_sentiment(candidates: list[dict]) -> list[dict]:
         if isinstance(r, Exception):
             logger.warning("News task exception: %s", r)
             continue
-        # Drop stocks with severe negative news
-        if r.get("news", {}).get("flagged"):
+        # Drop stocks with severe negative news — but never drop permanent watchlist pins
+        if r.get("news", {}).get("flagged") and not r.get("manual"):
             logger.info("Dropping %s due to severe negative news", r["symbol"])
             continue
         enriched.append(r)
 
-    enriched.sort(key=lambda x: x["composite_score"], reverse=True)
-    return enriched[:TOP_N_FOR_CONFIDENCE]
+    manual_pins = [r for r in enriched if r.get("manual")]
+    screened = [r for r in enriched if not r.get("manual")]
+    screened.sort(key=lambda x: x["composite_score"], reverse=True)
+    return screened[:TOP_N_FOR_CONFIDENCE] + manual_pins
 
 
 async def _stage3_llm_confidence(candidates: list[dict]) -> list[dict]:
@@ -951,10 +996,10 @@ Respond in JSON:
         sym = c["symbol"]
         rating = ratings.get(sym, {})
         confidence = rating.get("confidence", "MEDIUM")
-        if confidence == "LOW":
+        if confidence == "LOW" and not c.get("manual"):
             logger.info("Dropping %s: LLM rated LOW — %s", sym, rating.get("reason", ""))
             continue
-        if sym in correlated_drops:
+        if sym in correlated_drops and not c.get("manual"):
             logger.info("Dropping %s: correlated sector duplicate", sym)
             continue
         c["llm_confidence"] = confidence

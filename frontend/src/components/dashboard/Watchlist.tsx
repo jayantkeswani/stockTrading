@@ -1,26 +1,16 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect } from "react";
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
 import { SYMBOLS } from "@/lib/constants";
 import { formatINR, pnlColor } from "@/lib/formatters";
 import { api } from "@/lib/api";
+import { SymbolSearchInput } from "@/components/shared/SymbolSearchInput";
+import type { SymbolResult } from "@/components/shared/SymbolSearchInput";
 
 interface WatchlistProps {
   onOpenChart: (symbol: string) => void;
-}
-
-interface SymbolResult {
-  symbol: string;
-  display: string;
-  short_name: string;
-  segment: string;
-  strike: number;
-  type: string;
-  ltp: number;
-  expiry: string;
-  lot_size: number;
 }
 
 interface WatchlistItem {
@@ -42,12 +32,6 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
       removeWatchlistItem: s.removeWatchlistItem,
     }))
   );
-  const [inputValue, setInputValue] = useState("");
-  const [suggestions, setSuggestions] = useState<SymbolResult[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // Fetch prices for watchlist symbols
   const fetchWatchlistPrices = useCallback(
@@ -97,36 +81,9 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
     return () => clearInterval(interval);
   }, [watchlistItems, fetchWatchlistPrices]);
 
-  // Debounced symbol search
-  useEffect(() => {
-    if (inputValue.trim().length < 1) {
-      setSuggestions([]);
-      setShowSuggestions(false);
-      return;
-    }
-
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      setSearching(true);
-      try {
-        const result = await api.searchSymbols(inputValue.trim());
-        setSuggestions(result.results);
-        setShowSuggestions(result.results.length > 0);
-      } catch {
-        setSuggestions([]);
-      }
-      setSearching(false);
-    }, 300);
-
-    return () => clearTimeout(debounceRef.current);
-  }, [inputValue]);
-
   const handleSelectSuggestion = useCallback(
     async (result: SymbolResult) => {
       if (watchlistItems.some((c) => c.symbol === result.symbol)) {
-        setInputValue("");
-        setSuggestions([]);
-        setShowSuggestions(false);
         return;
       }
 
@@ -151,9 +108,6 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
 
       addWatchlistItem(newItem);
       fetchWatchlistPrices([newItem]);
-      setInputValue("");
-      setSuggestions([]);
-      setShowSuggestions(false);
     },
     [watchlistItems, fetchWatchlistPrices, addWatchlistItem]
   );
@@ -166,12 +120,6 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
       // Ignore
     }
   }, [removeWatchlistItem]);
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      setShowSuggestions(false);
-    }
-  }, []);
 
   // Render a single watchlist row — unified for indices and custom items
   const renderRow = (
@@ -252,62 +200,7 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
         )}
       </div>
 
-      {/* Search input */}
-      <div className="px-2 py-1.5 border-t border-border relative">
-        <input
-          ref={inputRef}
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-          placeholder="search symbols..."
-          className="w-full text-xs font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50 transition-colors"
-        />
-        {searching && (
-          <div className="absolute right-4 top-2.5 text-[10px] text-text-muted font-mono">...</div>
-        )}
-
-        {/* Autocomplete dropdown */}
-        {showSuggestions && suggestions.length > 0 && (
-          <div className="absolute left-2 right-2 bottom-full mb-1 bg-bg-secondary border border-border rounded shadow-lg max-h-[200px] overflow-y-auto z-50">
-            {suggestions.map((s) => (
-              <button
-                key={s.symbol}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => handleSelectSuggestion(s)}
-                className="w-full flex items-center justify-between px-2 py-1 hover:bg-bg-tertiary/80 transition-colors text-left border-b border-border/20 last:border-0"
-              >
-                <div className="min-w-0 flex-1">
-                  <span className="text-xs font-mono font-medium text-text-primary truncate">
-                    {s.display}
-                  </span>
-                  {s.segment && (
-                    <span className={`ml-1 text-[10px] font-mono ${
-                      s.segment === "FUT" ? "text-warning" : s.segment === "OPT" ? "text-profit" : "text-text-muted"
-                    }`}>
-                      {s.segment}
-                    </span>
-                  )}
-                  {s.expiry && (
-                    <span className="ml-1 text-[10px] text-text-muted font-mono">
-                      {s.expiry}
-                    </span>
-                  )}
-                </div>
-                {s.type && (
-                  <span className={`text-[10px] font-mono font-medium ${
-                    s.type === "CE" ? "text-profit" : "text-loss"
-                  }`}>
-                    {s.type}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      <SymbolSearchInput onSelect={handleSelectSuggestion} placeholder="search symbols..." />
     </div>
   );
 }

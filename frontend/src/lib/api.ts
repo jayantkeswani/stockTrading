@@ -309,6 +309,20 @@ export const api = {
   setIntradayFuturesAgentAction: (action: "pause" | "resume") =>
     request<{ status: string }>(`/api/v1/intraday-futures/agent/${action}`, { method: "POST" }),
 
+  getPermanentWatchlist: () =>
+    request<{ symbols: string[] }>(`/api/v1/intraday-futures/permanent-watchlist`),
+
+  addToPermanentWatchlist: (symbol: string) =>
+    request<{ symbols: string[] }>(`/api/v1/intraday-futures/permanent-watchlist`, {
+      method: "POST",
+      body: JSON.stringify({ symbol }),
+    }),
+
+  removeFromPermanentWatchlist: (symbol: string) =>
+    request<{ symbols: string[] }>(`/api/v1/intraday-futures/permanent-watchlist/${encodeURIComponent(symbol)}`, {
+      method: "DELETE",
+    }),
+
   // Health
   health: () => request(`/api/v1/health`),
 };
