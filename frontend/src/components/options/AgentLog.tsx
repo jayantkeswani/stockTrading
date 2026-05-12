@@ -41,8 +41,6 @@ export function AgentLog({ date }: { date: string | null }) {
   }, [date]);
 
   useEffect(() => {
-    setEntries([]);
-    setTotal(0);
     setActiveCategories(new Set());
     fetchPage(0, false);
     if (isHistorical) return;
