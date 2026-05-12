@@ -304,15 +304,37 @@ async def _synthesize_briefing(llm, data: dict) -> dict:
         "on NSE India. Your briefing controls three downstream decisions:\n"
         "  1. 'approach' (aggressive/normal/conservative) — caps lot sizing and "
         "signal generation aggressiveness.\n"
-        "  2. 'sector_bias' — the screener will weight this sector higher in ranking.\n"
+        "  2. 'sector_bias' / 'sector_avoid' — the screener weights these in ranking.\n"
         "  3. 'max_lots_recommendation' (1 or 2) — hard cap on lots per trade today.\n\n"
-        "Decision rules:\n"
-        "  - 3+ consecutive losing trades → conservative, max 1 lot\n"
-        "  - VIX rising for 3+ days → conservative\n"
-        "  - VIX falling + positive 5d P&L → aggressive is acceptable\n"
-        "  - Win rate below 40% on any setup over 5 days → flag that setup\n"
-        "  - If a sector dominated wins, bias toward it; if it dominated losses, bias away\n"
-        "  - Global cues strongly negative (US markets -1%+, crude spike) → conservative\n\n"
+        "## Approach rules (evaluated in priority order)\n"
+        "CONSERVATIVE (max 1 lot) — any one of:\n"
+        "  - 3+ consecutive losing trades (drawdown streak)\n"
+        "  - VIX rising for 3+ days AND current VIX > 17\n"
+        "  - Global cues strongly negative (US markets -1%+, crude spike >2%)\n"
+        "  - Win rate below 30% across all setups over 5 days\n"
+        "AGGRESSIVE (max 2 lots) — ALL of:\n"
+        "  - VIX falling or stable AND current VIX < 16\n"
+        "  - 5-day net P&L positive\n"
+        "  - No drawdown streak (consecutive losses < 2)\n"
+        "  - Global cues neutral or positive\n"
+        "NORMAL (max 2 lots) — everything else. This is the default.\n\n"
+        "## Setup priority\n"
+        "setup_priority controls which setups the strategy favors today:\n"
+        "  - ORB: best on trending days (gap + follow-through, VIX moderate)\n"
+        "  - VWAP_BOUNCE: best on mean-reversion days (gap fade, choppy price action)\n"
+        "  - PDH_PDL: best when prior day had a clear range and today breaks it\n"
+        "  - GAP_CONTINUATION: best on strong gap days (>0.5% Nifty gap, global trend)\n"
+        "Recommend 1-2 setups that match today's expected regime. Do NOT always default to ORB.\n\n"
+        "## Sector bias\n"
+        "Consider BOTH recent P&L performance AND today's global cues:\n"
+        "  - Crude spike >2% → avoid ENERGY (input cost), favor METALS (commodity cycle)\n"
+        "  - USD strengthening >0.5% → avoid IT (revenue tailwind priced in), favor PHARMA\n"
+        "  - US markets strongly positive → favor IT, METALS (global beta)\n"
+        "  - Recent sector P&L: bias toward sectors with >60% win rate, avoid <30%\n"
+        "  - When recent P&L and global cues conflict, weight global cues higher (forward-looking)\n\n"
+        "## Mixed signals\n"
+        "When indicators conflict (e.g. VIX rising but P&L positive, or global negative but "
+        "sector strong), default to NORMAL with specific flags explaining the tension.\n\n"
         "Be specific and data-driven. 'Banking strong 4/5 days, net +8K' is good. "
         "'Consider sectors' is useless."
     )
@@ -349,11 +371,11 @@ Current VIX: {data.get('vix', 'N/A')}
 Respond in JSON:
 {{
     "approach": "aggressive" | "normal" | "conservative",
-    "summary": "<2-3 sentence briefing referencing specific data>",
-    "sector_bias": "<specific sector to favor, or 'none'>",
-    "sector_avoid": "<specific sector to avoid, or 'none'>",
-    "setup_priority": ["ORB"],
-    "flags": ["<specific warnings with numbers>"],
+    "summary": "<2-3 sentence briefing citing specific numbers from the data above>",
+    "sector_bias": "<specific sector name to favor, or 'none'>",
+    "sector_avoid": "<specific sector name to avoid, or 'none'>",
+    "setup_priority": ["<1-2 setup types from: ORB, VWAP_BOUNCE, PDH_PDL, GAP_CONTINUATION>"],
+    "flags": ["<specific warnings with numbers, e.g. 'ORB win rate 25% over 5 days'>"],
     "max_lots_recommendation": 1 or 2
 }}"""
 
@@ -763,17 +785,17 @@ async def _stage2_news_sentiment(candidates: list[dict]) -> list[dict]:
     )
 
     _SCREENER_SEARCH_PROMPT = (
-        "Search for the latest news and developments about {symbol} ({display_name}) "
-        "stock in the Indian market.\n\n"
-        "Include:\n"
-        "1. Earnings announcements or results (if in last 48 hours)\n"
-        "2. Analyst upgrades/downgrades\n"
-        "3. Corporate actions (dividends, splits, bonus, buybacks)\n"
-        "4. Regulatory or policy changes impacting the company\n"
-        "5. Block deals or large institutional transactions\n"
-        "6. Any breaking news or significant price-moving events\n\n"
-        "Focus on news from the LAST 48 HOURS only. For a morning screener, "
-        "recency is critical. Be factual and specific."
+        "Search for the latest news about {symbol} ({display_name}) on NSE India. "
+        "LAST 48 HOURS ONLY — older news is irrelevant for today's trading.\n\n"
+        "Priority (highest first):\n"
+        "1. Earnings results or guidance changes (last 48h)\n"
+        "2. Analyst upgrades/downgrades with price targets\n"
+        "3. SEBI/regulatory actions, fraud allegations, credit rating changes\n"
+        "4. Block deals, bulk deals, or large institutional transactions\n"
+        "5. Corporate actions (dividends, splits, bonus, buybacks)\n"
+        "6. Breaking news or significant price-moving events\n\n"
+        "Skip: general sector commentary, old news, routine management quotes. "
+        "Be factual. Attribute each item to a source."
     )
 
     class _ScreenerNewsAgent(NewsSentimentAgent):
@@ -918,29 +940,52 @@ async def _stage3_llm_confidence(candidates: list[dict]) -> list[dict]:
     llm = create_llm_client()
     system = (
         "You are a senior quantitative analyst reviewing stock candidates for "
-        "intraday futures trading on NSE India. You will receive today's market "
-        "conditions, the morning briefing, and per-stock data including quantitative "
-        "scores, news sentiment, fundamentals, and our own recent trade history.\n\n"
-        "Rating criteria:\n"
-        "- HIGH: Strong quantitative profile + supportive news + no sector headwinds + "
-        "fundamentals support institutional interest. Prime candidate.\n"
-        "- MEDIUM: Decent profile but one concern (mixed news, sector rotation risk, "
-        "low institutional interest, weak volume trend). Standard watchlist inclusion.\n"
-        "- LOW: Specific red flag that makes intraday trading dangerous today — "
-        "regulatory risk, earnings tonight, analyst downgrade, severe negative news, "
-        "or consistently poor results in our own trading history. Will be DROPPED.\n\n"
-        "Also identify correlated groups: if multiple candidates are from the same "
-        "sector, recommend keeping only the strongest and dropping the rest."
+        "intraday futures trading on NSE India.\n\n"
+        "## Rating criteria\n"
+        "HIGH: Strong quant score (>60) + supportive or neutral news + no sector "
+        "headwinds + fundamentals show institutional interest (FII >15% or rising). "
+        "Prime candidate for aggressive sizing.\n"
+        "MEDIUM: Decent profile but one concern (mixed news, weak volume trend, "
+        "sector rotation risk, low institutional interest, or low quant score 30-60). "
+        "Standard watchlist inclusion.\n"
+        "LOW: Specific red flag making intraday trading DANGEROUS today — regulatory "
+        "risk, earnings tonight (not yet reported), active SEBI investigation, severe "
+        "negative news score (<-0.5), or analyst downgrade within 48h. Will be DROPPED "
+        "from the watchlist.\n\n"
+        "IMPORTANT: Only rate LOW for concrete, stock-specific dangers. Do NOT rate "
+        "LOW for: low quant scores alone, weak volume, general sector weakness, "
+        "no news (neutral is fine), or limited trade history. Those are MEDIUM.\n\n"
+        "## Using the morning briefing\n"
+        "The briefing sets today's approach (aggressive/normal/conservative), sector "
+        "bias, and sector to avoid. Apply these:\n"
+        "  - If briefing says 'avoid PHARMA', downgrade PHARMA candidates by one tier "
+        "unless they have exceptional quant+news.\n"
+        "  - If briefing says 'sector_bias: METALS', give METALS candidates the benefit "
+        "of the doubt on borderline ratings.\n"
+        "  - Conservative approach: be stricter — require stronger evidence for HIGH.\n\n"
+        "## Trade history interpretation\n"
+        "our_history shows our own recent results trading this stock:\n"
+        "  - No history (trades=0): neutral — don't penalize, we just haven't traded it.\n"
+        "  - 1-2 trades: too small a sample — mention but don't let it drive the rating.\n"
+        "  - 3+ trades with <30% win rate: flag as concern, factor into rating.\n"
+        "  - 3+ trades with >60% win rate: mild positive (we trade this stock well).\n\n"
+        "## Correlated groups\n"
+        "Aggressively identify sector clusters. If 3+ candidates share a sector "
+        "(especially BANKING, NBFC, IT, METALS), recommend keeping only the 1-2 "
+        "strongest by quant score + news quality. Mark the rest for dropping.\n\n"
+        "## Token efficiency\n"
+        "Every candidate MUST have a reason (1 short sentence). If you run out of "
+        "reasoning space, write 'Score X, news Y' — never leave reason empty."
     )
 
     candidates_json = json.dumps(
         [
             {
                 "symbol": c["symbol"],
-                "score": c["composite_score"],
+                "score": round(c["composite_score"], 1),
                 "bias": c["bias"],
                 "rs_pct": c["factors"]["rs_percentile"],
-                "adr": c["factors"]["adr_pct"],
+                "adr": round(c["factors"]["adr_pct"], 1),
                 "volume_trend": c["factors"]["volume_trend"],
                 "sector": c["factors"]["sector"],
                 "news_sentiment": c.get("news", {}).get("sentiment", "unknown"),
@@ -952,35 +997,37 @@ async def _stage3_llm_confidence(candidates: list[dict]) -> list[dict]:
             }
             for c in candidates
         ],
-        indent=2,
+        indent=1,
     )
 
-    prompt = f"""Review these {len(candidates)} intraday futures candidates for today.
+    prompt = f"""Rate these {len(candidates)} intraday futures candidates for today.
 
-## Today's Market Conditions
-{json.dumps(global_cues, indent=2)}
+## Market Conditions
+{json.dumps(global_cues, indent=1)}
 
 ## Morning Briefing
-{json.dumps(briefing, indent=2)}
+{json.dumps(briefing, indent=1)}
 
 ## Candidates
 {candidates_json}
 
+Rate EVERY candidate. Every reason must be non-empty (1 sentence).
+
 Respond in JSON:
 {{
     "ratings": {{
-        "<SYMBOL>": {{"confidence": "HIGH" | "MEDIUM" | "LOW", "reason": "<brief reason>"}},
+        "SYMBOL": {{"confidence": "HIGH" | "MEDIUM" | "LOW", "reason": "<1 sentence>"}},
         ...
     }},
     "correlated_groups": [
-        {{"symbols": ["SYM1", "SYM2"], "sector": "<sector>", "keep": "<strongest symbol>"}}
+        {{"symbols": ["SYM1", "SYM2"], "sector": "BANKING", "keep": "SYM1"}}
     ]
 }}"""
 
     try:
         result = await asyncio.wait_for(
-            llm.generate_json(prompt=prompt, system=system, max_tokens=4096),
-            timeout=45,
+            llm.generate_json(prompt=prompt, system=system, max_tokens=8192),
+            timeout=60,
         )
         ratings = result.get("ratings", {})
         correlated_groups = result.get("correlated_groups", [])

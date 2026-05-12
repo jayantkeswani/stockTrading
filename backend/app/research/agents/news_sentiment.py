@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 SEARCH_SYSTEM_PROMPT = """You are a financial news analyst specializing in Indian stock markets (NSE/BSE).
 Search for and analyze recent news about the specified stock.
 Focus on news from Indian financial media: MoneyControl, Economic Times, LiveMint, Business Standard, NDTV Profit, and NSE/BSE announcements.
-Return factual, source-attributed information."""
+Return factual, source-attributed information. Distinguish between stock-specific news (earnings, corporate actions, analyst calls) and general sector/industry commentary. Stock-specific events matter far more for trading decisions."""
 
 ANALYSIS_PROMPT_TEMPLATE = """Search for the latest news and developments about {symbol} ({display_name}) stock in the Indian market.
 
@@ -34,7 +34,7 @@ Include:
 For each piece of news, note the source and approximate date.
 Focus on news from the last 30 days. Be factual and specific."""
 
-SENTIMENT_PROMPT_TEMPLATE = """Based on the following news about {symbol} ({display_name}), provide a structured sentiment analysis.
+SENTIMENT_PROMPT_TEMPLATE = """Analyze the news below for {symbol} ({display_name}) and score its sentiment for INTRADAY TRADING impact.
 
 NEWS AND DEVELOPMENTS:
 {news_text}
@@ -42,10 +42,29 @@ NEWS AND DEVELOPMENTS:
 SOURCES:
 {sources_text}
 
-Respond in the following JSON format:
+## Scoring guide
+Your sentiment_score directly adjusts this stock's ranking: score × 10 points are added to a composite quant score (typical range 30-90). A score of +0.8 adds +8 points — enough to jump several ranking positions. Be calibrated:
+
+  +0.7 to +1.0: STRONG POSITIVE — stock-specific catalyst with clear price impact (earnings beat >10%, major contract win, analyst upgrade with >15% target raise, block deal by marquee institution). Requires a concrete, time-bound event.
+  +0.3 to +0.6: MILD POSITIVE — supportive news but no single strong catalyst (steady results, minor positive commentary, sector tailwind). Most "positive" news falls here.
+  -0.1 to +0.2: NEUTRAL — no material news, routine updates, or balanced mix of positive/negative. This is the DEFAULT when news is unremarkable. Use 0.0 when there is genuinely no news.
+  -0.3 to -0.6: MILD NEGATIVE — concerning but not disqualifying (analyst downgrade, margin pressure, sector headwind, promoter pledge).
+  -0.7 to -1.0: STRONG NEGATIVE — stock-specific red flag for today's trading (regulatory action, earnings miss >10%, fraud allegation, SEBI order, credit downgrade).
+
+Common calibration errors to avoid:
+  - Routine positive results (revenue up 5%, in-line with estimates) are NOT +0.8. They are +0.2 to +0.3.
+  - General sector commentary ("IT sector outlook positive") is NOT stock-specific. Score 0.0 to +0.1.
+  - A mix of positive and negative news is "mixed", NOT positive. Score near 0.0.
+  - No significant news found = neutral, score 0.0. Do NOT default to positive.
+
+## Event classification
+risk_events: Only stock-specific, time-bound risks that could move price TODAY or THIS WEEK (earnings tonight, regulatory hearing, SEBI order). Do NOT include general industry trends.
+catalyst_events: Only stock-specific, time-bound catalysts (dividend ex-date, contract award, results beat). Do NOT include vague sector optimism.
+
+Respond in JSON:
 {{
     "overall_sentiment": "positive" | "negative" | "neutral" | "mixed",
-    "sentiment_score": <float between -1.0 (very negative) and 1.0 (very positive)>,
+    "sentiment_score": <float -1.0 to 1.0, calibrated per the guide above>,
     "articles": [
         {{
             "headline": "<news headline>",
@@ -56,12 +75,11 @@ Respond in the following JSON format:
         }}
     ],
     "key_themes": ["<theme 1>", "<theme 2>"],
-    "risk_events": ["<risk event if any>"],
-    "catalyst_events": ["<positive catalyst if any>"]
+    "risk_events": ["<stock-specific risk only>"],
+    "catalyst_events": ["<stock-specific catalyst only>"]
 }}
 
-Extract 5-10 articles. Include source URLs from the search results where available.
-Be accurate with sentiment classification."""
+Extract up to 7 articles. Include source URLs from the search results where available."""
 
 
 class NewsSentimentAgent(BaseResearchAgent):
