@@ -41,11 +41,11 @@ stockTrading/
 │   └── telegram/          # MTProto client (Telethon) + signal parser + Fyers probe + independent verifier + setup analyzer. list_dialogs.py (discover chat IDs), fetch_history.py (pull signal-channel history to JSON), parse_signals.py (classifies messages into ENTRY / EXIT_FULL (Book Profit) / EXIT_FORCED (cost-to-cost or "at current price" — deliberately separate from EXIT_FULL so channel-claimed wins aren't inflated) / EXIT_PARTIAL / WATCHLIST / HOLD_OVERNIGHT / REPORT / UPDATE / CANCEL / OTHER; stdlib-only), probe_fyers_history.py (one-shot diagnostic: Fyers free plan serves 1m history only while contract is actively listed; expired contracts return s="error"), verify_signals.py (hybrid backtest: accurate mode for currently-live contracts via real option 1m bars, delta-approx for expired contracts via underlying spot 1m × moneyness-derived delta; channel's stated T1-then-C2C rule; NSE F&O lot sizing from the master CSV; outputs per-trade + aggregate hit rate / expectancy / profit factor in JSON + stdout), analyze_setups.py (reverse-engineers the implied strategy: fetches underlying 1m bars up to each entry minute, reuses backend.app.indicators (VWAP, CPR, previous_day, candle_patterns) to compute features at entry time, aggregates CE vs PE distributional stats — time-of-day buckets, VWAP/PDH/PDL/CPR position, candle patterns, volume ratio, moneyness — and prints an evidence-backed hypothesis; also dumps feature CSV + JSON), analyze_edge.py (feature-importance pass: joins setups_*.json with verification_*.json on msg_id, bucketizes each feature (bool/categorical/numeric-quartile), ranks by win-rate lift with min-bucket-size guard, then stress-tests top-3 filter combinations per direction — finds "filters that beat Arjun at his own strategy"; multiple win definitions via --win-def). Fetched JSON, symbol master cache, candle cache all in scripts/telegram/data/ (gitignored). Session files + data/ gitignored. Uses TELEGRAM_API_ID/API_HASH/PHONE/SESSION_NAME from .env
 ├── backend/               # Python FastAPI backend (see backend/CLAUDE.md)
 │   ├── app/
-│   │   ├── api/v1/        # REST endpoints (13 routers, incl. watchlist, strategies, tasks, research)
+│   │   ├── api/v1/        # REST endpoints (14 routers, incl. watchlist, strategies, tasks, research, options)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
 │   │   ├── models/        # SQLAlchemy ORM models (16 tables incl. market_data_daily, global_market_snapshots, trading_config; signals has ai_* columns; signal_history archives Case-2 dedup snapshots)
 │   │   ├── schemas/       # Pydantic request/response schemas
-│   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill, strategy_params, morning_screener)
+│   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill, strategy_params, morning_screener, agent_log)
 │   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
 │   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels, global_market, intraday_bias, confidence, ATR, gap_analysis, stock_trend)
 │   │   ├── data_feed/     # Fyers API (auth, REST via API_URL/DATA_URL, WebSocket, feed manager, symbol master)
@@ -54,12 +54,12 @@ stockTrading/
 │   │   ├── backtest/      # Backtest module (context_builder, harness, exit_simulator, option_data_fetcher, strike_selector, report)
 │   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP, NSE_HOLIDAYS), enums, utils, task_registry
 │   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh, global_market every 15m, Strategy 5 morning workflow, NSE bhav copy daily, F&O ban list 7:00 AM)
-│   ├── tests/             # pytest test suite (816 tests, incl. signal_history archiving)
+│   ├── tests/             # pytest test suite (827 tests, incl. signal_history archiving)
 │   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
     └── src/
-        ├── app/           # 8 pages (dashboard, trades, signals, research, settings, agent, chart, intraday-futures)
-        ├── components/    # React components by domain (37 components incl. 8 intraday-futures/* (+ PermanentWatchlist), shared/SymbolSearchInput, research/ResearchSearch, ResearchProgress, ResearchReport)
+        ├── app/           # 9 pages (dashboard, trades, signals, research, settings, agent, chart, intraday-futures, options)
+        ├── components/    # React components by domain (38 components incl. 8 intraday-futures/* (+ PermanentWatchlist), options/AgentLog, shared/SymbolSearchInput, research/ResearchSearch, ResearchProgress, ResearchReport)
         ├── hooks/         # useWebSocket (auto-reconnect, event subscriptions, research events)
         ├── lib/           # API client, types, formatters, constants
         └── store/         # Zustand store (prices, positions, signals, scanLogs, risk, agent, research)

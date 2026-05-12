@@ -43,14 +43,25 @@ class VWAPPullbackStrategy(BaseStrategy):
     name = StrategyName.VWAP_PULLBACK
     max_lots = 5
 
+    _pending_logs: list[tuple[str, str]] = []
+
+    def drain_pending_logs(self) -> list[tuple[str, str]]:
+        logs = self._pending_logs
+        self._pending_logs = []
+        return logs
+
+    def _log(self, category: str, message: str) -> None:
+        self._pending_logs.append((category, message))
+
     def evaluate(self, ctx: MarketContext) -> StrategySignal | None:
         """Evaluate VWAP pullback entry conditions."""
 
         if not ctx.vwap or not ctx.previous_day or not ctx.cpr:
-            logger.debug("Missing indicators for %s", ctx.symbol)
+            self._log("GATE", f"{ctx.symbol}: missing indicators (vwap={bool(ctx.vwap)}, prev_day={bool(ctx.previous_day)}, cpr={bool(ctx.cpr)})")
             return None
 
         if len(ctx.candles_5m) < 5:
+            self._log("GATE", f"{ctx.symbol}: only {len(ctx.candles_5m)} of 5 required 5m candles")
             return None
 
         vwap = ctx.vwap.vwap
@@ -59,10 +70,11 @@ class VWAPPullbackStrategy(BaseStrategy):
         p = ctx.strategy_params or {}
         proximity_pct = p.get("vwap_proximity_pct", VWAP_PROXIMITY_PCT)
 
-        if not is_pullback_to_vwap(price, vwap, proximity_pct):
-            return None
-
         distance = price_distance_from_vwap(price, vwap)
+
+        if not is_pullback_to_vwap(price, vwap, proximity_pct):
+            self._log("GATE", f"{ctx.symbol}: price {price:.2f} not near VWAP {vwap:.2f} (dist={distance:.3f}%, threshold=±{proximity_pct:.2f}%)")
+            return None
 
         # Determine candidate direction from pullback sign (structural rule, not bias)
         if distance > 0:
@@ -70,6 +82,7 @@ class VWAPPullbackStrategy(BaseStrategy):
         elif distance < 0:
             signal = self._evaluate_put(ctx, vwap, distance)
         else:
+            self._log("GATE", f"{ctx.symbol}: price exactly at VWAP, ambiguous direction")
             signal = None
 
         return signal
@@ -81,16 +94,19 @@ class VWAPPullbackStrategy(BaseStrategy):
 
         # Soft bias gate: STRONG bearish bias blocks CE
         if ctx.intraday_bias and is_blocked_by_bias("CE", ctx.intraday_bias):
-            logger.debug("CE blocked by STRONG bearish intraday bias for %s", ctx.symbol)
+            self._log("GATE", f"{ctx.symbol}: CE blocked by STRONG bearish bias (score={ctx.intraday_bias.score:+.2f})")
             return None
 
         if not is_bullish_reversal(ctx.candles_5m):
+            self._log("GATE", f"{ctx.symbol}: no bullish reversal on 5m candles (CE path)")
             return None
 
         vol_candles = ctx.candles_5m_futures_volume or ctx.candles_5m
         avg_vol = average_volume(vol_candles, periods=20)
         curr_vol = vol_candles[-1].volume
         if avg_vol > 0 and curr_vol > avg_vol * 1.2:
+            ratio = curr_vol / avg_vol if avg_vol > 0 else 0
+            self._log("GATE", f"{ctx.symbol}: CE volume spike rejected (curr={curr_vol:.0f}, avg={avg_vol:.0f}, ratio={ratio:.2f}x)")
             return None
 
         return self._build_signal(ctx, SignalType.BUY_CE, vwap, distance)
@@ -102,16 +118,19 @@ class VWAPPullbackStrategy(BaseStrategy):
 
         # Soft bias gate: STRONG bullish bias blocks PE
         if ctx.intraday_bias and is_blocked_by_bias("PE", ctx.intraday_bias):
-            logger.debug("PE blocked by STRONG bullish intraday bias for %s", ctx.symbol)
+            self._log("GATE", f"{ctx.symbol}: PE blocked by STRONG bullish bias (score={ctx.intraday_bias.score:+.2f})")
             return None
 
         if not is_bearish_reversal(ctx.candles_5m):
+            self._log("GATE", f"{ctx.symbol}: no bearish reversal on 5m candles (PE path)")
             return None
 
         vol_candles = ctx.candles_5m_futures_volume or ctx.candles_5m
         avg_vol = average_volume(vol_candles, periods=20)
         curr_vol = vol_candles[-1].volume
         if avg_vol > 0 and curr_vol > avg_vol * 1.2:
+            ratio = curr_vol / avg_vol if avg_vol > 0 else 0
+            self._log("GATE", f"{ctx.symbol}: PE volume spike rejected (curr={curr_vol:.0f}, avg={avg_vol:.0f}, ratio={ratio:.2f}x)")
             return None
 
         return self._build_signal(ctx, SignalType.BUY_PE, vwap, distance)
@@ -159,10 +178,7 @@ class VWAPPullbackStrategy(BaseStrategy):
         p = ctx.strategy_params or {}
         min_persist = p.get("min_confidence_to_persist", 30.0)
         if confidence_result.score < min_persist:
-            logger.debug(
-                "Signal suppressed: confidence %.1f < persist threshold %.1f for %s %s",
-                confidence_result.score, min_persist, ctx.symbol, direction,
-            )
+            self._log("GATE", f"{ctx.symbol} {signal_type.value}: confidence {confidence_result.score:.1f} < persist threshold {min_persist:.1f}")
             return None
 
         # OI confirmation (soft — already reflected in oi_support factor)
@@ -202,6 +218,12 @@ class VWAPPullbackStrategy(BaseStrategy):
             f"OI: {'confirmed' if oi_confirmed else 'weak'}. "
             f"Confidence: {confidence_result.score:.0f} ({confidence_result.rationale_short})."
         )
+
+        rr_str = ""
+        if index_sl is not None and index_target is not None and index_sl != ctx.current_price:
+            rr = abs(index_target - ctx.current_price) / abs(ctx.current_price - index_sl)
+            rr_str = f", R:R=1:{rr:.1f}"
+        self._log("SIGNAL", f"{ctx.symbol} {signal_type.value} at {ctx.current_price:.2f}, confidence={confidence_result.score:.1f}{rr_str}")
 
         return StrategySignal(
             strategy_name=self.name,

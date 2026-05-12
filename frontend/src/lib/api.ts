@@ -272,6 +272,17 @@ export const api = {
     );
   },
 
+  // Options (Strategy 2 — VWAP Pullback)
+  getOptionsAgentLog: (date?: string, offset = 0, limit = 100) => {
+    const params = new URLSearchParams();
+    if (date) params.set("date", date);
+    params.set("offset", String(offset));
+    params.set("limit", String(limit));
+    return request<{ entries: S5AgentLogEntry[]; total: number }>(
+      `/api/v1/options/agent-log?${params.toString()}`
+    );
+  },
+
   getIntradayFuturesGlobalCues: (date?: string, force?: boolean) => {
     const params = new URLSearchParams();
     if (date) params.set("date", date);

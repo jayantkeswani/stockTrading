@@ -898,8 +898,16 @@ class StrategyRunner:
         else:
             self._s5_session_cache.pop(symbol, None)
 
+    async def _s2_log(self, category: str, message: str) -> None:
+        """Write an agent log entry for Strategy 2 (Options). Never raises."""
+        try:
+            from app.services.agent_log import append_agent_log
+            await append_agent_log("strat2", now_ist().date(), category, message)
+        except Exception:
+            pass
+
     async def _flush_strategy_logs(self, strategy: BaseStrategy) -> None:
-        """Drain pending log entries, ORB writes, and phase updates from Strategy 5."""
+        """Drain pending log entries, ORB writes, and phase updates from strategies."""
         today = now_ist().date()
         r = get_redis()
 
@@ -909,9 +917,14 @@ class StrategyRunner:
             logs = drain()
             if logs:
                 try:
-                    from app.services.morning_screener import _append_agent_log
-                    for category, message in logs:
-                        await _append_agent_log(today, category, message)
+                    if strategy.name == StrategyName.VWAP_PULLBACK:
+                        from app.services.agent_log import append_agent_log
+                        for category, message in logs:
+                            await append_agent_log("strat2", today, category, message)
+                    else:
+                        from app.services.morning_screener import _append_agent_log
+                        for category, message in logs:
+                            await _append_agent_log(today, category, message)
                 except Exception:
                     logger.debug("Failed to flush strategy logs", exc_info=True)
 
@@ -1380,6 +1393,8 @@ class StrategyRunner:
                 if not strat_ok and strat_executable:
                     strat_executable = False
                     strat_blocked = strat_reason
+                    if strategy.name == StrategyName.VWAP_PULLBACK:
+                        await self._s2_log("GATE", f"{symbol}: {strat_reason}")
 
                 # Compute window state from strategy's own windows
                 windows = parse_trading_windows(params)
@@ -1412,6 +1427,8 @@ class StrategyRunner:
 
                     # Skip AI overlay when nothing meaningful changed
                     if await self._is_dedup_skip(signal):
+                        if strategy.name == StrategyName.VWAP_PULLBACK:
+                            await self._s2_log("SKIP", f"{signal.symbol}: AI dedup skip (identical PENDING exists)")
                         continue
 
                     # LLM confidence overlay — after resolve, ctx still in scope
@@ -1422,6 +1439,8 @@ class StrategyRunner:
                     if min_conf is not None and strat_executable and signal.confidence < min_conf:
                         strat_executable = False
                         strat_blocked = f"Confidence below threshold ({signal.confidence:.0f} < {min_conf:.0f})"
+                        if strategy.name == StrategyName.VWAP_PULLBACK:
+                            await self._s2_log("SKIP", f"{signal.symbol}: {strat_blocked}")
 
                     await self._handle_signal(signal, strat_executable, strat_blocked, ai_fields=ai_fields)
             except Exception:
@@ -1694,6 +1713,8 @@ class StrategyRunner:
                 "Signal skipped: open position exists for %s %s",
                 signal.symbol, signal.signal_type,
             )
+            if signal.strategy_name == StrategyName.VWAP_PULLBACK:
+                await self._s2_log("SKIP", f"{signal.symbol}: open position exists for {signal.signal_type.value}")
             return
 
         # Check for existing PENDING signal for same strategy + symbol + direction
@@ -1703,6 +1724,8 @@ class StrategyRunner:
                 "Duplicate signal skipped: %s %s %s (identical PENDING exists)",
                 signal.strategy_name, signal.symbol, signal.signal_type,
             )
+            if signal.strategy_name == StrategyName.VWAP_PULLBACK:
+                await self._s2_log("SKIP", f"{signal.symbol}: dedup noise skip (identical PENDING, no meaningful change)")
             return
         if isinstance(dedup_result, Signal):
             # Updated existing signal — broadcast as update (not new)
