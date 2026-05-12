@@ -402,7 +402,7 @@ async def run_morning_screener(as_of: date | None = None) -> list[dict]:
     await _append_agent_log(today, "SCREENER", "Starting morning screener pipeline")
 
     # Stage 1: Quantitative scoring
-    candidates = await _stage1_quantitative(today)
+    candidates, all_scores_lookup = await _stage1_quantitative(today)
     await _append_agent_log(
         today, "SCREENER", f"Stage 1 complete: {len(candidates)} stocks scored >= {MIN_COMPOSITE_SCORE}"
     )
@@ -419,32 +419,37 @@ async def run_morning_screener(as_of: date | None = None) -> list[dict]:
         injected = 0
         for sym in permanent_symbols:
             if sym not in existing_symbols:
-                candidates.append({
-                    "symbol": sym,
-                    "composite_score": 0,
-                    "price": 0,
-                    "bias": "NEUTRAL",
-                    "trend_strength": "WEAK",
-                    "trend_score": 0.0,
-                    "trend_components": {},
-                    "factors": {
-                        "rs_percentile": 0.0,
-                        "range_position": 50.0,
-                        "volume_trend": 50.0,
-                        "oi_change": 50.0,
-                        "adr_pct": 0.0,
-                        "adr_qualifies": False,
-                        "sector": get_sector(sym),
-                        "trend_quality": 50.0,
-                        "delivery_pct": 50.0,
-                        "high_52w_proximity": 50.0,
-                    },
-                    "pdh": None,
-                    "pdl": None,
-                    "pdc": None,
-                    "lot_size": 0,
-                    "manual": True,
-                })
+                scored = all_scores_lookup.get(sym)
+                if scored:
+                    candidate = {**scored, "manual": True}
+                else:
+                    candidate = {
+                        "symbol": sym,
+                        "composite_score": 0,
+                        "price": 0,
+                        "bias": "NEUTRAL",
+                        "trend_strength": "WEAK",
+                        "trend_score": 0.0,
+                        "trend_components": {},
+                        "factors": {
+                            "rs_percentile": 0.0,
+                            "range_position": 50.0,
+                            "volume_trend": 50.0,
+                            "oi_change": 50.0,
+                            "adr_pct": 0.0,
+                            "adr_qualifies": False,
+                            "sector": get_sector(sym),
+                            "trend_quality": 50.0,
+                            "delivery_pct": 50.0,
+                            "high_52w_proximity": 50.0,
+                        },
+                        "pdh": None,
+                        "pdl": None,
+                        "pdc": None,
+                        "lot_size": 0,
+                        "manual": True,
+                    }
+                candidates.append(candidate)
                 injected += 1
             else:
                 for c in candidates:
@@ -532,7 +537,7 @@ async def _fetch_stock_oi_changes(symbols: list[str]) -> dict[str, dict]:
     return result
 
 
-async def _stage1_quantitative(today: date) -> list[dict]:
+async def _stage1_quantitative(today: date) -> tuple[list[dict], dict[str, dict]]:
     """Score ~180 F&O stocks on 8 quantitative factors."""
     from app.data_sources.nse_client import get_fo_ban_list, get_fo_lot_sizes
     from app.tasks.nse_bhav_copy_task import get_bhav_copy, _previous_trading_day
@@ -611,7 +616,8 @@ async def _stage1_quantitative(today: date) -> list[dict]:
     )
 
     candidates.sort(key=lambda x: x["composite_score"], reverse=True)
-    return candidates[:TOP_N_FOR_NEWS]
+    all_scores_lookup = {s["symbol"]: s for s in all_scores}
+    return candidates[:TOP_N_FOR_NEWS], all_scores_lookup
 
 
 def _compute_stock_score(
