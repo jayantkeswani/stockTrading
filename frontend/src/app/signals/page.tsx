@@ -2,15 +2,26 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { formatINR, formatTime, formatDate, startOfWeekIST, endOfDayIST } from "@/lib/formatters";
+import { formatINR, formatTime, formatDate, startOfWeekIST, startOfDayIST, endOfDayIST, subDaysIST, subMonthsIST } from "@/lib/formatters";
 import { STRATEGY_LABELS, STATUS_COLORS } from "@/lib/constants";
 import type { Signal } from "@/lib/types";
 import { SignalHistoryPanel } from "@/components/signals/SignalHistoryPanel";
 import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
+import { useStore } from "@/store";
 
-function defaultPeriod(): Period {
+function periodFromLabel(label: string, customStart?: string, customEnd?: string): Period {
   const now = new Date();
-  return { start: startOfWeekIST(now), end: endOfDayIST(now), label: "This Week" };
+  switch (label) {
+    case "Today":     return { start: startOfDayIST(now), end: endOfDayIST(now), label };
+    case "Last 30D":  return { start: startOfDayIST(subDaysIST(now, 30)), end: endOfDayIST(now), label };
+    case "Last 3M":   return { start: startOfDayIST(subMonthsIST(now, 3)), end: endOfDayIST(now), label };
+    case "Custom":
+      if (customStart && customEnd) {
+        return { start: new Date(customStart), end: new Date(customEnd), label };
+      }
+      return { start: startOfWeekIST(now), end: endOfDayIST(now), label: "This Week" };
+    default:          return { start: startOfWeekIST(now), end: endOfDayIST(now), label: "This Week" };
+  }
 }
 
 const VWAP_CONFIDENCE_FACTOR_LABELS: Record<string, string> = {
@@ -253,11 +264,18 @@ function SignalCard({ signal }: { signal: Signal }) {
 }
 
 export default function SignalsPage() {
-  const [period, setPeriod] = useState<Period>(defaultPeriod);
+  const {
+    signalsMinConfidence, setSignalsMinConfidence,
+    signalsPeriodLabel, signalsPeriodStart, signalsPeriodEnd, setSignalsPeriod,
+    signalsStrategy, setSignalsStrategy,
+    signalsHideInformational, setSignalsHideInformational,
+  } = useStore();
+
+  const period = periodFromLabel(signalsPeriodLabel, signalsPeriodStart, signalsPeriodEnd);
+  const handlePeriodChange = (p: Period) => setSignalsPeriod(p.label, p.start, p.end);
+
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [hideInformational, setHideInformational] = useState(false);
-  const [strategyFilter, setStrategyFilter] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
@@ -279,14 +297,15 @@ export default function SignalsPage() {
     }
     load();
     return () => { cancelled = true; };
-  }, [period]);
+  }, [signalsPeriodLabel, signalsPeriodStart, signalsPeriodEnd]);
 
   const strategies = Array.from(new Set(signals.map(s => s.strategy_name))).sort();
 
   const q = searchQuery.trim().toLowerCase();
   const displayed = signals.filter(s => {
-    if (hideInformational && !s.executable && s.blocked_reason === "Outside trade window") return false;
-    if (strategyFilter && s.strategy_name !== strategyFilter) return false;
+    if (signalsHideInformational && !s.executable && s.blocked_reason === "Outside trade window") return false;
+    if (signalsStrategy && s.strategy_name !== signalsStrategy) return false;
+    if (signalsMinConfidence > 0 && (s.confidence == null || Number(s.confidence) < signalsMinConfidence)) return false;
     if (q && !s.symbol.toLowerCase().includes(q) && !s.reason.toLowerCase().includes(q) && !(s.ai_summary?.toLowerCase().includes(q))) return false;
     return true;
   });
@@ -298,13 +317,13 @@ export default function SignalsPage() {
           <h1 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider">
             Signal History
           </h1>
-          <PeriodFilter value={period} onChange={setPeriod} />
+          <PeriodFilter key={signalsPeriodLabel} value={period} onChange={handlePeriodChange} />
           {strategies.length > 1 && (
             <div className="flex items-center gap-1">
               <button
-                onClick={() => setStrategyFilter("")}
+                onClick={() => setSignalsStrategy("")}
                 className={`text-[10px] font-mono px-1.5 py-px rounded border transition-colors ${
-                  strategyFilter === ""
+                  signalsStrategy === ""
                     ? "bg-accent/20 text-accent border-accent/30"
                     : "text-text-muted border-border hover:text-text-primary"
                 }`}
@@ -314,9 +333,9 @@ export default function SignalsPage() {
               {strategies.map(s => (
                 <button
                   key={s}
-                  onClick={() => setStrategyFilter(prev => prev === s ? "" : s)}
+                  onClick={() => setSignalsStrategy(signalsStrategy === s ? "" : s)}
                   className={`text-[10px] font-mono px-1.5 py-px rounded border transition-colors ${
-                    strategyFilter === s
+                    signalsStrategy === s
                       ? "bg-accent/20 text-accent border-accent/30"
                       : "text-text-muted border-border hover:text-text-primary"
                   }`}
@@ -326,6 +345,21 @@ export default function SignalsPage() {
               ))}
             </div>
           )}
+          <label className="flex items-center gap-1.5 text-[9px] font-mono text-text-muted">
+            <span>CONF</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={signalsMinConfidence}
+              onChange={(e) => setSignalsMinConfidence(Number(e.target.value))}
+              className="w-16 h-1 accent-accent"
+            />
+            <span className={signalsMinConfidence > 0 ? "text-accent" : "text-text-muted"}>
+              {signalsMinConfidence > 0 ? `${signalsMinConfidence}%` : "any"}
+            </span>
+          </label>
           <div className="relative flex items-center">
             <input
               type="text"
@@ -347,8 +381,8 @@ export default function SignalsPage() {
         <label className="flex items-center gap-1.5 cursor-pointer select-none">
           <input
             type="checkbox"
-            checked={hideInformational}
-            onChange={e => setHideInformational(e.target.checked)}
+            checked={signalsHideInformational}
+            onChange={e => setSignalsHideInformational(e.target.checked)}
             className="accent-accent w-3 h-3"
           />
           <span className="text-[10px] font-mono text-text-muted">Hide informational</span>

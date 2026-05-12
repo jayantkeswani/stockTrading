@@ -11,7 +11,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-bg-primary noise-bg">
       <Sidebar />
       <Header />
-      <main className="ml-12 mt-9 p-3">{children}</main>
+      <main className="fixed top-9 left-12 right-0 bottom-0 p-3 overflow-y-auto">{children}</main>
     </div>
   );
 }

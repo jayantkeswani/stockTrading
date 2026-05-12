@@ -7,6 +7,12 @@ trade_monitor: SL hit → target hit → trailing SL → time exit at 3:15 PM.
 P&L is computed on equity 1m candles (stock futures track spot intraday,
 basis is negligible).  Lot sizes from signal metadata.
 
+SL modes (--sl-mode):
+  - "close" (default): trailing SL fires on candle close only.  Matches the
+    live agent's 2-second tick polling — brief wick touches are missed.
+    Initial (hard) SL still uses wicks (a real stop order would fill).
+  - "wick": both initial and trailing SL fire on candle high/low (legacy).
+
 Usage:
     cd backend && source .venv/bin/activate
 
@@ -24,6 +30,9 @@ Usage:
 
     # Override lots
     python scripts/backtest_strategy5.py --confidence 70 --start 2026-05-04 --lots 1
+
+    # Legacy wick-based SL mode
+    python scripts/backtest_strategy5.py --confidence 70 --start 2026-05-05 --sl-mode wick
 
     # Sweep mode: test multiple thresholds
     python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05
@@ -43,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from app.core.constants import IST, MARKET_CLOSE, MARKET_OPEN
 from app.core.database import async_session_factory
-from app.services.strategy_params import INTRADAY_FUTURES_DEFAULTS
+from app.services.strategy_params import get_strategy_params
 
 
 # ── Data structures ─────────────────────────────────────────────────────
@@ -213,14 +222,21 @@ def simulate_exit(
     close_deadline: datetime,
     breakeven_pct: float = 0.5,
     trail_pct: float = 0.3,
+    sl_mode: str = "close",
 ) -> tuple[float, datetime, str, float, list[float]]:
     """Walk candles and simulate trade_monitor exit logic.
+
+    sl_mode controls trailing SL trigger:
+      - "close": trailing SL fires on candle close (matches live agent tick-poll
+        behavior where brief wicks are missed). Initial SL still uses wicks.
+      - "wick": both initial and trailing SL fire on candle high/low (legacy).
 
     Returns (exit_price, exit_time, exit_reason, hwm, sl_trail_history).
     """
     current_sl = stop_loss
     hwm = entry_price
     sl_history = [stop_loss]
+    use_close_for_trail = sl_mode == "close"
 
     for ts, o, h, l, c in candles:
         # Update HWM
@@ -231,13 +247,21 @@ def simulate_exit(
             if l < hwm:
                 hwm = l
 
-        # 1. SL check (wick-based: uses high/low, not just close)
-        if is_long and l <= current_sl:
-            reason = "TRAILING_SL" if current_sl != stop_loss else "SL"
-            return current_sl, ts, reason, hwm, sl_history
-        if not is_long and h >= current_sl:
-            reason = "TRAILING_SL" if current_sl != stop_loss else "SL"
-            return current_sl, ts, reason, hwm, sl_history
+        is_trailing = current_sl != stop_loss
+
+        # 1. SL check
+        # Initial (hard) SL always uses wicks — a true stop order would fill.
+        # Trailing SL uses close when sl_mode="close" to match the live agent's
+        # tick-poll behavior (brief wick touches are often missed).
+        if is_trailing and use_close_for_trail:
+            sl_triggered = (is_long and c <= current_sl) or (not is_long and c >= current_sl)
+        else:
+            sl_triggered = (is_long and l <= current_sl) or (not is_long and h >= current_sl)
+
+        if sl_triggered:
+            reason = "TRAILING_SL" if is_trailing else "SL"
+            exit_px = current_sl if not is_trailing else c
+            return exit_px, ts, reason, hwm, sl_history
 
         # 2. Target check (wick-based)
         if target_price is not None:
@@ -294,9 +318,11 @@ async def run_backtest(
     symbol_filter: list[str] | None = None,
     quiet: bool = False,
     lots_override: int | None = None,
+    sl_mode: str = "close",
 ) -> BacktestReport:
-    breakeven_pct = INTRADAY_FUTURES_DEFAULTS.get("trailing_sl_breakeven_pct", 0.5)
-    trail_pct = INTRADAY_FUTURES_DEFAULTS.get("trailing_sl_trail_pct", 0.3)
+    strat_params = await get_strategy_params("intraday_futures")
+    breakeven_pct = strat_params.get("trailing_sl_breakeven_pct", 0.5)
+    trail_pct = strat_params.get("trailing_sl_trail_pct", 0.3)
 
     trades: list[SimTrade] = []
 
@@ -343,6 +369,7 @@ async def run_backtest(
                 close_deadline=close_deadline,
                 breakeven_pct=breakeven_pct,
                 trail_pct=trail_pct,
+                sl_mode=sl_mode,
             )
 
             if is_long:
@@ -382,12 +409,13 @@ async def run_backtest(
 
 # ── Report printing ─────────────────────────────────────────────────────
 
-def print_report(report: BacktestReport) -> None:
+def print_report(report: BacktestReport, sl_mode: str = "close") -> None:
     if not report.trades:
         return
 
+    sl_label = f"  [sl_mode={sl_mode}]" if sl_mode != "close" else ""
     print(f"\n{'='*80}")
-    print(f"  STRATEGY 5 BACKTEST — Confidence >= {report.threshold}")
+    print(f"  STRATEGY 5 BACKTEST — Confidence >= {report.threshold}{sl_label}")
     print(f"  {report.start_date} to {report.end_date}")
     print(f"{'='*80}\n")
 
@@ -471,13 +499,15 @@ async def run_sweep(
     setup_filter: str | None = None,
     symbol_filter: list[str] | None = None,
     lots_override: int | None = None,
+    sl_mode: str = "close",
 ) -> None:
     """Run backtest at multiple confidence thresholds."""
     thresholds = [40, 50, 55, 60, 65, 70, 75, 80, 85, 90]
 
     lots_label = f" (lots={lots_override})" if lots_override is not None else ""
+    sl_label = f" [sl_mode={sl_mode}]"
     print(f"\n{'='*80}")
-    print(f"  CONFIDENCE SWEEP — {start_date} to {end_date}{lots_label}")
+    print(f"  CONFIDENCE SWEEP — {start_date} to {end_date}{lots_label}{sl_label}")
     print(f"{'='*80}\n")
 
     print(f"  {'Threshold':>9} {'Trades':>7} {'Wins':>5} {'Rate':>7} "
@@ -488,7 +518,7 @@ async def run_sweep(
     for threshold in thresholds:
         report = await run_backtest(
             start_date, end_date, threshold, setup_filter, symbol_filter,
-            quiet=True, lots_override=lots_override,
+            quiet=True, lots_override=lots_override, sl_mode=sl_mode,
         )
         if report.total_trades == 0:
             print(f"  {threshold:>8.0f}% {0:>7} {'—':>5} {'—':>7} "
@@ -529,6 +559,9 @@ def main():
                         help="Override lot count per trade (default: use signal's recommended lots)")
     parser.add_argument("--sweep", action="store_true",
                         help="Run confidence sweep (ignores --confidence)")
+    parser.add_argument("--sl-mode", choices=["close", "wick"], default="close",
+                        help="Trailing SL trigger: 'close' (candle close, matches live agent) "
+                             "or 'wick' (candle high/low, legacy). Default: close")
 
     args = parser.parse_args()
     end_date = args.end or args.start
@@ -536,13 +569,14 @@ def main():
 
     async def _run():
         if args.sweep:
-            await run_sweep(args.start, end_date, args.setup, symbol_filter, args.lots)
+            await run_sweep(args.start, end_date, args.setup, symbol_filter, args.lots,
+                            sl_mode=args.sl_mode)
         else:
             report = await run_backtest(
                 args.start, end_date, args.confidence, args.setup, symbol_filter,
-                lots_override=args.lots,
+                lots_override=args.lots, sl_mode=args.sl_mode,
             )
-            print_report(report)
+            print_report(report, sl_mode=args.sl_mode)
 
     asyncio.run(_run())
 

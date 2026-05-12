@@ -45,11 +45,14 @@ function formatSignalTime(isoString: string): string {
 }
 
 export function ScannerPanel() {
-  const { signals, updateSignal, removeSignal } = useStore();
+  const { signals, updateSignal, removeSignal, scannerMinConfidence, setScannerMinConfidence } = useStore();
   const today = isoDateIST(new Date());
-  const pendingSignals = signals.filter(
+  const allPending = signals.filter(
     (s) => s.status === "PENDING" && isoDateIST(new Date(s.generated_at)) === today
   );
+  const pendingSignals = scannerMinConfidence > 0
+    ? allPending.filter((s) => s.confidence != null && Number(s.confidence) >= scannerMinConfidence)
+    : allPending;
 
   const [execSignal, setExecSignal] = useState<Signal | null>(null);
   const [execError, setExecError] = useState<string | null>(null);
@@ -82,7 +85,23 @@ export function ScannerPanel() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-[9px] font-mono text-text-muted">
+            <span>CONF</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={scannerMinConfidence}
+              onChange={(e) => setScannerMinConfidence(Number(e.target.value))}
+              className="w-14 h-1 accent-accent"
+            />
+            <span className={scannerMinConfidence > 0 ? "text-accent" : "text-text-muted"}>
+              {scannerMinConfidence > 0 ? `${scannerMinConfidence}%` : "any"}
+            </span>
+          </label>
+          <div className="w-px h-3 bg-border" />
           <div className="w-1 h-1 rounded-full bg-profit animate-pulse" />
           <span className="text-[10px] text-text-muted font-mono">LIVE</span>
         </div>

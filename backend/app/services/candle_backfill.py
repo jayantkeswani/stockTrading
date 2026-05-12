@@ -142,6 +142,24 @@ async def _has_candles_for_day(symbol: str, day: date) -> bool:
     return count > 0
 
 
+async def _latest_candle_time(symbol: str, day: date) -> datetime | None:
+    """Return the latest candle timestamp for the given symbol and day, or None."""
+    day_start = datetime.combine(day, MARKET_OPEN, tzinfo=IST)
+    day_end = datetime.combine(day, MARKET_CLOSE, tzinfo=IST)
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(func.max(MarketData1m.timestamp)).where(
+                and_(
+                    MarketData1m.symbol == symbol,
+                    MarketData1m.timestamp >= day_start,
+                    MarketData1m.timestamp <= day_end,
+                )
+            )
+        )
+        return result.scalar_one()
+
+
 def _fetch_history_via_sdk(token: str, fyers_symbol: str, day: date) -> list[dict]:
     """Fetch 1m candles using the Fyers SDK (synchronous).
 
@@ -308,13 +326,21 @@ async def backfill_today():
     )
 
     total = 0
+    skipped = 0
+    freshness_threshold = timedelta(minutes=2)
     for symbol, fyers_symbol in symbols.items():
         try:
+            latest = await _latest_candle_time(symbol, today)
+            if latest is not None and (now - latest) < freshness_threshold:
+                skipped += 1
+                continue
             count = await _backfill_symbol(token, symbol, fyers_symbol, today)
             total += count
         except Exception:
             logger.exception("Failed to backfill today's candles for %s", symbol)
 
+    if skipped:
+        logger.info("Today's backfill: skipped %d symbols (candles within %ds)", skipped, int(freshness_threshold.total_seconds()))
     logger.info("Today's backfill complete: %d total candles inserted", total)
 
 

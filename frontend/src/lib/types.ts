@@ -38,6 +38,7 @@ export interface Position {
   is_shadow: boolean;
   position_type: string;
   opened_at: string;
+  signal_confidence: number | null;
 }
 
 export interface Trade {

@@ -324,7 +324,7 @@ async def search_symbols(q: str = Query(min_length=1, max_length=50)):
 
 
 class BatchPriceRequest(BaseModel):
-    symbols: list[str] = Field(..., max_length=50)
+    symbols: list[str] = Field(..., max_length=200)
 
 
 @router.post("/prices/batch")

@@ -9,6 +9,14 @@ Lifecycle:
 - It connects to Fyers WS, subscribes to index symbols
 - Each tick is forwarded to feed_manager.process_tick() via asyncio
 - On market close or app shutdown, call stop()
+
+Reconnection is managed by us, NOT the Fyers SDK.  The SDK's built-in
+reconnect (reconnect=True) reuses the same FyersDataSocket instance, which
+keeps stale topic_id→symbol mappings (scrips_sym, index_sym, resp).  After
+a reconnect the server may assign different topic_ids, causing tick data
+from one symbol (e.g. NIFTY) to be attributed to another (e.g. GAIL).
+By setting reconnect=False we ensure every reconnection creates a fresh
+FyersDataSocket with clean internal state.
 """
 
 import asyncio
@@ -168,12 +176,11 @@ class FyersWSClient:
             self._ws = FyersDataSocket(
                 access_token=full_token,
                 litemode=False,
-                reconnect=True,
+                reconnect=False,
                 on_message=self._on_message,
                 on_error=self._on_error,
                 on_connect=self._on_connect,
                 on_close=self._on_close,
-                reconnect_retry=10,
             )
 
             # Connect first (validates token, starts WS thread), then subscribe.
@@ -309,32 +316,24 @@ class FyersWSClient:
         await feed_manager.process_tick(symbol, tick_data, fyers_alias=fyers_alias)
 
     def _on_connect(self):
-        """Called when Fyers WebSocket connects (initial or reconnect)."""
-        # Snapshot and clear the disconnect timestamp atomically before async work
+        """Called when Fyers WebSocket connects.
+
+        With reconnect=False, every connection uses a fresh FyersDataSocket
+        created by start().  start() calls subscribe() after connect() returns,
+        so we do NOT re-subscribe here — that would double-subscribe.
+        """
         disconnect_at = self._last_disconnect_at
         self._last_disconnect_at = None
         is_reconnect = self._was_ever_connected
         self._was_ever_connected = True
         self._connected = True
-        logger.info("Fyers WebSocket connected")
-
-        # Re-subscribe ALL symbols on reconnect — the SDK only replays the
-        # last subscribe() call; symbols added incrementally are lost.
-        if is_reconnect and self._symbols and self._ws:
-            try:
-                self._ws.subscribe(symbols=self._symbols, data_type="SymbolUpdate")
-                logger.info(
-                    "Re-subscribed %d symbols after reconnect", len(self._symbols),
-                )
-            except Exception:
-                logger.exception("Failed to re-subscribe after reconnect")
+        logger.info("Fyers WebSocket connected (reconnect=%s)", is_reconnect)
 
         if self._loop:
             self._loop.call_soon_threadsafe(
                 asyncio.ensure_future,
                 self._broadcast_connection_status(True),
             )
-            # Reconnect (not initial connect) — trigger gap backfill
             if disconnect_at is not None:
                 reconnect_at = now_ist()
                 logger.info(
@@ -348,11 +347,18 @@ class FyersWSClient:
                 )
 
     def _on_close(self, *args):
-        """Called when Fyers WebSocket disconnects."""
+        """Called when Fyers WebSocket disconnects.
+
+        During market hours: records disconnect time for gap backfill, clears
+        partial candles, then schedules a full stop()+start() reconnect with a
+        fresh FyersDataSocket (clean topic_id mappings).
+
+        After market hours: logs and stays disconnected.  The next morning's
+        7:45 AM reauth creates a fresh connection anyway.
+        """
         self._connected = False
         logger.warning("Fyers WebSocket disconnected")
 
-        # Record disconnect time only when mid-session during market hours
         if self._was_ever_connected and is_market_open():
             self._last_disconnect_at = now_ist()
             logger.info(
@@ -364,6 +370,14 @@ class FyersWSClient:
                     asyncio.ensure_future,
                     self._clear_in_progress_candles(),
                 )
+                self._loop.call_soon_threadsafe(
+                    asyncio.ensure_future,
+                    self._managed_reconnect(),
+                )
+        elif not is_market_open():
+            logger.info(
+                "Market closed — staying disconnected until next session",
+            )
 
         if self._loop:
             self._loop.call_soon_threadsafe(
@@ -407,6 +421,23 @@ class FyersWSClient:
                 asyncio.ensure_future,
                 self._trigger_reauth_and_restart(),
             )
+
+    async def _managed_reconnect(self) -> None:
+        """Reconnect with a fresh FyersDataSocket during market hours.
+
+        Waits 5 seconds (lets transient network blips settle), then does a full
+        stop()+start() cycle.  start() creates a brand-new FyersDataSocket with
+        clean internal state — no stale topic_id mappings.  The _on_connect
+        callback will trigger gap backfill for the disconnect window.
+        """
+        await asyncio.sleep(5)
+        if not is_market_open():
+            logger.info("Market closed by the time reconnect fired — skipping")
+            return
+        logger.info("Managed reconnect: creating fresh FyersDataSocket")
+        symbols = list(self._symbols)
+        await self.stop()
+        await self.start(extra_symbols=symbols)
 
     async def _broadcast_connection_status(self, connected: bool):
         """Broadcast Fyers connection status to frontend via WebSocket."""

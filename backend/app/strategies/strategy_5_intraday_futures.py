@@ -439,6 +439,7 @@ class IntradayFuturesStrategy(BaseStrategy):
 
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "ORB", rvol, breakout_vol, is_long=is_long, indicators=indicators)
+        self._build_indicator_snapshot(ctx, params, indicators)
 
         return StrategySignal(
             strategy_name=self.name,
@@ -540,6 +541,7 @@ class IntradayFuturesStrategy(BaseStrategy):
         lots = self._compute_lots(rvol, params, indicators)
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "VWAP_BOUNCE", rvol, breakout_vol, is_long=is_long, indicators=indicators)
+        self._build_indicator_snapshot(ctx, params, indicators)
 
         return StrategySignal(
             strategy_name=self.name,
@@ -661,6 +663,7 @@ class IntradayFuturesStrategy(BaseStrategy):
         lots = self._compute_lots(rvol, params, indicators)
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "PDH_PDL", rvol, breakout_vol, is_long=is_long, indicators=indicators)
+        self._build_indicator_snapshot(ctx, params, indicators)
 
         return StrategySignal(
             strategy_name=self.name,
@@ -762,6 +765,7 @@ class IntradayFuturesStrategy(BaseStrategy):
         lots = self._compute_lots(rvol, params, indicators)
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "GAP_CONTINUATION", rvol, breakout_vol, is_long=is_long, indicators=indicators)
+        self._build_indicator_snapshot(ctx, params, indicators)
 
         return StrategySignal(
             strategy_name=self.name,
@@ -1001,6 +1005,42 @@ class IntradayFuturesStrategy(BaseStrategy):
             }
 
         return round(max(0, min(100, composite)), 1)
+
+    @staticmethod
+    def _build_indicator_snapshot(
+        ctx: MarketContext, params: dict, indicators: dict
+    ) -> None:
+        """Enrich indicators dict with context data so the LLM overlay sees full picture."""
+        if ctx.vwap:
+            indicators.setdefault("vwap", round(ctx.vwap.vwap, 2))
+            distance = round(
+                (ctx.current_price - ctx.vwap.vwap) / ctx.vwap.vwap * 100, 2
+            )
+            indicators["vwap_distance_pct"] = distance
+        indicators["price"] = ctx.current_price
+        if ctx.previous_day:
+            indicators.setdefault("pdh", ctx.previous_day.pdh)
+            indicators.setdefault("pdl", ctx.previous_day.pdl)
+            indicators["pdc"] = ctx.previous_day.pdc
+        if ctx.cpr:
+            indicators["cpr_pivot"] = ctx.cpr.pivot
+            indicators["cpr_tc"] = ctx.cpr.tc
+            indicators["cpr_bc"] = ctx.cpr.bc
+            indicators["cpr_type"] = ctx.cpr.cpr_type.value
+        if ctx.india_vix:
+            indicators["india_vix"] = ctx.india_vix
+        if ctx.intraday_bias:
+            indicators["intraday_bias"] = ctx.intraday_bias.components
+        if ctx.global_cues:
+            indicators["global_score"] = ctx.global_cues.global_score
+        oi_dir = params.get("_oi_direction")
+        if oi_dir:
+            indicators["fut_oi_direction"] = oi_dir
+            indicators["fut_oi_change_pct"] = params.get("_oi_change_pct")
+        trend_score = params.get("_stock_trend_score")
+        if trend_score is not None:
+            indicators["stock_trend_score"] = trend_score
+            indicators["stock_trend_strength"] = params.get("_stock_trend_strength")
 
     def should_exit(
         self,

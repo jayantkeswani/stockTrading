@@ -122,6 +122,26 @@ interface AppState {
   setTradesSim: (updates: Partial<AppState["tradesSim"]>) => void;
   resetTradesSim: () => void;
 
+  // Scanner confidence filter (persisted)
+  scannerMinConfidence: number;
+  setScannerMinConfidence: (v: number) => void;
+
+  // Signals page filters (persisted)
+  signalsMinConfidence: number;
+  signalsPeriodLabel: string;
+  signalsPeriodStart: string;
+  signalsPeriodEnd: string;
+  signalsStrategy: string;
+  signalsHideInformational: boolean;
+  setSignalsMinConfidence: (v: number) => void;
+  setSignalsPeriod: (label: string, start: Date, end: Date) => void;
+  setSignalsStrategy: (strategy: string) => void;
+  setSignalsHideInformational: (v: boolean) => void;
+
+  // Positions confidence filter (persisted)
+  positionsMinConfidence: number;
+  setPositionsMinConfidence: (v: number) => void;
+
   // UI
   selectedSymbol: string;
   setSelectedSymbol: (symbol: string) => void;
@@ -326,6 +346,26 @@ export const useStore = create<AppState>()(
       setTradesSim: (updates) => set((state) => ({ tradesSim: { ...state.tradesSim, ...updates } })),
       resetTradesSim: () => set({ tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null } }),
 
+      // Scanner confidence filter
+      scannerMinConfidence: 0,
+      setScannerMinConfidence: (v) => set({ scannerMinConfidence: v }),
+
+      // Signals page filters
+      signalsMinConfidence: 0,
+      signalsPeriodLabel: "This Week",
+      signalsPeriodStart: "",
+      signalsPeriodEnd: "",
+      signalsStrategy: "",
+      signalsHideInformational: false,
+      setSignalsMinConfidence: (v) => set({ signalsMinConfidence: v }),
+      setSignalsPeriod: (label, start, end) => set({ signalsPeriodLabel: label, signalsPeriodStart: start.toISOString(), signalsPeriodEnd: end.toISOString() }),
+      setSignalsStrategy: (strategy) => set({ signalsStrategy: strategy }),
+      setSignalsHideInformational: (v) => set({ signalsHideInformational: v }),
+
+      // Positions confidence filter
+      positionsMinConfidence: 0,
+      setPositionsMinConfidence: (v) => set({ positionsMinConfidence: v }),
+
       selectedSymbol: "NIFTY",
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
       activeTimeframe: "5m",
@@ -344,6 +384,14 @@ export const useStore = create<AppState>()(
         tradesStrategy: state.tradesStrategy,
         tradesSimOpen: state.tradesSimOpen,
         tradesSim: state.tradesSim,
+        scannerMinConfidence: state.scannerMinConfidence,
+        signalsMinConfidence: state.signalsMinConfidence,
+        signalsPeriodLabel: state.signalsPeriodLabel,
+        signalsPeriodStart: state.signalsPeriodStart,
+        signalsPeriodEnd: state.signalsPeriodEnd,
+        signalsStrategy: state.signalsStrategy,
+        signalsHideInformational: state.signalsHideInformational,
+        positionsMinConfidence: state.positionsMinConfidence,
       }),
     }
   )

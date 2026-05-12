@@ -10,6 +10,7 @@ from app.core.enums import ExitReason, TradeStatus
 from app.core.redis import get_cached_price
 from app.core.utils import now_ist
 from app.models.position import Position
+from app.models.signal import Signal
 from app.models.trade import Trade
 from app.schemas.position import PositionCloseRequest, PositionResponse, PositionUpdateSLRequest
 from app.websocket.manager import ws_manager
@@ -17,19 +18,32 @@ from app.websocket.manager import ws_manager
 router = APIRouter()
 
 
+def _to_response(pos: Position, signal: Signal | None) -> PositionResponse:
+    resp = PositionResponse.model_validate(pos)
+    if signal:
+        resp.signal_confidence = signal.confidence
+    return resp
+
+
 @router.get("", response_model=list[PositionResponse])
 async def list_positions(
     include_shadow: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Position).order_by(Position.opened_at.desc())
+    query = (
+        select(Position, Signal)
+        .outerjoin(Trade, Position.trade_id == Trade.id)
+        .outerjoin(Signal, Trade.signal_id == Signal.id)
+        .order_by(Position.opened_at.desc())
+    )
     if not include_shadow:
         query = query.where(Position.is_shadow == False)  # noqa: E712
     result = await db.execute(query)
-    positions = result.scalars().all()
+    rows = result.all()
 
-    # Enrich positions with live prices from Redis cache
-    for pos in positions:
+    responses = []
+    for pos, signal in rows:
+        # Enrich with live prices from Redis cache
         price_symbol = pos.fyers_option_symbol or pos.symbol
         price_data = await get_cached_price(price_symbol)
         if price_data:
@@ -39,8 +53,9 @@ async def list_positions(
                 is_short = pos.target_price is not None and pos.target_price < pos.entry_price
                 diff = (pos.entry_price - ltp) if is_short else (ltp - pos.entry_price)
                 pos.unrealized_pnl = diff * pos.quantity
+        responses.append(_to_response(pos, signal))
 
-    return positions
+    return responses
 
 
 @router.get("/{position_id}", response_model=PositionResponse)

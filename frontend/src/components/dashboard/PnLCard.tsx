@@ -5,10 +5,13 @@ import { useStore } from "@/store";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 
 export function PnLCard() {
-  const { risk, positions, prices, positionViewMode, shadowPositions, shadowClosedToday } = useStore();
+  const { risk, positions, prices, positionViewMode, shadowPositions, shadowClosedToday, positionsMinConfidence } = useStore();
 
   const isShadow = positionViewMode === "SHADOW";
-  const activePositions = isShadow ? shadowPositions : positions;
+  const rawPositions = isShadow ? shadowPositions : positions;
+  const activePositions = positionsMinConfidence > 0
+    ? rawPositions.filter((p) => p.signal_confidence != null && Number(p.signal_confidence) >= positionsMinConfidence)
+    : rawPositions;
 
   // Compute live unrealized P&L from active positions + real-time prices
   const liveUnrealizedPnl = useMemo(() => {
@@ -26,9 +29,12 @@ export function PnLCard() {
   }, [activePositions, prices]);
 
   // In shadow mode: closed P&L from shadow trades today (computed client-side)
+  const filteredShadowClosed = positionsMinConfidence > 0
+    ? shadowClosedToday.filter((t) => t.signal_confidence != null && Number(t.signal_confidence) >= positionsMinConfidence)
+    : shadowClosedToday;
   const shadowClosedPnl = useMemo(() => {
-    return shadowClosedToday.reduce((sum, t) => sum + Number(t.pnl ?? 0), 0);
-  }, [shadowClosedToday]);
+    return filteredShadowClosed.reduce((sum, t) => sum + Number(t.pnl ?? 0), 0);
+  }, [filteredShadowClosed]);
 
   const closedPnl = isShadow ? shadowClosedPnl : Number(risk?.closed_pnl ?? 0);
   const pnl = closedPnl + liveUnrealizedPnl;
@@ -41,7 +47,7 @@ export function PnLCard() {
   }, [activePositions]);
 
   const tradesCount = isShadow
-    ? shadowClosedToday.length
+    ? filteredShadowClosed.length
     : (risk?.trades_today ?? 0);
 
   return (

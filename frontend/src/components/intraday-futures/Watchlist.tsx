@@ -274,7 +274,7 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
                     </td>
                     <td className="px-2 py-1 text-right">
                       {(() => {
-                        const p = prices[item.symbol] || prices[`NSE:${item.symbol}-EQ`];
+                        const p = prices[`NSE:${item.symbol}-EQ`] || prices[item.symbol];
                         const ltp = p?.ltp ?? item.price;
                         const changePct = p?.change_pct ?? null;
                         const change = p?.change ?? null;

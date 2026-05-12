@@ -37,6 +37,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     positionViewMode, setPositionViewMode,
     shadowPositions, setShadowPositions,
     shadowClosedToday, setShadowClosedToday,
+    positionsMinConfidence, setPositionsMinConfidence,
   } = useStore(useShallow((s) => ({
     positions: s.positions,
     closedToday: s.closedToday,
@@ -47,6 +48,8 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     setShadowPositions: s.setShadowPositions,
     shadowClosedToday: s.shadowClosedToday,
     setShadowClosedToday: s.setShadowClosedToday,
+    positionsMinConfidence: s.positionsMinConfidence,
+    setPositionsMinConfidence: s.setPositionsMinConfidence,
   })));
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -109,8 +112,15 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
 
-  const activePositions = isShadow ? shadowPositions : positions;
-  const activeClosed = isShadow ? shadowClosedToday : closedToday;
+  const rawPositions = isShadow ? shadowPositions : positions;
+  const rawClosed = isShadow ? shadowClosedToday : closedToday;
+
+  const activePositions = positionsMinConfidence > 0
+    ? rawPositions.filter((p) => p.signal_confidence != null && Number(p.signal_confidence) >= positionsMinConfidence)
+    : rawPositions;
+  const activeClosed = positionsMinConfidence > 0
+    ? rawClosed.filter((t) => t.signal_confidence != null && Number(t.signal_confidence) >= positionsMinConfidence)
+    : rawClosed;
 
   const rowProps: PositionRowsProps = {
     list: activePositions, prices, expandedId, toggleExpand, handleClose, isShadow, compact,
@@ -125,19 +135,36 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
         {activePositions.length > 0 && (
           <span className="text-xs font-mono text-text-muted">({activePositions.length})</span>
         )}
-        <div className="ml-auto flex items-center rounded border border-border overflow-hidden text-[9px] font-mono">
-          <button
-            onClick={handleToggle}
-            className={`px-1.5 py-0.5 transition-colors ${!isShadow ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"}`}
-          >
-            Real
-          </button>
-          <button
-            onClick={handleToggle}
-            className={`px-1.5 py-0.5 border-l border-border transition-colors ${isShadow ? "bg-purple-500/15 text-purple-400" : "text-text-muted hover:text-text-secondary"}`}
-          >
-            Ghost
-          </button>
+        <div className="ml-auto flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-[9px] font-mono text-text-muted">
+            <span>CONF</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={positionsMinConfidence}
+              onChange={(e) => setPositionsMinConfidence(Number(e.target.value))}
+              className="w-14 h-1 accent-accent"
+            />
+            <span className={positionsMinConfidence > 0 ? "text-accent" : "text-text-muted"}>
+              {positionsMinConfidence > 0 ? `${positionsMinConfidence}%` : "any"}
+            </span>
+          </label>
+          <div className="flex items-center rounded border border-border overflow-hidden text-[9px] font-mono">
+            <button
+              onClick={handleToggle}
+              className={`px-1.5 py-0.5 transition-colors ${!isShadow ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"}`}
+            >
+              Real
+            </button>
+            <button
+              onClick={handleToggle}
+              className={`px-1.5 py-0.5 border-l border-border transition-colors ${isShadow ? "bg-purple-500/15 text-purple-400" : "text-text-muted hover:text-text-secondary"}`}
+            >
+              Ghost
+            </button>
+          </div>
         </div>
       </div>
 
