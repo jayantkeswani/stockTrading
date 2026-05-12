@@ -29,20 +29,20 @@ export default function IntradayFuturesPage() {
   }, []);
 
   return (
-    <div className="space-y-3">
-      {/* Full-width status bar */}
+    <>
+      {/* Status bar — always visible at top */}
       <DayStatusBar date={selectedDate} onDateChange={setSelectedDate} onBriefingRun={() => setBriefingKey((k) => k + 1)} />
 
-      {/* Two-column layout */}
-      <div className="grid grid-cols-12 gap-3">
+      {/* Two-column layout — fixed height with per-column scroll so status bar stays pinned */}
+      <div className="grid grid-cols-12 gap-2 mt-2 h-[calc(100vh-96px)]">
         {/* Left: Watchlist */}
-        <div className="col-span-8 space-y-3">
+        <div className="col-span-8 flex flex-col gap-2 overflow-y-auto pr-1 pb-2">
           <Watchlist date={selectedDate} onOpenChart={handleOpenChart} />
           <PermanentWatchlist />
         </div>
 
         {/* Right: Agent Log + Global Cues */}
-        <div className="col-span-4 space-y-3">
+        <div className="col-span-4 flex flex-col gap-2 overflow-y-auto pb-2">
           <AgentLog date={selectedDate} />
           <SetupPerformance date={selectedDate} />
           <GlobalCues date={selectedDate} refreshKey={briefingKey} />
@@ -55,6 +55,6 @@ export default function IntradayFuturesPage() {
         onClose={handleCloseChart}
         initialSymbol={chartSymbol}
       />
-    </div>
+    </>
   );
 }
