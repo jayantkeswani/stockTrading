@@ -1330,13 +1330,17 @@ async def _provision_watchlist_symbols(symbols: list[str], today: date) -> None:
         return_exceptions=True,
     )
 
-    # Subscribe on WebSocket for live ticks
+    # Subscribe on WebSocket for live ticks.
+    # If WS is down, log and move on — _collect_dynamic_symbols() on the next
+    # reconnect reads the watchlist from Redis and subscribes everything.
     if fyers_ws_client.is_connected:
         fyers_symbols = list(fyers_map.values())
         await fyers_ws_client.subscribe_symbols(fyers_symbols, symbol_map=fyers_map)
         logger.info("Subscribed %d watchlist symbols on WebSocket", len(fyers_symbols))
     else:
-        logger.warning("Fyers WS not connected — watchlist symbols not subscribed")
+        logger.warning(
+            "Fyers WS not connected — watchlist symbols will be subscribed on reconnect"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1744,7 +1748,7 @@ async def run_preopen_reassessment(as_of: date | None = None) -> dict:
         if preopen_price <= 0:
             continue
 
-        pdc = item.get("pdc", 0)
+        pdc = item.get("pdc") or 0
         if pdc <= 0:
             continue
 

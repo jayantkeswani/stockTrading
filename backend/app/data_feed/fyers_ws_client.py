@@ -53,6 +53,8 @@ class FyersWSClient:
         self._last_disconnect_at: datetime | None = None
         # Liveness watchdog task (created in start(), cancelled in stop())
         self._watchdog_task: asyncio.Task | None = None
+        # Tracks the pending _managed_reconnect task to prevent duplicates
+        self._reconnect_task: asyncio.Task | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -149,6 +151,16 @@ class FyersWSClient:
             extra_symbols: Additional symbols to subscribe (e.g. watchlist items).
                            Merged with the main symbols list, deduplicated.
         """
+        # Cancel any pending reconnect — we're starting fresh.
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+        self._reconnect_task = None
+
+        # Close any existing connection first — prevents orphaned SDK threads
+        # with stale topic_id→symbol mappings from delivering misattributed ticks.
+        if self._ws:
+            await self.stop()
+
         # Get access token from Redis
         access_token = await self._get_access_token()
         if not access_token:
@@ -204,17 +216,26 @@ class FyersWSClient:
             logger.exception("Failed to start Fyers WebSocket")
 
     async def stop(self):
-        """Stop the Fyers WebSocket connection."""
+        """Stop the Fyers WebSocket connection.
+
+        Nulls ``_ws`` BEFORE calling ``close_connection()`` so that the
+        ``_on_close`` callback (fired synchronously by the SDK) sees
+        ``_ws is None`` and skips scheduling a duplicate reconnect.
+        """
         if self._watchdog_task and not self._watchdog_task.done():
             self._watchdog_task.cancel()
         self._watchdog_task = None
-        if self._ws:
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+        self._reconnect_task = None
+        ws = self._ws
+        self._ws = None
+        self._connected = False
+        if ws:
             try:
-                self._ws.close_connection()
+                ws.close_connection()
             except Exception:
                 logger.exception("Error closing Fyers WebSocket")
-        self._connected = False
-        self._ws = None
         logger.info("Fyers WebSocket stopped")
 
     def register_symbol_map(self, symbol_map: dict[str, str]):
@@ -355,11 +376,18 @@ class FyersWSClient:
 
         After market hours: logs and stays disconnected.  The next morning's
         7:45 AM reauth creates a fresh connection anyway.
+
+        Skips reconnect scheduling when ``_ws is None`` — this means stop()
+        already nulled the reference before calling close_connection(), so
+        the disconnect is intentional (part of a managed reconnect or
+        explicit shutdown).
         """
         self._connected = False
         logger.warning("Fyers WebSocket disconnected")
 
-        if self._was_ever_connected and is_market_open():
+        if self._ws is None:
+            logger.info("Intentional stop — skipping reconnect scheduling")
+        elif self._was_ever_connected and is_market_open():
             self._last_disconnect_at = now_ist()
             logger.info(
                 "Disconnect at %s captured for gap backfill",
@@ -371,8 +399,7 @@ class FyersWSClient:
                     self._clear_in_progress_candles(),
                 )
                 self._loop.call_soon_threadsafe(
-                    asyncio.ensure_future,
-                    self._managed_reconnect(),
+                    self._schedule_reconnect,
                 )
         elif not is_market_open():
             logger.info(
@@ -384,6 +411,13 @@ class FyersWSClient:
                 asyncio.ensure_future,
                 self._broadcast_connection_status(False),
             )
+
+    def _schedule_reconnect(self):
+        """Schedule a managed reconnect if one isn't already pending."""
+        if self._reconnect_task and not self._reconnect_task.done():
+            logger.info("Reconnect already scheduled — skipping duplicate")
+            return
+        self._reconnect_task = asyncio.ensure_future(self._managed_reconnect())
 
     def _on_error(self, error):
         """Called on Fyers WebSocket error."""
@@ -422,6 +456,47 @@ class FyersWSClient:
                 self._trigger_reauth_and_restart(),
             )
 
+    async def _collect_dynamic_symbols(self) -> list[str]:
+        """Collect S5 watchlist + dashboard watchlist symbols from Redis.
+
+        Called on reconnect so symbols provisioned while the WS was down
+        (e.g. screener output) are subscribed on the fresh connection.
+        """
+        import json
+
+        extra = []
+        try:
+            r = get_redis()
+            today = str(now_ist().date())
+
+            # S5 screener watchlist
+            raw = await r.get(f"strat5:watchlist:{today}")
+            if raw:
+                for item in json.loads(raw):
+                    sym = item.get("symbol")
+                    if sym:
+                        fyers_sym = f"NSE:{sym}-EQ"
+                        extra.append(fyers_sym)
+                        self._reverse_map[fyers_sym] = sym
+
+            # S5 permanent watchlist (user-pinned stocks)
+            perm_raw = await r.get("strat5:watchlist:permanent")
+            if perm_raw:
+                for sym in json.loads(perm_raw):
+                    if sym:
+                        fyers_sym = f"NSE:{sym}-EQ"
+                        extra.append(fyers_sym)
+                        self._reverse_map[fyers_sym] = sym
+
+            # Dashboard watchlist (keys are Fyers symbols)
+            items = await r.hgetall("watchlist:items")
+            if items:
+                extra.extend(items.keys())
+        except Exception:
+            logger.debug("Failed to collect dynamic symbols from Redis", exc_info=True)
+
+        return extra
+
     async def _managed_reconnect(self) -> None:
         """Reconnect with a fresh FyersDataSocket during market hours.
 
@@ -436,6 +511,8 @@ class FyersWSClient:
             return
         logger.info("Managed reconnect: creating fresh FyersDataSocket")
         symbols = list(self._symbols)
+        dynamic = await self._collect_dynamic_symbols()
+        symbols = list(dict.fromkeys(symbols + dynamic))
         await self.stop()
         await self.start(extra_symbols=symbols)
 
@@ -507,8 +584,11 @@ class FyersWSClient:
             from app.data_feed.fyers_auto_login import trigger_reauth
             await trigger_reauth()
             logger.info("Reauth completed — restarting WebSocket")
+            symbols = list(self._symbols)
+            dynamic = await self._collect_dynamic_symbols()
+            symbols = list(dict.fromkeys(symbols + dynamic))
             await self.stop()
-            await self.start(symbols=self._symbols)
+            await self.start(extra_symbols=symbols)
         except Exception:
             logger.exception("Reauth + WS restart failed")
 
@@ -582,7 +662,7 @@ class FyersWSClient:
 
         # For option/futures contracts (not registered), pass through as-is
         # e.g. "NSE:NIFTY2642124000CE", "NSE:TCS25AprFUT"
-        if ":" in fyers_symbol:
+        if isinstance(fyers_symbol, str) and ":" in fyers_symbol:
             return fyers_symbol
 
         return None

@@ -14,6 +14,7 @@ from app.services.morning_screener import (
     get_watchlist,
     run_morning_briefing,
     run_morning_screener,
+    run_preopen_reassessment,
     set_agent_status,
     snapshot_global_cues,
 )
@@ -347,6 +348,16 @@ async def run_briefing():
         briefing = await run_morning_briefing(force=True)
         strategy_runner.clear_s5_session_cache()
         return {"status": "ok", "briefing": briefing}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/preopen/run")
+async def run_preopen():
+    try:
+        result = await run_preopen_reassessment()
+        strategy_runner.clear_s5_session_cache()
+        return {"status": "ok", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

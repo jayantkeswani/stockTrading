@@ -35,12 +35,21 @@ _RETRY_INTERVAL_MINUTES = 2
 
 
 async def _start_data_feed_after_login() -> None:
-    """Start the WS feed after a successful login if not already connected."""
+    """Start the WS feed after a successful login if not already connected.
+
+    Collects the full set of symbols that should be subscribed:
+    - Previously-subscribed symbols (e.g. index futures for VWAP volume)
+    - S5 watchlist + dashboard watchlist from Redis (may have been provisioned
+      while WS was down, e.g. screener ran at 8:30 but WS dropped at 7:47)
+    """
     try:
         from app.data_feed.fyers_ws_client import fyers_ws_client
 
         if not fyers_ws_client.is_connected:
-            await fyers_ws_client.start()
+            existing = list(fyers_ws_client._symbols)
+            dynamic = await fyers_ws_client._collect_dynamic_symbols()
+            all_extra = list(dict.fromkeys(existing + dynamic))
+            await fyers_ws_client.start(extra_symbols=all_extra if all_extra else None)
             logger.info("Data feed started after successful auto-login")
     except Exception as e:
         logger.error("Failed to start data feed after login: %s", e)

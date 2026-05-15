@@ -96,6 +96,19 @@ async def _get_all_backfill_symbols() -> dict[str, str]:
     except Exception:
         logger.exception("Failed to load S5 watchlist symbols for backfill")
 
+    # Strategy 5 permanent watchlist — user-pinned stocks that may not appear
+    # in the dynamic screener output until 8:30 AM.  Backfilling them here
+    # ensures PDH/PDL/PDC context is available from the first candle.
+    try:
+        perm_raw = await r.get("strat5:watchlist:permanent")
+        if perm_raw:
+            import json as _json2
+            for sym in _json2.loads(perm_raw):
+                if sym and sym not in symbols:
+                    symbols[sym] = _resolve_fyers_symbol(sym)
+    except Exception:
+        logger.exception("Failed to load permanent watchlist symbols for backfill")
+
     # Near-month index futures for VWAP volume sourcing.
     # Internal key "{INDEX}_FUT" matches strategy_runner._init_index_futures().
     try:

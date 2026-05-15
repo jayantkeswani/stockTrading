@@ -146,6 +146,54 @@ class TestRunPreopenReassessment:
         assert result["skipped"] is True
         assert result["reason"] == "empty_watchlist"
 
+    async def test_pdc_none_skips_stock_without_crash(self):
+        """Permanent watchlist injected stocks have pdc=None — should be skipped, not crash."""
+        watchlist = [
+            _make_watchlist_item("REGULARSTOCK", 65.0, "BULLISH", 500.0),
+            {  # Injected permanent stock with pdc=None (no daily candle data)
+                "symbol": "NEWSTOCK",
+                "composite_score": 0.0,
+                "bias": "NEUTRAL",
+                "price": 0,
+                "pdc": None,
+                "lot_size": 0,
+                "manual": True,
+                "factors": {},
+            },
+        ]
+        mock_redis = AsyncMock()
+        cues = {"india_vix": 14.5}
+
+        async def mock_get(key):
+            if "watchlist" in key:
+                return json.dumps(watchlist)
+            if "global_cues" in key:
+                return json.dumps(cues)
+            if "agent_log" in key:
+                return json.dumps([])
+            return None
+
+        mock_redis.get = AsyncMock(side_effect=mock_get)
+        mock_redis.set = AsyncMock()
+
+        quotes = _mock_quotes_response(
+            stocks={"NSE:REGULARSTOCK-EQ": (505.0, 500.0)},
+            nifty_ltp=24000.0, nifty_prev=24000.0,
+            vix=14.0,
+        )
+        mock_client = AsyncMock()
+        mock_client.get_quotes = AsyncMock(return_value=quotes)
+
+        with (
+            patch("app.services.morning_screener.get_redis", return_value=mock_redis),
+            patch("app.services.morning_screener.FyersClient", return_value=mock_client),
+        ):
+            # Must not raise TypeError: '<=' not supported between instances of 'NoneType' and 'int'
+            result = await run_preopen_reassessment(date(2026, 4, 28))
+
+        assert "error" not in result
+        assert result.get("skipped") is not True
+
     async def test_bias_override_on_large_relative_gap(self):
         watchlist = [
             _make_watchlist_item("SUNPHARMA", 65.0, "BEARISH", 1800.0),

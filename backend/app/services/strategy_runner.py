@@ -399,6 +399,19 @@ class StrategyRunner:
         buffer = self._candle_buffers.get(symbol, [])
         today_open = buffer[0]["o"] if buffer else None
 
+        # Ensure the index futures buffer is seeded from DB when it is empty.
+        # _init_index_futures subscribes the futures contract on the live WS feed,
+        # but that subscription is lost whenever the daily 7:45 AM reauth calls
+        # start() with no symbols (resetting self._symbols to the 6 base symbols).
+        # The gap backfill writes futures candles to DB but not to the in-memory
+        # buffer.  Pre-loading here fills that gap so VWAP has real volumes even
+        # when no live futures tick has arrived yet after a reconnect.
+        if symbol in self._index_futures_info:
+            _, _, fut_name = self._index_futures_info[symbol]
+            if not self._candle_buffers.get(fut_name):
+                today = now_ist().date()
+                self._candle_buffers[fut_name] = await self._load_todays_candles(fut_name, today)
+
         # VWAP from today's 1m candles
         vwap_result = self._calculate_vwap_from_buffer(symbol)
 
