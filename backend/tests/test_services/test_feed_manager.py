@@ -32,6 +32,7 @@ class TestFeedManagerAutoStrategyTrigger:
         from app.data_feed.feed_manager import feed_manager
 
         mock_get_auto.return_value = [StrategyName.VWAP_PULLBACK]
+        mock_runner._is_futures_volume_symbol.return_value = False
         mock_runner.on_candle_close = AsyncMock()
 
         candle_data = {
@@ -55,6 +56,7 @@ class TestFeedManagerAutoStrategyTrigger:
         from app.data_feed.feed_manager import feed_manager
 
         mock_get_auto.return_value = []
+        mock_runner._is_futures_volume_symbol.return_value = False
         mock_runner.on_candle_close = AsyncMock()
 
         candle_data = {
@@ -67,3 +69,23 @@ class TestFeedManagerAutoStrategyTrigger:
         await feed_manager._run_auto_strategy_evaluation("INDIA VIX", candle_data)
 
         mock_runner.on_candle_close.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("app.data_feed.feed_manager.strategy_runner")
+    async def test_auto_eval_forwards_futures_volume_symbols(self, mock_runner):
+        """Futures volume symbols (e.g. NIFTY_FUT) bypass strategy check and go directly to on_candle_close."""
+        from app.data_feed.feed_manager import feed_manager
+
+        mock_runner._is_futures_volume_symbol.return_value = True
+        mock_runner.on_candle_close = AsyncMock()
+
+        candle_data = {
+            "symbol": "NIFTY_FUT",
+            "timeframe": "1m",
+            "o": 24000, "h": 24010, "l": 23990, "c": 24005,
+            "v": 5000, "timestamp": "2026-04-16T10:00:00+05:30",
+        }
+
+        await feed_manager._run_auto_strategy_evaluation("NIFTY_FUT", candle_data)
+
+        mock_runner.on_candle_close.assert_called_once_with("NIFTY_FUT", candle_data)

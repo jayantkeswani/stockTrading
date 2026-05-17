@@ -163,7 +163,14 @@ class StrategyRunner:
                 logger.debug("Could not build MarketContext for %s — skipping evaluation", symbol)
                 return
 
-            await self._evaluate_strategies(symbol, ctx, executable, blocked_reason, strategy_filter)
+            # Parse candle timestamp so window checks use the candle's time,
+            # not wall-clock time (avoids off-by-one at window boundaries).
+            candle_ts_raw = candle_data.get("timestamp")
+            candle_ts = None
+            if candle_ts_raw:
+                candle_ts = datetime.fromisoformat(candle_ts_raw) if isinstance(candle_ts_raw, str) else candle_ts_raw
+
+            await self._evaluate_strategies(symbol, ctx, executable, blocked_reason, strategy_filter, as_of=candle_ts)
 
         except Exception:
             logger.exception("Error in strategy runner for %s", symbol)
@@ -320,14 +327,17 @@ class StrategyRunner:
 
     def _check_strategy_risk_limits(
         self, params: dict, india_vix: float | None,
+        as_of: datetime | None = None,
     ) -> tuple[bool, str | None]:
         """Check per-strategy risk limits (trading windows, VIX threshold).
 
         Returns (executable, blocked_reason). Only called inside _evaluate_strategies.
+        Pass as_of (the candle timestamp) so the window check uses the candle's
+        time, not the wall-clock time when evaluation runs.
         """
         # Trading window — only if strategy defines windows (CAN SLIM has none)
         windows = parse_trading_windows(params)
-        if windows and not is_in_custom_trading_window(windows=windows):
+        if windows and not is_in_custom_trading_window(as_of=as_of, windows=windows):
             return False, "Outside trade window"
 
         # VIX threshold — strategy-specific key name
@@ -1373,6 +1383,7 @@ class StrategyRunner:
         executable: bool,
         blocked_reason: str | None,
         strategy_filter: list[StrategyName] | None = None,
+        as_of: datetime | None = None,
     ) -> None:
         """Run each active strategy and handle any signals produced.
 
@@ -1380,6 +1391,9 @@ class StrategyRunner:
             strategy_filter: If provided, only evaluate these specific strategies
                              (used by auto-mode and manual scan). If None, evaluates
                              all active strategies (legacy behavior).
+            as_of: Candle timestamp for window checks. Prevents the last candle
+                   in a window from being misclassified as "outside" because
+                   evaluation runs a few hundred ms after the minute boundary.
         """
         if strategy_filter is not None:
             names = strategy_filter
@@ -1402,7 +1416,7 @@ class StrategyRunner:
 
                 # Per-strategy risk limits (windows, VIX) — may override executable
                 strat_executable, strat_blocked = executable, blocked_reason
-                strat_ok, strat_reason = self._check_strategy_risk_limits(params, ctx.india_vix)
+                strat_ok, strat_reason = self._check_strategy_risk_limits(params, ctx.india_vix, as_of=as_of)
                 if not strat_ok and strat_executable:
                     strat_executable = False
                     strat_blocked = strat_reason
@@ -1412,7 +1426,7 @@ class StrategyRunner:
                 # Compute window state from strategy's own windows
                 windows = parse_trading_windows(params)
                 dead_zone = parse_dead_zone(params)
-                window_state = get_custom_window_state(windows=windows, dead_zone=dead_zone)
+                window_state = get_custom_window_state(as_of=as_of, windows=windows, dead_zone=dead_zone)
 
                 signal = strategy.evaluate(ctx)
                 await self._flush_strategy_logs(strategy)

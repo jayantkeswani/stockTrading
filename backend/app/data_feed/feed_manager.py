@@ -220,6 +220,14 @@ class FeedManager:
     async def _run_auto_strategy_evaluation(self, symbol: str, candle_data: dict):
         """Trigger strategy evaluation only for auto-mode strategies that cover this symbol."""
         try:
+            # Index futures volume symbols (e.g. BANKNIFTY_FUT) must always
+            # flow through on_candle_close so the strategy runner populates
+            # its in-memory buffer — VWAP computation for index symbols
+            # depends on these buffers for reliable volume data.
+            if strategy_runner._is_futures_volume_symbol(symbol):
+                await strategy_runner.on_candle_close(symbol, candle_data)
+                return
+
             from app.services.strategy_runner import get_auto_strategies_for_symbol
 
             async with self.db_semaphore:
