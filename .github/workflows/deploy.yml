@@ -122,12 +122,16 @@ jobs:
             docker pull "$BACKEND_IMAGE"
             docker pull "$FRONTEND_IMAGE"
 
-            # Deploy
-            docker compose -f docker-compose.prod.yml up -d
+            # Start DB first, run migrations, then bring up all services
+            docker compose -f docker-compose.prod.yml up -d postgres redis
+            sleep 5
 
-            # Run migrations
-            docker compose -f docker-compose.prod.yml exec -T backend \
+            # Run migrations via compose run (joins the compose network automatically)
+            docker compose -f docker-compose.prod.yml run --rm -T backend \
               alembic upgrade head
+
+            # Now bring up all services
+            docker compose -f docker-compose.prod.yml up -d
 
             # Verify
             sleep 5
