@@ -29,10 +29,18 @@ stockTrading/
 ├── ARCHITECTURE.md        # System design, data flow diagrams
 ├── README.md              # Setup and run instructions
 ├── Makefile               # Dev commands (make dev, make test, make migrate)
-├── docker-compose.yml     # PostgreSQL (5433) + Redis (6380)
+├── docker-compose.yml     # PostgreSQL (5433) + Redis (6380) — LOCAL dev only
+├── docker-compose.prod.yml # PRODUCTION: all 5 services (backend, frontend, postgres, redis, nginx)
 ├── .env.example           # Environment template
+├── .envrc                 # direnv: GCP project isolation (stock-trading config)
+├── .github/workflows/     # CI/CD: deploy.yml (push-to-master auto-deploy to GCP VM)
 ├── .vscode/               # VS Code launch configs, tasks, settings
 ├── .claude/skills/        # Claude Code skill definitions (test-runner, review-code, build-strategy, etc.)
+├── infrastructure/        # GCP deployment (Terraform, Docker, scripts)
+│   ├── terraform/         # main.tf, vm.tf, network.tf, apis.tf, gemini.tf, variables.tf, outputs.tf
+│   ├── bootstrap/         # bootstrap.sh (one-time: TF state bucket + API enable)
+│   ├── docker/            # Dockerfile.backend, Dockerfile.frontend, nginx.conf
+│   └── scripts/           # vm-startup.sh (first-boot: Docker install, deploy user, IST)
 ├── docs/
 │   ├── strategies/        # One MD per strategy with full trading rules. Includes arjun-liquide-study.md — a full reverse-engineering study (signal parser, independent backtest of 630 trades, feature-importance analysis, implied strategy + edge filters). Not yet a registered strategy; precursor to strategy_5_breakout_momentum.
 │   ├── backtest/          # Backtest harness docs (harness.md, option-data.md)
@@ -137,6 +145,62 @@ python scripts/backtest_strategy5.py --confidence 60 --start 2026-05-05 --symbol
 python scripts/backtest_strategy5.py --confidence 70 --start 2026-05-05 --sl-mode wick  # legacy wick-based trailing SL
 python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05  # threshold sweep
 python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05 --lots 1  # normalize to 1 lot
+```
+
+## Deployment (GCP)
+
+Single VM deployment on Google Cloud Platform (asia-south1, Mumbai). Terraform manages all infrastructure. Full details in `docs/deployment-architecture.md`.
+
+### GCP Setup
+- **Project**: `stock-trading-prod` under org `kakwani-khayti-org`
+- **Account**: `kakwani.khayti@gmail.com` (separate from penguin-bean project)
+- **gcloud config**: `stock-trading` (isolated via `direnv` + `.envrc`)
+- **ADC credentials**: `~/.gcp/stock-trading-adc.json`
+- **Free trial**: ₹28,365 credits, expires Aug 17 2026
+
+### Infrastructure Commands
+```bash
+# One-time bootstrap (enables APIs, creates TF state bucket)
+./infrastructure/bootstrap/bootstrap.sh
+
+# Terraform
+make infra-plan                # Preview changes
+make infra-up                  # Create/update infrastructure
+make infra-down                # DESTROY everything (one command)
+
+# After terraform apply, retrieve sensitive outputs:
+cd infrastructure/terraform
+terraform output -raw vm_external_ip      # → add as GCP_VM_IP in GitHub Secrets
+terraform output -raw deploy_private_key  # → add as SSH_PRIVATE_KEY in GitHub Secrets
+terraform output -raw gemini_api_key      # → add as GOOGLE_API_KEY in GitHub Secrets
+
+# Production management
+make ssh                       # SSH into VM
+make prod-up                   # Start containers on VM
+make prod-down                 # Stop containers on VM
+make prod-logs                 # Tail logs on VM
+
+# Database migration (local → production)
+make db-export                 # Dump local DB to dump.sql
+make db-import                 # Upload and import dump.sql to VM
+```
+
+### CI/CD
+Push to `master` → GitHub Actions SSH deploys to VM automatically. Workflow: `.github/workflows/deploy.yml`. Uses ~1-2 min per deploy (500 min/month free for private repos).
+
+### Secrets (GitHub Repo Secrets)
+All secrets stored in GitHub (Settings → Secrets), written to `.env` on VM during each deploy. Never in GCP Secret Manager or the codebase.
+
+### Directory Map (Infrastructure)
+```
+infrastructure/
+├── terraform/          # All .tf files (VM, firewall, IP, APIs, Gemini key)
+├── bootstrap/          # bootstrap.sh (one-time: state bucket + API enable)
+├── docker/             # Dockerfile.backend, Dockerfile.frontend, nginx.conf
+└── scripts/            # vm-startup.sh (first-boot: Docker, deploy user, IST)
+.envrc                  # direnv: GCP config isolation (committed, no secrets)
+.github/workflows/      # deploy.yml (push-to-master auto-deploy)
+docker-compose.prod.yml # Production: all 5 services in containers
 ```
 
 ## Known Cleanup Tasks

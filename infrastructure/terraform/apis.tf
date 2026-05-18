@@ -1,0 +1,19 @@
+resource "google_project_service" "compute" {
+  service            = "compute.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "apikeys" {
+  service            = "apikeys.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "generativelanguage" {
+  service            = "generativelanguage.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "storage" {
+  service            = "storage.googleapis.com"
+  disable_on_destroy = false
+}

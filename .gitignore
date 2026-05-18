@@ -33,6 +33,7 @@ Thumbs.db
 # Database
 *.db
 *.sqlite3
+dump.sql
 
 # Logs
 *.log
@@ -59,3 +60,8 @@ scripts/telegram/data/
 
 # Intraday Hunter — generated transcripts, extractions, candle cache
 scripts/intraday_hunter/data/
+
+# Terraform
+infrastructure/terraform/.terraform/
+infrastructure/terraform/.terraform.lock.hcl
+infrastructure/terraform/terraform.tfstate*

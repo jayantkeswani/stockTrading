@@ -2,8 +2,9 @@ import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing,
 
 function getApiBase(): string {
   if (typeof window === "undefined") return "http://localhost:8080";
-  const host = window.location.hostname;
-  return `http://${host}:8080`;
+  const { hostname, port, protocol } = window.location;
+  if (port === "3000") return `http://${hostname}:8080`;
+  return `${protocol}//${hostname}`;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -124,6 +125,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ exit_price: exitPrice, reason: "MANUAL" }),
     }),
+  closeAllTrades: () =>
+    request<{ closed: number; trades: Array<{ trade_id: string; symbol: string; pnl: number }> }>(
+      `/api/v1/trades/close-all`,
+      { method: "POST", body: JSON.stringify({ reason: "MANUAL" }) },
+    ),
 
   // Signals
   getSignals: (params?: { status?: string; generated_since?: string; generated_until?: string; strategy?: string; limit?: number }) => {

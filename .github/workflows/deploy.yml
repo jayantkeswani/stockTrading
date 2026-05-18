@@ -1,0 +1,87 @@
+name: Deploy to GCP VM
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  APP_DIR: /opt/stock-trading
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.GCP_VM_IP }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@${{ secrets.GCP_VM_IP }} << 'DEPLOY_SCRIPT'
+            set -e
+            APP_DIR=/opt/stock-trading
+
+            # Clone or pull
+            if [ ! -d "$APP_DIR/.git" ]; then
+              git clone https://github.com/${{ github.repository }}.git $APP_DIR
+              cd $APP_DIR
+            else
+              cd $APP_DIR
+              git fetch origin master
+              git reset --hard origin/master
+            fi
+
+            # Write .env from secrets
+            cat > .env << 'ENV_EOF'
+          DATABASE_URL=postgresql+asyncpg://trader:${{ secrets.DB_PASSWORD }}@postgres:5432/stocktrading
+          DATABASE_URL_SYNC=postgresql://trader:${{ secrets.DB_PASSWORD }}@postgres:5432/stocktrading
+          REDIS_URL=redis://redis:6379/0
+          FYERS_APP_ID=${{ secrets.FYERS_APP_ID }}
+          FYERS_SECRET_KEY=${{ secrets.FYERS_SECRET_KEY }}
+          FYERS_REDIRECT_URI=${{ secrets.FYERS_REDIRECT_URI }}
+          FYERS_USERNAME=${{ secrets.FYERS_USERNAME }}
+          FYERS_PIN=${{ secrets.FYERS_PIN }}
+          FYERS_TOTP_SECRET=${{ secrets.FYERS_TOTP_SECRET }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+          RESEARCH_LLM_PROVIDER=gemini
+          RESEARCH_LLM_MODEL=gemini-2.5-flash
+          TRADING_CAPITAL=1000000
+          MAX_DAILY_DRAWDOWN_PCT=5.0
+          MAX_RISK_PER_TRADE_PCT=2.0
+          MAX_TRADES_PER_DAY=3
+          PAPER_TRADING=true
+          BACKEND_HOST=0.0.0.0
+          BACKEND_PORT=8080
+          FRONTEND_URL=http://localhost:3000
+          ENV_EOF
+
+            # Export DB_PASSWORD for docker-compose interpolation
+            export DB_PASSWORD='${{ secrets.DB_PASSWORD }}'
+
+            # Build and deploy
+            docker compose -f docker-compose.prod.yml build
+            docker compose -f docker-compose.prod.yml up -d
+
+            # Run migrations
+            docker compose -f docker-compose.prod.yml exec -T backend \
+              alembic upgrade head
+
+            # Verify
+            sleep 5
+            docker compose -f docker-compose.prod.yml ps
+
+            echo "Deploy complete!"
+          DEPLOY_SCRIPT
+
+      - name: Health check
+        run: |
+          sleep 10
+          curl -sf --max-time 10 http://${{ secrets.GCP_VM_IP }}/api/v1/risk/daily || echo "Health check failed (app may still be starting)"

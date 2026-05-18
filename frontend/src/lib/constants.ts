@@ -1,7 +1,8 @@
 export function getWsUrl(): string {
   if (typeof window === "undefined") return "ws://localhost:8080/ws";
-  const host = window.location.hostname;
-  return `ws://${host}:8080/ws`;
+  const { hostname, port } = window.location;
+  if (port === "3000") return `ws://${hostname}:8080/ws`;
+  return `ws://${hostname}/ws`;
 }
 
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "1D";

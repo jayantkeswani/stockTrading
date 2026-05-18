@@ -61,6 +61,8 @@ export default function TradesPage() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [closingTradeId, setClosingTradeId] = useState<string | null>(null);
+  const [closingAll, setClosingAll] = useState(false);
 
   const mode = positionViewMode === "SHADOW" ? "SHADOW" : "REAL";
   const sim = tradesSim;
@@ -132,6 +134,37 @@ export default function TradesPage() {
     return simTrades.filter((t) => isoDateIST(new Date(t.entry_time)) === selectedDay);
   }, [simTrades, selectedDay]);
 
+  const hasOpenTrades = trades.some((t) => t.status === "OPEN");
+
+  async function handleCloseTrade(tradeId: string) {
+    if (!confirm("Exit this trade at current market price?")) return;
+    setClosingTradeId(tradeId);
+    try {
+      await api.closeTrade(tradeId);
+      setTrades((prev) => prev.map((t) => t.id === tradeId ? { ...t, status: "CLOSED" as const, exit_reason: "MANUAL" } : t));
+    } catch (err) {
+      alert(`Failed to close trade: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setClosingTradeId(null);
+    }
+  }
+
+  async function handleCloseAll() {
+    if (!confirm("Exit ALL open trades (including shadow) at current market price?")) return;
+    setClosingAll(true);
+    try {
+      const result = await api.closeAllTrades();
+      setTrades((prev) => prev.map((t) => {
+        const closed = result.trades.find((c) => c.trade_id === t.id);
+        return closed ? { ...t, status: "CLOSED" as const, exit_reason: "MANUAL", pnl: closed.pnl } : t;
+      }));
+    } catch (err) {
+      alert(`Failed to close all trades: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setClosingAll(false);
+    }
+  }
+
   const periodLabel = `${period.start.toLocaleDateString("en-IN", {
     timeZone: "Asia/Kolkata", day: "2-digit", month: "short",
   })} — ${period.end.toLocaleDateString("en-IN", {
@@ -191,7 +224,18 @@ export default function TradesPage() {
             Sim {simOpen ? "▲" : "▾"}
           </button>
         </div>
-        <span className="text-[9px] font-mono text-text-muted/40 tracking-wider">{periodLabel}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-[9px] font-mono text-text-muted/40 tracking-wider">{periodLabel}</span>
+          {hasOpenTrades && (
+            <button
+              onClick={handleCloseAll}
+              disabled={closingAll}
+              className="px-2 py-1 rounded border border-loss/40 text-[10px] font-mono text-loss hover:bg-loss/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {closingAll ? "Closing..." : "Exit All"}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Simulation filter panel */}
@@ -361,6 +405,8 @@ export default function TradesPage() {
           showSource={mode === "SHADOW"}
           showSignalData={simActive}
           simLots={simOpen ? sim.sim_lots : null}
+          onCloseTrade={handleCloseTrade}
+          closingTradeId={closingTradeId}
         />
       </div>
     </div>

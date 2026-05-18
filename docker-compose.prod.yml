@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: st-postgres
+    environment:
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-trader_dev_123}
+      POSTGRES_DB: stocktrading
+    volumes:
+      - st_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trader -d stocktrading"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: st-redis
+    volumes:
+      - st_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.backend
+    container_name: st-backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://trader:${DB_PASSWORD:-trader_dev_123}@postgres:5432/stocktrading
+      DATABASE_URL_SYNC: postgresql://trader:${DB_PASSWORD:-trader_dev_123}@postgres:5432/stocktrading
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - backend_logs:/app/backend/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.frontend
+    container_name: st-frontend
+    environment:
+      HOSTNAME: "0.0.0.0"
+      PORT: "3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: st-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./infrastructure/docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  st_postgres_data:
+  st_redis_data:
+  backend_logs:
