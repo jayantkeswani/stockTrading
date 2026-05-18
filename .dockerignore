@@ -1,0 +1,53 @@
+# VCS
+.git
+.gitignore
+.githooks
+
+# IDE / editor
+.vscode
+.claude
+.DS_Store
+
+# Virtual environments and node_modules
+backend/.venv
+frontend/node_modules
+frontend/.next
+
+# Build artifacts and caches
+graphify-out
+backend/logs
+backend/__pycache__
+**/__pycache__
+**/*.pyc
+
+# Dev / local files
+.env
+.env.example
+.envrc
+dump.sql
+*.log
+fyersApi.log
+fyersRequests.log
+
+# Documentation (not needed in images)
+docs
+CLAUDE.md
+ARCHITECTURE.md
+README.md
+options_buying_strategies_research.md
+
+# Scripts (dev-only, not needed in images)
+scripts
+
+# Infrastructure (Dockerfiles are referenced by path, not COPYed)
+infrastructure/terraform
+infrastructure/bootstrap
+infrastructure/scripts
+
+# Tests
+backend/tests
+
+# Misc
+Makefile
+docker-compose.yml
+docker-compose.prod.yml

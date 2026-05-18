@@ -37,6 +37,12 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - backend_logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/tasks"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
