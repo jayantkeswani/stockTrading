@@ -247,6 +247,9 @@ get_auto_strategies_for_symbol() calls strategy.get_symbols() for dynamic matchi
 Option A (Manual): User visits /api/v1/auth/fyers/login → Fyers OAuth → callback → token stored in Redis
 Option B (Auto):   APScheduler job → fyers_auto_login.py → base64 credentials + TOTP → token stored in Redis
                    Runs on startup + periodic refresh
+                   NOTE: Fyers v3 /api/v3/token returns a consent page (not an auth code) if the
+                   app hasn't been browser-approved — requires one-time manual browser approval via
+                   the generate-authcode URL. The error message includes the exact URL.
 ```
 
 ### 6. Symbol Master Flow

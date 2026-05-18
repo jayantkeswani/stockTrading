@@ -31,6 +31,7 @@ stockTrading/
 ├── Makefile               # Dev commands (make dev, make test, make migrate)
 ├── docker-compose.yml     # PostgreSQL (5433) + Redis (6380) — LOCAL dev only
 ├── docker-compose.prod.yml # PRODUCTION: all 5 services (backend, frontend, postgres, redis, nginx)
+├── .dockerignore          # Excludes .git, .venv, node_modules, tests, docs from Docker build context
 ├── .env.example           # Environment template
 ├── .envrc                 # direnv: GCP project isolation (stock-trading config)
 ├── .github/workflows/     # CI/CD: deploy.yml (push-to-master auto-deploy to GCP VM)
@@ -152,10 +153,12 @@ python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05
 Single VM deployment on Google Cloud Platform (asia-south1, Mumbai). Terraform manages all infrastructure. Full details in `docs/deployment-architecture.md`.
 
 ### GCP Setup
+- **Live URL**: http://8.231.84.44 (HTTP only, no HTTPS — single user, paper trading)
 - **Project**: `stock-trading-prod` under org `kakwani-khayti-org`
 - **Account**: `kakwani.khayti@gmail.com` (separate from penguin-bean project)
 - **gcloud config**: `stock-trading` (isolated via `direnv` + `.envrc`)
 - **ADC credentials**: `~/.gcp/stock-trading-adc.json`
+- **SSH key**: `~/.ssh/st-deploy` (extracted from Terraform state; `ssh -i ~/.ssh/st-deploy deploy@8.231.84.44`)
 - **Free trial**: ₹28,365 credits, expires Aug 17 2026
 
 ### Infrastructure Commands
@@ -186,10 +189,19 @@ make db-import                 # Upload and import dump.sql to VM
 ```
 
 ### CI/CD
+
+> **WARNING: Pushing to `master` triggers an automatic production deploy.** Every push rebuilds Docker images and deploys to the live VM at http://8.231.84.44. Do NOT push unless you are certain the changes are correct. There is no staging environment.
+
 Push to `master` → GitHub Actions two-job pipeline: (1) build Docker images on runner + push to ghcr.io, (2) SSH into VM + pull images + deploy. Images cached via GitHub Actions cache (`type=gha`). Workflow: `.github/workflows/deploy.yml`. Uses ~2-4 min per deploy (500 min/month free for private repos).
 
 ### Secrets (GitHub Repo Secrets)
 All secrets stored in GitHub (Settings → Secrets), written to `.env` on VM during each deploy. Never in GCP Secret Manager or the codebase.
+
+### Production Container Health
+- **Backend**: `curl -sf http://localhost:8080/api/v1/tasks` healthcheck with 60s start_period, 10s interval
+- **PostgreSQL**: `pg_isready` healthcheck
+- **Redis**: `redis-cli ping` healthcheck
+- **Nginx**: DNS re-resolution via `resolver 127.0.0.11 valid=5s` + variable-based `proxy_pass` — picks up new container IPs after deploys without manual `nginx -s reload`
 
 ### Directory Map (Infrastructure)
 ```
@@ -201,6 +213,7 @@ infrastructure/
 .envrc                  # direnv: GCP config isolation (committed, no secrets)
 .github/workflows/      # deploy.yml (push-to-master auto-deploy)
 docker-compose.prod.yml # Production: all 5 services in containers
+.dockerignore           # Excludes .git, .venv, node_modules, tests, docs from Docker build context
 ```
 
 ## Known Cleanup Tasks

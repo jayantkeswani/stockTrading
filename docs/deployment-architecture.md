@@ -50,8 +50,8 @@ Single GCE VM deployment on Google Cloud Platform. All services run as Docker co
 
 | Container | Image | Port | Volume | Restart |
 |-----------|-------|------|--------|---------|
-| `st-nginx` | nginx:alpine | 80→80 | nginx.conf (bind) | unless-stopped |
-| `st-backend` | ghcr.io/.../backend (Python 3.11) | 8080 (internal) | backend_logs | unless-stopped |
+| `st-nginx` | nginx:alpine | 80→80 | nginx.conf (bind); DNS re-resolution via `resolver 127.0.0.11 valid=5s` | unless-stopped |
+| `st-backend` | ghcr.io/.../backend (Python 3.11) | 8080 (internal) | backend_logs; healthcheck: `curl /api/v1/tasks` (60s start_period) | unless-stopped |
 | `st-frontend` | ghcr.io/.../frontend (Node 20) | 3000 (internal) | — | unless-stopped |
 | `st-postgres` | postgres:16-alpine | 5432 (internal) | st_postgres_data | unless-stopped |
 | `st-redis` | redis:7-alpine | 6379 (internal) | st_redis_data | unless-stopped |
@@ -59,6 +59,8 @@ Single GCE VM deployment on Google Cloud Platform. All services run as Docker co
 In production, PostgreSQL and Redis are on container-internal ports only (not exposed to the host). The backend connects to them via Docker service names (`postgres:5432`, `redis:6379`).
 
 ## CI/CD Pipeline
+
+> **WARNING: Pushing to `master` triggers an automatic production deploy.** There is no staging environment.
 
 ```
 git push origin master
@@ -114,8 +116,10 @@ Secrets **never** live in the codebase or in GCP Secret Manager. They flow from 
 
 ## Network
 
+- **Live URL**: http://8.231.84.44
 - **External access**: HTTP on port 80 only (no HTTPS — single user, paper trading)
 - **WebSocket**: nginx proxies `/ws` to backend:8080 with upgrade headers
+- **Nginx DNS re-resolution**: `resolver 127.0.0.11 valid=5s` + variable-based `proxy_pass` — nginx picks up new container IPs after deploys without manual `nginx -s reload`
 - **Fyers data feed**: outbound WebSocket + REST to Fyers servers
 - **Telegram**: outbound HTTPS to api.telegram.org
 

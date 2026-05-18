@@ -63,5 +63,17 @@ chown deploy:deploy /opt/stock-trading
 echo "Setting timezone to IST..."
 timedatectl set-timezone Asia/Kolkata
 
+echo "Setting up 1GB swap file..."
+if [ ! -f /swapfile ]; then
+  fallocate -l 1G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  echo "Swap enabled."
+else
+  echo "Swap already exists, skipping."
+fi
+
 touch "$MARKER"
 echo "=== Setup complete ==="
