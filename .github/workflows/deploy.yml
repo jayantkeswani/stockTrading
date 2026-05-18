@@ -89,6 +89,7 @@ jobs:
 
             # Write .env from secrets
             cat > .env << 'ENV_EOF'
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           DATABASE_URL=postgresql+asyncpg://trader:${{ secrets.DB_PASSWORD }}@postgres:5432/stocktrading
           DATABASE_URL_SYNC=postgresql://trader:${{ secrets.DB_PASSWORD }}@postgres:5432/stocktrading
           REDIS_URL=redis://redis:6379/0
