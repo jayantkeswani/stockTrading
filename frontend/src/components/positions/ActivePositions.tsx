@@ -291,7 +291,7 @@ function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, isS
       {list.map((pos) => {
         const priceKey = pos.fyers_option_symbol || pos.symbol;
         const livePrice = prices[priceKey]?.ltp;
-        const currentPrice = livePrice ?? pos.current_price;
+        const currentPrice = livePrice ?? pos.current_price ?? 0;
         const isShort = pos.target_price != null && pos.target_price < pos.entry_price;
         const isFutures = !pos.option_type;
         const priceDiff = isShort ? pos.entry_price - currentPrice : currentPrice - pos.entry_price;

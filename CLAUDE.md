@@ -186,7 +186,7 @@ make db-import                 # Upload and import dump.sql to VM
 ```
 
 ### CI/CD
-Push to `master` → GitHub Actions SSH deploys to VM automatically. Workflow: `.github/workflows/deploy.yml`. Uses ~1-2 min per deploy (500 min/month free for private repos).
+Push to `master` → GitHub Actions two-job pipeline: (1) build Docker images on runner + push to ghcr.io, (2) SSH into VM + pull images + deploy. Images cached via GitHub Actions cache (`type=gha`). Workflow: `.github/workflows/deploy.yml`. Uses ~2-4 min per deploy (500 min/month free for private repos).
 
 ### Secrets (GitHub Repo Secrets)
 All secrets stored in GitHub (Settings → Secrets), written to `.env` on VM during each deploy. Never in GCP Secret Manager or the codebase.

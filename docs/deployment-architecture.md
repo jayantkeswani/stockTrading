@@ -51,8 +51,8 @@ Single GCE VM deployment on Google Cloud Platform. All services run as Docker co
 | Container | Image | Port | Volume | Restart |
 |-----------|-------|------|--------|---------|
 | `st-nginx` | nginx:alpine | 80→80 | nginx.conf (bind) | unless-stopped |
-| `st-backend` | custom (Python 3.11) | 8080 (internal) | backend_logs | unless-stopped |
-| `st-frontend` | custom (Node 20) | 3000 (internal) | — | unless-stopped |
+| `st-backend` | ghcr.io/.../backend (Python 3.11) | 8080 (internal) | backend_logs | unless-stopped |
+| `st-frontend` | ghcr.io/.../frontend (Node 20) | 3000 (internal) | — | unless-stopped |
 | `st-postgres` | postgres:16-alpine | 5432 (internal) | st_postgres_data | unless-stopped |
 | `st-redis` | redis:7-alpine | 6379 (internal) | st_redis_data | unless-stopped |
 
@@ -66,15 +66,22 @@ git push origin master
         ▼
 GitHub Actions (.github/workflows/deploy.yml)
         │
-        ├── SSH into VM as deploy@{IP}
-        ├── git pull latest code
-        ├── Write .env from GitHub Secrets
-        ├── docker compose build + up
-        ├── alembic upgrade head (migrations)
-        └── Health check
+        ├── Job 1: build-and-push (ubuntu-latest, 7GB RAM)
+        │   ├── Docker Buildx + GitHub Actions cache (GHA)
+        │   ├── Build backend image → ghcr.io
+        │   └── Build frontend image → ghcr.io
+        │
+        └── Job 2: deploy (after build)
+            ├── SCP docker-compose.prod.yml + nginx.conf to VM
+            ├── SSH into VM as deploy@{IP}
+            ├── Write .env from GitHub Secrets
+            ├── docker login ghcr.io + pull images
+            ├── docker compose up -d
+            ├── alembic upgrade head (migrations)
+            └── Health check
 ```
 
-Triggered on every push to `master` and via manual `workflow_dispatch`. Uses ~1-2 GitHub Actions minutes per deploy (well within the 500 min/month free tier for private repos).
+Images are built on the GitHub runner (7GB RAM, free) and pushed to GitHub Container Registry (ghcr.io, currently free for containers). The VM only pulls pre-built images — no builds on the e2-small. Docker layer caching via GitHub Actions cache (`type=gha`) makes subsequent builds fast (~30s when only source changes). Triggered on every push to `master` and via manual `workflow_dispatch`.
 
 ## Secrets Flow
 

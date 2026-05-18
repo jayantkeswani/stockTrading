@@ -6,16 +6,67 @@ on:
   workflow_dispatch:
 
 env:
-  APP_DIR: /opt/stock-trading
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/${{ github.repository }}/backend
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository }}/frontend
 
 jobs:
-  deploy:
+  build-and-push:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.backend
+          push: true
+          tags: ${{ env.BACKEND_IMAGE }}:latest,${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.frontend
+          push: true
+          tags: ${{ env.FRONTEND_IMAGE }}:latest,${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            docker-compose.prod.yml
+            infrastructure/docker/nginx.conf
 
       - name: Setup SSH
         run: |
@@ -24,19 +75,11 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.GCP_VM_IP }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Sync code to VM
+      - name: Sync config files to VM
         run: |
-          tar czf /tmp/app.tar.gz \
-            --exclude='.git' \
-            --exclude='node_modules' \
-            --exclude='__pycache__' \
-            --exclude='.venv' \
-            --exclude='.next' \
-            --exclude='.env' \
-            .
-          scp -i ~/.ssh/deploy_key /tmp/app.tar.gz deploy@${{ secrets.GCP_VM_IP }}:/tmp/app.tar.gz
-          ssh -i ~/.ssh/deploy_key deploy@${{ secrets.GCP_VM_IP }} \
-            "cd /opt/stock-trading && rm -rf backend frontend infrastructure docker-compose.prod.yml Makefile && tar xzf /tmp/app.tar.gz && rm /tmp/app.tar.gz"
+          scp -i ~/.ssh/deploy_key docker-compose.prod.yml deploy@${{ secrets.GCP_VM_IP }}:/opt/stock-trading/
+          ssh -i ~/.ssh/deploy_key deploy@${{ secrets.GCP_VM_IP }} "mkdir -p /opt/stock-trading/infrastructure/docker"
+          scp -i ~/.ssh/deploy_key infrastructure/docker/nginx.conf deploy@${{ secrets.GCP_VM_IP }}:/opt/stock-trading/infrastructure/docker/
 
       - name: Deploy
         run: |
@@ -70,11 +113,16 @@ jobs:
           FRONTEND_URL=http://localhost:3000
           ENV_EOF
 
-            # Export DB_PASSWORD for docker-compose interpolation
+            # Login to ghcr.io and pull images
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            export BACKEND_IMAGE="${{ env.BACKEND_IMAGE }}:latest"
+            export FRONTEND_IMAGE="${{ env.FRONTEND_IMAGE }}:latest"
             export DB_PASSWORD='${{ secrets.DB_PASSWORD }}'
 
-            # Build and deploy
-            docker compose -f docker-compose.prod.yml build
+            docker pull "$BACKEND_IMAGE"
+            docker pull "$FRONTEND_IMAGE"
+
+            # Deploy
             docker compose -f docker-compose.prod.yml up -d
 
             # Run migrations
@@ -84,6 +132,9 @@ jobs:
             # Verify
             sleep 5
             docker compose -f docker-compose.prod.yml ps
+
+            # Cleanup old images
+            docker image prune -f
 
             echo "Deploy complete!"
           DEPLOY_SCRIPT

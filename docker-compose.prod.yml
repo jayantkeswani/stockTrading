@@ -28,9 +28,7 @@ services:
     restart: unless-stopped
 
   backend:
-    build:
-      context: .
-      dockerfile: infrastructure/docker/Dockerfile.backend
+    image: ${BACKEND_IMAGE:-ghcr.io/jayantkeswani/stocktrading/backend:latest}
     container_name: st-backend
     env_file: .env
     environment:
@@ -47,9 +45,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    build:
-      context: .
-      dockerfile: infrastructure/docker/Dockerfile.frontend
+    image: ${FRONTEND_IMAGE:-ghcr.io/jayantkeswani/stocktrading/frontend:latest}
     container_name: st-frontend
     environment:
       HOSTNAME: "0.0.0.0"
