@@ -38,7 +38,7 @@ services:
       DATABASE_URL_SYNC: postgresql://trader:${DB_PASSWORD:-trader_dev_123}@postgres:5432/stocktrading
       REDIS_URL: redis://redis:6379/0
     volumes:
-      - backend_logs:/app/backend/logs
+      - backend_logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy

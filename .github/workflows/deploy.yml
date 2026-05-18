@@ -14,6 +14,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
@@ -21,21 +24,23 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.GCP_VM_IP }} >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: Sync code to VM
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='__pycache__' \
+            --exclude='.venv' \
+            --exclude='.next' \
+            --exclude='.env' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            ./ deploy@${{ secrets.GCP_VM_IP }}:/opt/stock-trading/
+
       - name: Deploy
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no deploy@${{ secrets.GCP_VM_IP }} << 'DEPLOY_SCRIPT'
+          ssh -i ~/.ssh/deploy_key deploy@${{ secrets.GCP_VM_IP }} << 'DEPLOY_SCRIPT'
             set -e
-            APP_DIR=/opt/stock-trading
-
-            # Clone or pull
-            if [ ! -d "$APP_DIR/.git" ]; then
-              git clone https://github.com/${{ github.repository }}.git $APP_DIR
-              cd $APP_DIR
-            else
-              cd $APP_DIR
-              git fetch origin master
-              git reset --hard origin/master
-            fi
+            cd /opt/stock-trading
 
             # Write .env from secrets
             cat > .env << 'ENV_EOF'
