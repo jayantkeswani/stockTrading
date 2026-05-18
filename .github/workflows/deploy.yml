@@ -128,7 +128,7 @@ jobs:
 
             # Run migrations via compose run (joins the compose network automatically)
             docker compose -f docker-compose.prod.yml run --rm -T backend \
-              alembic upgrade head
+              python -m alembic upgrade head
 
             # Now bring up all services
             docker compose -f docker-compose.prod.yml up -d
