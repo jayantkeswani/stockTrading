@@ -134,35 +134,32 @@ def _auto_login_sync() -> str:
         if data.get("s") != "ok" and data.get("code") != 200:
             raise FyersAutoLoginError(f"token (auth_code) request failed: {data.get('message', data)}")
 
-        # Fyers v3 API may return auth code in data.auth (new format)
-        # or as a query param in top-level Url (old format)
         url_str = data.get("Url")
-        auth_from_data = (data.get("data") or {}).get("auth")
+        if not url_str:
+            # Fyers returns a consent page (data.auth + permissions) instead of a
+            # redirect URL when the app hasn't been approved by the user in a browser.
+            # This happens after SEBI compliance resets or for brand-new apps.
+            from urllib.parse import urlencode
 
-        if url_str:
-            parsed = urlparse(url_str)
-            auth_code = parse_qs(parsed.query).get("auth_code", [None])[0]
-            if not auth_code:
-                raise FyersAutoLoginError(f"Could not extract auth_code from URL: {url_str}")
-        elif auth_from_data:
-            auth_code = auth_from_data
-        else:
-            raise FyersAutoLoginError(f"No Url or auth in token response: {data}")
+            auth_url = (
+                "https://api-t1.fyers.in/api/v3/generate-authcode?"
+                + urlencode(
+                    {
+                        "client_id": settings.fyers_app_id,
+                        "redirect_uri": settings.fyers_redirect_uri,
+                        "response_type": "code",
+                        "state": "stocktrading",
+                    }
+                )
+            )
+            raise FyersAutoLoginError(
+                f"App consent required. Open this URL in a browser and approve once: {auth_url}"
+            )
 
-        # Step 5: Exchange auth code for API access token
-        app_id_hash = _compute_app_id_hash(settings.fyers_app_id, settings.fyers_secret_key)
-        payload = {
-            "grant_type": "authorization_code",
-            "appIdHash": app_id_hash,
-            "code": auth_code,
-        }
-        response = client.post(TOKEN_API, json=payload)
-        data = response.json()
-        if data.get("s") != "ok":
-            raise FyersAutoLoginError(f"validate-authcode failed: {data.get('message', data)}")
-        access_token = data.get("access_token")
-        if not access_token:
-            raise FyersAutoLoginError("No access_token in validate-authcode response")
+        parsed = urlparse(url_str)
+        auth_code = parse_qs(parsed.query).get("auth_code", [None])[0]
+        if not auth_code:
+            raise FyersAutoLoginError(f"Could not extract auth_code from URL: {url_str}")
 
         # Step 5: Exchange auth code for API access token
         app_id_hash = _compute_app_id_hash(settings.fyers_app_id, settings.fyers_secret_key)
