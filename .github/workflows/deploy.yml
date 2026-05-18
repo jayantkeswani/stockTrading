@@ -26,15 +26,17 @@ jobs:
 
       - name: Sync code to VM
         run: |
-          rsync -az --delete \
+          tar czf /tmp/app.tar.gz \
             --exclude='.git' \
             --exclude='node_modules' \
             --exclude='__pycache__' \
             --exclude='.venv' \
             --exclude='.next' \
             --exclude='.env' \
-            -e "ssh -i ~/.ssh/deploy_key" \
-            ./ deploy@${{ secrets.GCP_VM_IP }}:/opt/stock-trading/
+            .
+          scp -i ~/.ssh/deploy_key /tmp/app.tar.gz deploy@${{ secrets.GCP_VM_IP }}:/tmp/app.tar.gz
+          ssh -i ~/.ssh/deploy_key deploy@${{ secrets.GCP_VM_IP }} \
+            "cd /opt/stock-trading && rm -rf backend frontend infrastructure docker-compose.prod.yml Makefile && tar xzf /tmp/app.tar.gz && rm /tmp/app.tar.gz"
 
       - name: Deploy
         run: |
