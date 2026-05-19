@@ -103,8 +103,8 @@ def start_telegram_bot() -> asyncio.Task | None:
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
         logger.info("Telegram not configured — bot polling skipped")
         return None
-    if not settings.telegram_polling_enabled:
-        logger.info("Telegram polling disabled via TELEGRAM_POLLING_ENABLED=false")
+    if not settings.telegram_enabled:
+        logger.info("Telegram disabled via TELEGRAM_ENABLED=false")
         return None
     asyncio.create_task(_register_commands(), name="telegram_register_commands")
     _polling_task = asyncio.create_task(_poll_loop(), name="telegram_bot_poll")

@@ -21,6 +21,9 @@ async def send_telegram(message: str) -> bool:
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
         logger.warning("Telegram not configured — skipping notification")
         return False
+    if not settings.telegram_enabled:
+        logger.debug("Telegram disabled (TELEGRAM_ENABLED=false) — skipping notification")
+        return False
     url = _TELEGRAM_API.format(token=settings.telegram_bot_token)
 
     # Sync httpx via asyncio.to_thread — avoids anyio async TLS failures on
