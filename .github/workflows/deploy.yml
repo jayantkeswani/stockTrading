@@ -146,19 +146,22 @@ jobs:
             docker pull "${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
             docker pull "${{ env.FRONTEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
 
-            # Stop app containers (keep DB running for migrations)
-            docker compose -f docker-compose.prod.yml stop backend frontend nginx || true
-            docker compose -f docker-compose.prod.yml rm -f backend frontend nginx || true
-
             # Ensure DB is up and healthy
             docker compose -f docker-compose.prod.yml up -d postgres redis
             sleep 5
 
-            # Run migrations
-            docker compose -f docker-compose.prod.yml run --rm -T backend \
+            # Run migrations via docker run (not compose run — compose run
+            # pollutes service state and causes the subsequent up -d to skip
+            # recreating the backend container)
+            docker run --rm -T \
+              --network stock-trading_default \
+              -e DATABASE_URL="postgresql+asyncpg://trader:${DB_PASSWORD}@postgres:5432/stocktrading" \
+              "${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}" \
               python -m alembic upgrade head
 
-            # Start all services with new images
+            # Stop old app containers, then start all services with new images
+            docker compose -f docker-compose.prod.yml stop backend frontend nginx 2>/dev/null || true
+            docker compose -f docker-compose.prod.yml rm -f backend frontend nginx 2>/dev/null || true
             docker compose -f docker-compose.prod.yml up -d
 
             # Verify
@@ -173,7 +176,11 @@ jobs:
 
       - name: Health check
         run: |
-          sleep 10
-          HEALTH=$(curl -sf --max-time 10 http://${{ secrets.GCP_VM_IP }}/api/v1/health || echo '{"status":"unknown"}')
+          for i in $(seq 1 12); do
+            HEALTH=$(curl -sf --max-time 10 http://${{ secrets.GCP_VM_IP }}/api/v1/health 2>/dev/null) && break
+            echo "Attempt $i: backend not ready yet, waiting 10s..."
+            sleep 10
+          done
+          HEALTH=${HEALTH:-'{"status":"unknown"}'}
           echo "Health response: $HEALTH"
           echo "$HEALTH" | grep -q '"version"' && echo "Version visible in health endpoint" || echo "WARNING: version not in health response (app may still be starting)"
