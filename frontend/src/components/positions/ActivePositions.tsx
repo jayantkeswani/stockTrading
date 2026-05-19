@@ -6,7 +6,7 @@ import { useShallow } from "zustand/react/shallow";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
-import type { Position } from "@/lib/types";
+import type { Position, Trade } from "@/lib/types";
 
 interface ActivePositionsProps {
   compact?: boolean;
@@ -18,6 +18,8 @@ interface PositionRowsProps {
   expandedId: string | null;
   toggleExpand: (id: string) => void;
   handleClose: (id: string) => void;
+  handleWatchlist: (pos: Position) => void;
+  watchlistStatuses: Record<string, string>;
   isShadow: boolean;
   compact?: boolean;
 }
@@ -53,6 +55,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
   })));
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [watchlistStatuses, setWatchlistStatuses] = useState<Record<string, string>>({});
   const prevPositionsLen = useRef(positions.length);
 
   const isShadow = positionViewMode === "SHADOW";
@@ -112,6 +115,55 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
 
+  const addToWatchlistById = async (id: string, fyersSymbol: string | null, symbol: string, optionType: string | null, strikePrice: number, expiryDate: string) => {
+    if (watchlistStatuses[id] && watchlistStatuses[id] !== "idle") return;
+    setWatchlistStatuses((prev) => ({ ...prev, [id]: "adding" }));
+    try {
+      let fyers = fyersSymbol;
+      if (!fyers) {
+        const isFut = !optionType;
+        const query = isFut ? symbol : `${symbol} ${strikePrice}${optionType}`;
+        const res = await api.searchSymbols(query);
+        const match = res.results?.find((r: { symbol: string }) =>
+          isFut ? r.symbol.includes("FUT") : r.symbol.includes(`${strikePrice}${optionType}`)
+        );
+        fyers = match?.symbol ?? null;
+      }
+      if (!fyers) {
+        setWatchlistStatuses((prev) => ({ ...prev, [id]: "error" }));
+        setTimeout(() => setWatchlistStatuses((prev) => ({ ...prev, [id]: "idle" })), 2500);
+        return;
+      }
+      const isFutures = !optionType;
+      const segment = isFutures ? "FUT" : "OPT";
+      const display = isFutures
+        ? `${symbol} FUT`
+        : `${symbol} ${strikePrice} ${optionType}`;
+      await api.addToWatchlist({
+        symbol: fyers,
+        display,
+        segment,
+        strike: strikePrice > 0 ? strikePrice : null,
+        option_type: isFutures ? null : optionType,
+        expiry: expiryDate,
+      });
+      useStore.getState().addWatchlistItem({ symbol: fyers, display, segment });
+      setWatchlistStatuses((prev) => ({ ...prev, [id]: "done" }));
+      setTimeout(() => setWatchlistStatuses((prev) => ({ ...prev, [id]: "idle" })), 2000);
+    } catch {
+      setWatchlistStatuses((prev) => ({ ...prev, [id]: "error" }));
+      setTimeout(() => setWatchlistStatuses((prev) => ({ ...prev, [id]: "idle" })), 2500);
+    }
+  };
+
+  const handleWatchlist = (pos: Position) => {
+    addToWatchlistById(pos.id, pos.fyers_option_symbol, pos.symbol, pos.option_type || null, pos.strike_price, pos.expiry_date);
+  };
+
+  const handleTradeWatchlist = (t: Trade) => {
+    addToWatchlistById(t.id, null, t.symbol, t.option_type || null, t.strike_price, t.expiry_date);
+  };
+
   const rawPositions = isShadow ? shadowPositions : positions;
   const rawClosed = isShadow ? shadowClosedToday : closedToday;
 
@@ -123,7 +175,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     : rawClosed;
 
   const rowProps: PositionRowsProps = {
-    list: activePositions, prices, expandedId, toggleExpand, handleClose, isShadow, compact,
+    list: activePositions, prices, expandedId, toggleExpand, handleClose, handleWatchlist, watchlistStatuses, isShadow, compact,
   };
 
   return (
@@ -238,6 +290,24 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                     {t.strike_price > 0 && (
                       <span className="text-[10px] font-mono text-text-muted">{t.strike_price}</span>
                     )}
+                    {(() => {
+                      const ws = watchlistStatuses[t.id] || "idle";
+                      return (
+                        <button
+                          onClick={() => handleTradeWatchlist(t)}
+                          title="Add to watchlist"
+                          className={`text-[10px] font-mono px-1 py-px rounded border transition-colors ${
+                            ws === "done"
+                              ? "border-profit/30 text-profit bg-profit/10"
+                              : ws === "error"
+                              ? "border-loss/30 text-loss bg-loss/10"
+                              : "border-border/40 text-text-muted/60 hover:text-accent hover:border-accent/40"
+                          }`}
+                        >
+                          {ws === "adding" ? "..." : ws === "done" ? "✓" : ws === "error" ? "✗" : "+"}
+                        </button>
+                      );
+                    })()}
                     <span className={`text-[9px] font-mono px-1 py-px rounded border ${
                       t.side === "BUY"
                         ? "border-profit/30 text-profit"
@@ -285,7 +355,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
   );
 }
 
-function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, isShadow, compact }: PositionRowsProps) {
+function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, handleWatchlist, watchlistStatuses, isShadow, compact }: PositionRowsProps) {
   return (
     <>
       {list.map((pos) => {
@@ -315,19 +385,39 @@ function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, isS
               onClick={() => toggleExpand(pos.id)}
             >
               <td className="px-3 py-1.5">
-                <span className="font-mono font-medium">{pos.symbol}</span>
-                {isFutures ? (
-                  <span className={`ml-1 text-[10px] font-mono ${isShort ? "text-loss" : "text-profit"}`}>
-                    {isShort ? "SHORT" : "LONG"}
-                  </span>
-                ) : (
-                  <span className={`ml-1 text-[10px] font-mono ${pos.option_type === "CE" ? "text-profit" : "text-loss"}`}>
-                    {pos.option_type}
-                  </span>
-                )}
-                {compact && !isFutures && (
-                  <span className="ml-1 text-[10px] text-text-muted font-mono">{pos.strike_price}</span>
-                )}
+                <div className="flex items-center gap-1">
+                  <span className="font-mono font-medium">{pos.symbol}</span>
+                  {isFutures ? (
+                    <span className={`text-[10px] font-mono ${isShort ? "text-loss" : "text-profit"}`}>
+                      {isShort ? "SHORT" : "LONG"}
+                    </span>
+                  ) : (
+                    <span className={`text-[10px] font-mono ${pos.option_type === "CE" ? "text-profit" : "text-loss"}`}>
+                      {pos.option_type}
+                    </span>
+                  )}
+                  {compact && !isFutures && (
+                    <span className="text-[10px] text-text-muted font-mono">{pos.strike_price}</span>
+                  )}
+                  {(() => {
+                    const ws = watchlistStatuses[pos.id] || "idle";
+                    return (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleWatchlist(pos); }}
+                        title="Add to watchlist"
+                        className={`text-[10px] font-mono px-1 py-px rounded border transition-colors ${
+                          ws === "done"
+                            ? "border-profit/30 text-profit bg-profit/10"
+                            : ws === "error"
+                            ? "border-loss/30 text-loss bg-loss/10"
+                            : "border-border/40 text-text-muted/60 hover:text-accent hover:border-accent/40"
+                        }`}
+                      >
+                        {ws === "adding" ? "..." : ws === "done" ? "✓" : ws === "error" ? "✗" : "+"}
+                      </button>
+                    );
+                  })()}
+                </div>
               </td>
               {!compact && (
                 <td className="px-3 py-1.5 font-mono text-text-secondary">{isFutures ? "—" : pos.strike_price}</td>

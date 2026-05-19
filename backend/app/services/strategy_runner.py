@@ -2197,6 +2197,8 @@ class StrategyRunner:
             "ai_rationale": ai.get("ai_rationale"),
             "ai_adjustment": ai.get("ai_adjustment"),
             "ai_action": ai.get("ai_action"),
+            "fyers_option_symbol": signal.fyers_option_symbol,
+            "fyers_futures_symbol": signal.fyers_futures_symbol,
         }
         await ws_manager.broadcast(event, payload)
 
