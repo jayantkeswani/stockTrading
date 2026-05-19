@@ -35,7 +35,7 @@ stockTrading/
 ├── .dockerignore          # Excludes .git, .venv, node_modules, tests, docs from Docker build context
 ├── .env.example           # Environment template
 ├── .envrc                 # direnv: GCP project isolation (stock-trading config)
-├── .github/workflows/     # CI/CD: deploy.yml (tag-based releases; master push = build CI only, tag push = deploy)
+├── .github/workflows/     # CI/CD: ci.yml (build on master push), deploy.yml (tag-based releases to GCP VM)
 ├── .vscode/               # VS Code launch configs, tasks, settings
 ├── .claude/skills/        # Claude Code skill definitions (test-runner, review-code, build-strategy, etc.)
 ├── infrastructure/        # GCP deployment (Terraform, Docker, scripts)
@@ -219,10 +219,10 @@ make show-version
 # or: curl http://8.231.84.44/api/v1/health
 
 # Manual deploy via GitHub Actions UI (escape hatch)
-# GitHub → Actions → Deploy to GCP VM → Run workflow → (optional version)
+# GitHub → Actions → Deploy → Run workflow → (optional version)
 ```
 
-Workflow: `.github/workflows/deploy.yml`. Uses ~2-4 min per full build (500 min/month free for private repos), ~1 min for tag-based deploys (retag only).
+Workflows: `.github/workflows/ci.yml` (build on master push, ~2-4 min), `.github/workflows/deploy.yml` (tag-based deploy, ~1 min retag + deploy). 500 min/month free for private repos.
 
 ### Secrets (GitHub Repo Secrets)
 All secrets stored in GitHub (Settings → Secrets), written to `.env` on VM during each deploy. Never in GCP Secret Manager or the codebase.
@@ -241,7 +241,7 @@ infrastructure/
 ├── docker/             # Dockerfile.backend, Dockerfile.frontend, nginx.conf
 └── scripts/            # vm-startup.sh (first-boot: Docker, deploy user, IST)
 .envrc                  # direnv: GCP config isolation (committed, no secrets)
-.github/workflows/      # deploy.yml (push-to-master auto-deploy)
+.github/workflows/      # ci.yml (build on master push), deploy.yml (tag-based deploy)
 docker-compose.prod.yml # Production: all 5 services in containers
 .dockerignore           # Excludes .git, .venv, node_modules, tests, docs from Docker build context
 ```

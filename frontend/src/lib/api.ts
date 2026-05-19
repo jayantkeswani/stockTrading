@@ -343,6 +343,4 @@ export const api = {
       method: "DELETE",
     }),
 
-  // Health
-  health: () => request(`/api/v1/health`),
 };

@@ -63,30 +63,30 @@ In production, PostgreSQL and Redis are on container-internal ports only (not ex
 
 > **SAFE TO PUSH TO MASTER.** Master pushes only build images (CI validation). Deploys are triggered by semver tags.
 
-### Build (master push — no deploy)
+### Build (master push — no deploy) — `ci.yml`
 
 ```
 git push origin master
         │
         ▼
-GitHub Actions: build job
+GitHub Actions (ci.yml): build job
         ├── Docker Buildx + GitHub Actions cache (GHA)
         ├── Build backend → ghcr.io/.../backend:<sha> + :latest
         └── Build frontend → ghcr.io/.../frontend:<sha> + :latest
 ```
 
-### Deploy (tag push — no rebuild)
+### Deploy (tag push — no rebuild) — `deploy.yml`
 
 ```
 make release v=1.0.0   (creates + pushes tag)
         │
         ▼
-GitHub Actions: retag job
+GitHub Actions (deploy.yml): retag job
         ├── docker buildx imagetools create (registry-side, ~5s)
         ├── Retag :<sha> as :v1.0.0 for both images
         │
         ▼
-GitHub Actions: deploy job
+GitHub Actions (deploy.yml): deploy job
         ├── SCP docker-compose.prod.yml + nginx.conf to VM
         ├── SSH into VM as deploy@{IP}
         ├── Write .env from GitHub Secrets (includes APP_VERSION=v1.0.0)
