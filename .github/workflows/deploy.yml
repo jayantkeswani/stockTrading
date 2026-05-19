@@ -134,17 +134,17 @@ jobs:
           APP_VERSION=${{ needs.retag.outputs.deploy_version }}
           ENV_EOF
 
-            # DEPLOYED_AT needs shell expansion (heredoc is single-quoted)
+            # These need shell expansion (inner heredoc is single-quoted)
             echo "DEPLOYED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> .env
+            echo "BACKEND_IMAGE=${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}" >> .env
+            echo "FRONTEND_IMAGE=${{ env.FRONTEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}" >> .env
 
             # Login to ghcr.io and pull images
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            export BACKEND_IMAGE="${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
-            export FRONTEND_IMAGE="${{ env.FRONTEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
             export DB_PASSWORD='${{ secrets.DB_PASSWORD }}'
 
-            docker pull "$BACKEND_IMAGE"
-            docker pull "$FRONTEND_IMAGE"
+            docker pull "${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
+            docker pull "${{ env.FRONTEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
 
             # Start DB first, run migrations, then bring up all services
             docker compose -f docker-compose.prod.yml up -d postgres redis

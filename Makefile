@@ -85,7 +85,13 @@ release:             ## Create and push a release tag (usage: make release v=1.0
 	mkt=(h==9 and m>=15) or (10<=h<15) or (h==15 and m<=30); \
 	print('\033[33mWARNING: Market hours (9:15-15:30 IST). Deploy at your own risk.\033[0m') if mkt else None"
 	@echo "Tagging v$(v)..."
-	git tag -a "v$(v)" -m "Release v$(v)"
+	@PREV_TAG=$$(git describe --tags --abbrev=0 2>/dev/null || echo ""); \
+	if [ -n "$$PREV_TAG" ]; then \
+		CHANGELOG=$$(git log $$PREV_TAG..HEAD --oneline --no-decorate); \
+	else \
+		CHANGELOG=$$(git log --oneline --no-decorate -10); \
+	fi; \
+	git tag -a "v$(v)" -m "v$(v)$$( [ -n \"$$CHANGELOG\" ] && printf '\n\n%s' \"$$CHANGELOG\" )"
 	git push origin "v$(v)"
 	@echo "Tag v$(v) pushed. GitHub Actions deploy pipeline started."
 	@echo "Monitor: https://github.com/jayantkeswani/stocktrading/actions"
