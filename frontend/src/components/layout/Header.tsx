@@ -34,6 +34,7 @@ function BiasIndicator() {
 export function Header() {
   const { wsConnected, marketStatus, setMarketStatus, setAgentStatus, updatePrice } = useStore();
   const [time, setTime] = useState("");
+  const [deployedVersion, setDeployedVersion] = useState("");
 
   // Clock
   useEffect(() => {
@@ -51,6 +52,11 @@ export function Header() {
     update();
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Fetch deployed version once on mount
+  useEffect(() => {
+    api.health().then((h) => setDeployedVersion(h?.version || "")).catch(() => {});
   }, []);
 
   // Poll market status + prices every 10s
@@ -157,6 +163,11 @@ export function Header() {
             {wsConnected ? "WS" : "WS OFF"}
           </span>
         </div>
+
+        {/* Deployed Version */}
+        {deployedVersion && deployedVersion !== "dev" && (
+          <span className="text-[10px] font-mono text-text-muted/60">{deployedVersion}</span>
+        )}
       </div>
     </header>
   );

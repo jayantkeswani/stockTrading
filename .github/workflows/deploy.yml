@@ -3,7 +3,13 @@ name: Deploy to GCP VM
 on:
   push:
     branches: [master]
+    tags: ['v*.*.*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy (e.g. v1.0.0). Leave blank for latest.'
+        required: false
+        default: ''
 
 env:
   REGISTRY: ghcr.io
@@ -11,7 +17,9 @@ env:
   FRONTEND_IMAGE: ghcr.io/jayantkeswani/stocktrading/frontend
 
 jobs:
-  build-and-push:
+  # ── Build (master push only) ─────────────────────────────
+  build:
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -52,9 +60,66 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ── Retag (tag push or manual dispatch — no rebuild) ─────
+  retag:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+      deploy_version: ${{ steps.resolve.outputs.deploy_version }}
+
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve version and retag
+        id: resolve
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v*.*.* ]]; then
+            VERSION="${{ github.ref_name }}"
+            SOURCE_TAG="${{ github.sha }}"
+            echo "Retagging :${SOURCE_TAG} as :${VERSION}"
+            docker buildx imagetools create \
+              -t "${{ env.BACKEND_IMAGE }}:${VERSION}" \
+              "${{ env.BACKEND_IMAGE }}:${SOURCE_TAG}"
+            docker buildx imagetools create \
+              -t "${{ env.FRONTEND_IMAGE }}:${VERSION}" \
+              "${{ env.FRONTEND_IMAGE }}:${SOURCE_TAG}"
+            echo "image_tag=${VERSION}" >> $GITHUB_OUTPUT
+            echo "deploy_version=${VERSION}" >> $GITHUB_OUTPUT
+
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+            echo "Retagging :latest as :${VERSION}"
+            docker buildx imagetools create \
+              -t "${{ env.BACKEND_IMAGE }}:${VERSION}" \
+              "${{ env.BACKEND_IMAGE }}:latest"
+            docker buildx imagetools create \
+              -t "${{ env.FRONTEND_IMAGE }}:${VERSION}" \
+              "${{ env.FRONTEND_IMAGE }}:latest"
+            echo "image_tag=${VERSION}" >> $GITHUB_OUTPUT
+            echo "deploy_version=${VERSION}" >> $GITHUB_OUTPUT
+
+          else
+            echo "image_tag=latest" >> $GITHUB_OUTPUT
+            echo "deploy_version=latest-$(date -u +%Y%m%d-%H%M)" >> $GITHUB_OUTPUT
+          fi
+
+  # ── Deploy (after retag) ─────────────────────────────────
   deploy:
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: retag
     timeout-minutes: 10
     permissions:
       contents: read
@@ -114,12 +179,14 @@ jobs:
           BACKEND_HOST=0.0.0.0
           BACKEND_PORT=8080
           FRONTEND_URL=http://localhost:3000
+          APP_VERSION=${{ needs.retag.outputs.deploy_version }}
+          DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           ENV_EOF
 
             # Login to ghcr.io and pull images
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            export BACKEND_IMAGE="${{ env.BACKEND_IMAGE }}:latest"
-            export FRONTEND_IMAGE="${{ env.FRONTEND_IMAGE }}:latest"
+            export BACKEND_IMAGE="${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
+            export FRONTEND_IMAGE="${{ env.FRONTEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
             export DB_PASSWORD='${{ secrets.DB_PASSWORD }}'
 
             docker pull "$BACKEND_IMAGE"
@@ -143,10 +210,12 @@ jobs:
             # Cleanup old images
             docker image prune -f
 
-            echo "Deploy complete!"
+            echo "Deploy complete! Version: ${{ needs.retag.outputs.deploy_version }}"
           DEPLOY_SCRIPT
 
       - name: Health check
         run: |
           sleep 10
-          curl -sf --max-time 10 http://${{ secrets.GCP_VM_IP }}/api/v1/risk/daily || echo "Health check failed (app may still be starting)"
+          HEALTH=$(curl -sf --max-time 10 http://${{ secrets.GCP_VM_IP }}/api/v1/health || echo '{"status":"unknown"}')
+          echo "Health response: $HEALTH"
+          echo "$HEALTH" | grep -q '"version"' && echo "Version visible in health endpoint" || echo "WARNING: version not in health response (app may still be starting)"

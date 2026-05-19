@@ -27,6 +27,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // Health
+  health: () => request<{ status: string; version: string; deployed_at: string }>(`/api/v1/health`),
+
   // Market
   getPrice: (symbol: string) => request(`/api/v1/market/price/${symbol}`),
   getAllPrices: () =>

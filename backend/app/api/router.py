@@ -24,7 +24,13 @@ api_router.include_router(options.router, prefix="/api/v1/options", tags=["optio
 
 @api_router.get("/api/v1/health")
 async def health_check():
-    return {"status": "ok", "service": "stocktrading-backend"}
+    from app.config import settings
+    return {
+        "status": "ok",
+        "service": "stocktrading-backend",
+        "version": settings.app_version,
+        "deployed_at": settings.deployed_at,
+    }
 
 
 @api_router.websocket("/ws")

@@ -59,32 +59,51 @@ Single GCE VM deployment on Google Cloud Platform. All services run as Docker co
 
 In production, PostgreSQL and Redis are on container-internal ports only (not exposed to the host). The backend connects to them via Docker service names (`postgres:5432`, `redis:6379`).
 
-## CI/CD Pipeline
+## CI/CD Pipeline (Tag-Based Releases)
 
-> **WARNING: Pushing to `master` triggers an automatic production deploy.** There is no staging environment.
+> **SAFE TO PUSH TO MASTER.** Master pushes only build images (CI validation). Deploys are triggered by semver tags.
+
+### Build (master push — no deploy)
 
 ```
 git push origin master
         │
         ▼
-GitHub Actions (.github/workflows/deploy.yml)
-        │
-        ├── Job 1: build-and-push (ubuntu-latest, 7GB RAM)
-        │   ├── Docker Buildx + GitHub Actions cache (GHA)
-        │   ├── Build backend image → ghcr.io
-        │   └── Build frontend image → ghcr.io
-        │
-        └── Job 2: deploy (after build)
-            ├── SCP docker-compose.prod.yml + nginx.conf to VM
-            ├── SSH into VM as deploy@{IP}
-            ├── Write .env from GitHub Secrets
-            ├── docker login ghcr.io + pull images
-            ├── docker compose up -d
-            ├── alembic upgrade head (migrations)
-            └── Health check
+GitHub Actions: build job
+        ├── Docker Buildx + GitHub Actions cache (GHA)
+        ├── Build backend → ghcr.io/.../backend:<sha> + :latest
+        └── Build frontend → ghcr.io/.../frontend:<sha> + :latest
 ```
 
-Images are built on the GitHub runner (7GB RAM, free) and pushed to GitHub Container Registry (ghcr.io, currently free for containers). The VM only pulls pre-built images — no builds on the e2-small. Docker layer caching via GitHub Actions cache (`type=gha`) makes subsequent builds fast (~30s when only source changes). Triggered on every push to `master` and via manual `workflow_dispatch`.
+### Deploy (tag push — no rebuild)
+
+```
+make release v=1.0.0   (creates + pushes tag)
+        │
+        ▼
+GitHub Actions: retag job
+        ├── docker buildx imagetools create (registry-side, ~5s)
+        ├── Retag :<sha> as :v1.0.0 for both images
+        │
+        ▼
+GitHub Actions: deploy job
+        ├── SCP docker-compose.prod.yml + nginx.conf to VM
+        ├── SSH into VM as deploy@{IP}
+        ├── Write .env from GitHub Secrets (includes APP_VERSION=v1.0.0)
+        ├── docker pull :v1.0.0 images
+        ├── alembic upgrade head (migrations)
+        ├── docker compose up -d
+        └── Health check (verifies version in /api/v1/health)
+```
+
+Images are built on the GitHub runner (7GB RAM, free) and pushed to GitHub Container Registry (ghcr.io, currently free for containers). The VM only pulls pre-built images — no builds on the e2-small. Docker layer caching via GitHub Actions cache (`type=gha`) makes subsequent builds fast (~30s when only source changes). Releases reuse existing images (retag only), so deploys take ~1 min. Manual `workflow_dispatch` available as an escape hatch.
+
+### Version Visibility
+
+- `GET /api/v1/health` returns `{"version": "v1.0.0", "deployed_at": "..."}` in production
+- Frontend Header shows the deployed version next to the WS indicator
+- `make show-version` prints the health response from local machine
+- `APP_VERSION` env var written to `.env` on VM during each deploy
 
 ## Secrets Flow
 

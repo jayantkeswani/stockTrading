@@ -35,7 +35,7 @@ stockTrading/
 ├── .dockerignore          # Excludes .git, .venv, node_modules, tests, docs from Docker build context
 ├── .env.example           # Environment template
 ├── .envrc                 # direnv: GCP project isolation (stock-trading config)
-├── .github/workflows/     # CI/CD: deploy.yml (push-to-master auto-deploy to GCP VM)
+├── .github/workflows/     # CI/CD: deploy.yml (tag-based releases; master push = build CI only, tag push = deploy)
 ├── .vscode/               # VS Code launch configs, tasks, settings
 ├── .claude/skills/        # Claude Code skill definitions (test-runner, review-code, build-strategy, etc.)
 ├── infrastructure/        # GCP deployment (Terraform, Docker, scripts)
@@ -178,6 +178,11 @@ terraform output -raw vm_external_ip      # → add as GCP_VM_IP in GitHub Secre
 terraform output -raw deploy_private_key  # → add as SSH_PRIVATE_KEY in GitHub Secrets
 terraform output -raw gemini_api_key      # → add as GOOGLE_API_KEY in GitHub Secrets
 
+# Release (tag-based deploy)
+make release v=1.0.0           # Create + push tag → triggers deploy
+make deploy-version v=1.0.0    # Rollback: deploy a specific version via workflow_dispatch
+make show-version              # Show what version is deployed in production
+
 # Production management
 make ssh                       # SSH into VM
 make prod-up                   # Start containers on VM
@@ -194,11 +199,30 @@ make db-export                 # Dump local DB to dump.sql
 make db-import                 # Upload and import dump.sql to VM
 ```
 
-### CI/CD
+### CI/CD (Tag-Based Releases)
 
-> **WARNING: Pushing to `master` triggers an automatic production deploy.** Every push rebuilds Docker images and deploys to the live VM at http://8.231.84.44. Do NOT push unless you are certain the changes are correct. There is no staging environment.
+> **SAFE TO PUSH TO MASTER.** Pushing to `master` only builds Docker images (CI validation) — it does NOT deploy. To deploy: cut a semver tag.
 
-Push to `master` → GitHub Actions two-job pipeline: (1) build Docker images on runner + push to ghcr.io, (2) SSH into VM + pull images + deploy. Images cached via GitHub Actions cache (`type=gha`). Workflow: `.github/workflows/deploy.yml`. Uses ~2-4 min per deploy (500 min/month free for private repos).
+**Build** (master push): GitHub Actions builds backend + frontend Docker images → pushes to ghcr.io with `:<sha>` and `:latest` tags. No deploy. Images cached via GHA cache (`type=gha`).
+
+**Deploy** (tag push): `make release v=1.0.0` creates a `v1.0.0` tag → GitHub Actions retags the existing `:<sha>` image as `:v1.0.0` (no rebuild, ~5s) → SSHes to VM → pulls versioned images → runs migrations → deploys. Health check verifies version in `/api/v1/health` response.
+
+```bash
+# Create and push a release (triggers retag + deploy via GitHub Actions)
+make release v=1.0.0
+
+# Emergency rollback to a previous version
+make deploy-version v=0.9.5
+
+# Check what version is deployed right now
+make show-version
+# or: curl http://8.231.84.44/api/v1/health
+
+# Manual deploy via GitHub Actions UI (escape hatch)
+# GitHub → Actions → Deploy to GCP VM → Run workflow → (optional version)
+```
+
+Workflow: `.github/workflows/deploy.yml`. Uses ~2-4 min per full build (500 min/month free for private repos), ~1 min for tag-based deploys (retag only).
 
 ### Secrets (GitHub Repo Secrets)
 All secrets stored in GitHub (Settings → Secrets), written to `.env` on VM during each deploy. Never in GCP Secret Manager or the codebase.

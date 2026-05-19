@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     backend_host: str = "0.0.0.0"
     backend_port: int = 8080
     frontend_url: str = "http://localhost:3000"
+    app_version: str = "dev"
+    deployed_at: str = ""
 
     model_config = {"env_file": str(_env_file), "env_file_encoding": "utf-8", "extra": "ignore"}
 

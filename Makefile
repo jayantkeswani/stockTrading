@@ -1,5 +1,6 @@
 .PHONY: dev stop reset infra backend frontend migrate test clean hooks \
-       infra-up infra-down infra-plan ssh db-export db-import prod-up prod-down prod-logs
+       infra-up infra-down infra-plan ssh db-export db-import prod-up prod-down prod-logs \
+       release deploy-version show-version
 
 # ── One touch ──────────────────────────────────────────────
 dev:                 ## Start everything (infra + backend + frontend)
@@ -74,6 +75,29 @@ db-import:           ## Import dump.sql to production VM DB
 	scp -i ~/.ssh/st-deploy dump.sql deploy@$(VM_IP):/opt/stock-trading/
 	ssh -i ~/.ssh/st-deploy deploy@$(VM_IP) "cd /opt/stock-trading && docker exec -i st-postgres psql -U trader -d stocktrading < dump.sql"
 	@echo "Import complete"
+
+# ── Release (Tag-Based Deploy) ───────────────────────────
+release:             ## Create and push a release tag (usage: make release v=1.0.0)
+	@if [ -z "$(v)" ]; then echo "Usage: make release v=1.0.0" && exit 1; fi
+	@python3 -c "from datetime import datetime,timezone,timedelta; \
+	ist=datetime.now(timezone(timedelta(hours=5,minutes=30))); \
+	h,m=ist.hour,ist.minute; \
+	mkt=(h==9 and m>=15) or (10<=h<15) or (h==15 and m<=30); \
+	print('\033[33mWARNING: Market hours (9:15-15:30 IST). Deploy at your own risk.\033[0m') if mkt else None"
+	@echo "Tagging v$(v)..."
+	git tag -a "v$(v)" -m "Release v$(v)"
+	git push origin "v$(v)"
+	@echo "Tag v$(v) pushed. GitHub Actions deploy pipeline started."
+	@echo "Monitor: https://github.com/jayantkeswani/stocktrading/actions"
+
+deploy-version:      ## Deploy a specific version via workflow_dispatch (usage: make deploy-version v=1.0.0)
+	@if [ -z "$(v)" ]; then echo "Usage: make deploy-version v=1.0.0" && exit 1; fi
+	gh workflow run deploy.yml -f version="v$(v)"
+	@echo "Deployment of v$(v) triggered via workflow_dispatch."
+
+show-version:        ## Show what version is currently deployed in production
+	@curl -sf http://$(VM_IP)/api/v1/health 2>/dev/null | python3 -m json.tool || \
+	  curl -sf http://8.231.84.44/api/v1/health | python3 -m json.tool
 
 help:                ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
