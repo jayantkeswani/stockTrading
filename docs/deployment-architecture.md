@@ -133,6 +133,65 @@ Secrets **never** live in the codebase or in GCP Secret Manager. They flow from 
 | Network egress | ~$1 | Minimal (single user) |
 | **Total** | **~$21/mo** | **~$63 for 90-day trial** |
 
+## Production Debugging
+
+### Container Names
+
+All production containers use the `st-` prefix (defined in `docker-compose.prod.yml`):
+
+| Container | Service |
+|-----------|---------|
+| `st-backend` | FastAPI backend |
+| `st-frontend` | Next.js frontend |
+| `st-postgres` | PostgreSQL 16 |
+| `st-redis` | Redis 7 |
+| `st-nginx` | Nginx reverse proxy |
+
+### Viewing Logs
+
+Backend logs go to **stdout only** — there is no `app.log` file on disk. Use `docker logs`:
+
+```bash
+# SSH in first
+make ssh
+# or: ssh -i ~/.ssh/st-deploy deploy@8.231.84.44
+
+# Tail live logs
+docker logs -f st-backend
+
+# Last 200 lines
+docker logs --tail 200 st-backend
+
+# Search for errors
+docker logs st-backend 2>&1 | grep -i ERROR | tail -50
+
+# Filter by module (e.g., AI confidence failures)
+docker logs st-backend 2>&1 | grep 'AI confidence overlay failed'
+
+# All containers via compose (from /opt/stock-trading)
+cd /opt/stock-trading && docker compose -f docker-compose.prod.yml logs -f --tail=100
+```
+
+Or without SSH (single-command from local machine):
+
+```bash
+# Quick error scan
+ssh -i ~/.ssh/st-deploy deploy@8.231.84.44 "docker logs st-backend 2>&1 | grep -i ERROR | tail -50"
+
+# Check container status
+ssh -i ~/.ssh/st-deploy deploy@8.231.84.44 "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
+```
+
+### Common Issues
+
+| Symptom | Check |
+|---------|-------|
+| AI confidence overlay failures | `docker logs st-backend 2>&1 \| grep 'AI confidence overlay failed'` — usually Gemini rate limits (429) |
+| Backend not starting | `docker logs st-backend 2>&1 \| head -50` — check for import errors or missing env vars |
+| DB connection errors | `docker exec st-postgres pg_isready` and check `DATABASE_URL` in `.env` |
+| Redis connection errors | `docker exec st-redis redis-cli ping` — should return PONG |
+| Nginx 502 Bad Gateway | `docker logs st-nginx` — backend container may be restarting; check backend logs |
+
 ## Teardown
 
 One command destroys everything:

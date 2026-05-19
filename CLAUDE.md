@@ -183,6 +183,11 @@ make prod-up                   # Start containers on VM
 make prod-down                 # Stop containers on VM
 make prod-logs                 # Tail logs on VM
 
+# Production debugging (container names use st-* prefix, no app.log file — logs go to stdout)
+ssh -i ~/.ssh/st-deploy deploy@8.231.84.44 "docker logs --tail 200 st-backend"     # Recent backend logs
+ssh -i ~/.ssh/st-deploy deploy@8.231.84.44 "docker logs st-backend 2>&1 | grep -i ERROR | tail -50"  # Errors
+ssh -i ~/.ssh/st-deploy deploy@8.231.84.44 "docker ps --format 'table {{.Names}}\t{{.Status}}'"       # Container health
+
 # Database migration (local → production)
 make db-export                 # Dump local DB to dump.sql
 make db-import                 # Upload and import dump.sql to VM

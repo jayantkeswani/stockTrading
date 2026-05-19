@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    telegram_polling_enabled: bool = True
 
     # Trading Config — SEED-ONLY: used once at first startup to populate the
     # trading_config DB table. After seeding, all runtime code reads from the DB
