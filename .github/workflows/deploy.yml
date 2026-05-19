@@ -156,6 +156,7 @@ jobs:
             docker run --rm \
               --network stock-trading_default \
               -e DATABASE_URL="postgresql+asyncpg://trader:${DB_PASSWORD}@postgres:5432/stocktrading" \
+              -e DATABASE_URL_SYNC="postgresql://trader:${DB_PASSWORD}@postgres:5432/stocktrading" \
               "${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}" \
               python -m alembic upgrade head
 
