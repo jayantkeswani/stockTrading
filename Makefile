@@ -91,7 +91,11 @@ release:             ## Create and push a release tag (usage: make release v=1.0
 	else \
 		CHANGELOG=$$(git log --oneline --no-decorate -10); \
 	fi; \
-	git tag -a "v$(v)" -m "v$(v)$$( [ -n \"$$CHANGELOG\" ] && printf '\n\n%s' \"$$CHANGELOG\" )"
+	if [ -n "$$CHANGELOG" ]; then \
+		git tag -a "v$(v)" -m "v$(v)" -m "$$CHANGELOG"; \
+	else \
+		git tag -a "v$(v)" -m "v$(v)"; \
+	fi
 	git push origin "v$(v)"
 	@echo "Tag v$(v) pushed. GitHub Actions deploy pipeline started."
 	@echo "Monitor: https://github.com/jayantkeswani/stocktrading/actions"

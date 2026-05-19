@@ -146,16 +146,20 @@ jobs:
             docker pull "${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
             docker pull "${{ env.FRONTEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
 
-            # Start DB first, run migrations, then bring up all services
+            # Stop app containers (keep DB running for migrations)
+            docker compose -f docker-compose.prod.yml stop backend frontend nginx || true
+            docker compose -f docker-compose.prod.yml rm -f backend frontend nginx || true
+
+            # Ensure DB is up and healthy
             docker compose -f docker-compose.prod.yml up -d postgres redis
             sleep 5
 
-            # Run migrations via compose run (joins the compose network automatically)
+            # Run migrations
             docker compose -f docker-compose.prod.yml run --rm -T backend \
               python -m alembic upgrade head
 
-            # Now bring up all services (force-recreate to pick up new images)
-            docker compose -f docker-compose.prod.yml up -d --force-recreate
+            # Start all services with new images
+            docker compose -f docker-compose.prod.yml up -d
 
             # Verify
             sleep 5
