@@ -20,6 +20,7 @@ Automated options trading system for Indian stock market (NSE/BSE) focused on **
 - Frontend: Next.js 15 (App Router), TypeScript strict, Tailwind CSS v4 (dark theme only), Zustand, TradingView lightweight-charts
 - All times in IST (Asia/Kolkata), stored as TIMESTAMPTZ in DB
 - Market hours: 9:15 AM - 3:30 PM IST
+- Market Pre-Open: 9:00 AM - 9:07 AM IST
 - Backend runs on port **8080**, frontend on port **3000**
 - Single user, no auth in V1
 
@@ -100,7 +101,6 @@ stockTrading/
 - Strategy configuration (active/auto_mode/symbols) is managed via Settings page → Strategies section.
 
 ## Agent Autonomy Levels
-- **MANUAL**: Alerts only via Telegram, user executes manually
 - **SEMI**: Auto-closes on SL hit, requests confirmation for profit booking
 - **YOLO**: Fully autonomous — auto-executes signals, auto-books profits, auto-closes on SL
 
@@ -223,6 +223,12 @@ make show-version
 ```
 
 Workflows: `.github/workflows/ci.yml` (build on master push, ~2-4 min), `.github/workflows/deploy.yml` (tag-based deploy, ~1 min retag + deploy). 500 min/month free for private repos.
+
+### Versioning Strategy
+Semver (`vMAJOR.MINOR.PATCH`). Before releasing, run `git log v{last}..HEAD --oneline` to review changes since the last tag:
+- **Patch** (+0.0.1): bug fixes, doc updates, config changes
+- **Minor** (+0.1.0): new features, endpoints, UI additions, strategy changes
+- **Major** (+1.0.0): always confirm with user — never auto-decide
 
 ### Secrets (GitHub Repo Secrets)
 All secrets stored in GitHub (Settings → Secrets), written to `.env` on VM during each deploy. Never in GCP Secret Manager or the codebase.

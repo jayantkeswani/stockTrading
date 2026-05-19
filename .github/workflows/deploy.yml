@@ -132,8 +132,10 @@ jobs:
           BACKEND_PORT=8080
           FRONTEND_URL=http://localhost:3000
           APP_VERSION=${{ needs.retag.outputs.deploy_version }}
-          DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           ENV_EOF
+
+            # DEPLOYED_AT needs shell expansion (heredoc is single-quoted)
+            echo "DEPLOYED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> .env
 
             # Login to ghcr.io and pull images
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -152,8 +154,8 @@ jobs:
             docker compose -f docker-compose.prod.yml run --rm -T backend \
               python -m alembic upgrade head
 
-            # Now bring up all services
-            docker compose -f docker-compose.prod.yml up -d
+            # Now bring up all services (force-recreate to pick up new images)
+            docker compose -f docker-compose.prod.yml up -d --force-recreate
 
             # Verify
             sleep 5
