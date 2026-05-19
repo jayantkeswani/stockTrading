@@ -40,11 +40,6 @@ class TradeResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class TradeCloseRequest(BaseModel):
-    exit_price: Decimal | None = None
-    reason: str = "MANUAL"
-
-
 class TradeSummaryResponse(BaseModel):
     total_trades: int
     winning_trades: int

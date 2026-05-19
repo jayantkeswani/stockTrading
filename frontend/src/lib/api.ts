@@ -123,17 +123,6 @@ export const api = {
     const query = source ? `?source=${source}` : "";
     return request(`/api/v1/trades/summary${query}`);
   },
-  closeTrade: (id: string, exitPrice?: number) =>
-    request(`/api/v1/trades/${id}/close`, {
-      method: "POST",
-      body: JSON.stringify({ exit_price: exitPrice, reason: "MANUAL" }),
-    }),
-  closeAllTrades: () =>
-    request<{ closed: number; trades: Array<{ trade_id: string; symbol: string; pnl: number }> }>(
-      `/api/v1/trades/close-all`,
-      { method: "POST", body: JSON.stringify({ reason: "MANUAL" }) },
-    ),
-
   // Signals
   getSignals: (params?: { status?: string; generated_since?: string; generated_until?: string; strategy?: string; limit?: number }) => {
     const query = new URLSearchParams();

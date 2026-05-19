@@ -80,9 +80,12 @@ async def auto_execute_signal(signal_id) -> dict | None:
                 )
                 return None
 
-        # Check for existing open position on the same symbol + direction
+        # Check for existing open position on the same symbol + direction (exclude shadow)
         direction = signal.signal_type.replace("BUY_", "") if signal.instrument_type == "OPTION" else None
-        pos_query = select(Position).where(Position.symbol == signal.symbol)
+        pos_query = select(Position).where(
+            Position.symbol == signal.symbol,
+            Position.is_shadow == False,  # noqa: E712
+        )
         if direction:
             pos_query = pos_query.where(Position.option_type == direction)
         existing_pos = (await session.execute(pos_query)).scalar_one_or_none()

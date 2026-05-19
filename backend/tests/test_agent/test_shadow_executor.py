@@ -263,9 +263,12 @@ def _mock_session(mock_session_factory, signal, added_objects=None):
 
 def _make_raw_session(signal, added_objects):
     session = AsyncMock()
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = signal
-    session.execute = AsyncMock(return_value=result)
+    signal_result = MagicMock()
+    signal_result.scalar_one_or_none.return_value = signal
+    no_result = MagicMock()
+    no_result.scalar_one_or_none.return_value = None
+    # First execute = signal lookup, second = shadow trade dedup check
+    session.execute = AsyncMock(side_effect=[signal_result, no_result])
     session.add = lambda obj: added_objects.append(obj)
     session.flush = AsyncMock()
     session.commit = AsyncMock()

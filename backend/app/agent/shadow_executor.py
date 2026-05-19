@@ -54,6 +54,17 @@ async def _do_shadow_execute(signal_id) -> None:
             logger.debug("Shadow execute: signal %s is %s, skipping", signal_id, signal.status)
             return
 
+        # Skip if a shadow trade already exists for this signal (Case 2 re-fire)
+        existing_shadow = await session.execute(
+            select(Trade.id).where(
+                Trade.signal_id == signal.id,
+                Trade.source == TradeSource.SHADOW.value,
+            ).limit(1)
+        )
+        if existing_shadow.scalar_one_or_none() is not None:
+            logger.debug("Shadow execute: shadow trade already exists for signal %s, skipping", signal_id)
+            return
+
         # Hard deadline — past 3:15 PM IST, markets are closed
         if is_past_close_deadline():
             logger.debug("Shadow skip: past close deadline for signal %s", signal_id)

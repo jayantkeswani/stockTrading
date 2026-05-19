@@ -101,8 +101,17 @@ stockTrading/
 - Strategy configuration (active/auto_mode/symbols) is managed via Settings page → Strategies section.
 
 ## Agent Autonomy Levels
+- **MANUAL**: Alerts only via Telegram, user executes manually
 - **SEMI**: Auto-closes on SL hit, requests confirmation for profit booking
 - **YOLO**: Fully autonomous — auto-executes signals, auto-books profits, auto-closes on SL
+
+### Shadow + YOLO Isolation
+Three independent consumers of every signal, fully isolated:
+1. **Shadow executor** — creates SHADOW trade/position based on `min_confidence_for_shadow`. Invisible to signal lifecycle, dedup, and YOLO position checks.
+2. **YOLO executor** — creates YOLO trade/position based on `min_confidence_for_execution`. Only checks non-shadow positions for dedup.
+3. **Manual execution** — signal stays PENDING and available for user to click EXEC regardless of shadow/YOLO state.
+
+Signal dedup "acted on" = manual execution (`executed_trade_id` set) OR YOLO trade exists. Shadow trades never trigger Case 3 (new signal creation).
 
 ## Commands
 ```bash

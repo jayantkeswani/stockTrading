@@ -10,8 +10,6 @@ interface Props {
   showSource?: boolean;
   showSignalData?: boolean;
   simLots?: number | null;
-  onCloseTrade?: (tradeId: string) => void;
-  closingTradeId?: string | null;
 }
 
 function confidenceColor(conf: number | null): string {
@@ -22,7 +20,7 @@ function confidenceColor(conf: number | null): string {
   return "text-loss";
 }
 
-export function TradesTable({ trades, loading, showSource = false, showSignalData = false, simLots = null, onCloseTrade, closingTradeId }: Props) {
+export function TradesTable({ trades, loading, showSource = false, showSignalData = false, simLots = null }: Props) {
   if (loading) {
     return (
       <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
@@ -57,7 +55,6 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
             {showSignalData && <th className="text-left px-3 py-1.5">AI</th>}
             <th className="text-left px-3 py-1.5">Exit Reason</th>
             <th className="text-left px-3 py-1.5">Status</th>
-            {onCloseTrade && <th className="text-center px-3 py-1.5">Action</th>}
           </tr>
         </thead>
         <tbody>
@@ -139,21 +136,6 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
                   <span className="text-[9px] font-mono px-1 py-px rounded bg-purple-500/15 text-purple-400">
                     {trade.source}
                   </span>
-                </td>
-              )}
-              {onCloseTrade && (
-                <td className="px-3 py-1.5 text-center">
-                  {trade.status === "OPEN" ? (
-                    <button
-                      onClick={() => onCloseTrade(trade.id)}
-                      disabled={closingTradeId === trade.id}
-                      className="text-[9px] font-mono px-2 py-0.5 rounded border border-loss/40 text-loss hover:bg-loss/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {closingTradeId === trade.id ? "..." : "EXIT"}
-                    </button>
-                  ) : (
-                    <span className="text-text-muted/30 text-[9px] font-mono">—</span>
-                  )}
                 </td>
               )}
             </tr>

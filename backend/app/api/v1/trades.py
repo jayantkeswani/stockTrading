@@ -1,6 +1,5 @@
 import uuid
 from datetime import datetime
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select, func
@@ -8,13 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.enums import TradeSource, TradeStatus
-from app.core.redis import get_cached_price
-from app.core.utils import now_ist
-from app.models.position import Position
 from app.models.signal import Signal
 from app.models.trade import Trade
-from app.schemas.trade import TradeCloseRequest, TradeResponse, TradeSummaryResponse
-from app.websocket.manager import ws_manager
+from app.schemas.trade import TradeResponse, TradeSummaryResponse
 
 router = APIRouter()
 
@@ -128,59 +123,6 @@ async def trade_summary(
     )
 
 
-@router.post("/close-all")
-async def close_all_trades(
-    body: TradeCloseRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(Trade).where(Trade.status == TradeStatus.OPEN))
-    open_trades = result.scalars().all()
-    if not open_trades:
-        return {"closed": 0, "trades": []}
-
-    closed = []
-    for trade in open_trades:
-        exit_price = None
-        price_symbol = trade.fyers_option_symbol or trade.symbol
-        price_data = await get_cached_price(price_symbol)
-        if price_data:
-            ltp = Decimal(str(price_data.get("ltp", 0)))
-            if ltp > 0:
-                exit_price = ltp
-
-        trade.status = TradeStatus.CLOSED
-        trade.exit_reason = body.reason
-        trade.exit_time = now_ist()
-        if exit_price:
-            trade.exit_price = exit_price
-            is_short = trade.side == "SELL"
-            diff = (trade.entry_price - exit_price) if is_short else (exit_price - trade.entry_price)
-            trade.pnl = diff * trade.quantity
-            trade.pnl_percent = float(diff / trade.entry_price * 100)
-
-        pos_result = await db.execute(select(Position).where(Position.trade_id == trade.id))
-        position = pos_result.scalar_one_or_none()
-        position_id = None
-        if position:
-            position_id = str(position.id)
-            await db.delete(position)
-
-        closed.append({
-            "trade_id": str(trade.id),
-            "position_id": position_id,
-            "symbol": trade.symbol,
-            "exit_price": float(trade.exit_price) if trade.exit_price else 0.0,
-            "pnl": float(trade.pnl) if trade.pnl else 0.0,
-        })
-
-    await db.flush()
-
-    for item in closed:
-        await ws_manager.broadcast("position:closed", item)
-
-    return {"closed": len(closed), "trades": closed}
-
-
 @router.get("/{trade_id}", response_model=TradeResponse)
 async def get_trade(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Trade).where(Trade.id == trade_id))
@@ -190,55 +132,3 @@ async def get_trade(trade_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     return trade
 
 
-@router.post("/{trade_id}/close", response_model=TradeResponse)
-async def close_trade(
-    trade_id: uuid.UUID,
-    body: TradeCloseRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(Trade).where(Trade.id == trade_id))
-    trade = result.scalar_one_or_none()
-    if not trade:
-        raise HTTPException(status_code=404, detail="Trade not found")
-    if trade.status != TradeStatus.OPEN:
-        raise HTTPException(status_code=400, detail="Trade is not open")
-
-    exit_price = body.exit_price
-    if not exit_price:
-        price_symbol = trade.fyers_option_symbol or trade.symbol
-        price_data = await get_cached_price(price_symbol)
-        if price_data:
-            ltp = Decimal(str(price_data.get("ltp", 0)))
-            if ltp > 0:
-                exit_price = ltp
-
-    trade.status = TradeStatus.CLOSED
-    trade.exit_reason = body.reason
-    trade.exit_time = now_ist()
-    if exit_price:
-        trade.exit_price = exit_price
-        is_short = trade.side == "SELL"
-        diff = (trade.entry_price - exit_price) if is_short else (exit_price - trade.entry_price)
-        trade.pnl = diff * trade.quantity
-        trade.pnl_percent = float(diff / trade.entry_price * 100)
-
-    # Delete linked position
-    pos_result = await db.execute(select(Position).where(Position.trade_id == trade_id))
-    position = pos_result.scalar_one_or_none()
-    position_id = None
-    if position:
-        position_id = str(position.id)
-        await db.delete(position)
-
-    await db.flush()
-
-    await ws_manager.broadcast(
-        "position:closed",
-        {
-            "position_id": position_id,
-            "trade_id": str(trade_id),
-            "exit_price": float(trade.exit_price) if trade.exit_price else 0.0,
-            "pnl": float(trade.pnl) if trade.pnl else 0.0,
-        },
-    )
-    return trade

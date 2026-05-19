@@ -29,7 +29,7 @@ from app.services.position_sizing import calculate_lots, vix_to_multiplier
 from app.services.strategy_params import get_strategy_params, parse_trading_windows, parse_dead_zone
 from app.services.trading_config import get_trading_config
 from app.core.database import async_session_factory
-from app.core.enums import InstrumentType, SignalStatus, StrategyName
+from app.core.enums import InstrumentType, SignalStatus, StrategyName, TradeSource
 from app.core.redis import get_cached_price, get_redis
 from app.core.utils import (
     get_custom_window_state,
@@ -1810,7 +1810,10 @@ class StrategyRunner:
                 from app.models.position import Position
 
                 direction = signal.signal_type.value.replace("BUY_", "") if signal.instrument_type.value == "OPTION" else None
-                query = select(Position.id).where(Position.symbol == signal.symbol)
+                query = select(Position.id).where(
+                    Position.symbol == signal.symbol,
+                    Position.is_shadow == False,  # noqa: E712
+                )
                 if direction:
                     query = query.where(Position.option_type == direction)
                 result = await session.execute(query.limit(1))
@@ -1853,12 +1856,16 @@ class StrategyRunner:
                 if existing is None:
                     return False  # new signal — proceed
 
-                # Case 3: has execution — caller needs a new signal
+                # Case 3: has real execution (manual or YOLO) — caller needs a new signal.
+                # Shadow trades are excluded — they don't "consume" the signal.
                 has_execution = existing.executed_trade_id is not None
                 if not has_execution:
                     trade_check = await session.execute(
                         select(TradeModel.id)
-                        .where(TradeModel.signal_id == existing.id)
+                        .where(
+                            TradeModel.signal_id == existing.id,
+                            TradeModel.source != TradeSource.SHADOW.value,
+                        )
                         .limit(1)
                     )
                     has_execution = trade_check.scalar_one_or_none() is not None
@@ -1928,13 +1935,17 @@ class StrategyRunner:
                 if existing is None:
                     return None
 
-                # Case 3: existing signal has been executed (real or shadow trade).
+                # Case 3: existing signal has been executed (manual or YOLO trade).
+                # Shadow trades are excluded — they don't consume the signal.
                 # Preserve it as an immutable audit record; caller creates a new signal.
                 has_execution = existing.executed_trade_id is not None
                 if not has_execution:
                     trade_check = await session.execute(
                         select(TradeModel.id)
-                        .where(TradeModel.signal_id == existing.id)
+                        .where(
+                            TradeModel.signal_id == existing.id,
+                            TradeModel.source != TradeSource.SHADOW.value,
+                        )
                         .limit(1)
                     )
                     has_execution = trade_check.scalar_one_or_none() is not None
