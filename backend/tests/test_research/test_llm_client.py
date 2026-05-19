@@ -133,17 +133,19 @@ class TestRepairTruncatedJson:
 class TestCreateLlmClient:
     """Tests for the LLM client factory."""
 
-    def test_missing_api_key_raises(self):
+    def test_missing_credentials_raises(self):
         from unittest.mock import patch, MagicMock
 
         mock_settings = MagicMock()
         mock_settings.research_llm_provider = "gemini"
         mock_settings.google_api_key = ""
+        mock_settings.gcp_project_id = ""
         mock_settings.research_llm_model = "gemini-2.5-flash"
+        mock_settings.vertex_ai_location = "asia-south1"
 
         with patch("app.config.settings", mock_settings):
             from app.research.llm_client import create_llm_client
-            with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
+            with pytest.raises(ValueError, match="No Gemini credentials"):
                 create_llm_client()
 
     def test_unsupported_provider_raises(self):
@@ -157,15 +159,52 @@ class TestCreateLlmClient:
             with pytest.raises(ValueError, match="Unsupported"):
                 create_llm_client()
 
-    def test_gemini_client_creation(self):
+    def test_api_key_mode(self):
         from unittest.mock import patch, MagicMock
 
         mock_settings = MagicMock()
         mock_settings.research_llm_provider = "gemini"
+        mock_settings.gcp_project_id = ""
         mock_settings.google_api_key = "test-key-123"
+        mock_settings.research_llm_model = "gemini-2.5-flash"
+        mock_settings.vertex_ai_location = "asia-south1"
+
+        with patch("app.config.settings", mock_settings):
+            from app.research.llm_client import create_llm_client, GeminiClient
+            client = create_llm_client()
+            assert isinstance(client, GeminiClient)
+            assert client._api_key == "test-key-123"
+            assert client._project_id == ""
+
+    def test_vertex_ai_mode(self):
+        from unittest.mock import patch, MagicMock
+
+        mock_settings = MagicMock()
+        mock_settings.research_llm_provider = "gemini"
+        mock_settings.gcp_project_id = "stock-trading-prod"
+        mock_settings.vertex_ai_location = "asia-south1"
         mock_settings.research_llm_model = "gemini-2.5-flash"
 
         with patch("app.config.settings", mock_settings):
             from app.research.llm_client import create_llm_client, GeminiClient
             client = create_llm_client()
             assert isinstance(client, GeminiClient)
+            assert client._project_id == "stock-trading-prod"
+            assert client._location == "asia-south1"
+            assert client._api_key == ""
+
+    def test_vertex_ai_takes_precedence_over_api_key(self):
+        from unittest.mock import patch, MagicMock
+
+        mock_settings = MagicMock()
+        mock_settings.research_llm_provider = "gemini"
+        mock_settings.gcp_project_id = "stock-trading-prod"
+        mock_settings.google_api_key = "should-be-ignored"
+        mock_settings.vertex_ai_location = "us-central1"
+        mock_settings.research_llm_model = "gemini-2.5-flash"
+
+        with patch("app.config.settings", mock_settings):
+            from app.research.llm_client import create_llm_client, GeminiClient
+            client = create_llm_client()
+            assert client._project_id == "stock-trading-prod"
+            assert client._api_key == ""

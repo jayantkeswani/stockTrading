@@ -43,7 +43,8 @@ Single GCE VM deployment on Google Cloud Platform. All services run as Docker co
 | `stock-trading-allow-http` | Firewall | Allow TCP 80 from 0.0.0.0/0 |
 | `stock-trading-allow-ssh` | Firewall | Allow TCP 22 from 0.0.0.0/0 |
 | `stock-trading-vm` | Service Account | Minimal privilege for VM |
-| `gemini-api-key` | API Key | Restricted to Generative Language API |
+| `gemini-api-key` | API Key | Restricted to Generative Language API (AI Studio fallback) |
+| `vm_vertex_user` | IAM Binding | `roles/aiplatform.user` on VM service account (Vertex AI) |
 | `stock-trading-prod-terraform-state` | GCS Bucket | Terraform remote state (versioned) |
 
 ## Container Layout
@@ -112,7 +113,14 @@ Secrets **never** live in the codebase or in GCP Secret Manager. They flow from 
 | `FYERS_TOTP_SECRET` | User's TOTP seed | Backend auto-login |
 | `TELEGRAM_BOT_TOKEN` | Telegram BotFather | Backend notifications |
 | `TELEGRAM_CHAT_ID` | Telegram | Backend notifications |
-| `GOOGLE_API_KEY` | Terraform output `gemini_api_key` | Backend AI/research |
+| `GOOGLE_API_KEY` | Terraform output `gemini_api_key` | Backend AI/research (AI Studio fallback, local dev) |
+
+Non-secret env vars hardcoded in the deploy workflow:
+
+| Variable | Value | Used By |
+|----------|-------|---------|
+| `GCP_PROJECT_ID` | `stock-trading-prod` | Backend Vertex AI mode (ADC via GCE metadata server) |
+| `VERTEX_AI_LOCATION` | `asia-south1` | Backend Vertex AI region |
 
 ## Network
 

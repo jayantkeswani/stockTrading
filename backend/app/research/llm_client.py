@@ -62,13 +62,20 @@ class LLMClient(ABC):
 
 
 class GeminiClient(LLMClient):
-    """Gemini LLM client using google-generativeai SDK."""
+    """Gemini LLM client via google-genai SDK (AI Studio or Vertex AI)."""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
+    def __init__(
+        self,
+        model: str = "gemini-2.5-flash",
+        api_key: str = "",
+        project_id: str = "",
+        location: str = "asia-south1",
+    ):
         self._api_key = api_key
+        self._project_id = project_id
+        self._location = location
         self._model_name = model
         self._client = None
-        self._model = None
 
     def _ensure_client(self):
         """Lazy-init the Gemini client (import is heavy)."""
@@ -77,7 +84,20 @@ class GeminiClient(LLMClient):
 
         from google import genai
 
-        self._client = genai.Client(api_key=self._api_key)
+        if self._project_id:
+            self._client = genai.Client(
+                vertexai=True,
+                project=self._project_id,
+                location=self._location,
+            )
+            logger.info(
+                "Gemini client initialised in Vertex AI mode (project=%s, location=%s)",
+                self._project_id,
+                self._location,
+            )
+        else:
+            self._client = genai.Client(api_key=self._api_key)
+            logger.info("Gemini client initialised in AI Studio mode")
 
     async def generate(
         self,
@@ -156,18 +176,30 @@ class GeminiClient(LLMClient):
 
 
 def create_llm_client() -> LLMClient:
-    """Factory: create the configured LLM client."""
+    """Factory: create the configured LLM client.
+
+    GCP_PROJECT_ID set → Vertex AI (ADC via GCE metadata server).
+    GOOGLE_API_KEY set → AI Studio (free tier, local dev).
+    """
     from app.config import settings
 
     provider = getattr(settings, "research_llm_provider", "gemini")
     if provider == "gemini":
-        api_key = getattr(settings, "google_api_key", "")
         model = getattr(settings, "research_llm_model", "gemini-3-flash-preview")
-        if not api_key:
-            raise ValueError(
-                "GOOGLE_API_KEY is required for research. Set it in .env"
-            )
-        return GeminiClient(api_key=api_key, model=model)
+        project_id = getattr(settings, "gcp_project_id", "")
+
+        if project_id:
+            location = getattr(settings, "vertex_ai_location", "asia-south1")
+            return GeminiClient(model=model, project_id=project_id, location=location)
+
+        api_key = getattr(settings, "google_api_key", "")
+        if api_key:
+            return GeminiClient(model=model, api_key=api_key)
+
+        raise ValueError(
+            "No Gemini credentials configured. "
+            "Set GCP_PROJECT_ID (Vertex AI) or GOOGLE_API_KEY (AI Studio) in .env"
+        )
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")
 

@@ -10,6 +10,7 @@ Automated options trading system for Indian stock market (NSE/BSE) focused on **
 - **Monorepo**: `backend/` (Python/FastAPI) + `frontend/` (Next.js/React/TypeScript)
 - **Database**: PostgreSQL on port 5433 + Redis on port 6380 (non-default to avoid local conflicts)
 - **Data Feed**: Fyers API (free) for market data; Zerodha/Kite for trade execution (future)
+- **LLM**: Gemini via `google-genai` SDK — Vertex AI in production (ADC via GCE SA), AI Studio locally (API key)
 - **AI Agent**: Python asyncio background task with 3 autonomy levels (MANUAL / SEMI / YOLO)
 - **Notifications**: Telegram Bot API for alerts and trade confirmations
 - **Paper trading** by default — no real money until explicitly switched
@@ -63,7 +64,7 @@ stockTrading/
 │   │   ├── backtest/      # Backtest module (context_builder, harness, exit_simulator, option_data_fetcher, strike_selector, report)
 │   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP, NSE_HOLIDAYS), enums, utils, task_registry
 │   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh, global_market every 15m, Strategy 5 morning workflow, NSE bhav copy daily, F&O ban list 7:00 AM)
-│   ├── tests/             # pytest test suite (829 tests, incl. signal_history archiving)
+│   ├── tests/             # pytest test suite (831 tests, incl. signal_history archiving)
 │   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
     └── src/
@@ -238,7 +239,7 @@ Deferred work that is safe to do but not urgent. Each entry has a **why it's def
 ---
 
 ## Test Coverage
-Tests live in `backend/tests/`. 829 tests, all passing. Currently covered:
+Tests live in `backend/tests/`. 831 tests, all passing. Currently covered:
 - `test_core/` - IST timezone utils, market hour checks
 - `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns, relative strength (raw score + percentile ranking), volume analysis, market levels (swing detection, index SL/target selection), ADR (computation, threshold), RVOL (profile building, computation, serialization), ATR (computation, Wilder's smoothing), gap analysis (detection, continuation, edge cases), stock trend (6 factors individually, composite direction/strength classification, graceful degradation with <10 candles, V-reversal, flat market)
 - `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type (uses `strategy_params` in MarketContext); CAN SLIM scoring, base pattern detection, strategy evaluate/exit/sizing; Intraday Futures phase machine, ORB breakout detection (5-min candle close confirmation, ORB range min/max validation), 4 sub-setups (ORB/VWAP Bounce/PDH-PDL/Gap Continuation), caution zone confirmation, multi-factor confidence (9 factors incl. stock trend alignment + direction-aware Nifty bias + 4-way OI classification), full position sizing (RVOL/confidence/screener/VIX/briefing/trend), filters (ADR/RVOL/VWAP/price/volume/Nifty bias/stock trend direction), stock trend filter (STRONG opposing blocks, MODERATE allows with risk_warning, NEUTRAL passes), cross-position checks, `get_symbols()` dynamic Redis

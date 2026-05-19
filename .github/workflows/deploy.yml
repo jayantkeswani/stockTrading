@@ -102,6 +102,8 @@ jobs:
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+          GCP_PROJECT_ID=stock-trading-prod
+          VERTEX_AI_LOCATION=asia-south1
           RESEARCH_LLM_PROVIDER=${{ vars.RESEARCH_LLM_PROVIDER }}
           RESEARCH_LLM_MODEL=${{ vars.RESEARCH_LLM_MODEL }}
           TRADING_CAPITAL=1000000

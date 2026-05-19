@@ -45,6 +45,8 @@ class Settings(BaseSettings):
 
     # AI Research
     google_api_key: str = ""
+    gcp_project_id: str = ""
+    vertex_ai_location: str = "asia-south1"
     research_llm_provider: str = "gemini"
     research_llm_model: str = "gemini-3-flash-preview"
     research_agent_timeout_seconds: int = 90

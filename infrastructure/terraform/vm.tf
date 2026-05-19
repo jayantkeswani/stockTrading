@@ -10,6 +10,14 @@ resource "google_service_account" "vm" {
   depends_on = [google_project_service.compute]
 }
 
+resource "google_project_iam_member" "vm_vertex_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.vm.email}"
+
+  depends_on = [google_project_service.aiplatform]
+}
+
 resource "google_compute_address" "static_ip" {
   name   = "stock-trading-ip"
   region = var.region
