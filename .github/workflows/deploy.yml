@@ -153,7 +153,7 @@ jobs:
             # Run migrations via docker run (not compose run — compose run
             # pollutes service state and causes the subsequent up -d to skip
             # recreating the backend container)
-            docker run --rm -T \
+            docker run --rm \
               --network stock-trading_default \
               -e DATABASE_URL="postgresql+asyncpg://trader:${DB_PASSWORD}@postgres:5432/stocktrading" \
               "${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}" \
