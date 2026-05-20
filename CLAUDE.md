@@ -333,6 +333,101 @@ Every major directory has a CLAUDE.md with its purpose, files, conventions, and 
 3. Wire into `strategy_runner.py` to populate context
 4. Write tests in `backend/tests/test_indicators/`
 
+### Local Live Testing
+
+Unit tests verify code correctness, but many bugs (volume spikes, VWAP disappearing, WS reconnect issues) only surface with real Fyers data. Always verify data-path changes against the live local stack before deploying.
+
+**Prerequisites**: PostgreSQL + Redis running (`docker compose up -d`), Fyers token in Redis (auto-login at 7:45 AM or manual via browser).
+
+#### During Market Hours (9:15–15:30 IST)
+
+```bash
+# 1. Start the backend (or it may already be running)
+make backend                    # or: cd backend && source .venv/bin/activate && uvicorn app.main:app --port 8080
+
+# 2. Establish baselines — snapshot current state BEFORE the change
+docker exec -i st-postgres psql -U trader -d stocktrading -c "
+  SELECT symbol, ROUND(AVG(volume)) as avg_vol, MAX(volume) as max_vol, SUM(volume) as total_vol
+  FROM market_data_1m
+  WHERE timestamp >= (NOW() AT TIME ZONE 'Asia/Kolkata')::date::timestamptz AT TIME ZONE 'Asia/Kolkata'
+    AND symbol IN ('VEDL','SAIL','NIFTY','BANKNIFTY')
+  GROUP BY symbol ORDER BY symbol;"
+
+# 3. Test restart scenarios — kill and restart the backend
+kill -9 $(lsof -ti :8080)      # force kill
+# restart with new code
+cd backend && source .venv/bin/activate && uvicorn app.main:app --port 8080 &
+sleep 90                        # wait for at least one candle close (~60s)
+
+# 4. Compare post-restart candles against baseline
+docker exec -i st-postgres psql -U trader -d stocktrading -c "
+  SELECT symbol, timestamp AT TIME ZONE 'Asia/Kolkata' AS ts, volume
+  FROM market_data_1m
+  WHERE timestamp > NOW() - INTERVAL '3 minutes'
+    AND symbol IN ('VEDL','SAIL','NIFTY','BANKNIFTY')
+  ORDER BY timestamp DESC, symbol;"
+
+# 5. Test WS reconnect (manual Connect button scenario)
+curl -s http://localhost:8080/api/v1/market/feed/stop -X POST
+sleep 2
+curl -s http://localhost:8080/api/v1/market/feed/start -X POST
+sleep 90                        # wait for candle close
+
+# 6. Check strategy diagnostics (VWAP, gates, signals)
+curl -s "http://localhost:8080/api/v1/options/agent-log?date=$(date +%F)&limit=5" | python3 -m json.tool
+curl -s "http://localhost:8080/api/v1/intraday-futures/agent-log?date=$(date +%F)&limit=5" | python3 -m json.tool
+
+# 7. Inspect Redis state (prices, RVOL profiles, watchlist)
+cd backend && source .venv/bin/activate && python3 -c "
+import asyncio, redis.asyncio as aioredis, json
+async def check():
+    r = aioredis.from_url('redis://localhost:6380', decode_responses=True)
+    for sym in ['NIFTY','VEDL','TCS']:
+        p = await r.get(f'price:{sym}')
+        print(f'{sym}: LTP={json.loads(p)[\"ltp\"] if p else \"MISSING\"}')
+        rv = await r.get(f'strat5:rvol_baseline:{sym}')
+        print(f'  RVOL profile: {\"exists\" if rv else \"MISSING\"}')
+    await r.aclose()
+asyncio.run(check())"
+```
+
+**What to look for:**
+- Candle volumes after restart should be in normal range (not millions)
+- VWAP values should appear in agent logs after reconnect (not "missing VWAP")
+- Redis prices should update within seconds of WS connect
+- No `ERROR` lines in backend stdout/logs
+
+#### Outside Market Hours
+
+Live ticks won't flow, but you can still verify:
+```bash
+# Unit tests — always the first check
+make test
+
+# Start backend — startup tasks run (symbol master, backfill, schedulers)
+# but no live candles; strategies won't evaluate
+make backend
+
+# REST endpoints that work without live data
+curl -s http://localhost:8080/api/v1/health | python3 -m json.tool
+curl -s http://localhost:8080/api/v1/tasks | python3 -m json.tool       # background task status
+curl -s http://localhost:8080/api/v1/strategies | python3 -m json.tool  # strategy configs
+
+# DB queries — inspect historical candles, signals, trades
+docker exec -i st-postgres psql -U trader -d stocktrading -c "
+  SELECT symbol, COUNT(*), MIN(timestamp AT TIME ZONE 'Asia/Kolkata'), MAX(timestamp AT TIME ZONE 'Asia/Kolkata')
+  FROM market_data_1m WHERE timestamp > NOW() - INTERVAL '1 day' GROUP BY symbol ORDER BY symbol;"
+
+# Research agent — tests LLM connectivity (Gemini/Vertex AI)
+curl -s http://localhost:8080/api/v1/research/start -X POST \
+  -H 'Content-Type: application/json' -d '{"symbol":"TCS"}'
+
+# Feed refresh via REST (fetches quotes without WS)
+curl -s http://localhost:8080/api/v1/market/feed/refresh -X POST
+```
+
+**Key rule:** Never test against production. Local has its own PostgreSQL (port 5433), Redis (port 6380), and Fyers token. The `TELEGRAM_ENABLED=false` setting in local `.env` prevents accidental Telegram messages.
+
 ## graphify
 This project has a graphify knowledge graph at graphify-out/.
 
