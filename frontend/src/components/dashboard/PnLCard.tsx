@@ -60,21 +60,15 @@ export function PnLCard() {
         </span>
       )}
 
-      {/* Unrealized P&L */}
+      {/* Day P&L — total with inline breakdown */}
       <div className="flex items-center gap-2">
-        <span className="text-xs text-text-muted font-mono uppercase">Unrealized</span>
-        <span className={`text-sm font-bold font-mono ${pnlColor(liveUnrealizedPnl)}`}>
-          {formatINR(liveUnrealizedPnl)}
+        <span className="text-xs text-text-muted font-mono uppercase">Day P&L</span>
+        <span className={`text-sm font-bold font-mono ${pnlColor(pnl)}`}>
+          {formatINR(pnl)}
         </span>
-      </div>
-
-      <div className="w-px h-4 bg-border" />
-
-      {/* Realized P&L */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-text-muted font-mono uppercase">Realized</span>
-        <span className={`text-sm font-bold font-mono ${pnlColor(closedPnl)}`}>
-          {formatINR(closedPnl)}
+        <span className="text-[10px] font-mono text-text-muted">
+          (U: <span className={pnlColor(liveUnrealizedPnl)}>{formatINR(liveUnrealizedPnl)}</span>
+          {" + R: "}<span className={pnlColor(closedPnl)}>{formatINR(closedPnl)}</span>)
         </span>
       </div>
 
