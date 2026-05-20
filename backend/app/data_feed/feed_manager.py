@@ -116,15 +116,24 @@ class FeedManager:
         `volume` from Fyers is vol_traded_today — cumulative since market open.
         We compute the per-tick delta against the last seen value so each candle
         accumulates only the volume actually traded in that minute.
-        A drop in vol_traded_today (new day, reconnect reset) is treated as a
-        full reset by clamping the delta to zero.
+
+        First tick for a symbol (after restart or new subscription) seeds the
+        baseline with zero delta — prevents dumping the entire morning's
+        cumulative volume into one candle.  Subsequent ticks compute normal
+        deltas.  A drop in cumulative volume (new day) is clamped to zero.
         """
         now = datetime.now(IST)
         minute_key = now.strftime("%Y-%m-%d %H:%M")
 
-        last_vol = self._last_vol_today.get(symbol, 0)
-        vol_delta = max(0, volume - last_vol)
-        self._last_vol_today[symbol] = volume
+        if symbol not in self._last_vol_today:
+            # First tick after startup — seed the baseline from the cumulative
+            # value to avoid dumping the entire morning's volume into one candle.
+            self._last_vol_today[symbol] = volume
+            vol_delta = 0
+        else:
+            last_vol = self._last_vol_today[symbol]
+            vol_delta = max(0, volume - last_vol)
+            self._last_vol_today[symbol] = volume
 
         if symbol not in self._current_candles:
             self._current_candles[symbol] = {}
