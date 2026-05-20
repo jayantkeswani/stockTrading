@@ -140,8 +140,8 @@ class TestCreateLlmClient:
         mock_settings.research_llm_provider = "gemini"
         mock_settings.google_api_key = ""
         mock_settings.gcp_project_id = ""
-        mock_settings.research_llm_model = "gemini-2.5-flash"
-        mock_settings.vertex_ai_location = "asia-south1"
+        mock_settings.research_llm_model = "gemini-3.5-flash"
+        mock_settings.vertex_ai_location = "us-central1"
 
         with patch("app.config.settings", mock_settings):
             from app.research.llm_client import create_llm_client
@@ -166,8 +166,8 @@ class TestCreateLlmClient:
         mock_settings.research_llm_provider = "gemini"
         mock_settings.gcp_project_id = ""
         mock_settings.google_api_key = "test-key-123"
-        mock_settings.research_llm_model = "gemini-2.5-flash"
-        mock_settings.vertex_ai_location = "asia-south1"
+        mock_settings.research_llm_model = "gemini-3.5-flash"
+        mock_settings.vertex_ai_location = "us-central1"
 
         with patch("app.config.settings", mock_settings):
             from app.research.llm_client import create_llm_client, GeminiClient
@@ -182,15 +182,15 @@ class TestCreateLlmClient:
         mock_settings = MagicMock()
         mock_settings.research_llm_provider = "gemini"
         mock_settings.gcp_project_id = "stock-trading-prod"
-        mock_settings.vertex_ai_location = "asia-south1"
-        mock_settings.research_llm_model = "gemini-2.5-flash"
+        mock_settings.vertex_ai_location = "us-central1"
+        mock_settings.research_llm_model = "gemini-3.5-flash"
 
         with patch("app.config.settings", mock_settings):
             from app.research.llm_client import create_llm_client, GeminiClient
             client = create_llm_client()
             assert isinstance(client, GeminiClient)
             assert client._project_id == "stock-trading-prod"
-            assert client._location == "asia-south1"
+            assert client._location == "us-central1"
             assert client._api_key == ""
 
     def test_vertex_ai_takes_precedence_over_api_key(self):
@@ -201,7 +201,7 @@ class TestCreateLlmClient:
         mock_settings.gcp_project_id = "stock-trading-prod"
         mock_settings.google_api_key = "should-be-ignored"
         mock_settings.vertex_ai_location = "us-central1"
-        mock_settings.research_llm_model = "gemini-2.5-flash"
+        mock_settings.research_llm_model = "gemini-3.5-flash"
 
         with patch("app.config.settings", mock_settings):
             from app.research.llm_client import create_llm_client, GeminiClient

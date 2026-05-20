@@ -1,6 +1,6 @@
 """Provider-agnostic LLM client for research agents.
 
-Default: Gemini 2.5 Flash via google-generativeai SDK.
+Default: Gemini 3.5 Flash via google-genai SDK.
 Supports search grounding for real-time news.
 Swappable to other providers via config.
 """
@@ -66,10 +66,10 @@ class GeminiClient(LLMClient):
 
     def __init__(
         self,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.5-flash",
         api_key: str = "",
         project_id: str = "",
-        location: str = "asia-south1",
+        location: str = "us-central1",
     ):
         self._api_key = api_key
         self._project_id = project_id
@@ -185,11 +185,11 @@ def create_llm_client() -> LLMClient:
 
     provider = getattr(settings, "research_llm_provider", "gemini")
     if provider == "gemini":
-        model = getattr(settings, "research_llm_model", "gemini-3-flash-preview")
+        model = getattr(settings, "research_llm_model", "gemini-3.5-flash")
         project_id = getattr(settings, "gcp_project_id", "")
 
         if project_id:
-            location = getattr(settings, "vertex_ai_location", "asia-south1")
+            location = getattr(settings, "vertex_ai_location", "us-central1")
             return GeminiClient(model=model, project_id=project_id, location=location)
 
         api_key = getattr(settings, "google_api_key", "")
