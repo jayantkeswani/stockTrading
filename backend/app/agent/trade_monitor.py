@@ -264,6 +264,7 @@ async def _close_position(
             "exit_price": float(exit_price),
             "pnl": float(trade.pnl) if trade and trade.pnl else 0,
             "reason": exit_reason.value,
+            "is_shadow": pos.is_shadow,
         },
         requires_confirmation=requires_confirmation,
         confirmation_status=ConfirmationStatus.PENDING if requires_confirmation else None,
@@ -347,6 +348,7 @@ async def _request_profit_confirmation(
             "unrealized_pnl": float(pos.unrealized_pnl) if pos.unrealized_pnl else 0,
             "target_price": float(pos.target_price) if pos.target_price else 0,
             "message": f"Target reached for {pos.symbol}. Book profit?",
+            "is_shadow": pos.is_shadow,
         },
         requires_confirmation=True,
         confirmation_status=ConfirmationStatus.PENDING,
@@ -486,6 +488,7 @@ async def _roll_futures_position(
             "old_symbol": pos.fyers_option_symbol,
             "new_symbol": resolution.fyers_symbol,
             "entry_price": float(new_ltp),
+            "is_shadow": pos.is_shadow,
         },
         requires_confirmation=False,
     )

@@ -56,7 +56,7 @@ export function PnLCard() {
     }`}>
       {isShadow && (
         <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 shrink-0">
-          GHOST
+          SHADOW
         </span>
       )}
 

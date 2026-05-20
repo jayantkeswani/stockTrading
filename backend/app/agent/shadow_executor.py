@@ -100,16 +100,7 @@ async def _do_shadow_execute(signal_id) -> None:
             lot_size = int((signal.indicators or {}).get("futures_lot_size", 1))
         else:
             lot_size = LOT_SIZES.get(signal.symbol, 75)
-        if signal.lots is not None:
-            lots = signal.lots
-        else:
-            lots = calculate_lots(
-                capital=cfg.capital,
-                risk_per_trade_pct=cfg.max_risk_per_trade_pct,
-                entry_price=float(signal.entry_price),
-                stop_loss=float(signal.stop_loss),
-                lot_size=lot_size,
-            )
+        lots = 1
         quantity = lots * lot_size
 
         if is_futures:
@@ -200,6 +191,18 @@ async def _do_shadow_execute(signal_id) -> None:
         )
         session.add(log)
         await session.commit()
+
+    # Broadcast agent:action so AgentFeed picks it up in real-time
+    await ws_manager.broadcast("agent:action", {
+        "id": str(log.id),
+        "action_type": AgentActionType.SHADOW_EXECUTED.value,
+        "trade_id": str(trade.id),
+        "details": log.details,
+        "requires_confirmation": False,
+        "confirmation_status": None,
+        "confirmed_at": None,
+        "created_at": now.isoformat(),
+    })
 
     # Subscribe trading symbol for live price tracking (idempotent)
     if trading_symbol:

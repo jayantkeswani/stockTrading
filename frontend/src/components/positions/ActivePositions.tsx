@@ -214,7 +214,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
               onClick={handleToggle}
               className={`px-1.5 py-0.5 border-l border-border transition-colors ${isShadow ? "bg-purple-500/15 text-purple-400" : "text-text-muted hover:text-text-secondary"}`}
             >
-              Ghost
+              Shadow
             </button>
           </div>
         </div>
@@ -222,13 +222,13 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
 
       {isShadow && (
         <div className="px-3 py-1 border-b border-purple-500/20 bg-purple-500/5">
-          <span className="text-[9px] font-mono text-purple-400/70">Signal Test — ghost trades auto-close at SL/target/EOD</span>
+          <span className="text-[9px] font-mono text-purple-400/70">Signal Test — shadow trades auto-close at SL/target/EOD</span>
         </div>
       )}
 
       {activePositions.length === 0 && activeClosed.length === 0 ? (
         <div className="px-3 py-4 text-center text-text-muted text-xs font-mono">
-          {isShadow ? "no ghost positions yet" : "no open positions"}
+          {isShadow ? "no shadow positions yet" : "no open positions"}
         </div>
       ) : activePositions.length === 0 ? null : (
         <div className="overflow-x-auto">
@@ -262,12 +262,12 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
         </div>
       )}
 
-      {/* Closed Today (real or ghost) */}
+      {/* Closed Today (real or shadow) */}
       {activeClosed.length > 0 && (
         <div className="border-t border-border/50">
           <div className="px-3 py-1.5 border-b border-border/30 flex items-center gap-2">
             <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
-              {isShadow ? "Ghost Closed Today" : "Closed Today"}
+              {isShadow ? "Shadow Closed Today" : "Closed Today"}
             </span>
             <span className="text-[10px] font-mono text-text-muted">({activeClosed.length})</span>
           </div>
@@ -482,7 +482,7 @@ function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, han
                     <div>
                       <span className="text-text-muted">Type</span>
                       <div className="text-text-primary mt-0.5">
-                        {isShadow ? "GHOST" : pos.is_paper ? "PAPER" : "LIVE"} / {pos.position_type}
+                        {isShadow ? "SHADOW" : pos.is_paper ? "PAPER" : "LIVE"} / {pos.position_type}
                         {isFutures && (
                           <span className={`ml-1 ${isShort ? "text-loss" : "text-profit"}`}>
                             {isShort ? "SHORT" : "LONG"}

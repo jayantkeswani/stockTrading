@@ -24,7 +24,7 @@ const ACTION_COLORS: Record<string, string> = {
   TARGET_HIT: "text-profit",
   AUTO_EXECUTED: "text-accent",
   MANUAL_EXECUTED: "text-accent",
-  SHADOW_EXECUTED: "text-text-muted",
+  SHADOW_EXECUTED: "text-purple-400",
 };
 
 export default function AgentPage() {
@@ -360,11 +360,17 @@ export default function AgentPage() {
               const symbol = log.details?.symbol != null ? String(log.details.symbol) : null;
               const strategyKey = log.details?.strategy_name as string | undefined;
               const pnl = log.details?.pnl != null ? Number(log.details.pnl) : null;
+              const shadow = log.action_type === "SHADOW_EXECUTED" || log.details?.is_shadow === true;
 
               return (
                 <div key={log.id} className="px-3 py-1.5 hover:bg-bg-tertiary/30">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 flex-wrap">
+                      {shadow && (
+                        <span className="text-[9px] font-mono px-1 py-px rounded bg-purple-500/15 text-purple-400 shrink-0">
+                          SHADOW
+                        </span>
+                      )}
                       <span
                         className={`text-xs font-mono font-bold ${
                           ACTION_COLORS[log.action_type] ?? "text-text-secondary"

@@ -185,7 +185,7 @@ export default function TradesPage() {
               <option key={key} value={key}>{label}</option>
             ))}
           </select>
-          {/* Real / Ghost toggle */}
+          {/* Real / Shadow toggle */}
           <div className="flex items-center rounded border border-border overflow-hidden text-[10px] font-mono">
             <button
               onClick={() => setPositionViewMode("REAL")}
@@ -201,7 +201,7 @@ export default function TradesPage() {
                 mode === "SHADOW" ? "bg-purple-500/15 text-purple-400" : "text-text-muted hover:text-text-secondary"
               }`}
             >
-              Ghost
+              Shadow
             </button>
           </div>
           {/* Net P&L toggle */}
@@ -363,7 +363,7 @@ export default function TradesPage() {
       {mode === "SHADOW" && (
         <div className="px-3 py-1.5 rounded border border-purple-500/20 bg-purple-500/5">
           <p className="text-[10px] font-mono text-purple-400/70">
-            Ghost mode — showing ghost trades that execute every signal (including blocked ones) to measure raw signal accuracy. These do not affect P&amp;L, risk, or active positions.
+            Shadow mode — showing shadow trades that execute every signal (including blocked ones) to measure raw signal accuracy. These do not affect P&amp;L, risk, or active positions.
           </p>
         </div>
       )}

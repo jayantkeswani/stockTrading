@@ -253,7 +253,7 @@ Before changing any threshold (proximity, confidence, etc.) for testing:
 1. Go to **Settings → Strategies** and turn `auto_mode` off for VWAP Pullback.
 2. Avoid using the **Scanner** header button or `POST /api/v1/strategies/evaluate/batch` during the experiment.
 
-Both auto-mode candle-close evaluations AND manual evals trigger `shadow_executor`, which creates ghost `Trade(source="SHADOW")` + `Position(is_shadow=True)` for every signal regardless of the `executable` flag. If you forget, clean up with:
+Both auto-mode candle-close evaluations AND manual evals trigger `shadow_executor`, which creates shadow `Trade(source="SHADOW")` + `Position(is_shadow=True)` for every signal regardless of the `executable` flag. If you forget, clean up with:
 ```sql
 DELETE FROM positions WHERE is_shadow = true;
 DELETE FROM trades WHERE source = 'SHADOW';

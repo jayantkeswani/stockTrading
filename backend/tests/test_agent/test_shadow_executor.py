@@ -1,4 +1,4 @@
-"""Tests for shadow_executor.py — signal accuracy ghost agent."""
+"""Tests for shadow_executor.py — signal accuracy shadow agent."""
 
 import uuid
 from decimal import Decimal
