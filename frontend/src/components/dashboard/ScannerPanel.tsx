@@ -46,13 +46,17 @@ function formatSignalTime(isoString: string): string {
 
 export function ScannerPanel() {
   const { signals, updateSignal, removeSignal, scannerMinConfidence, setScannerMinConfidence } = useStore();
+  const [searchQuery, setSearchQuery] = useState("");
   const today = isoDateIST(new Date());
   const allPending = signals.filter(
     (s) => s.status === "PENDING" && isoDateIST(new Date(s.generated_at)) === today
   );
-  const pendingSignals = scannerMinConfidence > 0
+  const confFiltered = scannerMinConfidence > 0
     ? allPending.filter((s) => s.confidence != null && Number(s.confidence) >= scannerMinConfidence)
     : allPending;
+  const pendingSignals = searchQuery
+    ? confFiltered.filter((s) => s.symbol.toLowerCase().includes(searchQuery.toLowerCase()))
+    : confFiltered;
 
   const [execSignal, setExecSignal] = useState<Signal | null>(null);
   const [execError, setExecError] = useState<string | null>(null);
@@ -86,6 +90,24 @@ export function ScannerPanel() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="search..."
+              className="w-20 text-[10px] font-mono bg-bg-tertiary border border-border/60 rounded px-1.5 py-0.5 text-text-primary placeholder:text-text-muted/50 focus:outline-none focus:border-accent/40"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-1 top-1/2 -translate-y-1/2 text-[9px] text-text-muted hover:text-text-secondary"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <div className="w-px h-3 bg-border" />
           <label className="flex items-center gap-1.5 text-[9px] font-mono text-text-muted">
             <span>CONF</span>
             <input
