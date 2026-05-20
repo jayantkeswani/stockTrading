@@ -11,7 +11,7 @@ from app.config import settings as cfg
 from app.core.constants import IST
 from app.core.database import get_db
 from app.core.redis import get_cached_price
-from app.core.utils import is_market_open, is_in_trading_window, is_in_dead_zone, time_to_market_close_minutes
+from app.core.utils import is_market_open, is_in_trading_window, is_in_dead_zone, now_ist, time_to_market_close_minutes
 from app.data_feed.fyers_ws_client import fyers_ws_client
 from app.models.market_data import MarketData1m
 from app.schemas.market_data import CandleResponse, PriceResponse
@@ -265,10 +265,25 @@ async def market_status():
 
 @router.post("/feed/start")
 async def start_data_feed():
-    """Start the Fyers live data feed."""
+    """Start the Fyers live data feed.
+
+    Mirrors the full reconnect flow: preserves existing subscriptions
+    (index futures, watchlist), collects dynamic symbols, and triggers
+    gap backfill for today's candles.
+    """
     if fyers_ws_client.is_connected:
         return {"status": "already_connected"}
-    await fyers_ws_client.start()
+
+    from app.services.strategy_runner import strategy_runner
+
+    existing = list(fyers_ws_client._symbols)
+    dynamic = await fyers_ws_client._collect_dynamic_symbols()
+    all_extra = list(dict.fromkeys(existing + dynamic))
+
+    fyers_ws_client._last_disconnect_at = now_ist()
+    strategy_runner._futures_init_done = False
+
+    await fyers_ws_client.start(extra_symbols=all_extra if all_extra else None)
     return {"status": "connecting"}
 
 

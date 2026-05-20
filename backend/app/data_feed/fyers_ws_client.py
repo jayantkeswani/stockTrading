@@ -21,13 +21,13 @@ FyersDataSocket with clean internal state.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, time
 from threading import Thread
 
 from app.config import settings
 from app.core.constants import FYERS_SYMBOL_MAP
 from app.core.redis import get_redis
-from app.core.utils import is_market_open, now_ist
+from app.core.utils import is_market_open, is_trading_day, now_ist
 
 logger = logging.getLogger(__name__)
 
@@ -374,8 +374,11 @@ class FyersWSClient:
         partial candles, then schedules a full stop()+start() reconnect with a
         fresh FyersDataSocket (clean topic_id mappings).
 
-        After market hours: logs and stays disconnected.  The next morning's
-        7:45 AM reauth creates a fresh connection anyway.
+        Pre-market on trading days (before 9:15): schedules a reconnect at
+        9:00 AM so the feed is ready before market open.
+
+        After 15:30 or on non-trading days: logs and stays disconnected.
+        The next morning's 7:45 AM reauth creates a fresh connection anyway.
 
         Skips reconnect scheduling when ``_ws is None`` — this means stop()
         already nulled the reference before calling close_connection(), so
@@ -385,13 +388,15 @@ class FyersWSClient:
         self._connected = False
         logger.warning("Fyers WebSocket disconnected")
 
+        now = now_ist()
+
         if self._ws is None:
             logger.info("Intentional stop — skipping reconnect scheduling")
-        elif self._was_ever_connected and is_market_open():
-            self._last_disconnect_at = now_ist()
+        elif is_market_open():
+            self._last_disconnect_at = now
             logger.info(
                 "Disconnect at %s captured for gap backfill",
-                self._last_disconnect_at.strftime("%H:%M:%S"),
+                now.strftime("%H:%M:%S"),
             )
             if self._loop:
                 self._loop.call_soon_threadsafe(
@@ -401,7 +406,20 @@ class FyersWSClient:
                 self._loop.call_soon_threadsafe(
                     self._schedule_reconnect,
                 )
-        elif not is_market_open():
+        elif is_trading_day(now.date()) and now.time() < time(15, 30):
+            self._last_disconnect_at = now
+            target_9am = now.replace(hour=9, minute=0, second=0, microsecond=0)
+            delay = max(0, (target_9am - now).total_seconds())
+            logger.info(
+                "Pre-market disconnect — scheduling reconnect %s",
+                "now" if delay == 0 else f"at 09:00 ({delay:.0f}s)",
+            )
+            if self._loop:
+                self._loop.call_soon_threadsafe(
+                    self._schedule_premarket_reconnect,
+                    delay,
+                )
+        else:
             logger.info(
                 "Market closed — staying disconnected until next session",
             )
@@ -418,6 +436,32 @@ class FyersWSClient:
             logger.info("Reconnect already scheduled — skipping duplicate")
             return
         self._reconnect_task = asyncio.ensure_future(self._managed_reconnect())
+
+    def _schedule_premarket_reconnect(self, delay: float) -> None:
+        """Schedule a pre-market reconnect after *delay* seconds."""
+        if self._reconnect_task and not self._reconnect_task.done():
+            logger.info("Reconnect already scheduled — skipping duplicate")
+            return
+
+        async def _delayed():
+            if delay > 0:
+                await asyncio.sleep(delay)
+            await self._premarket_reconnect()
+
+        self._reconnect_task = asyncio.ensure_future(_delayed())
+
+    async def _premarket_reconnect(self) -> None:
+        """Reconnect before market open — skips the is_market_open() check
+        that _managed_reconnect uses."""
+        from app.services.strategy_runner import strategy_runner
+
+        logger.info("Pre-market reconnect: creating fresh FyersDataSocket")
+        symbols = list(self._symbols)
+        dynamic = await self._collect_dynamic_symbols()
+        symbols = list(dict.fromkeys(symbols + dynamic))
+        strategy_runner._futures_init_done = False
+        await self.stop()
+        await self.start(extra_symbols=symbols)
 
     def _on_error(self, error):
         """Called on Fyers WebSocket error."""
