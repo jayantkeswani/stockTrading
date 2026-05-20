@@ -54,7 +54,7 @@ stockTrading/
 │   ├── app/
 │   │   ├── api/v1/        # REST endpoints (14 routers, incl. watchlist, strategies, tasks, research, options)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
-│   │   ├── models/        # SQLAlchemy ORM models (16 tables incl. market_data_daily, global_market_snapshots, trading_config; signals has ai_* columns; signal_history archives Case-2 dedup snapshots)
+│   │   ├── models/        # SQLAlchemy ORM models (16 tables incl. market_data_daily, global_market_snapshots, trading_config; signals has ai_* columns + market snapshot fields (nifty_spot, nifty_day_change_pct, trigger_candle, minutes_since_open); signal_history archives Case-2 dedup snapshots)
 │   │   ├── schemas/       # Pydantic request/response schemas
 │   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill, strategy_params, morning_screener, agent_log)
 │   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
@@ -65,7 +65,7 @@ stockTrading/
 │   │   ├── backtest/      # Backtest module (context_builder, harness, exit_simulator, option_data_fetcher, strike_selector, report)
 │   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP, NSE_HOLIDAYS), enums, utils, task_registry
 │   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh, global_market every 15m, Strategy 5 morning workflow, NSE bhav copy daily, F&O ban list 7:00 AM)
-│   ├── tests/             # pytest test suite (831 tests, incl. signal_history archiving)
+│   ├── tests/             # pytest test suite (855 tests, incl. signal_history archiving)
 │   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
     └── src/

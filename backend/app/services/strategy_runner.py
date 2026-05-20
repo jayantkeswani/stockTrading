@@ -246,6 +246,7 @@ class StrategyRunner:
         await self._flush_strategy_logs(strategy)
         if signal is not None:
             signal.indicators["window_state"] = window_state
+            await self._enrich_signal_snapshot(signal)
             if signal.instrument_type == InstrumentType.OPTION:
                 signal, executable, blocked_reason = await self._resolve_option(
                     signal, ctx, executable, blocked_reason,
@@ -558,6 +559,33 @@ class StrategyRunner:
             except (ValueError, TypeError):
                 pass
         return None
+
+    async def _enrich_signal_snapshot(self, signal) -> None:
+        """Inject common market snapshot fields into signal indicators for later quality analysis."""
+        nifty_cached = await get_cached_price("NIFTY")
+        if nifty_cached:
+            nifty_ltp = float(nifty_cached["ltp"])
+            signal.indicators["nifty_spot"] = round(nifty_ltp, 2)
+            nifty_buffer = self._candle_buffers.get("NIFTY", [])
+            if nifty_buffer:
+                nifty_open = nifty_buffer[0]["o"]
+                if nifty_open:
+                    signal.indicators["nifty_day_change_pct"] = round(
+                        (nifty_ltp - nifty_open) / nifty_open * 100, 2
+                    )
+
+        buffer = self._candle_buffers.get(signal.symbol, [])
+        if buffer:
+            c = buffer[-1]
+            signal.indicators["trigger_candle"] = {
+                "o": c["o"], "h": c["h"], "l": c["l"],
+                "c": c["c"], "v": c.get("v", 0),
+                "ts": c.get("timestamp", ""),
+            }
+
+        t = now_ist()
+        minutes = (t.hour * 60 + t.minute) - (MARKET_OPEN.hour * 60 + MARKET_OPEN.minute)
+        signal.indicators["minutes_since_open"] = max(0, minutes)
 
     async def _is_canslim_symbol(self, symbol: str) -> bool:
         """Check if this symbol is configured for the CAN SLIM strategy."""
@@ -1441,6 +1469,7 @@ class StrategyRunner:
                 await self._flush_strategy_logs(strategy)
                 if signal is not None:
                     signal.indicators["window_state"] = window_state
+                    await self._enrich_signal_snapshot(signal)
 
                     logger.info(
                         "Signal generated: %s %s %s (confidence=%.1f, executable=%s, window=%s)",

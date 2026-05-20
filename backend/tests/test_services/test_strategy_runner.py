@@ -177,9 +177,10 @@ class TestEvaluateManual:
     @patch("app.services.strategy_runner.strategy_runner._load_todays_candles", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._get_current_price", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._resolve_option", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._enrich_signal_snapshot", new_callable=AsyncMock)
     @patch("app.strategies.registry.get_strategy")
     async def test_generates_signal_on_manual_scan(
-        self, mock_get_strategy, mock_resolve_option, mock_price, mock_candles, mock_ctx, mock_risk, mock_params, mock_trading_cfg, mock_handle
+        self, mock_get_strategy, mock_enrich, mock_resolve_option, mock_price, mock_candles, mock_ctx, mock_risk, mock_params, mock_trading_cfg, mock_handle
     ):
         """Manual evaluation should call strategy.evaluate and handle the signal."""
         from app.services.strategy_runner import strategy_runner
