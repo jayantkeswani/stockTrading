@@ -139,7 +139,7 @@ Non-secret env vars hardcoded in the deploy workflow:
 | Variable | Value | Used By |
 |----------|-------|---------|
 | `GCP_PROJECT_ID` | `stock-trading-prod` | Backend Vertex AI mode (ADC via GCE metadata server) |
-| `VERTEX_AI_LOCATION` | `us-central1` | Backend Vertex AI region |
+| `VERTEX_AI_LOCATION` | `global` | Gemini API global endpoint (auto-routes to nearest region) |
 
 ## Network
 

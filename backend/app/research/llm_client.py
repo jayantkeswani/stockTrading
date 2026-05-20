@@ -69,7 +69,7 @@ class GeminiClient(LLMClient):
         model: str = "gemini-3.5-flash",
         api_key: str = "",
         project_id: str = "",
-        location: str = "us-central1",
+        location: str = "global",
     ):
         self._api_key = api_key
         self._project_id = project_id
@@ -189,7 +189,7 @@ def create_llm_client() -> LLMClient:
         project_id = getattr(settings, "gcp_project_id", "")
 
         if project_id:
-            location = getattr(settings, "vertex_ai_location", "us-central1")
+            location = getattr(settings, "vertex_ai_location", "global")
             return GeminiClient(model=model, project_id=project_id, location=location)
 
         api_key = getattr(settings, "google_api_key", "")
