@@ -68,11 +68,10 @@ async def auto_execute_signal(signal_id) -> dict | None:
             )
             return None
 
-        # Confidence gate — only execute signals above the strategy's execution threshold
-        from app.services.strategy_params import get_strategy_params
-        params = await get_strategy_params(signal.strategy_name)
-        min_exec_conf = params.get("min_confidence_for_execution")
-        if min_exec_conf is not None and signal.confidence is not None:
+        # Confidence gate — only execute signals above the global execution threshold
+        cfg = await get_trading_config()
+        min_exec_conf = cfg.min_confidence_for_execution
+        if signal.confidence is not None:
             if float(signal.confidence) < min_exec_conf:
                 logger.info(
                     "Auto-execute: confidence %.0f < execution threshold %.0f for %s, skipping",
@@ -109,7 +108,6 @@ async def auto_execute_signal(signal_id) -> dict | None:
         else:
             lot_size = LOT_SIZES.get(signal.symbol, 75)
 
-        cfg = await get_trading_config()
         # Use snapshotted lots (frozen at signal generation) or fall back to compute
         if signal.lots is not None:
             lots = signal.lots

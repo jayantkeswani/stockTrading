@@ -21,6 +21,7 @@ def test_dto_yolo_mode_property():
     dto = TradingConfigDTO(
         capital=1_000_000, max_daily_drawdown_pct=5.0, max_risk_per_trade_pct=2.0,
         max_trades_per_day=3, paper_trading=True, autonomy_level="YOLO",
+        min_confidence_to_persist=30.0, min_confidence_for_shadow=70.0, min_confidence_for_execution=70.0,
     )
     assert dto.yolo_mode is True
 
@@ -29,6 +30,7 @@ def test_dto_semi_not_yolo():
     dto = TradingConfigDTO(
         capital=1_000_000, max_daily_drawdown_pct=5.0, max_risk_per_trade_pct=2.0,
         max_trades_per_day=3, paper_trading=True, autonomy_level="SEMI",
+        min_confidence_to_persist=30.0, min_confidence_for_shadow=70.0, min_confidence_for_execution=70.0,
     )
     assert dto.yolo_mode is False
 
@@ -37,6 +39,7 @@ def test_dto_max_drawdown_amount():
     dto = TradingConfigDTO(
         capital=1_000_000, max_daily_drawdown_pct=5.0, max_risk_per_trade_pct=2.0,
         max_trades_per_day=3, paper_trading=True, autonomy_level="SEMI",
+        min_confidence_to_persist=30.0, min_confidence_for_shadow=70.0, min_confidence_for_execution=70.0,
     )
     assert dto.max_drawdown_amount == 50_000.0
 
@@ -48,6 +51,7 @@ async def test_get_trading_config_returns_cache():
     dto = TradingConfigDTO(
         capital=999_999, max_daily_drawdown_pct=4.0, max_risk_per_trade_pct=1.5,
         max_trades_per_day=2, paper_trading=False, autonomy_level="MANUAL",
+        min_confidence_to_persist=30.0, min_confidence_for_shadow=70.0, min_confidence_for_execution=70.0,
     )
     _svc._cache = dto
     result = await get_trading_config()
@@ -75,6 +79,7 @@ async def test_update_writes_db_and_updates_cache():
     original = TradingConfigDTO(
         capital=1_000_000, max_daily_drawdown_pct=5.0, max_risk_per_trade_pct=2.0,
         max_trades_per_day=3, paper_trading=True, autonomy_level="SEMI",
+        min_confidence_to_persist=30.0, min_confidence_for_shadow=70.0, min_confidence_for_execution=70.0,
     )
     _svc._cache = original
 
@@ -85,6 +90,9 @@ async def test_update_writes_db_and_updates_cache():
     updated_row.max_trades_per_day = 3
     updated_row.paper_trading = True
     updated_row.autonomy_level = "SEMI"
+    updated_row.min_confidence_to_persist = 30.0
+    updated_row.min_confidence_for_shadow = 70.0
+    updated_row.min_confidence_for_execution = 70.0
 
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -103,4 +111,30 @@ async def test_update_writes_db_and_updates_cache():
     assert result.capital == 2_000_000
     assert _svc._cache is result
 
+    _svc._cache = None  # cleanup
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_shadow_above_execution():
+    """min_confidence_for_shadow must be <= min_confidence_for_execution."""
+    _svc._cache = TradingConfigDTO(
+        capital=1_000_000, max_daily_drawdown_pct=5.0, max_risk_per_trade_pct=2.0,
+        max_trades_per_day=3, paper_trading=True, autonomy_level="SEMI",
+        min_confidence_to_persist=30.0, min_confidence_for_shadow=70.0, min_confidence_for_execution=70.0,
+    )
+    with pytest.raises(ValueError, match="persist < shadow <= execution"):
+        await update_trading_config(min_confidence_for_shadow=80.0, min_confidence_for_execution=70.0)
+    _svc._cache = None  # cleanup
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_persist_above_shadow():
+    """min_confidence_to_persist must be < min_confidence_for_shadow."""
+    _svc._cache = TradingConfigDTO(
+        capital=1_000_000, max_daily_drawdown_pct=5.0, max_risk_per_trade_pct=2.0,
+        max_trades_per_day=3, paper_trading=True, autonomy_level="SEMI",
+        min_confidence_to_persist=30.0, min_confidence_for_shadow=70.0, min_confidence_for_execution=70.0,
+    )
+    with pytest.raises(ValueError, match="persist < shadow <= execution"):
+        await update_trading_config(min_confidence_to_persist=75.0)
     _svc._cache = None  # cleanup

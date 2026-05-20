@@ -52,6 +52,9 @@ interface TradingSettings {
   max_trades_per_day: number;
   paper_trading: boolean;
   autonomy_level: string;
+  min_confidence_to_persist: number;
+  min_confidence_for_shadow: number;
+  min_confidence_for_execution: number;
 }
 
 export default function SettingsPage() {
@@ -242,6 +245,42 @@ export default function SettingsPage() {
                   type="number"
                   value={currentSettings.max_trades_per_day}
                   onChange={(e) => setTradingDraft((d) => ({ ...d, max_trades_per_day: Number(e.target.value) }))}
+                  className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">Min Confidence to Persist</label>
+                <input
+                  type="number"
+                  step="5"
+                  min="0"
+                  max="100"
+                  value={currentSettings.min_confidence_to_persist}
+                  onChange={(e) => setTradingDraft((d) => ({ ...d, min_confidence_to_persist: Number(e.target.value) }))}
+                  className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">Min Confidence for Shadow</label>
+                <input
+                  type="number"
+                  step="5"
+                  min="0"
+                  max="100"
+                  value={currentSettings.min_confidence_for_shadow}
+                  onChange={(e) => setTradingDraft((d) => ({ ...d, min_confidence_for_shadow: Number(e.target.value) }))}
+                  className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">Min Confidence for Execution</label>
+                <input
+                  type="number"
+                  step="5"
+                  min="0"
+                  max="100"
+                  value={currentSettings.min_confidence_for_execution}
+                  onChange={(e) => setTradingDraft((d) => ({ ...d, min_confidence_for_execution: Number(e.target.value) }))}
                   className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
                 />
               </div>
@@ -587,9 +626,6 @@ function SymbolSelector({
 // ------------------------------------------------------------------
 
 const PARAM_LABELS: Record<string, string> = {
-  min_confidence_to_persist: "Min Confidence to Persist",
-  min_confidence_for_shadow: "Min Confidence for Shadow",
-  min_confidence_for_execution: "Min Confidence for Execution",
   vwap_proximity_pct: "VWAP Proximity %",
   sl_pct_aligned: "SL % (Bias Aligned)",
   sl_pct_unaligned: "SL % (Bias Unaligned)",
@@ -604,7 +640,7 @@ const PARAM_LABELS: Record<string, string> = {
   trailing_sl_activation_pct: "Trailing SL Activation %",
 };
 
-const HIDDEN_PARAMS = new Set(["trading_windows", "dead_zone"]);
+const HIDDEN_PARAMS = new Set(["trading_windows", "dead_zone", "min_confidence_to_persist", "min_confidence_for_shadow", "min_confidence_for_execution"]);
 
 function StrategyParams({
   strategyName,

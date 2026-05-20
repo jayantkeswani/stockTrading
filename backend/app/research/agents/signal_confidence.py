@@ -249,6 +249,12 @@ async def score_signal(
         return _FALLBACK
 
 
+def _get_persist_threshold() -> float:
+    from app.services.trading_config import get_trading_config_sync
+    cfg = get_trading_config_sync()
+    return cfg.min_confidence_to_persist if cfg else 30.0
+
+
 def _build_context_json(
     signal: StrategySignal,
     ctx: MarketContext,
@@ -335,7 +341,7 @@ def _build_context_json(
         },
         "deterministic_confidence": {
             "score": float(signal.confidence) if signal.confidence else 0,
-            "persist_threshold": (ctx.strategy_params or {}).get("min_confidence_to_persist", 30.0),
+            "persist_threshold": _get_persist_threshold(),
             "factors": conf_factors,
             "rationale": indicators.get("confidence_rationale"),
         },

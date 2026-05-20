@@ -242,6 +242,9 @@ export const api = {
       max_trades_per_day: number;
       paper_trading: boolean;
       autonomy_level: string;
+      min_confidence_to_persist: number;
+      min_confidence_for_shadow: number;
+      min_confidence_for_execution: number;
     }>(`/api/v1/settings/trading`),
   updateTradingSettings: (patch: {
     capital?: number;
@@ -250,6 +253,9 @@ export const api = {
     max_trades_per_day?: number;
     paper_trading?: boolean;
     autonomy_level?: string;
+    min_confidence_to_persist?: number;
+    min_confidence_for_shadow?: number;
+    min_confidence_for_execution?: number;
   }) =>
     request(`/api/v1/settings/trading`, {
       method: "PATCH",

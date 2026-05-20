@@ -10,6 +10,9 @@ class TradingConfigResponse(BaseModel):
     max_trades_per_day: int
     paper_trading: bool
     autonomy_level: str  # "MANUAL" | "SEMI" | "YOLO"
+    min_confidence_to_persist: float
+    min_confidence_for_shadow: float
+    min_confidence_for_execution: float
 
     model_config = {"from_attributes": True}
 
@@ -21,3 +24,6 @@ class TradingConfigUpdate(BaseModel):
     max_trades_per_day: int | None = Field(default=None, ge=1, le=20)
     paper_trading: bool | None = None
     autonomy_level: str | None = Field(default=None, pattern="^(MANUAL|SEMI|YOLO)$")
+    min_confidence_to_persist: float | None = Field(default=None, ge=0, le=100)
+    min_confidence_for_shadow: float | None = Field(default=None, ge=0, le=100)
+    min_confidence_for_execution: float | None = Field(default=None, ge=0, le=100)

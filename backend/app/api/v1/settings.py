@@ -19,6 +19,9 @@ async def get_trading_settings():
         max_trades_per_day=cfg.max_trades_per_day,
         paper_trading=cfg.paper_trading,
         autonomy_level=cfg.autonomy_level,
+        min_confidence_to_persist=cfg.min_confidence_to_persist,
+        min_confidence_for_shadow=cfg.min_confidence_for_shadow,
+        min_confidence_for_execution=cfg.min_confidence_for_execution,
     )
 
 
@@ -41,4 +44,7 @@ async def patch_trading_settings(body: TradingConfigUpdate):
         max_trades_per_day=cfg.max_trades_per_day,
         paper_trading=cfg.paper_trading,
         autonomy_level=cfg.autonomy_level,
+        min_confidence_to_persist=cfg.min_confidence_to_persist,
+        min_confidence_for_shadow=cfg.min_confidence_for_shadow,
+        min_confidence_for_execution=cfg.min_confidence_for_execution,
     )

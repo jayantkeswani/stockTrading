@@ -6,9 +6,6 @@ import { api } from "@/lib/api";
 const PARAM_LABELS: Record<string, string> = {
   trailing_sl_breakeven_pct: "Trailing SL Breakeven %",
   trailing_sl_trail_pct: "Trailing SL Trail %",
-  min_confidence_to_persist: "Min Confidence to Persist",
-  min_confidence_for_shadow: "Min Confidence for Shadow",
-  min_confidence_for_execution: "Min Confidence for Execution",
   max_daily_drawdown_pct: "Max Daily Drawdown %",
   max_simultaneous_positions: "Max Positions",
   max_trades_per_day: "Max Trades/Day",
@@ -17,7 +14,7 @@ const PARAM_LABELS: Record<string, string> = {
   min_adr: "Min ADR %",
 };
 
-const HIDDEN_PARAMS = new Set(["trading_windows", "dead_zone", "trailing_sl_enabled", "enabled_setups"]);
+const HIDDEN_PARAMS = new Set(["trading_windows", "dead_zone", "trailing_sl_enabled", "enabled_setups", "min_confidence_to_persist", "min_confidence_for_shadow", "min_confidence_for_execution"]);
 
 const ALL_SETUPS = ["ORB", "VWAP_BOUNCE", "PDH_PDL", "GAP_CONTINUATION"] as const;
 const SETUP_LABELS: Record<string, string> = {

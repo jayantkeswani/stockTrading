@@ -107,9 +107,11 @@ stockTrading/
 
 ### Shadow + YOLO Isolation
 Three independent consumers of every signal, fully isolated:
-1. **Shadow executor** — creates SHADOW trade/position based on `min_confidence_for_shadow`. Invisible to signal lifecycle, dedup, and YOLO position checks.
-2. **YOLO executor** — creates YOLO trade/position based on `min_confidence_for_execution`. Only checks non-shadow positions for dedup.
+1. **Shadow executor** — creates SHADOW trade/position based on global `min_confidence_for_shadow` (in `trading_config`). Invisible to signal lifecycle, dedup, and YOLO position checks.
+2. **YOLO executor** — creates YOLO trade/position based on global `min_confidence_for_execution` (in `trading_config`). Only checks non-shadow positions for dedup.
 3. **Manual execution** — signal stays PENDING and available for user to click EXEC regardless of shadow/YOLO state.
+
+All three confidence thresholds (`min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`) are global in `trading_config` — they apply uniformly to all strategies. Cross-field validation enforces `persist < shadow <= execution`.
 
 Signal dedup "acted on" = manual execution (`executed_trade_id` set) OR YOLO trade exists. Shadow trades never trigger Case 3 (new signal creation).
 
@@ -278,7 +280,7 @@ Deferred work that is safe to do but not urgent. Each entry has a **why it's def
 ---
 
 ## Test Coverage
-Tests live in `backend/tests/`. 853 tests, all passing. Currently covered:
+Tests live in `backend/tests/`. 855 tests, all passing. Currently covered:
 - `test_core/` - IST timezone utils, market hour checks
 - `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns, relative strength (raw score + percentile ranking), volume analysis, market levels (swing detection, index SL/target selection), ADR (computation, threshold), RVOL (profile building, computation, serialization), ATR (computation, Wilder's smoothing), gap analysis (detection, continuation, edge cases), stock trend (6 factors individually, composite direction/strength classification, graceful degradation with <10 candles, V-reversal, flat market)
 - `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type (uses `strategy_params` in MarketContext); CAN SLIM scoring, base pattern detection, strategy evaluate/exit/sizing; Intraday Futures phase machine, ORB breakout detection (5-min candle close confirmation, ORB range min/max validation), 4 sub-setups (ORB/VWAP Bounce/PDH-PDL/Gap Continuation), caution zone confirmation, multi-factor confidence (9 factors incl. stock trend alignment + direction-aware Nifty bias + 4-way OI classification), full position sizing (RVOL/confidence/screener/VIX/briefing/trend), filters (ADR/RVOL/VWAP/price/volume/Nifty bias/stock trend direction), stock trend filter (STRONG opposing blocks, MODERATE allows with risk_warning, NEUTRAL passes), cross-position checks, `get_symbols()` dynamic Redis

@@ -1,10 +1,24 @@
 """Tests for VWAP Pullback Strategy (Strategy 2)."""
 
 import pytest
+from unittest.mock import patch
 from app.core.enums import CPRType, DayBias, SignalType, StrategyName
+from app.services.trading_config import TradingConfigDTO
+
+_LOW_PERSIST_CFG = TradingConfigDTO(
+    capital=1_000_000, max_daily_drawdown_pct=5.0, max_risk_per_trade_pct=2.0,
+    max_trades_per_day=3, paper_trading=True, autonomy_level="SEMI",
+    min_confidence_to_persist=10.0, min_confidence_for_shadow=70.0, min_confidence_for_execution=70.0,
+)
 
 
-_LOW_THRESHOLD_PARAMS = {"min_confidence_to_persist": 10.0}
+@pytest.fixture(autouse=True)
+def _mock_trading_config_sync():
+    with patch(
+        "app.services.trading_config.get_trading_config_sync",
+        return_value=_LOW_PERSIST_CFG,
+    ):
+        yield
 from app.indicators.candle_patterns import Candle
 from app.indicators.cpr import CPRResult
 from app.indicators.open_interest import OIAnalysis
@@ -129,7 +143,7 @@ def _make_context(
         india_vix=india_vix,
         current_time_ist="10:30:00",
         intraday_bias=intraday_bias,
-        strategy_params=_LOW_THRESHOLD_PARAMS,
+        strategy_params={},
     )
 
 

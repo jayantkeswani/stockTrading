@@ -9,10 +9,6 @@ import pytest
 from app.core.enums import AgentActionType, SignalStatus, TradeSource
 
 
-def _default_params():
-    return {"min_confidence_for_shadow": 45.0, "min_confidence_for_execution": 60.0}
-
-
 class TestShadowExecuteSignal:
 
     @pytest.mark.asyncio
@@ -21,9 +17,8 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
-    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_creates_trade_and_position(
-        self, mock_params, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """A PENDING signal — even executable=False — produces Trade(SHADOW) + Position(is_shadow=True)."""
         signal_id = uuid.uuid4()
@@ -61,9 +56,8 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
-    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_fires_for_executable_signal_too(
-        self, mock_params, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Shadow also runs when executable=True (normal case)."""
         signal_id = uuid.uuid4()
@@ -112,21 +106,14 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
-    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_no_dedup_two_calls_same_symbol(
-        self, mock_params, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Two signals on the same symbol both produce shadow trades — no dedup."""
         signal_id_1 = uuid.uuid4()
         signal_id_2 = uuid.uuid4()
         added_1: list = []
         added_2: list = []
-
-        def _session_ctx_1():
-            return _mock_session(mock_session_factory, _make_signal(signal_id_1), added_1)[0]
-
-        def _session_ctx_2():
-            return _mock_session(mock_session_factory, _make_signal(signal_id_2), added_2)[0]
 
         mock_cfg.return_value = _make_cfg()
         mock_price.return_value = 150.0
@@ -157,9 +144,8 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
-    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value=_default_params())
     async def test_shadow_falls_back_to_signal_price_on_live_price_failure(
-        self, mock_params, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Falls back to signal.entry_price if get_live_price raises."""
         signal_id = uuid.uuid4()
@@ -177,14 +163,16 @@ class TestShadowExecuteSignal:
         assert float(trades[0].entry_price) == 175.0
 
     @pytest.mark.asyncio
+    @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
-    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value={"min_confidence_for_shadow": 45.0})
-    async def test_shadow_skips_low_confidence_signal(self, mock_params, mock_session_factory):
+    @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
+    async def test_shadow_skips_low_confidence_signal(self, mock_deadline, mock_session_factory, mock_cfg):
         """Signal below min_confidence_for_shadow threshold produces no trade."""
         signal_id = uuid.uuid4()
         signal = _make_signal(signal_id, confidence=Decimal("30.0"))
 
         session, added_objects = _mock_session(mock_session_factory, signal)
+        mock_cfg.return_value = _make_cfg(min_confidence_for_shadow=45.0)
 
         from app.agent.shadow_executor import shadow_execute_signal
         await shadow_execute_signal(signal_id)
@@ -197,16 +185,15 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
-    @patch("app.services.strategy_params.get_strategy_params", new_callable=AsyncMock, return_value={"min_confidence_for_shadow": 45.0})
     async def test_shadow_fires_at_exact_threshold(
-        self, mock_params, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
+        self, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
         """Signal at exactly min_confidence_for_shadow should still fire."""
         signal_id = uuid.uuid4()
         signal = _make_signal(signal_id, confidence=Decimal("45.0"))
 
         session, added_objects = _mock_session(mock_session_factory, signal)
-        mock_cfg.return_value = _make_cfg()
+        mock_cfg.return_value = _make_cfg(min_confidence_for_shadow=45.0)
         mock_price.return_value = 180.0
         mock_ws.broadcast = AsyncMock()
 
@@ -244,11 +231,13 @@ def _make_signal(signal_id, executable=True, blocked_reason=None, status=None, e
     return s
 
 
-def _make_cfg():
+def _make_cfg(min_confidence_for_shadow=45.0, min_confidence_for_execution=60.0):
     cfg = MagicMock()
     cfg.capital = 1_000_000
     cfg.max_risk_per_trade_pct = 1.5
     cfg.paper_trading = True
+    cfg.min_confidence_for_shadow = min_confidence_for_shadow
+    cfg.min_confidence_for_execution = min_confidence_for_execution
     return cfg
 
 

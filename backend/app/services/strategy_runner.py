@@ -262,9 +262,10 @@ class StrategyRunner:
 
             ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
 
-            # Confidence gating — execution threshold
-            min_conf = params.get("min_confidence_for_execution")
-            if min_conf is not None and executable and signal.confidence < min_conf:
+            # Confidence gating — global execution threshold
+            cfg = await get_trading_config()
+            min_conf = cfg.min_confidence_for_execution
+            if executable and signal.confidence < min_conf:
                 executable = False
                 blocked_reason = f"Confidence below threshold ({signal.confidence:.0f} < {min_conf:.0f})"
 
@@ -1469,9 +1470,10 @@ class StrategyRunner:
                     # LLM confidence overlay — after resolve, ctx still in scope
                     ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
 
-                    # Confidence gating — execution threshold
-                    min_conf = params.get("min_confidence_for_execution")
-                    if min_conf is not None and strat_executable and signal.confidence < min_conf:
+                    # Confidence gating — global execution threshold
+                    cfg = await get_trading_config()
+                    min_conf = cfg.min_confidence_for_execution
+                    if strat_executable and signal.confidence < min_conf:
                         strat_executable = False
                         strat_blocked = f"Confidence below threshold ({signal.confidence:.0f} < {min_conf:.0f})"
                         if strategy.name == StrategyName.VWAP_PULLBACK:

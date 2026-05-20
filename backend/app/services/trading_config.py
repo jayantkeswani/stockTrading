@@ -34,6 +34,9 @@ class TradingConfigDTO:
     max_trades_per_day: int
     paper_trading: bool
     autonomy_level: str  # "MANUAL" | "SEMI" | "YOLO"
+    min_confidence_to_persist: float
+    min_confidence_for_shadow: float
+    min_confidence_for_execution: float
 
     @property
     def yolo_mode(self) -> bool:
@@ -56,6 +59,9 @@ def _row_to_dto(row: TradingConfig) -> TradingConfigDTO:
         max_trades_per_day=int(row.max_trades_per_day),
         paper_trading=bool(row.paper_trading),
         autonomy_level=str(row.autonomy_level),
+        min_confidence_to_persist=float(row.min_confidence_to_persist),
+        min_confidence_for_shadow=float(row.min_confidence_for_shadow),
+        min_confidence_for_execution=float(row.min_confidence_for_execution),
     )
 
 
@@ -77,6 +83,11 @@ async def get_trading_config() -> TradingConfigDTO:
     return _cache
 
 
+def get_trading_config_sync() -> TradingConfigDTO | None:
+    """Return cached config or None (no DB call). For use in sync code paths."""
+    return _cache
+
+
 async def update_trading_config(**fields) -> TradingConfigDTO:
     """Partially update the trading configuration.
 
@@ -88,6 +99,7 @@ async def update_trading_config(**fields) -> TradingConfigDTO:
     allowed = {
         "capital", "max_daily_drawdown_pct", "max_risk_per_trade_pct",
         "max_trades_per_day", "paper_trading", "autonomy_level",
+        "min_confidence_to_persist", "min_confidence_for_shadow", "min_confidence_for_execution",
     }
     invalid = set(fields) - allowed
     if invalid:
@@ -97,6 +109,19 @@ async def update_trading_config(**fields) -> TradingConfigDTO:
         level = fields["autonomy_level"]
         if level not in ("MANUAL", "SEMI", "YOLO"):
             raise ValueError(f"Invalid autonomy_level: {level!r}. Must be MANUAL, SEMI, or YOLO.")
+
+    persist_val = fields.get("min_confidence_to_persist")
+    shadow_val = fields.get("min_confidence_for_shadow")
+    exec_val = fields.get("min_confidence_for_execution")
+    if persist_val is not None or shadow_val is not None or exec_val is not None:
+        effective_persist = persist_val if persist_val is not None else (_cache.min_confidence_to_persist if _cache else 30.0)
+        effective_shadow = shadow_val if shadow_val is not None else (_cache.min_confidence_for_shadow if _cache else 70.0)
+        effective_exec = exec_val if exec_val is not None else (_cache.min_confidence_for_execution if _cache else 70.0)
+        if not (effective_persist < effective_shadow <= effective_exec):
+            raise ValueError(
+                f"Confidence tiers must satisfy persist < shadow <= execution "
+                f"(got {effective_persist} < {effective_shadow} <= {effective_exec})"
+            )
 
     async with async_session_factory() as session:
         result = await session.execute(select(TradingConfig).where(TradingConfig.id == 1))
@@ -145,6 +170,9 @@ async def ensure_seeded() -> None:
             max_trades_per_day=settings.max_trades_per_day,
             paper_trading=settings.paper_trading,
             autonomy_level=autonomy_level,
+            min_confidence_to_persist=30.0,
+            min_confidence_for_shadow=70.0,
+            min_confidence_for_execution=70.0,
         )
         session.add(row)
         await session.commit()

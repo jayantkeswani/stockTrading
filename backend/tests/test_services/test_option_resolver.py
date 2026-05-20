@@ -1,7 +1,7 @@
 """Tests for the option resolver — strike selection, expiry selection, and SL/target on premium."""
 
 from datetime import date, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -296,7 +296,8 @@ class TestResolveOptionDetails:
 
 class TestStrategySignalInstrumentType:
 
-    def test_vwap_pullback_sets_instrument_type_option(self):
+    @patch("app.services.trading_config.get_trading_config_sync", return_value=MagicMock(min_confidence_to_persist=10.0))
+    def test_vwap_pullback_sets_instrument_type_option(self, _mock_cfg):
         """VWAP pullback strategy should set instrument_type=OPTION."""
         from app.strategies.strategy_2_vwap_pullback import VWAPPullbackStrategy
         from app.indicators.candle_patterns import Candle
@@ -331,7 +332,7 @@ class TestStrategySignalInstrumentType:
             oi_analysis=None,
             india_vix=16.0,
             current_time_ist="10:30:00",
-            strategy_params={"min_confidence_to_persist": 10.0},
+            strategy_params={},
         )
 
         signal = strategy.evaluate(ctx)
