@@ -103,6 +103,10 @@ interface AppState {
   intradayBias: { symbol: string; bias: string; strength: string; score: number; updated_at: string } | null;
   setIntradayBias: (bias: { symbol: string; bias: string; strength: string; score: number; updated_at: string }) => void;
 
+  // Trades page Net P&L toggle (persisted)
+  showNetPnL: boolean;
+  setShowNetPnL: (v: boolean) => void;
+
   // Trades page filters (persisted across navigation)
   tradesPeriodLabel: string;
   tradesPeriodStart: string;
@@ -338,6 +342,8 @@ export const useStore = create<AppState>()(
       tradesPeriodStart: "",
       tradesPeriodEnd: "",
       tradesStrategy: "",
+      showNetPnL: false,
+      setShowNetPnL: (v) => set({ showNetPnL: v }),
       tradesSimOpen: false,
       tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null },
       setTradesPeriod: (label, start, end) => set({ tradesPeriodLabel: label, tradesPeriodStart: start.toISOString(), tradesPeriodEnd: end.toISOString() }),
@@ -378,6 +384,7 @@ export const useStore = create<AppState>()(
         scanLogs: state.scanLogs,
         activeTimeframe: state.activeTimeframe,
         positionViewMode: state.positionViewMode,
+        showNetPnL: state.showNetPnL,
         tradesPeriodLabel: state.tradesPeriodLabel,
         tradesPeriodStart: state.tradesPeriodStart,
         tradesPeriodEnd: state.tradesPeriodEnd,

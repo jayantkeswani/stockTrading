@@ -6,13 +6,19 @@ import type { Trade } from "@/lib/types";
 interface Props {
   trades: Trade[];
   dailyPnL: Map<string, number>;
+  showNetPnL?: boolean;
 }
 
-export function SummaryStrip({ trades, dailyPnL }: Props) {
+function tradePnl(t: Trade, showNet: boolean): number {
+  if (showNet && t.net_pnl != null) return Number(t.net_pnl);
+  return Number(t.pnl);
+}
+
+export function SummaryStrip({ trades, dailyPnL, showNetPnL = false }: Props) {
   const closed = trades.filter((t) => t.status === "CLOSED" && t.pnl != null);
   const openCount = trades.filter((t) => t.status === "OPEN").length;
-  const totalPnl = closed.reduce((s, t) => s + Number(t.pnl), 0);
-  const winners = closed.filter((t) => Number(t.pnl) > 0);
+  const totalPnl = closed.reduce((s, t) => s + tradePnl(t, showNetPnL), 0);
+  const winners = closed.filter((t) => tradePnl(t, showNetPnL) > 0);
   const winRate = closed.length > 0 ? (winners.length / closed.length) * 100 : 0;
   const avgPnl = closed.length > 0 ? totalPnl / closed.length : 0;
 
@@ -20,9 +26,9 @@ export function SummaryStrip({ trades, dailyPnL }: Props) {
   const bestDay = dayValues.length > 0 ? Math.max(...dayValues) : 0;
   const worstDay = dayValues.length > 0 ? Math.min(...dayValues) : 0;
 
-  const losers = closed.filter((t) => Number(t.pnl) < 0);
-  const grossProfit = winners.reduce((s, t) => s + Number(t.pnl), 0);
-  const grossLoss = Math.abs(losers.reduce((s, t) => s + Number(t.pnl), 0));
+  const losers = closed.filter((t) => tradePnl(t, showNetPnL) < 0);
+  const grossProfit = winners.reduce((s, t) => s + tradePnl(t, showNetPnL), 0);
+  const grossLoss = Math.abs(losers.reduce((s, t) => s + tradePnl(t, showNetPnL), 0));
   // No losses yet → show win rate as %; once losses exist → show gross profit / gross loss as ratio
   const profitFactor =
     closed.length === 0

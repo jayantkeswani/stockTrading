@@ -26,6 +26,8 @@ class TradeResponse(BaseModel):
     source: str = "MANUAL"
     pnl: Decimal | None = None
     pnl_percent: Decimal | None = None
+    charges_json: dict | None = None
+    net_pnl: Decimal | None = None
     entry_time: datetime
     exit_time: datetime | None = None
     notes: str | None = None
@@ -52,3 +54,5 @@ class TradeSummaryResponse(BaseModel):
     best_trade: Decimal
     worst_trade: Decimal
     profit_factor: float
+    total_net_pnl: Decimal = Decimal(0)
+    total_charges: Decimal = Decimal(0)

@@ -27,7 +27,32 @@ function toggleItem(arr: string[], item: string): string[] {
 
 function applySimLots(trade: Trade, simLots: number | null): Trade {
   if (simLots == null || trade.pnl == null || trade.lots == null || trade.lots === 0) return trade;
-  return { ...trade, pnl: (Number(trade.pnl) / trade.lots) * simLots };
+  const ratio = simLots / trade.lots;
+  const scaledPnl = (Number(trade.pnl) / trade.lots) * simLots;
+  const scaledCharges = trade.charges_json
+    ? {
+        ...trade.charges_json,
+        brokerage: trade.charges_json.brokerage * ratio,
+        stt: trade.charges_json.stt * ratio,
+        exchange_txn: trade.charges_json.exchange_txn * ratio,
+        gst: trade.charges_json.gst * ratio,
+        sebi_charges: trade.charges_json.sebi_charges * ratio,
+        stamp_duty: trade.charges_json.stamp_duty * ratio,
+        total: trade.charges_json.total * ratio,
+      }
+    : null;
+  return {
+    ...trade,
+    pnl: scaledPnl,
+    net_pnl: trade.net_pnl != null ? scaledPnl - (scaledCharges?.total ?? 0) : null,
+    charges_json: scaledCharges,
+  };
+}
+
+function effectivePnl(trade: Trade, showNet: boolean): number | null {
+  if (trade.pnl == null) return null;
+  if (showNet && trade.net_pnl != null) return Number(trade.net_pnl);
+  return Number(trade.pnl);
 }
 
 function isSimActive(sim: { min_confidence: number; ai_action: string; instrument_type: string; signal_types: string[]; sim_lots: number | null }): boolean {
@@ -56,6 +81,7 @@ export default function TradesPage() {
     tradesStrategy, setTradesStrategy,
     tradesSimOpen, setTradesSimOpen,
     tradesSim, setTradesSim, resetTradesSim,
+    showNetPnL, setShowNetPnL,
   } = useStore();
 
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -120,12 +146,13 @@ export default function TradesPage() {
   const dailyPnL = useMemo(() => {
     const map = new Map<string, number>();
     for (const t of simTrades) {
-      if (t.status !== "CLOSED" || t.pnl == null) continue;
+      const pnl = effectivePnl(t, showNetPnL);
+      if (t.status !== "CLOSED" || pnl == null) continue;
       const key = isoDateIST(new Date(t.entry_time));
-      map.set(key, (map.get(key) ?? 0) + Number(t.pnl));
+      map.set(key, (map.get(key) ?? 0) + pnl);
     }
     return map;
-  }, [simTrades]);
+  }, [simTrades, showNetPnL]);
 
   const displayedTrades = useMemo(() => {
     if (!selectedDay) return simTrades;
@@ -177,6 +204,17 @@ export default function TradesPage() {
               Ghost
             </button>
           </div>
+          {/* Net P&L toggle */}
+          <button
+            onClick={() => setShowNetPnL(!showNetPnL)}
+            className={`px-2 py-1 rounded border text-[10px] font-mono transition-colors ${
+              showNetPnL
+                ? "border-accent/50 bg-accent/10 text-accent"
+                : "border-border text-text-muted hover:text-text-secondary"
+            }`}
+          >
+            Net P&amp;L
+          </button>
           {/* Sim toggle */}
           <button
             onClick={() => setTradesSimOpen(!simOpen)}
@@ -330,7 +368,7 @@ export default function TradesPage() {
         </div>
       )}
 
-      <SummaryStrip trades={simTrades} dailyPnL={dailyPnL} />
+      <SummaryStrip trades={simTrades} dailyPnL={dailyPnL} showNetPnL={showNetPnL} />
 
       <PnLHeatmap
         period={period}
@@ -361,6 +399,7 @@ export default function TradesPage() {
           showSource={mode === "SHADOW"}
           showSignalData={simActive}
           simLots={simOpen ? sim.sim_lots : null}
+          showNetPnL={showNetPnL}
         />
       </div>
     </div>

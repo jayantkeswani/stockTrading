@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select, func
@@ -108,6 +109,15 @@ async def trade_summary(
     gross_profit = sum(t.pnl for t in winners) if winners else 0
     gross_loss = abs(sum(t.pnl for t in losers)) if losers else 0
 
+    total_charges = sum(
+        Decimal(str(t.charges_json["total"])) if t.charges_json else Decimal(0)
+        for t in trades
+    )
+    total_net_pnl = sum(
+        t.net_pnl if t.net_pnl is not None else (t.pnl or 0)
+        for t in trades
+    )
+
     return TradeSummaryResponse(
         total_trades=len(trades),
         winning_trades=len(winners),
@@ -120,6 +130,8 @@ async def trade_summary(
         best_trade=max((t.pnl for t in trades if t.pnl), default=0),
         worst_trade=min((t.pnl for t in trades if t.pnl), default=0),
         profit_factor=gross_profit / gross_loss if gross_loss > 0 else 0,
+        total_net_pnl=total_net_pnl,
+        total_charges=total_charges,
     )
 
 

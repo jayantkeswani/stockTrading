@@ -43,7 +43,10 @@ async def send_daily_summary() -> None:
         total = len(trades)
         wins = sum(1 for t in trades if (t.pnl or 0) > 0)
         losses = sum(1 for t in trades if (t.pnl or 0) <= 0)
-        net_pnl = sum(float(t.pnl or 0) for t in trades)
+        net_pnl = sum(
+            float(t.net_pnl) if t.net_pnl is not None else float(t.pnl or 0)
+            for t in trades
+        )
 
         best = max(trades, key=lambda t: float(t.pnl or 0))
         worst = min(trades, key=lambda t: float(t.pnl or 0))

@@ -92,6 +92,12 @@ async def close_position(
             trade.pnl = diff * trade.quantity
             trade.pnl_percent = float(diff / trade.entry_price * 100)
 
+            from app.services.brokerage_calculator import compute_charges
+            instrument_type = "OPTION" if trade.option_type else "FUTURE"
+            charges = compute_charges(instrument_type, trade.entry_price, position.current_price, trade.quantity, trade.side)
+            trade.charges_json = charges.to_dict()
+            trade.net_pnl = trade.pnl - charges.total
+
     pnl = float(trade.pnl) if trade and trade.pnl is not None else 0.0
     exit_price = float(trade.exit_price) if trade and trade.exit_price is not None else 0.0
 

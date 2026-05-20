@@ -247,6 +247,12 @@ async def _close_position(
             trade.pnl = (exit_price - trade.entry_price) * trade.quantity
             trade.pnl_percent = (exit_price - trade.entry_price) / trade.entry_price * 100
 
+        from app.services.brokerage_calculator import compute_charges
+        instrument_type = "OPTION" if trade.option_type else "FUTURE"
+        charges = compute_charges(instrument_type, trade.entry_price, exit_price, trade.quantity, trade.side)
+        trade.charges_json = charges.to_dict()
+        trade.net_pnl = trade.pnl - charges.total
+
     # Log agent action
     log = AgentLog(
         action_type=action_type.value,

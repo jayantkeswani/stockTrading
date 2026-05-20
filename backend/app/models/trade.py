@@ -3,6 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, Date, DateTime, Index, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, generate_uuid
@@ -39,6 +40,8 @@ class Trade(Base, TimestampMixin):
     broker_order_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="MANUAL")
+    charges_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    net_pnl: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
 
     __table_args__ = (
         Index("idx_trades_status", "status"),

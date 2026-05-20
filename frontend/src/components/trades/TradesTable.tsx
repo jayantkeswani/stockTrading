@@ -10,6 +10,7 @@ interface Props {
   showSource?: boolean;
   showSignalData?: boolean;
   simLots?: number | null;
+  showNetPnL?: boolean;
 }
 
 function confidenceColor(conf: number | null): string {
@@ -20,7 +21,7 @@ function confidenceColor(conf: number | null): string {
   return "text-loss";
 }
 
-export function TradesTable({ trades, loading, showSource = false, showSignalData = false, simLots = null }: Props) {
+export function TradesTable({ trades, loading, showSource = false, showSignalData = false, simLots = null, showNetPnL = false }: Props) {
   if (loading) {
     return (
       <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
@@ -46,7 +47,9 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
             <th className="text-right px-3 py-1.5">Entry</th>
             <th className="text-right px-3 py-1.5">Exit</th>
             <th className="text-right px-3 py-1.5">
-              P&amp;L{simLots != null && (
+              P&amp;L
+              {showNetPnL && <span className="normal-case font-normal text-accent/60 ml-1">net</span>}
+              {simLots != null && (
                 <span className="normal-case font-normal text-accent/60 ml-1">sim {simLots}L</span>
               )}
             </th>
@@ -59,7 +62,7 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
         </thead>
         <tbody>
           {trades.map((trade) => (
-            <tr key={trade.id} className="border-t border-border/30 hover:bg-bg-tertiary/30">
+            <tr key={trade.id} className="border-t border-border/30 hover:bg-bg-tertiary/30 hover:relative hover:z-10">
               <td className="px-3 py-1.5 text-text-muted text-xs font-mono">
                 {formatDate(trade.entry_time)}
                 <br />
@@ -82,12 +85,34 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
               <td className="px-3 py-1.5 text-right font-mono">
                 {trade.exit_price ? formatINR(trade.exit_price) : "—"}
               </td>
-              <td className={`px-3 py-1.5 text-right font-mono font-medium ${pnlColor(trade.pnl ?? 0)}`}>
+              <td className={`px-3 py-1.5 text-right font-mono font-medium ${pnlColor(
+                showNetPnL && trade.net_pnl != null ? trade.net_pnl : (trade.pnl ?? 0)
+              )}`}>
                 {trade.pnl != null ? (
-                  <>
-                    {formatINR(trade.pnl)}
-                    <div className="text-[10px]">{formatPercent(trade.pnl_percent ?? 0)}</div>
-                  </>
+                  <div className="flex items-center justify-end gap-0.5">
+                    <div>
+                      {formatINR(showNetPnL && trade.net_pnl != null ? trade.net_pnl : trade.pnl)}
+                      <div className="text-[10px]">{formatPercent(trade.pnl_percent ?? 0)}</div>
+                    </div>
+                    {showNetPnL && trade.charges_json && (
+                      <div className="relative group inline-block ml-1 cursor-help text-text-muted/40 text-[9px]">
+                        i
+                        <div className="absolute top-full right-0 z-50 hidden group-hover:block
+                                        bg-bg-elevated border border-border rounded p-2 text-[9px]
+                                        font-mono w-44 shadow-lg whitespace-nowrap text-text-secondary font-normal text-left mt-1">
+                          <div>Brokerage: {formatINR(trade.charges_json.brokerage)}</div>
+                          <div>STT: {formatINR(trade.charges_json.stt)}</div>
+                          <div>Exchange: {formatINR(trade.charges_json.exchange_txn)}</div>
+                          <div>GST: {formatINR(trade.charges_json.gst)}</div>
+                          <div>SEBI: {formatINR(trade.charges_json.sebi_charges)}</div>
+                          <div>Stamp: {formatINR(trade.charges_json.stamp_duty)}</div>
+                          <div className="border-t border-border/40 mt-1 pt-1 text-text-primary">
+                            Total: {formatINR(trade.charges_json.total)}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   "—"
                 )}

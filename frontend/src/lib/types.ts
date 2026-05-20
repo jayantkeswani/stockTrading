@@ -62,6 +62,16 @@ export interface Trade {
   source: "MANUAL" | "YOLO" | "SHADOW";
   pnl: number | null;
   pnl_percent: number | null;
+  charges_json: {
+    brokerage: number;
+    stt: number;
+    exchange_txn: number;
+    gst: number;
+    sebi_charges: number;
+    stamp_duty: number;
+    total: number;
+  } | null;
+  net_pnl: number | null;
   entry_time: string;
   exit_time: string | null;
   notes: string | null;
