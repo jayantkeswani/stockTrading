@@ -204,6 +204,57 @@ class TestShadowExecuteSignal:
         assert len(trades) == 1
 
     @pytest.mark.asyncio
+    @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
+    async def test_shadow_skips_when_open_shadow_exists(self, mock_deadline, mock_session_factory):
+        """An OPEN shadow trade for the same signal blocks a new shadow."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id)
+
+        session = AsyncMock()
+        added_objects = []
+        signal_result = MagicMock()
+        signal_result.scalar_one_or_none.return_value = signal
+        existing_trade = MagicMock()
+        existing_trade.scalar_one_or_none.return_value = uuid.uuid4()  # found an open shadow
+        session.execute = AsyncMock(side_effect=[signal_result, existing_trade])
+        session.add = lambda obj: added_objects.append(obj)
+        mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=session)
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        from app.agent.shadow_executor import shadow_execute_signal
+        await shadow_execute_signal(signal_id)
+
+        assert added_objects == []
+
+    @pytest.mark.asyncio
+    @patch("app.agent.shadow_executor.ws_manager")
+    @patch("app.agent.shadow_executor.get_live_price")
+    @patch("app.agent.shadow_executor.get_trading_config")
+    @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
+    async def test_shadow_creates_new_when_previous_closed(
+        self, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
+    ):
+        """A CLOSED shadow trade does not block — new shadow created on Case-2 re-fire."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id)
+
+        # Second execute (open-shadow check) returns None because the only
+        # shadow trade is CLOSED, so the OPEN filter excludes it.
+        session, added_objects = _mock_session(mock_session_factory, signal)
+        mock_cfg.return_value = _make_cfg()
+        mock_price.return_value = 185.0
+        mock_ws.broadcast = AsyncMock()
+
+        from app.agent.shadow_executor import shadow_execute_signal
+        await shadow_execute_signal(signal_id)
+
+        trades = [o for o in added_objects if type(o).__name__ == "Trade"]
+        assert len(trades) == 1
+        assert trades[0].source == TradeSource.SHADOW.value
+
+    @pytest.mark.asyncio
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
