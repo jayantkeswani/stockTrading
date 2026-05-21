@@ -5,7 +5,13 @@ old messages so stale commands aren't replayed. Ignores messages from any
 chat_id other than settings.telegram_chat_id (single-user safety gate).
 
 Commands supported:
-  /shadow  — today's shadow P&L summary (open + closed positions)
+  /status  — system snapshot (market, agent, feed, trades)
+  /market  — market overview (indices, VIX, global cues)
+  /pnl     — real trade P&L (MANUAL + YOLO)
+  /shadow  — shadow trade P&L
+  /yolo    — YOLO trade P&L
+  /signals — today's actionable signals
+  /help    — list all commands
 """
 
 import asyncio
@@ -45,12 +51,20 @@ async def _get_updates(offset: int, timeout: int = 30) -> list[dict]:
 
 
 async def _register_commands() -> None:
-    """Register /shadow in the Telegram command menu."""
+    """Register all commands in the Telegram command menu."""
     def _send():
         with httpx.Client(timeout=10) as client:
             client.post(
                 _api_url("setMyCommands"),
-                json={"commands": [{"command": "shadow", "description": "Today's shadow P&L report"}]},
+                json={"commands": [
+                    {"command": "status",  "description": "System snapshot"},
+                    {"command": "market",  "description": "Market overview"},
+                    {"command": "pnl",     "description": "Real trade P&L"},
+                    {"command": "shadow",  "description": "Shadow trade P&L"},
+                    {"command": "yolo",    "description": "YOLO trade P&L"},
+                    {"command": "signals", "description": "Today's signals"},
+                    {"command": "help",    "description": "List all commands"},
+                ]},
             )
     try:
         await asyncio.to_thread(_send)
