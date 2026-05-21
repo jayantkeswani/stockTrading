@@ -456,6 +456,12 @@ async def _roll_futures_position(
     original_trade = (await db.execute(select(Trade).where(Trade.id == pos.trade_id))).scalar_one_or_none()
     if original_trade:
         trade_kwargs["is_permanent_watchlist"] = original_trade.is_permanent_watchlist
+        trade_kwargs["signal_confidence"] = original_trade.signal_confidence
+        trade_kwargs["signal_ai_action"] = original_trade.signal_ai_action
+        trade_kwargs["signal_ai_summary"] = original_trade.signal_ai_summary
+        trade_kwargs["signal_instrument_type"] = original_trade.signal_instrument_type
+        trade_kwargs["signal_type"] = original_trade.signal_type
+        trade_kwargs["signal_snapshot"] = original_trade.signal_snapshot
     new_trade = Trade(**trade_kwargs)
     db.add(new_trade)
     await db.flush()

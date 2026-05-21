@@ -54,7 +54,7 @@ stockTrading/
 │   ├── app/
 │   │   ├── api/v1/        # REST endpoints (14 routers, incl. watchlist, strategies, tasks, research, options)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
-│   │   ├── models/        # SQLAlchemy ORM models (16 tables incl. market_data_daily, global_market_snapshots, trading_config; signals has ai_* columns + market snapshot fields (nifty_spot, nifty_day_change_pct, trigger_candle, minutes_since_open) + is_permanent_watchlist flag; trades has is_permanent_watchlist flag; trading_config has shadow_skip_permanent_watchlist + yolo_skip_permanent_watchlist toggles; signal_history archives Case-2 dedup snapshots)
+│   │   ├── models/        # SQLAlchemy ORM models (16 tables incl. market_data_daily, global_market_snapshots, trading_config; signals has ai_* columns + market snapshot fields (nifty_spot, nifty_day_change_pct, trigger_candle, minutes_since_open) + is_permanent_watchlist flag; trades has is_permanent_watchlist + signal_snapshot (JSONB) + 5 signal_* columns snapshotted at execution; trading_config has shadow_skip_permanent_watchlist + yolo_skip_permanent_watchlist toggles; signal_history archives Case-2 dedup snapshots)
 │   │   ├── schemas/       # Pydantic request/response schemas
 │   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill, strategy_params, morning_screener, agent_log)
 │   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)

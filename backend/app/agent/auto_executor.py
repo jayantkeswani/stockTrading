@@ -30,7 +30,7 @@ from app.core.utils import now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
 from app.models.signal import Signal
-from app.models.trade import Trade
+from app.models.trade import Trade, build_signal_snapshot
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -181,6 +181,12 @@ async def auto_execute_signal(signal_id) -> dict | None:
             entry_time=now,
             fyers_option_symbol=trading_symbol,
             is_permanent_watchlist=bool(signal.is_permanent_watchlist),
+            signal_confidence=signal.confidence,
+            signal_ai_action=signal.ai_action,
+            signal_ai_summary=signal.ai_summary,
+            signal_instrument_type=signal.instrument_type,
+            signal_type=signal.signal_type,
+            signal_snapshot=build_signal_snapshot(signal),
         )
         session.add(trade)
         await session.flush()  # Get trade.id

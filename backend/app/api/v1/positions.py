@@ -10,7 +10,6 @@ from app.core.enums import ExitReason, TradeStatus
 from app.core.redis import get_cached_price
 from app.core.utils import now_ist
 from app.models.position import Position
-from app.models.signal import Signal
 from app.models.trade import Trade
 from app.schemas.position import PositionCloseRequest, PositionResponse, PositionUpdateSLRequest
 from app.websocket.manager import ws_manager
@@ -18,10 +17,10 @@ from app.websocket.manager import ws_manager
 router = APIRouter()
 
 
-def _to_response(pos: Position, signal: Signal | None) -> PositionResponse:
+def _to_response(pos: Position, trade: Trade | None) -> PositionResponse:
     resp = PositionResponse.model_validate(pos)
-    if signal:
-        resp.signal_confidence = signal.confidence
+    if trade:
+        resp.signal_confidence = trade.signal_confidence
     return resp
 
 
@@ -31,9 +30,8 @@ async def list_positions(
     db: AsyncSession = Depends(get_db),
 ):
     query = (
-        select(Position, Signal)
+        select(Position, Trade)
         .outerjoin(Trade, Position.trade_id == Trade.id)
-        .outerjoin(Signal, Trade.signal_id == Signal.id)
         .order_by(Position.opened_at.desc())
     )
     if not include_shadow:
@@ -42,7 +40,7 @@ async def list_positions(
     rows = result.all()
 
     responses = []
-    for pos, signal in rows:
+    for pos, trade in rows:
         # Enrich with live prices from Redis cache
         price_symbol = pos.fyers_option_symbol or pos.symbol
         price_data = await get_cached_price(price_symbol)
@@ -53,7 +51,7 @@ async def list_positions(
                 is_short = pos.target_price is not None and pos.target_price < pos.entry_price
                 diff = (pos.entry_price - ltp) if is_short else (ltp - pos.entry_price)
                 pos.unrealized_pnl = diff * pos.quantity
-        responses.append(_to_response(pos, signal))
+        responses.append(_to_response(pos, trade))
 
     return responses
 

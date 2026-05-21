@@ -77,12 +77,31 @@ export interface Trade {
   exit_time: string | null;
   notes: string | null;
   created_at: string;
-  // Signal simulation fields (populated via JOIN when signal_id is linked)
+  // Signal snapshot — snapshotted on Trade at execution time
   signal_confidence: number | null;
   signal_ai_action: string | null;
   signal_ai_summary: string | null;
   signal_instrument_type: string | null;
   signal_type: string | null;
+  signal_snapshot: {
+    confidence?: number;
+    reason?: string;
+    indicators?: Record<string, unknown>;
+    ai_summary?: string;
+    ai_rationale?: string;
+    ai_adjustment?: number;
+    ai_action?: string;
+    generated_at?: string;
+    sizing_meta?: Record<string, unknown>;
+    entry_price?: number;
+    stop_loss?: number;
+    target_price?: number;
+    index_entry_price?: number;
+    instrument_type?: string;
+    signal_type?: string;
+    lots?: number;
+    quantity?: number;
+  } | null;
   signal_is_permanent_watchlist: boolean | null;
 }
 

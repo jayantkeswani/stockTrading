@@ -15,7 +15,7 @@ from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStat
 from app.core.utils import now_ist
 from app.models.position import Position
 from app.models.signal import Signal
-from app.models.trade import Trade
+from app.models.trade import Trade, build_signal_snapshot
 from app.models.signal_history import SignalHistory
 from app.schemas.signal import ExecuteSignalRequest, SignalHistoryResponse, SignalPreviewResponse, SignalResponse
 from app.websocket.manager import ws_manager
@@ -210,6 +210,12 @@ async def execute_signal(
         entry_time=now,
         fyers_option_symbol=trading_symbol,
         is_permanent_watchlist=bool(signal.is_permanent_watchlist),
+        signal_confidence=signal.confidence,
+        signal_ai_action=signal.ai_action,
+        signal_ai_summary=signal.ai_summary,
+        signal_instrument_type=signal.instrument_type,
+        signal_type=signal.signal_type,
+        signal_snapshot=build_signal_snapshot(signal),
     )
     db.add(trade)
     await db.flush()

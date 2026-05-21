@@ -20,7 +20,7 @@ from app.core.utils import is_past_close_deadline, now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
 from app.models.signal import Signal
-from app.models.trade import Trade
+from app.models.trade import Trade, build_signal_snapshot
 from app.services.live_price import get_live_price
 from app.services.position_sizing import calculate_lots
 from app.services.trading_config import get_trading_config
@@ -155,6 +155,12 @@ async def _do_shadow_execute(signal_id) -> None:
             entry_time=now,
             fyers_option_symbol=trading_symbol,
             is_permanent_watchlist=bool(signal.is_permanent_watchlist),
+            signal_confidence=signal.confidence,
+            signal_ai_action=signal.ai_action,
+            signal_ai_summary=signal.ai_summary,
+            signal_instrument_type=signal.instrument_type,
+            signal_type=signal.signal_type,
+            signal_snapshot=build_signal_snapshot(signal),
         )
         session.add(trade)
         await session.flush()
