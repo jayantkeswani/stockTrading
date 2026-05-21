@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.core.constants import IST
 from app.core.database import async_session_factory
 from app.core.redis import cache_price, publish_event
+from app.core.utils import is_market_open
 from app.models.market_data import MarketData1m
 from app.services.strategy_runner import strategy_runner
 from app.websocket.manager import ws_manager
@@ -229,6 +230,9 @@ class FeedManager:
     async def _run_auto_strategy_evaluation(self, symbol: str, candle_data: dict):
         """Trigger strategy evaluation only for auto-mode strategies that cover this symbol."""
         try:
+            if not is_market_open():
+                return
+
             # Index futures volume symbols (e.g. BANKNIFTY_FUT) must always
             # flow through on_candle_close so the strategy runner populates
             # its in-memory buffer — VWAP computation for index symbols
