@@ -8,6 +8,7 @@ Uses the Fyers SDK (FyersModel.history) which hits the correct
 https://api-t1.fyers.in/data/history endpoint.
 """
 
+import asyncio
 import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -219,7 +220,6 @@ async def _backfill_symbol(token: str, symbol: str, fyers_symbol: str, day: date
 
     Returns the number of candles inserted.
     """
-    import asyncio
 
     # SDK is synchronous — run in thread pool to avoid blocking the event loop
     candles = await asyncio.to_thread(
@@ -288,8 +288,6 @@ async def backfill_previous_day():
         prev_day, len(symbols),
     )
 
-    import asyncio
-
     total = 0
     fetched = 0
     for symbol, fyers_symbol in symbols.items():
@@ -348,8 +346,6 @@ async def backfill_today():
         MARKET_OPEN, now.strftime("%H:%M"), len(symbols),
     )
 
-    import asyncio as _asyncio
-
     total = 0
     skipped = 0
     fetched = 0
@@ -364,9 +360,9 @@ async def backfill_today():
             total += count
             fetched += 1
             if fetched % 5 == 0:
-                await _asyncio.sleep(1.0)
+                await asyncio.sleep(1.0)
             else:
-                await _asyncio.sleep(0.3)
+                await asyncio.sleep(0.3)
         except Exception:
             logger.exception("Failed to backfill today's candles for %s", symbol)
 
@@ -433,8 +429,6 @@ async def backfill_deep_history(days: int = 120) -> None:
         "Deep backfill: %d symbols need history (%d days from %s)",
         len(symbols_needing_backfill), days, start_date,
     )
-
-    import asyncio
 
     for sym, fyers_sym in symbols_needing_backfill:
         total_candles = 0

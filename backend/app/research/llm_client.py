@@ -62,13 +62,25 @@ class LLMClient(ABC):
         When response_schema is provided, the model constrains output to match
         the schema exactly (structured output). Falls back to extracting JSON
         from text when no schema is set.
+
+        Retries once on empty/unparseable response (Gemini intermittently
+        returns empty text with finish_reason=STOP).
         """
-        text = await self.generate(
-            prompt, system=system, json_mode=True, max_tokens=max_tokens,
-            response_schema=response_schema,
-        )
-        result = _extract_json(text)
-        return result if isinstance(result, dict) else {}
+        for attempt in range(2):
+            text = await self.generate(
+                prompt, system=system, json_mode=True, max_tokens=max_tokens,
+                response_schema=response_schema,
+            )
+            result = _extract_json(text)
+            if isinstance(result, dict) and result:
+                return result
+            if attempt == 0:
+                logger.warning(
+                    "generate_json empty result (attempt 1), retrying once — "
+                    "raw text: %.200s",
+                    text or "(empty)",
+                )
+        return {}
 
 
 class GeminiClient(LLMClient):
@@ -216,17 +228,24 @@ class GeminiClient(LLMClient):
         )
 
 
-def create_llm_client() -> LLMClient:
+def create_llm_client(pro: bool = False) -> LLMClient:
     """Factory: create the configured LLM client.
 
     GCP_PROJECT_ID set → Vertex AI (ADC via GCE metadata server).
     GOOGLE_API_KEY set → AI Studio (free tier, local dev).
+
+    pro=True uses the premium model (research_llm_model_pro) for
+    high-impact single calls (morning briefing, Stage 3 screener,
+    research synthesis).
     """
     from app.config import settings
 
     provider = getattr(settings, "research_llm_provider", "gemini")
     if provider == "gemini":
-        model = getattr(settings, "research_llm_model", "gemini-3.5-flash")
+        if pro:
+            model = getattr(settings, "research_llm_model_pro", "gemini-3.1-pro-preview")
+        else:
+            model = getattr(settings, "research_llm_model", "gemini-3.5-flash")
         project_id = getattr(settings, "gcp_project_id", "")
 
         if project_id:
@@ -289,7 +308,10 @@ def _extract_json(text: str) -> dict:
             except json.JSONDecodeError:
                 pass
 
-    logger.warning("Could not extract JSON from LLM response: %s...", text[:200])
+    logger.warning(
+        "Could not extract JSON from LLM response (len=%d): %.500s",
+        len(text), text or "(empty)",
+    )
     return {}
 
 

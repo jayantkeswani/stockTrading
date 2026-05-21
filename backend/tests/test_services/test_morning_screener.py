@@ -8,8 +8,11 @@ import pytest
 
 from app.indicators.candle_patterns import Candle
 from app.services.morning_screener import (
+    _BRIEFING_SCHEMA,
+    _STAGE3_CONFIDENCE_SCHEMA,
     _compute_stock_score,
     _compute_trade_stats,
+    _synthesize_briefing,
     get_agent_log,
     get_agent_status,
     get_morning_briefing,
@@ -294,3 +297,102 @@ class TestRedisReaders:
         mock_redis.set.assert_any_call(
             "strat5:agent_status:2026-04-27", "PAUSED", ex=90 * 86400
         )
+
+
+class TestBriefingSchema:
+    """Validate the briefing schema structure matches what the prompt expects."""
+
+    def test_required_fields(self):
+        assert set(_BRIEFING_SCHEMA["required"]) == {
+            "approach", "summary", "max_lots_recommendation",
+        }
+
+    def test_approach_enum(self):
+        approach = _BRIEFING_SCHEMA["properties"]["approach"]
+        assert set(approach["enum"]) == {"aggressive", "normal", "conservative"}
+
+    def test_array_fields(self):
+        assert _BRIEFING_SCHEMA["properties"]["setup_priority"]["type"] == "array"
+        assert _BRIEFING_SCHEMA["properties"]["flags"]["type"] == "array"
+
+
+class TestStage3ConfidenceSchema:
+    """Validate the Stage 3 confidence schema structure."""
+
+    def test_required_fields(self):
+        assert set(_STAGE3_CONFIDENCE_SCHEMA["required"]) == {
+            "ratings", "correlated_groups",
+        }
+
+    def test_ratings_array_items(self):
+        ratings = _STAGE3_CONFIDENCE_SCHEMA["properties"]["ratings"]
+        assert ratings["type"] == "array"
+        per_stock = ratings["items"]
+        assert set(per_stock["required"]) == {"symbol", "confidence", "reason"}
+        assert set(per_stock["properties"]["confidence"]["enum"]) == {
+            "HIGH", "MEDIUM", "LOW",
+        }
+
+    def test_correlated_groups_shape(self):
+        groups = _STAGE3_CONFIDENCE_SCHEMA["properties"]["correlated_groups"]
+        item = groups["items"]
+        assert set(item["required"]) == {"symbols", "sector", "keep"}
+
+
+class TestSynthesizeBriefing:
+    """Tests for _synthesize_briefing LLM call parameters."""
+
+    @pytest.mark.asyncio
+    async def test_passes_schema_and_max_tokens(self):
+        """Verify response_schema and max_tokens=4096 are passed to generate_json."""
+        mock_llm = AsyncMock()
+        mock_llm.generate_json = AsyncMock(return_value={
+            "approach": "normal",
+            "summary": "VIX stable at 15.2, net +5K yesterday.",
+            "sector_bias": "METALS",
+            "sector_avoid": "none",
+            "setup_priority": ["ORB"],
+            "flags": [],
+            "max_lots_recommendation": 2,
+        })
+
+        data = {
+            "yesterday": {"trades": 3, "pnl": 5000},
+            "recent_5d": {"trades": 12, "pnl": 8000},
+        }
+
+        result = await _synthesize_briefing(mock_llm, data)
+
+        assert result["approach"] == "normal"
+        assert result["summary"] == "VIX stable at 15.2, net +5K yesterday."
+
+        call_kwargs = mock_llm.generate_json.call_args[1]
+        assert call_kwargs["max_tokens"] == 4096
+        assert call_kwargs["response_schema"] is _BRIEFING_SCHEMA
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_empty_summary(self):
+        """When LLM returns empty summary, fallback text is used."""
+        mock_llm = AsyncMock()
+        mock_llm.generate_json = AsyncMock(return_value={
+            "approach": "aggressive",
+        })
+
+        data = {"yesterday": {}, "recent_5d": {}}
+        result = await _synthesize_briefing(mock_llm, data)
+
+        assert result["summary"] == "No briefing available."
+        assert result["approach"] == "aggressive"
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_exception(self):
+        """When generate_json raises, hardcoded fallback is returned."""
+        mock_llm = AsyncMock()
+        mock_llm.generate_json = AsyncMock(side_effect=RuntimeError("Gemini down"))
+
+        data = {"yesterday": {}, "recent_5d": {}, "consecutive_losses": 4}
+        result = await _synthesize_briefing(mock_llm, data)
+
+        assert result["approach"] == "conservative"
+        assert "llm_unavailable" in result["flags"]
+        assert result["max_lots_recommendation"] == 1

@@ -42,6 +42,51 @@ MIN_COMPOSITE_SCORE = 50
 TOP_N_FOR_NEWS = 25
 TOP_N_FOR_CONFIDENCE = 20
 
+_BRIEFING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "approach": {"type": "string", "enum": ["aggressive", "normal", "conservative"]},
+        "summary": {"type": "string"},
+        "sector_bias": {"type": "string"},
+        "sector_avoid": {"type": "string"},
+        "setup_priority": {"type": "array", "items": {"type": "string"}},
+        "flags": {"type": "array", "items": {"type": "string"}},
+        "max_lots_recommendation": {"type": "integer"},
+    },
+    "required": ["approach", "summary", "max_lots_recommendation"],
+}
+
+_STAGE3_CONFIDENCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ratings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "confidence": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+                    "reason": {"type": "string"},
+                },
+                "required": ["symbol", "confidence", "reason"],
+            },
+        },
+        "correlated_groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "symbols": {"type": "array", "items": {"type": "string"}},
+                    "sector": {"type": "string"},
+                    "keep": {"type": "string"},
+                },
+                "required": ["symbols", "sector", "keep"],
+            },
+        },
+    },
+    "required": ["ratings", "correlated_groups"],
+}
+
 
 # ---------------------------------------------------------------------------
 # Morning Briefing
@@ -68,7 +113,7 @@ async def run_morning_briefing(as_of: date | None = None, force: bool = False) -
 
     data = await _gather_briefing_data(today)
 
-    llm = create_llm_client()
+    llm = create_llm_client(pro=True)
     briefing = await _synthesize_briefing(llm, data)
     briefing["date"] = str(today)
     briefing["generated_at"] = time.time()
@@ -380,7 +425,10 @@ Respond in JSON:
 }}"""
 
     try:
-        result = await llm.generate_json(prompt=prompt, system=system, max_tokens=2048)
+        result = await llm.generate_json(
+            prompt=prompt, system=system, max_tokens=4096,
+            response_schema=_BRIEFING_SCHEMA,
+        )
         result.setdefault("approach", "normal")
         result.setdefault("flags", [])
         result.setdefault("max_lots_recommendation", 1 if data.get("consecutive_losses", 0) >= 3 else 2)
@@ -937,7 +985,7 @@ async def _stage3_llm_confidence(candidates: list[dict]) -> list[dict]:
         _get_confidence_trade_history([c["symbol"] for c in candidates]),
     )
 
-    llm = create_llm_client()
+    llm = create_llm_client(pro=True)
     system = (
         "You are a senior quantitative analyst reviewing stock candidates for "
         "intraday futures trading on NSE India.\n\n"
@@ -1015,10 +1063,10 @@ Rate EVERY candidate. Every reason must be non-empty (1 sentence).
 
 Respond in JSON:
 {{
-    "ratings": {{
-        "SYMBOL": {{"confidence": "HIGH" | "MEDIUM" | "LOW", "reason": "<1 sentence>"}},
+    "ratings": [
+        {{"symbol": "SYMBOL", "confidence": "HIGH" | "MEDIUM" | "LOW", "reason": "<1 sentence>"}},
         ...
-    }},
+    ],
     "correlated_groups": [
         {{"symbols": ["SYM1", "SYM2"], "sector": "BANKING", "keep": "SYM1"}}
     ]
@@ -1026,10 +1074,17 @@ Respond in JSON:
 
     try:
         result = await asyncio.wait_for(
-            llm.generate_json(prompt=prompt, system=system, max_tokens=8192),
+            llm.generate_json(
+                prompt=prompt, system=system, max_tokens=8192,
+                response_schema=_STAGE3_CONFIDENCE_SCHEMA,
+            ),
             timeout=60,
         )
-        ratings = result.get("ratings", {})
+        ratings_raw = result.get("ratings", [])
+        if isinstance(ratings_raw, list):
+            ratings = {r["symbol"]: r for r in ratings_raw if "symbol" in r}
+        else:
+            ratings = ratings_raw
         correlated_groups = result.get("correlated_groups", [])
     except Exception as e:
         logger.warning("LLM confidence check failed: %s — keeping all candidates", e)

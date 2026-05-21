@@ -208,3 +208,36 @@ class TestCreateLlmClient:
             client = create_llm_client()
             assert client._project_id == "stock-trading-prod"
             assert client._api_key == ""
+
+    def test_pro_mode_uses_pro_model(self):
+        from unittest.mock import patch, MagicMock
+
+        mock_settings = MagicMock()
+        mock_settings.research_llm_provider = "gemini"
+        mock_settings.gcp_project_id = ""
+        mock_settings.google_api_key = "test-key"
+        mock_settings.research_llm_model = "gemini-3.5-flash"
+        mock_settings.research_llm_model_pro = "gemini-3.1-pro-preview"
+        mock_settings.vertex_ai_location = "global"
+
+        with patch("app.config.settings", mock_settings):
+            from app.research.llm_client import create_llm_client, GeminiClient
+            client = create_llm_client(pro=True)
+            assert isinstance(client, GeminiClient)
+            assert client._model_name == "gemini-3.1-pro-preview"
+
+    def test_default_mode_uses_flash_model(self):
+        from unittest.mock import patch, MagicMock
+
+        mock_settings = MagicMock()
+        mock_settings.research_llm_provider = "gemini"
+        mock_settings.gcp_project_id = ""
+        mock_settings.google_api_key = "test-key"
+        mock_settings.research_llm_model = "gemini-3.5-flash"
+        mock_settings.research_llm_model_pro = "gemini-3.1-pro-preview"
+        mock_settings.vertex_ai_location = "global"
+
+        with patch("app.config.settings", mock_settings):
+            from app.research.llm_client import create_llm_client, GeminiClient
+            client = create_llm_client()
+            assert client._model_name == "gemini-3.5-flash"

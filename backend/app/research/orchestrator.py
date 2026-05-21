@@ -152,7 +152,8 @@ async def _run_research(symbol: str, report_id: uuid.UUID) -> None:
     })
 
     try:
-        synthesis = await synthesize_report(ctx, agent_results, llm)
+        pro_llm = create_llm_client(pro=True)
+        synthesis = await synthesize_report(ctx, agent_results, pro_llm)
     except Exception as e:
         logger.error("Synthesis failed for %s: %s", symbol, e)
         completed_count = sum(1 for r in agent_results.values() if r.status == "completed")

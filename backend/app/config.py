@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     vertex_ai_location: str = "global"
     research_llm_provider: str = "gemini"
     research_llm_model: str = "gemini-3.5-flash"
+    research_llm_model_pro: str = "gemini-3.1-pro-preview"
     research_agent_timeout_seconds: int = 90
     research_max_concurrent: int = 3
 
