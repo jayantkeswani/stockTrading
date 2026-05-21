@@ -107,6 +107,10 @@ interface AppState {
   showNetPnL: boolean;
   setShowNetPnL: (v: boolean) => void;
 
+  // Trades page open trades toggle (persisted)
+  tradesShowOpen: boolean;
+  setTradesShowOpen: (v: boolean) => void;
+
   // Trades page filters (persisted across navigation)
   tradesPeriodLabel: string;
   tradesPeriodStart: string;
@@ -344,6 +348,8 @@ export const useStore = create<AppState>()(
       tradesStrategy: "",
       showNetPnL: false,
       setShowNetPnL: (v) => set({ showNetPnL: v }),
+      tradesShowOpen: false,
+      setTradesShowOpen: (v) => set({ tradesShowOpen: v }),
       tradesSimOpen: false,
       tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null },
       setTradesPeriod: (label, start, end) => set({ tradesPeriodLabel: label, tradesPeriodStart: start.toISOString(), tradesPeriodEnd: end.toISOString() }),
@@ -385,6 +391,7 @@ export const useStore = create<AppState>()(
         activeTimeframe: state.activeTimeframe,
         positionViewMode: state.positionViewMode,
         showNetPnL: state.showNetPnL,
+        tradesShowOpen: state.tradesShowOpen,
         tradesPeriodLabel: state.tradesPeriodLabel,
         tradesPeriodStart: state.tradesPeriodStart,
         tradesPeriodEnd: state.tradesPeriodEnd,
