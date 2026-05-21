@@ -38,6 +38,7 @@ export default function AgentPage() {
   const [strategyFilter, setStrategyFilter] = useState<string>("");
   const [symbolQuery, setSymbolQuery] = useState<string>("");
   const [pendingOnly, setPendingOnly] = useState(false);
+  const [shadowFilter, setShadowFilter] = useState<"all" | "real" | "shadow">("all");
 
   useEffect(() => {
     async function loadStatus() {
@@ -77,6 +78,7 @@ export default function AgentPage() {
     setStrategyFilter("");
     setSymbolQuery("");
     setPendingOnly(false);
+    setShadowFilter("all");
   }, [period]);
 
   const actionTypes = useMemo(() => {
@@ -101,9 +103,12 @@ export default function AgentPage() {
       if (strategyFilter && (l.details?.strategy_name as string | undefined) !== strategyFilter) return false;
       if (q && !String(l.details?.symbol ?? "").toUpperCase().includes(q)) return false;
       if (pendingOnly && l.confirmation_status !== "PENDING") return false;
+      const isShadow = l.action_type === "SHADOW_EXECUTED" || l.details?.is_shadow === true;
+      if (shadowFilter === "shadow" && !isShadow) return false;
+      if (shadowFilter === "real" && isShadow) return false;
       return true;
     });
-  }, [logs, actionFilter, strategyFilter, symbolQuery, pendingOnly]);
+  }, [logs, actionFilter, strategyFilter, symbolQuery, pendingOnly, shadowFilter]);
 
   const handleToggle = async () => {
     try {
@@ -148,7 +153,7 @@ export default function AgentPage() {
     }
   };
 
-  const hasActiveFilters = actionFilter || strategyFilter || symbolQuery.trim() || pendingOnly;
+  const hasActiveFilters = actionFilter || strategyFilter || symbolQuery.trim() || pendingOnly || shadowFilter !== "all";
 
   return (
     <div className="space-y-2">
@@ -318,6 +323,34 @@ export default function AgentPage() {
               ))}
             </div>
           )}
+
+          {/* Shadow / Real filter */}
+          <div className="flex items-center rounded border border-border overflow-hidden text-[10px] font-mono">
+            <button
+              onClick={() => setShadowFilter("all")}
+              className={`px-1.5 py-0.5 transition-colors ${
+                shadowFilter === "all" ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"
+              }`}
+            >
+              All
+            </button>
+            <button
+              onClick={() => setShadowFilter("real")}
+              className={`px-1.5 py-0.5 border-l border-border transition-colors ${
+                shadowFilter === "real" ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"
+              }`}
+            >
+              Real
+            </button>
+            <button
+              onClick={() => setShadowFilter("shadow")}
+              className={`px-1.5 py-0.5 border-l border-border transition-colors ${
+                shadowFilter === "shadow" ? "bg-purple-500/15 text-purple-400" : "text-text-muted hover:text-text-secondary"
+              }`}
+            >
+              Shadow
+            </button>
+          </div>
 
           {/* Symbol search */}
           <input
