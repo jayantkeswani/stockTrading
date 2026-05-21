@@ -111,6 +111,10 @@ interface AppState {
   tradesShowOpen: boolean;
   setTradesShowOpen: (v: boolean) => void;
 
+  // Trades page exclude pinned toggle (persisted)
+  tradesExcludePinned: boolean;
+  setTradesExcludePinned: (v: boolean) => void;
+
   // Trades page filters (persisted across navigation)
   tradesPeriodLabel: string;
   tradesPeriodStart: string;
@@ -350,6 +354,8 @@ export const useStore = create<AppState>()(
       setShowNetPnL: (v) => set({ showNetPnL: v }),
       tradesShowOpen: false,
       setTradesShowOpen: (v) => set({ tradesShowOpen: v }),
+      tradesExcludePinned: false,
+      setTradesExcludePinned: (v) => set({ tradesExcludePinned: v }),
       tradesSimOpen: false,
       tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null },
       setTradesPeriod: (label, start, end) => set({ tradesPeriodLabel: label, tradesPeriodStart: start.toISOString(), tradesPeriodEnd: end.toISOString() }),
@@ -392,6 +398,7 @@ export const useStore = create<AppState>()(
         positionViewMode: state.positionViewMode,
         showNetPnL: state.showNetPnL,
         tradesShowOpen: state.tradesShowOpen,
+        tradesExcludePinned: state.tradesExcludePinned,
         tradesPeriodLabel: state.tradesPeriodLabel,
         tradesPeriodStart: state.tradesPeriodStart,
         tradesPeriodEnd: state.tradesPeriodEnd,

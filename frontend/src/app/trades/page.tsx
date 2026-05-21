@@ -83,12 +83,12 @@ export default function TradesPage() {
     tradesSim, setTradesSim, resetTradesSim,
     showNetPnL, setShowNetPnL,
     tradesShowOpen, setTradesShowOpen,
+    tradesExcludePinned, setTradesExcludePinned,
   } = useStore();
 
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [excludePinned, setExcludePinned] = useState(false);
 
   const mode = positionViewMode === "SHADOW" ? "SHADOW" : "REAL";
   const sim = tradesSim;
@@ -116,7 +116,7 @@ export default function TradesPage() {
           source: mode === "SHADOW" ? "SHADOW" : undefined,
           strategy: tradesStrategy || undefined,
           status: tradesShowOpen ? undefined : "CLOSED",
-          exclude_permanent: excludePinned || undefined,
+          exclude_permanent: tradesExcludePinned || undefined,
           ...(simOpen
             ? {
                 min_confidence: sim.min_confidence > 0 ? sim.min_confidence : undefined,
@@ -135,7 +135,7 @@ export default function TradesPage() {
     load();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period.start, period.end, mode, tradesStrategy, tradesShowOpen, excludePinned, simOpen, sim.min_confidence, sim.ai_action, sim.instrument_type]);
+  }, [period.start, period.end, mode, tradesStrategy, tradesShowOpen, tradesExcludePinned, simOpen, sim.min_confidence, sim.ai_action, sim.instrument_type]);
 
   const filteredTrades = useMemo(() => {
     if (!simOpen || sim.signal_types.length === 0) return trades;
@@ -232,9 +232,9 @@ export default function TradesPage() {
           </button>
           {/* Exclude Pinned toggle */}
           <button
-            onClick={() => setExcludePinned(!excludePinned)}
+            onClick={() => setTradesExcludePinned(!tradesExcludePinned)}
             className={`px-2 py-1 rounded border text-[10px] font-mono transition-colors ${
-              excludePinned
+              tradesExcludePinned
                 ? "border-accent/50 bg-accent/10 text-accent"
                 : "border-border text-text-muted hover:text-text-secondary"
             }`}
