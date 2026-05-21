@@ -172,7 +172,7 @@ class TestEvaluateManual:
     @patch("app.services.strategy_runner.strategy_runner._handle_signal", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.get_trading_config", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.get_strategy_params", new_callable=AsyncMock, return_value={})
-    @patch("app.services.strategy_runner.strategy_runner._check_global_risk_limits", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._check_regulatory_limits", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._build_market_context", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._load_todays_candles", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._get_current_price", new_callable=AsyncMock)
@@ -222,7 +222,7 @@ class TestEvaluateManual:
 
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.get_strategy_params", new_callable=AsyncMock, return_value={})
-    @patch("app.services.strategy_runner.strategy_runner._check_global_risk_limits", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._check_regulatory_limits", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._build_market_context", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._load_todays_candles", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._get_current_price", new_callable=AsyncMock)
@@ -245,7 +245,7 @@ class TestEvaluateManual:
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.strategy_runner._handle_signal", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.get_strategy_params", new_callable=AsyncMock, return_value={})
-    @patch("app.services.strategy_runner.strategy_runner._check_global_risk_limits", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._check_regulatory_limits", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._build_market_context", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._load_todays_candles", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._get_current_price", new_callable=AsyncMock)
@@ -272,7 +272,7 @@ class TestEvaluateManual:
 
     @pytest.mark.asyncio
     @patch("app.services.strategy_runner.strategy_runner._build_market_context", new_callable=AsyncMock)
-    @patch("app.services.strategy_runner.strategy_runner._check_global_risk_limits", new_callable=AsyncMock)
+    @patch("app.services.strategy_runner.strategy_runner._check_regulatory_limits", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._load_todays_candles", new_callable=AsyncMock)
     @patch("app.services.strategy_runner.strategy_runner._get_current_price", new_callable=AsyncMock)
     async def test_returns_none_when_no_market_context(

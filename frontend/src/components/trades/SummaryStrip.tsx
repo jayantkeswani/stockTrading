@@ -7,6 +7,7 @@ interface Props {
   trades: Trade[];
   dailyPnL: Map<string, number>;
   showNetPnL?: boolean;
+  peakMargin?: number;
 }
 
 function tradePnl(t: Trade, showNet: boolean): number {
@@ -14,7 +15,7 @@ function tradePnl(t: Trade, showNet: boolean): number {
   return Number(t.pnl);
 }
 
-export function SummaryStrip({ trades, dailyPnL, showNetPnL = false }: Props) {
+export function SummaryStrip({ trades, dailyPnL, showNetPnL = false, peakMargin }: Props) {
   const closed = trades.filter((t) => t.status === "CLOSED" && t.pnl != null);
   const openCount = trades.filter((t) => t.status === "OPEN").length;
   const totalPnl = closed.reduce((s, t) => s + tradePnl(t, showNetPnL), 0);
@@ -101,6 +102,18 @@ export function SummaryStrip({ trades, dailyPnL, showNetPnL = false }: Props) {
           {profitFactor}
         </span>
       </div>
+
+      {peakMargin != null && peakMargin > 0 && (
+        <>
+          <div className="w-px h-4 bg-border" />
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-text-muted font-mono uppercase tracking-wider">Peak Margin</span>
+            <span className="text-xs font-mono font-medium text-accent">
+              {formatINR(peakMargin)}
+            </span>
+          </div>
+        </>
+      )}
 
       {closed.length === 0 && trades.length === 0 && (
         <span className="text-xs font-mono text-text-muted ml-auto">no trades in this period</span>

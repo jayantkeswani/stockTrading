@@ -19,15 +19,12 @@ def build_signal_snapshot(signal) -> dict:
         "ai_adjustment": float(signal.ai_adjustment) if signal.ai_adjustment else None,
         "ai_action": signal.ai_action,
         "generated_at": signal.generated_at.isoformat() if signal.generated_at else None,
-        "sizing_meta": signal.sizing_meta,
         "entry_price": float(signal.entry_price) if signal.entry_price else None,
         "stop_loss": float(signal.stop_loss) if signal.stop_loss else None,
         "target_price": float(signal.target_price) if signal.target_price else None,
         "index_entry_price": float(signal.index_entry_price) if signal.index_entry_price else None,
         "instrument_type": signal.instrument_type,
         "signal_type": signal.signal_type,
-        "lots": signal.lots,
-        "quantity": signal.quantity,
     }
 
 
@@ -64,6 +61,7 @@ class Trade(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="MANUAL")
     charges_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     net_pnl: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    margin_required: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     is_permanent_watchlist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     signal_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     signal_ai_action: Mapped[str | None] = mapped_column(String(30), nullable=True)

@@ -230,15 +230,6 @@ function SignalCard({
   const indexEntry =
     signal.index_entry_price != null ? Number(signal.index_entry_price) : null;
 
-  const lotsLabel =
-    signal.lots != null && signal.lots > 0
-      ? `${signal.lots}L`
-      : null;
-  const qtyLabel =
-    signal.quantity != null && signal.quantity > 0
-      ? `(${signal.quantity})`
-      : null;
-
   const handleWatchlist = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (watchlistStatus !== "idle") return;
@@ -425,12 +416,6 @@ function SignalCard({
           title={signal.executable ? undefined : `Manual override — ${signal.blocked_reason || "not executable"}`}
         >
           EXEC
-          {lotsLabel && (
-            <span className={`ml-1 text-[10px] ${signal.executable ? "text-profit/70" : "text-warning/70"}`}>
-              {lotsLabel}
-              {qtyLabel && ` ${qtyLabel}`}
-            </span>
-          )}
         </button>
         {!signal.executable && signal.blocked_reason && (
           <span className="text-[9px] font-mono text-warning/70 italic">

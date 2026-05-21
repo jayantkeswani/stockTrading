@@ -149,8 +149,47 @@ CANSLIM_MIN_TOTAL_SCORE = 60.0  # Minimum composite score to qualify
 
 # Stock futures
 STOCK_FUTURES_EXPIRY_DOW = 3     # Thursday (last Thursday of month for NSE stock futures)
-FUTURES_MARGIN_PCT = 0.18        # ~18% of contract value (SPAN + exposure)
+FUTURES_MARGIN_PCT = 0.18        # ~18% of contract value (SPAN + exposure) — legacy default
 FUTURES_EXPIRY_ROLL_DAYS = 3     # Alert 3 days before futures expiry
+
+# ---------------------------------------------------------------------------
+# Margin Tiers: SPAN + Exposure as % of contract value
+# ---------------------------------------------------------------------------
+# Based on observed Zerodha/NSE margins as of May 2026.
+# Large-cap Nifty50: ~14-20%, Large-cap volatile (IT/pharma): ~20-27%,
+# Mid-cap F&O: ~25-35%. Index options: margin = premium (no leverage).
+MARGIN_TIER_DEFAULT = 0.20
+
+MARGIN_TIER_MAP: dict[str, float] = {
+    # Nifty50 large-cap stable (~15-18%)
+    "RELIANCE": 0.18, "HDFCBANK": 0.16, "ICICIBANK": 0.17,
+    "INFY": 0.20, "SBIN": 0.18, "BHARTIARTL": 0.17,
+    "ITC": 0.16, "KOTAKBANK": 0.17, "LT": 0.18,
+    "AXISBANK": 0.18, "HINDUNILVR": 0.17, "BAJFINANCE": 0.20,
+    "MARUTI": 0.18, "TITAN": 0.19, "SUNPHARMA": 0.20,
+    "TATAMOTORS": 0.20, "M&M": 0.18, "NTPC": 0.17,
+    "POWERGRID": 0.16, "ONGC": 0.18, "ULTRACEMCO": 0.19,
+    "WIPRO": 0.19, "NESTLEIND": 0.18, "JSWSTEEL": 0.20,
+    "TATASTEEL": 0.20, "ADANIENT": 0.25, "ADANIPORTS": 0.22,
+    "BAJAJFINSV": 0.19, "HCLTECH": 0.19, "TECHM": 0.20,
+    "INDUSINDBK": 0.20, "CIPLA": 0.19, "APOLLOHOSP": 0.20,
+    "DRREDDY": 0.19, "EICHERMOT": 0.19, "GRASIM": 0.19,
+    "COALINDIA": 0.17, "BPCL": 0.19, "DIVISLAB": 0.20,
+    "HEROMOTOCO": 0.19, "BRITANNIA": 0.18, "SHRIRAMFIN": 0.20,
+    "TRENT": 0.22, "BAJAJ-AUTO": 0.18, "HINDALCO": 0.20,
+    "ASIANPAINT": 0.19,
+    # Large-cap volatile (~20-27%)
+    "TCS": 0.27, "HDFC": 0.20,
+    # Common F&O mid-caps (~25-35%)
+    "VEDL": 0.28, "BANKBARODA": 0.25, "PNB": 0.28,
+    "IDFCFIRSTB": 0.30, "SAIL": 0.28, "NATIONALUM": 0.30,
+    "NMDC": 0.28, "RECLTD": 0.25, "PFC": 0.25,
+    "BHEL": 0.28, "IRCTC": 0.25, "ZOMATO": 0.28,
+    "IDEA": 0.35, "DELTACORP": 0.35,
+    # Index options: margin = premium (no leverage)
+    "NIFTY": 1.0, "BANKNIFTY": 1.0, "FINNIFTY": 1.0,
+    "SENSEX": 1.0, "MIDCPNIFTY": 1.0,
+}
 
 # ---------------------------------------------------------------------------
 # NSE Trading Holidays

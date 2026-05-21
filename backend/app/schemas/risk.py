@@ -11,7 +11,9 @@ class RiskDashboardResponse(BaseModel):
     max_daily_drawdown_pct: float
     trades_today: int
     max_trades_per_day: int
-    capital_at_risk: Decimal
+    notional: Decimal
+    risk: Decimal
+    margin_utilized: Decimal
     is_halted: bool
     positions_open: int
 

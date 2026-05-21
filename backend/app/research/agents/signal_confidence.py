@@ -302,7 +302,6 @@ def _build_context_json(
             "index_sl": float(index_sl) if index_sl else None,
             "index_target": float(index_target) if index_target else None,
             "rr_ratio": rr_ratio,
-            "lots": signal.lots,
         },
         "intraday_bias": bias_info,
         "vwap": {

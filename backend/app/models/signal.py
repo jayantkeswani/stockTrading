@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, Index, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Index, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,9 +35,6 @@ class Signal(Base, TimestampMixin):
     fyers_option_symbol: Mapped[str | None] = mapped_column(String(60), nullable=True)
     fyers_futures_symbol: Mapped[str | None] = mapped_column(String(60), nullable=True)
     executed_trade_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    lots: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    sizing_meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

@@ -9,7 +9,6 @@ from datetime import time
 
 from app.core.constants import (
     CANSLIM_BREAKOUT_VOLUME_MULTIPLIER,
-    CANSLIM_MAX_POSITIONAL_LOTS,
     CANSLIM_MAX_VIX,
     CANSLIM_MIN_TOTAL_SCORE,
     CANSLIM_SL_PCT,
@@ -47,7 +46,6 @@ CANSLIM_DEFAULTS: dict = {
     "min_total_score": CANSLIM_MIN_TOTAL_SCORE,
     "max_vix": CANSLIM_MAX_VIX,
     "breakout_volume_multiplier": CANSLIM_BREAKOUT_VOLUME_MULTIPLIER,
-    "max_positional_lots": CANSLIM_MAX_POSITIONAL_LOTS,
     "trailing_sl_activation_pct": CANSLIM_TRAILING_SL_ACTIVATION_PCT,
 }
 
@@ -55,9 +53,6 @@ INTRADAY_FUTURES_DEFAULTS: dict = {
     "trailing_sl_enabled": True,
     "trailing_sl_breakeven_pct": 0.5,
     "trailing_sl_trail_pct": 0.3,
-    "max_daily_drawdown_pct": 3.0,
-    "max_simultaneous_positions": 3,
-    "max_trades_per_day": 5,
     "rvol_threshold": 1.5,
     "rvol_caution_zone_threshold": 2.5,
     "enabled_setups": ["ORB", "VWAP_BOUNCE", "PDH_PDL", "GAP_CONTINUATION"],

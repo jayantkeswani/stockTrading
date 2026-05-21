@@ -26,6 +26,7 @@ class PositionResponse(BaseModel):
     position_type: str = "INTRADAY"
     opened_at: datetime
     signal_confidence: Decimal | None = None
+    margin_required: Decimal | None = None
 
     model_config = {"from_attributes": True}
 

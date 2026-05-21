@@ -408,9 +408,7 @@ class IntradayFuturesStrategy(BaseStrategy):
             self._skip(ctx.symbol, f"R:R insufficient ({direction})")
             return None
 
-        # Cross-position soft checks
-        risk_warnings = self._check_cross_position_risks(ctx, params)
-        risk_warnings.extend(risk_warnings_trend)
+        risk_warnings = list(risk_warnings_trend)
 
         # Enhanced ORB: breakout also crosses PDH (long) or PDL (short)
         enhanced_orb = False
@@ -432,8 +430,6 @@ class IntradayFuturesStrategy(BaseStrategy):
             "enhanced_orb": enhanced_orb,
         }
 
-        # Position sizing
-        lots = self._compute_lots(rvol, params, indicators)
         if ctx.vwap:
             indicators["vwap"] = round(ctx.vwap.vwap, 2)
 
@@ -454,7 +450,6 @@ class IntradayFuturesStrategy(BaseStrategy):
             confidence=confidence,
             reason=f"ORB {'breakout above' if is_long else 'breakdown below'} {orb_high if is_long else orb_low:.2f}",
             indicators=indicators,
-            lots=lots,
         )
 
     def _check_vwap_bounce(
@@ -538,7 +533,6 @@ class IntradayFuturesStrategy(BaseStrategy):
         if risk_warnings_trend:
             indicators["risk_warnings"] = risk_warnings_trend
 
-        lots = self._compute_lots(rvol, params, indicators)
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "VWAP_BOUNCE", rvol, breakout_vol, is_long=is_long, indicators=indicators)
         self._build_indicator_snapshot(ctx, params, indicators)
@@ -556,7 +550,6 @@ class IntradayFuturesStrategy(BaseStrategy):
             confidence=confidence,
             reason=f"VWAP Bounce {'bullish' if is_long else 'bearish'} reversal at {vwap_price:.2f}",
             indicators=indicators,
-            lots=lots,
         )
 
     def _check_pdh_pdl_breakout(
@@ -660,7 +653,6 @@ class IntradayFuturesStrategy(BaseStrategy):
         if risk_warnings_trend:
             indicators["risk_warnings"] = risk_warnings_trend
 
-        lots = self._compute_lots(rvol, params, indicators)
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "PDH_PDL", rvol, breakout_vol, is_long=is_long, indicators=indicators)
         self._build_indicator_snapshot(ctx, params, indicators)
@@ -678,7 +670,6 @@ class IntradayFuturesStrategy(BaseStrategy):
             confidence=confidence,
             reason=f"{'PDH' if is_long else 'PDL'} {'breakout' if is_long else 'breakdown'} at {pdh if is_long else pdl:.2f}",
             indicators=indicators,
-            lots=lots,
         )
 
     def _check_gap_continuation(
@@ -762,7 +753,6 @@ class IntradayFuturesStrategy(BaseStrategy):
         if risk_warnings_trend:
             indicators["risk_warnings"] = risk_warnings_trend
 
-        lots = self._compute_lots(rvol, params, indicators)
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "GAP_CONTINUATION", rvol, breakout_vol, is_long=is_long, indicators=indicators)
         self._build_indicator_snapshot(ctx, params, indicators)
@@ -780,7 +770,6 @@ class IntradayFuturesStrategy(BaseStrategy):
             confidence=confidence,
             reason=f"Gap {gap['direction']} continuation ({gap['gap_pct']:.1f}%) from {gap['gap_level']:.2f}",
             indicators=indicators,
-            lots=lots,
         )
 
     def _get_current_rvol(self, ctx: MarketContext) -> float | None:
@@ -805,25 +794,6 @@ class IntradayFuturesStrategy(BaseStrategy):
 
         bucket_avg = rvol_profile.get(str(bucket_idx), 0.0)
         return compute_rvol(current_vol, bucket_avg)
-
-    def _check_cross_position_risks(self, ctx: MarketContext, params: dict) -> list[str]:
-        """Soft enforcement: flag but don't suppress signals."""
-        warnings: list[str] = []
-        # Actual cross-position checks require DB queries done in strategy_runner.
-        # Here we flag based on params thresholds.
-        max_positions = params.get("max_simultaneous_positions", 3)
-        max_trades = params.get("max_trades_per_day", 5)
-
-        # These would be populated by strategy_runner before evaluate()
-        active_positions = params.get("_active_position_count", 0)
-        daily_trades = params.get("_daily_trade_count", 0)
-
-        if active_positions >= max_positions:
-            warnings.append(f"At max positions ({max_positions})")
-        if daily_trades >= max_trades:
-            warnings.append(f"At max daily trades ({max_trades})")
-
-        return warnings
 
     def _compute_lots(
         self, rvol: float | None, params: dict, indicators: dict | None = None,

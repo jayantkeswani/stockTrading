@@ -21,8 +21,9 @@ from app.core.constants import (
     LOT_SIZES,
     MARKET_OPEN,
 )
-from app.services.position_sizing import calculate_lots
 from app.services.live_price import get_live_price
+from app.services.lot_sizing import compute_lots_for_yolo
+from app.services.margin_calculator import compute_margin
 from app.services.trading_config import get_trading_config
 from app.core.database import async_session_factory
 from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
@@ -115,17 +116,19 @@ async def auto_execute_signal(signal_id) -> dict | None:
         else:
             lot_size = LOT_SIZES.get(signal.symbol, 75)
 
-        # Use snapshotted lots (frozen at signal generation) or fall back to compute
-        if signal.lots is not None:
-            lots = signal.lots
-        else:
-            lots = calculate_lots(
-                capital=cfg.capital,
-                risk_per_trade_pct=cfg.max_risk_per_trade_pct,
-                entry_price=float(signal.entry_price),
-                stop_loss=float(signal.stop_loss),
-                lot_size=lot_size,
-            )
+        # Read India VIX from Redis for lot sizing
+        india_vix = None
+        try:
+            from app.core.redis import get_redis
+            import json as _json
+            r = get_redis()
+            vix_raw = await r.get("price:INDIA VIX")
+            if vix_raw:
+                india_vix = float(_json.loads(vix_raw).get("ltp", 0)) or None
+        except Exception:
+            pass
+
+        lots, sizing_meta = await compute_lots_for_yolo(signal, lot_size, india_vix)
         quantity = lots * lot_size
 
         now = now_ist()
@@ -160,6 +163,10 @@ async def auto_execute_signal(signal_id) -> dict | None:
         else:
             live_entry = float(signal.entry_price)
 
+        # Compute margin
+        instrument = "FUTURE" if is_futures else "OPTION"
+        margin = compute_margin(signal.symbol, live_entry, quantity, instrument)
+
         # Create Trade
         trade = Trade(
             signal_id=signal.id,
@@ -180,6 +187,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             source=TradeSource.YOLO.value,
             entry_time=now,
             fyers_option_symbol=trading_symbol,
+            margin_required=margin,
             is_permanent_watchlist=bool(signal.is_permanent_watchlist),
             signal_confidence=signal.confidence,
             signal_ai_action=signal.ai_action,
@@ -208,6 +216,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             position_type=position_type,
             is_paper=cfg.paper_trading,
             opened_at=now,
+            margin_required=margin,
         )
         session.add(position)
 

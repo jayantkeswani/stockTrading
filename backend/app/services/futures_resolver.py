@@ -17,7 +17,8 @@ from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from app.core.constants import FUTURES_MARGIN_PCT, INDEX_FUTURES_EXPIRY_DOW, STOCK_FUTURES_EXPIRY_DOW
+from app.core.constants import INDEX_FUTURES_EXPIRY_DOW, STOCK_FUTURES_EXPIRY_DOW
+from app.services.margin_calculator import compute_margin
 from app.core.utils import now_ist
 
 logger = logging.getLogger(__name__)
@@ -79,9 +80,8 @@ async def resolve_futures_contract(
     # 4. Get lot size from symbol master
     lot_size = await _get_lot_size(symbol, fyers_symbol)
 
-    # 5. Estimate margin
-    contract_value = ltp * lot_size
-    margin = contract_value * FUTURES_MARGIN_PCT
+    # 5. Estimate margin via tiered heuristic
+    margin = compute_margin(symbol, ltp, lot_size, "FUTURE")
 
     logger.info(
         "Futures resolved: %s → %s expiry=%s ltp=%.2f lot=%d margin=%.0f",

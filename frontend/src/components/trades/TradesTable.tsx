@@ -285,6 +285,9 @@ function TradeRow({
         <td className="px-3 py-1.5 text-xs font-mono text-text-muted">
           {trade.exit_reason || "—"}
         </td>
+        <td className="px-3 py-1.5 text-right text-xs font-mono text-text-secondary">
+          {trade.margin_required != null ? formatINR(trade.margin_required) : "—"}
+        </td>
         <td className="px-3 py-1.5">
           <span
             className={`text-[10px] font-mono px-1 py-px rounded ${
@@ -340,8 +343,8 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
     );
   }
 
-  // base columns: Date, Symbol, Type, Entry, Exit, P&L, Strategy, Exit Reason, Status, Details toggle
-  let colCount = 10;
+  // base columns: Date, Symbol, Type, Entry, Exit, P&L, Strategy, Exit Reason, Margin, Status, Details toggle
+  let colCount = 11;
   if (showSignalData) colCount += 2;
   if (showSource) colCount += 1;
 
@@ -366,6 +369,7 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
             {showSignalData && <th className="text-right px-3 py-1.5">Conf</th>}
             {showSignalData && <th className="text-left px-3 py-1.5">AI</th>}
             <th className="text-left px-3 py-1.5">Exit Reason</th>
+            <th className="text-right px-3 py-1.5">Margin</th>
             <th className="text-left px-3 py-1.5">Status</th>
             {showSource && <th className="text-left px-3 py-1.5">Source</th>}
             <th className="w-6"></th>

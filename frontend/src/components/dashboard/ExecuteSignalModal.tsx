@@ -54,7 +54,7 @@ export function ExecuteSignalModal({ signal, onClose, onExecuted }: Props) {
   const entryPrice = preview?.entry_price ?? signal.entry_price;
   const sl = preview?.stop_loss ?? signal.stop_loss;
   const target = preview?.target_price ?? signal.target_price;
-  const capitalAtRisk = Math.abs(entryPrice - sl) * quantity;
+  const riskAmount = Math.abs(entryPrice - sl) * quantity;
 
   const handleExecute = async () => {
     setExecuting(true);
@@ -161,7 +161,7 @@ export function ExecuteSignalModal({ signal, onClose, onExecuted }: Props) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3 text-xs font-mono">
+              <div className="grid grid-cols-3 gap-3 text-xs font-mono mb-1.5">
                 <div>
                   <span className="text-text-muted">Qty </span>
                   <span className="text-text-secondary">{quantity}</span>
@@ -172,8 +172,20 @@ export function ExecuteSignalModal({ signal, onClose, onExecuted }: Props) {
                 </div>
                 <div>
                   <span className="text-text-muted">Risk </span>
-                  <span className="text-loss">{formatINR(capitalAtRisk)}</span>
+                  <span className="text-loss">{formatINR(riskAmount)}</span>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 text-xs font-mono">
+                <div>
+                  <span className="text-text-muted">Notional </span>
+                  <span className="text-text-secondary">{formatINR(entryPrice * quantity)}</span>
+                </div>
+                <div>
+                  <span className="text-text-muted">Margin </span>
+                  <span className="text-text-secondary">{preview?.margin_required ? formatINR(preview.margin_required) : "—"}</span>
+                </div>
+                <div />
               </div>
 
               {lotsOverride !== preview?.lots && preview && (
@@ -182,6 +194,17 @@ export function ExecuteSignalModal({ signal, onClose, onExecuted }: Props) {
                 </p>
               )}
             </div>
+
+            {/* Warnings */}
+            {preview?.warnings && preview.warnings.length > 0 && (
+              <div className="px-4 py-2 space-y-1 border-b border-border/50">
+                {preview.warnings.map((w, i) => (
+                  <div key={i} className="text-xs font-mono text-amber-400 bg-amber-400/10 rounded px-2 py-1">
+                    ⚠ {w}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {error && (
               <div className="px-4 py-2 bg-loss/10">

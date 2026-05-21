@@ -39,6 +39,7 @@ export interface Position {
   position_type: string;
   opened_at: string;
   signal_confidence: number | null;
+  margin_required: number | null;
 }
 
 export interface Trade {
@@ -62,6 +63,7 @@ export interface Trade {
   source: "MANUAL" | "YOLO" | "SHADOW";
   pnl: number | null;
   pnl_percent: number | null;
+  margin_required: number | null;
   charges_json: {
     brokerage: number;
     stt: number;
@@ -124,8 +126,6 @@ export interface Signal {
   executable: boolean;
   blocked_reason: string | null;
   generated_at: string;
-  lots: number | null;
-  quantity: number | null;
   fyers_option_symbol: string | null;
   fyers_futures_symbol: string | null;
   // Phase 2 — LLM overlay fields
@@ -166,8 +166,11 @@ export interface SignalPreview {
   entry_price: number;
   stop_loss: number;
   target_price: number | null;
-  capital_at_risk: number;
+  risk: number;
+  notional: number;
+  margin_required: number;
   sizing_meta: Record<string, unknown> | null;
+  warnings: string[];
 }
 
 export interface RiskDashboard {
@@ -178,7 +181,9 @@ export interface RiskDashboard {
   max_daily_drawdown_pct: number;
   trades_today: number;
   max_trades_per_day: number;
-  capital_at_risk: number;
+  notional: number;
+  risk: number;
+  margin_utilized: number;
   is_halted: boolean;
   positions_open: number;
 }

@@ -26,8 +26,6 @@ class SignalResponse(BaseModel):
     executed_trade_id: uuid.UUID | None = None
     generated_at: datetime
     expires_at: datetime | None = None
-    lots: int | None = None
-    quantity: int | None = None
     fyers_option_symbol: str | None = None
     fyers_futures_symbol: str | None = None
     # Phase 2 LLM overlay
@@ -48,8 +46,11 @@ class SignalPreviewResponse(BaseModel):
     entry_price: float  # live price at preview time
     stop_loss: float
     target_price: float | None
-    capital_at_risk: float
+    risk: float
+    notional: float
+    margin_required: float
     sizing_meta: dict | None = None
+    warnings: list[str] = []
 
 
 class SignalHistoryResponse(BaseModel):
@@ -65,9 +66,6 @@ class SignalHistoryResponse(BaseModel):
     executable: bool
     blocked_reason: str | None = None
     index_entry_price: Decimal | None = None
-    lots: int | None = None
-    quantity: int | None = None
-    sizing_meta: dict | None = None
     ai_summary: str | None = None
     ai_rationale: str | None = None
     ai_adjustment: Decimal | None = None
@@ -79,4 +77,4 @@ class SignalHistoryResponse(BaseModel):
 
 
 class ExecuteSignalRequest(BaseModel):
-    lots: int | None = None  # Optional override; uses signal.lots if omitted
+    lots: int | None = None  # Optional lots override for manual execution

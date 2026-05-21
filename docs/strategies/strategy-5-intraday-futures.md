@@ -16,7 +16,7 @@ Key characteristics:
 1. **Agent-driven lifecycle** — A background AI agent runs autonomously through the trading day following a phase-based schedule
 2. **Dynamic symbol selection** — Picks its own symbols each morning via a 3-stage screener (quantitative scoring → news sentiment → LLM confidence). Overrides `get_symbols()` to return dynamic watchlist from Redis instead of static DB config
 3. **Intra-day state** — Carries daily state (ORB levels, RVOL baselines, trade count, drawdown) in Redis, resets each day
-4. **Cross-position awareness** — Checks open Strategy 5 positions before generating signals (sector dedup, position limits). Scoped to this strategy only
+4. **Cross-position awareness** — Surfaces risk warnings (sector dedup, position counts) in signal indicators. Hard gates (max trades, drawdown) enforced at execution time by `auto_executor`, not during signal generation
 5. **Dedicated frontend page** — Agent activity log with category filters, watchlist with ORB levels, global cues, setup performance, day status bar
 6. **Day-over-day memory** — Reviews yesterday's performance and recent trends via LLM morning briefing, adjusting today's approach
 
@@ -94,7 +94,7 @@ Records high and low of the first 15 minutes per watchlist stock. Computes openi
 
 ### 9:30 AM – 2:45 PM — Active Trading
 
-Phase-dependent evaluation on each 1-minute candle close: hard filters → sub-setup checks → chart-based SL/target → cross-position risk checks → signal persist. Manages open positions (trailing SL, target monitoring). Tracks daily P&L and drawdown (Strategy 5 scoped).
+Phase-dependent evaluation on each 1-minute candle close: hard filters → sub-setup checks → chart-based SL/target → signal persist. Manages open positions (trailing SL, target monitoring). Tracks daily P&L and drawdown.
 
 ### 2:45 PM — Closing Phase
 
@@ -292,7 +292,7 @@ Weights sum to **1.0**. Missing-data defaults are **0.2** (not 0.5) to penalise 
 
 Price comparison uses the candle buffer (~10 minutes of recent 1m candles).
 
-**Confidence thresholds** (configurable via strategy_params):
+**Confidence thresholds** (global in `trading_config`, not per-strategy):
 - `min_confidence_to_persist`: 30.0 — below this, signal not saved
 - `min_confidence_for_shadow`: 70.0 — below this, no shadow trade
 - `min_confidence_for_execution`: 70.0 — below this, signal saved but `executable = False`
@@ -362,12 +362,6 @@ INTRADAY_FUTURES_DEFAULTS = {
     "trailing_sl_enabled": True,
     "trailing_sl_breakeven_pct": 0.5,
     "trailing_sl_trail_pct": 0.3,
-    "min_confidence_to_persist": 30.0,
-    "min_confidence_for_shadow": 70.0,
-    "min_confidence_for_execution": 70.0,
-    "max_daily_drawdown_pct": 3.0,
-    "max_simultaneous_positions": 3,
-    "max_trades_per_day": 5,
     "rvol_threshold": 1.5,
     "rvol_caution_zone_threshold": 2.5,
     "enabled_setups": ["ORB", "VWAP_BOUNCE", "PDH_PDL", "GAP_CONTINUATION"],
@@ -377,11 +371,15 @@ INTRADAY_FUTURES_DEFAULTS = {
 }
 ```
 
+**Note:** Confidence thresholds (`min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`) and capital/risk limits (`max_daily_drawdown_pct`, `max_trades_per_day`, `max_simultaneous_positions`) are **global** in the `trading_config` table, not per-strategy params. See the Settings page to configure them.
+
 ---
 
 ## Position Sizing
 
 **Default: 1 lot per trade. Maximum: 2 lots (hard cap).**
+
+Lot sizing is NOT computed during `evaluate()`. The strategy's `_compute_lots()` is called at **execution time** by `lot_sizing.compute_lots_for_yolo()` (YOLO path) or `lot_sizing.compute_lots_for_manual()` (manual path). Shadow trades always use 1 lot via `compute_lots_for_shadow()`.
 
 Standard risk-based sizing doesn't work for intraday stock futures — contract values are large (e.g., RELIANCE lot=250 x Rs 2800 = Rs 7L contract, Rs 1.4L margin). With 3 positions at 2 lots each, margin alone would be Rs 8.4L.
 
@@ -408,18 +406,9 @@ Reuses existing `vix_to_multiplier()` from `services/position_sizing.py`:
 
 ## Risk Management
 
-### Cross-Position Awareness — Strategy-Scoped, Soft Enforcement
+### Cross-Position Awareness
 
-All risk limits are scoped to Strategy 5 only. Other strategies' positions don't count toward Strategy 5 limits, and vice versa.
-
-Before emitting a signal, the strategy:
-1. Queries open positions where `strategy_name = 'INTRADAY_FUTURES'`
-2. Checks sector deduplication (no two Strategy 5 trades from the same sector)
-3. Checks position count against max simultaneous (3)
-4. Checks daily trade count against max trades (5)
-5. Checks daily drawdown against 3% limit
-
-**Soft enforcement:** Signals are never suppressed, only flagged with `risk_warnings` array (e.g., `["daily_drawdown_3pct_reached"]`, `["sector_duplicate: IT"]`). In YOLO mode, auto-execution pauses when warnings are present. Shadow executor still creates shadow trades for tracking.
+Cross-position enforcement uses soft `risk_warnings` only, surfaced in the signal's indicators. The strategy does not block or suppress signals based on position counts or drawdown — those gates live in `auto_executor._final_risk_check()` (YOLO path only). Max trades/day and drawdown limits are global in `trading_config`, not per-strategy.
 
 ### Market Condition Filters
 
@@ -531,7 +520,7 @@ Strategy 5 signals render with strategy-aware context in `ScannerPanel.tsx`:
 
 | File | Role |
 |---|---|
-| `backend/app/strategies/strategy_5_intraday_futures.py` | Strategy class: phase machine, 4 sub-setups, chart-based SL/target, cross-position checks, confidence scoring |
+| `backend/app/strategies/strategy_5_intraday_futures.py` | Strategy class: phase machine, 4 sub-setups, chart-based SL/target, confidence scoring |
 | `backend/app/services/morning_screener.py` | 3-stage screener (quant + news + LLM), global cues, morning briefing, watchlist, pre-open reassessment, setup performance |
 | `backend/app/indicators/rvol.py` | RVOL: time-of-day normalized volume |
 | `backend/app/indicators/adr.py` | ADR: average daily range |

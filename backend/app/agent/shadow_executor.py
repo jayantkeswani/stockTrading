@@ -15,6 +15,7 @@ import logging
 
 from app.core.constants import LOT_SIZES
 from app.core.database import async_session_factory
+from app.services.lot_sizing import compute_lots_for_shadow
 from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
 from app.core.utils import is_past_close_deadline, now_ist
 from app.models.agent_log import AgentLog
@@ -22,7 +23,7 @@ from app.models.position import Position
 from app.models.signal import Signal
 from app.models.trade import Trade, build_signal_snapshot
 from app.services.live_price import get_live_price
-from app.services.position_sizing import calculate_lots
+from app.services.margin_calculator import compute_margin
 from app.services.trading_config import get_trading_config
 from app.websocket.manager import ws_manager
 from sqlalchemy import select
@@ -110,7 +111,7 @@ async def _do_shadow_execute(signal_id) -> None:
             lot_size = int((signal.indicators or {}).get("futures_lot_size", 1))
         else:
             lot_size = LOT_SIZES.get(signal.symbol, 75)
-        lots = 1
+        lots = compute_lots_for_shadow(lot_size)
         quantity = lots * lot_size
 
         if is_futures:
@@ -137,6 +138,8 @@ async def _do_shadow_execute(signal_id) -> None:
             entry_price = float(signal.entry_price)
 
         now = now_ist()
+        instrument = "FUTURE" if is_futures else "OPTION"
+        margin = compute_margin(signal.symbol, entry_price, quantity, instrument)
 
         trade = Trade(
             signal_id=signal.id,
@@ -157,6 +160,7 @@ async def _do_shadow_execute(signal_id) -> None:
             source=TradeSource.SHADOW.value,
             entry_time=now,
             fyers_option_symbol=trading_symbol,
+            margin_required=margin,
             is_permanent_watchlist=bool(signal.is_permanent_watchlist),
             signal_confidence=signal.confidence,
             signal_ai_action=signal.ai_action,
@@ -185,6 +189,7 @@ async def _do_shadow_execute(signal_id) -> None:
             is_paper=True,
             is_shadow=True,
             opened_at=now,
+            margin_required=margin,
         )
         session.add(position)
 

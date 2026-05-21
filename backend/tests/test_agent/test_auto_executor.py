@@ -61,6 +61,51 @@ class TestYoloPermanentWatchlistSkip:
         trades = [o for o in added_objects if type(o).__name__ == "Trade"]
         assert len(trades) == 1
         assert trades[0].source == TradeSource.YOLO.value
+        assert trades[0].margin_required is not None
+        positions = [o for o in added_objects if type(o).__name__ == "Position"]
+        assert len(positions) == 1
+        assert positions[0].margin_required is not None
+
+
+class TestYoloFullExecution:
+
+    @pytest.mark.asyncio
+    @patch("app.agent.auto_executor.notify_auto_executed", new_callable=AsyncMock)
+    @patch("app.agent.auto_executor._final_risk_check", return_value=(True, None))
+    @patch("app.agent.auto_executor.ws_manager")
+    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_trading_config")
+    @patch("app.agent.auto_executor.async_session_factory")
+    async def test_yolo_creates_trade_with_margin_and_lots(
+        self, mock_session_factory, mock_cfg, mock_price, mock_ws, mock_risk, mock_notify
+    ):
+        """Full YOLO execution path: trade + position created with margin_required set."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id)
+
+        session, added_objects = _mock_session(mock_session_factory, signal)
+        mock_cfg.return_value = _make_cfg()
+        mock_price.return_value = 420.0
+        mock_ws.broadcast = AsyncMock()
+
+        from app.agent.auto_executor import auto_execute_signal
+        result = await auto_execute_signal(signal_id)
+
+        assert result is not None
+        trades = [o for o in added_objects if type(o).__name__ == "Trade"]
+        positions = [o for o in added_objects if type(o).__name__ == "Position"]
+
+        assert len(trades) == 1
+        assert trades[0].source == TradeSource.YOLO.value
+        assert trades[0].entry_price == 420.0
+        assert trades[0].margin_required is not None
+        assert trades[0].margin_required > 0
+
+        assert len(positions) == 1
+        assert positions[0].margin_required is not None
+        assert positions[0].margin_required > 0
+        # Both should have the same margin value
+        assert trades[0].margin_required == positions[0].margin_required
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +130,6 @@ def _make_signal(signal_id, executable=True, confidence=None):
     s.confidence = confidence if confidence is not None else Decimal("80.0")
     s.fyers_option_symbol = None
     s.fyers_futures_symbol = "NSE:VEDL26MAYFUT"
-    s.lots = 1
-    s.quantity = 50
     s.indicators = {"futures_lot_size": 50}
     s.is_permanent_watchlist = False
     return s

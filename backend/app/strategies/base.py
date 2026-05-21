@@ -44,10 +44,6 @@ class StrategySignal:
     # Set by futures_resolver post-processing (futures only)
     fyers_futures_symbol: str | None = None  # Full Fyers symbol, e.g. "NSE:TCS26APRFUT"
     futures_resolved: bool = False
-    # Set by strategy_runner post-resolution (snapshot of sizing inputs)
-    lots: int | None = None
-    quantity: int | None = None
-    sizing_meta: dict | None = None
 
 
 @dataclass

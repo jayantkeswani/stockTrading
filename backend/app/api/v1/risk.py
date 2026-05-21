@@ -55,12 +55,29 @@ async def risk_dashboard(db: AsyncSession = Depends(get_db)):
     total_daily_pnl = daily_pnl + unrealized
     drawdown_pct = float(abs(min(total_daily_pnl, 0)) / capital * 100)
 
-    # Capital at risk — shadow positions excluded
+    # Notional exposure — entry_price * quantity for open non-shadow positions
     result = await db.execute(
         select(func.coalesce(func.sum(Position.entry_price * Position.quantity), 0))
         .where(Position.is_shadow == False)  # noqa: E712
     )
-    capital_at_risk = result.scalar() or Decimal(0)
+    notional = result.scalar() or Decimal(0)
+
+    # SL-based risk — |entry - SL| * quantity for open non-shadow positions
+    result = await db.execute(
+        select(func.coalesce(
+            func.sum(func.abs(Position.entry_price - Position.stop_loss) * Position.quantity),
+            0,
+        ))
+        .where(Position.is_shadow == False)  # noqa: E712
+    )
+    risk = result.scalar() or Decimal(0)
+
+    # Margin utilized — sum of margin_required for open non-shadow positions
+    result = await db.execute(
+        select(func.coalesce(func.sum(Position.margin_required), 0))
+        .where(Position.is_shadow == False)  # noqa: E712
+    )
+    margin_utilized = result.scalar() or Decimal(0)
 
     return RiskDashboardResponse(
         capital=capital,
@@ -70,7 +87,9 @@ async def risk_dashboard(db: AsyncSession = Depends(get_db)):
         max_daily_drawdown_pct=cfg.max_daily_drawdown_pct,
         trades_today=trades_today,
         max_trades_per_day=cfg.max_trades_per_day,
-        capital_at_risk=capital_at_risk,
+        notional=notional,
+        risk=risk,
+        margin_utilized=margin_utilized,
         is_halted=drawdown_pct >= cfg.max_daily_drawdown_pct,
         positions_open=positions_open,
     )

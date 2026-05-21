@@ -42,8 +42,17 @@ export function PnLCard() {
   const capital = Number(risk?.capital ?? 1000000);
   const drawdown = capital > 0 ? Math.abs(Math.min(pnl, 0)) / capital * 100 : 0;
 
-  const capitalAtRisk = useMemo(() => {
+  const notional = useMemo(() => {
     return activePositions.reduce((total, pos) => total + pos.entry_price * pos.quantity, 0);
+  }, [activePositions]);
+
+  const riskTotal = useMemo(() => {
+    return activePositions.reduce((total, pos) =>
+      total + Math.abs(pos.entry_price - pos.stop_loss) * pos.quantity, 0);
+  }, [activePositions]);
+
+  const marginTotal = useMemo(() => {
+    return activePositions.reduce((total, pos) => total + (pos.margin_required ?? 0), 0);
   }, [activePositions]);
 
   const tradesCount = isShadow
@@ -111,12 +120,20 @@ export function PnLCard() {
 
       <div className="w-px h-4 bg-border" />
 
-      {/* Capital at risk */}
+      {/* Risk metrics */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-text-muted font-mono uppercase">NOTIONAL</span>
+        <span className="text-xs font-mono text-text-primary">{formatINR(notional)}</span>
+      </div>
+      <div className="w-px h-4 bg-border" />
       <div className="flex items-center gap-2">
         <span className="text-xs text-text-muted font-mono uppercase">RISK</span>
-        <span className="text-xs font-mono text-text-primary">
-          {formatINR(capitalAtRisk)}
-        </span>
+        <span className="text-xs font-mono text-text-primary">{formatINR(riskTotal)}</span>
+      </div>
+      <div className="w-px h-4 bg-border" />
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-text-muted font-mono uppercase">MARGIN</span>
+        <span className="text-xs font-mono text-text-primary">{formatINR(marginTotal)}</span>
       </div>
 
       {!isShadow && risk?.is_halted && (

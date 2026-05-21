@@ -432,6 +432,10 @@ async def _roll_futures_position(
     quantity = lots * resolution.lot_size
     now = now_ist()
 
+    # Compute margin for the rolled contract
+    from app.services.margin_calculator import compute_margin
+    margin = compute_margin(symbol, float(new_ltp), quantity, "FUTURE")
+
     # 4. Create new Trade + Position
     trade_kwargs = dict(
         strategy_name=pos.strategy_name,
@@ -450,6 +454,7 @@ async def _roll_futures_position(
         is_paper=pos.is_paper,
         entry_time=now,
         fyers_option_symbol=resolution.fyers_symbol,
+        margin_required=margin,
     )
     if pos.is_shadow:
         trade_kwargs["source"] = TradeSource.SHADOW.value
@@ -483,6 +488,7 @@ async def _roll_futures_position(
         is_paper=pos.is_paper,
         is_shadow=pos.is_shadow,
         opened_at=now,
+        margin_required=margin,
     )
     db.add(new_position)
 

@@ -6,12 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import LOT_SIZES
-from app.services.position_sizing import calculate_lots
-from app.services.trading_config import get_trading_config
+from app.core.constants import IST, LOT_SIZES
+from app.services.lot_sizing import compute_lots_for_manual
+from app.services.margin_calculator import compute_margin
 from app.services.live_price import get_live_price
+from app.services.trading_config import get_trading_config
 from app.core.database import get_db
-from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
+from app.core.enums import SignalStatus, TradeSource, TradeStatus
 from app.core.utils import now_ist
 from app.models.position import Position
 from app.models.signal import Signal
@@ -75,18 +76,8 @@ async def preview_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
     else:
         lot_size = LOT_SIZES.get(signal.symbol, 75)
 
-    # Use snapshotted lots if available, else compute fresh
-    if signal.lots is not None:
-        lots = signal.lots
-    else:
-        cfg = await get_trading_config()
-        lots = calculate_lots(
-            capital=cfg.capital,
-            risk_per_trade_pct=cfg.max_risk_per_trade_pct,
-            entry_price=float(signal.entry_price),
-            stop_loss=float(signal.stop_loss),
-            lot_size=lot_size,
-        )
+    # Compute lots at execution time via lot_sizing module
+    lots, _sizing_meta = await compute_lots_for_manual(signal, lot_size)
 
     quantity = lots * lot_size
     trading_symbol = signal.fyers_futures_symbol or signal.fyers_option_symbol
@@ -99,7 +90,49 @@ async def preview_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
 
     sl = float(signal.stop_loss)
     target = float(signal.target_price) if signal.target_price else None
-    capital_at_risk = abs(live_entry - sl) * quantity
+    risk = abs(live_entry - sl) * quantity
+    notional = live_entry * quantity
+    margin_required = compute_margin(signal.symbol, live_entry, quantity, signal.instrument_type)
+
+    # Generate warnings for manual execution context
+    warnings: list[str] = []
+    cfg = await get_trading_config()
+    today = now_ist().date()
+    from datetime import datetime as _dt
+    from app.core.constants import MARKET_OPEN
+    today_start = _dt.combine(today, MARKET_OPEN, tzinfo=IST)
+    from sqlalchemy import func as sa_func
+    pnl_result = await db.execute(
+        select(sa_func.coalesce(sa_func.sum(Trade.pnl), 0)).where(
+            Trade.entry_time >= today_start,
+            Trade.status == "CLOSED",
+            Trade.source != "SHADOW",
+        )
+    )
+    today_pnl = float(pnl_result.scalar_one())
+    if today_pnl < 0:
+        dd_pct = abs(today_pnl) / cfg.capital * 100
+        if dd_pct > cfg.max_daily_drawdown_pct * 0.6:
+            warnings.append(f"Drawdown at {dd_pct:.1f}% (limit {cfg.max_daily_drawdown_pct}%)")
+
+    trades_count_result = await db.execute(
+        select(sa_func.count(Trade.id)).where(
+            Trade.entry_time >= today_start,
+            Trade.source != "SHADOW",
+        )
+    )
+    trades_today = trades_count_result.scalar() or 0
+    if trades_today >= cfg.max_trades_per_day:
+        warnings.append(f"{trades_today}/{cfg.max_trades_per_day} trades today (limit reached)")
+    elif trades_today >= cfg.max_trades_per_day - 1:
+        warnings.append(f"{trades_today}/{cfg.max_trades_per_day} trades today (approaching limit)")
+
+    from app.core.redis import get_redis
+    redis_client = get_redis()
+    vix_raw = await redis_client.get("indicator:global:india_vix")
+    india_vix = float(vix_raw) if vix_raw else None
+    if india_vix and india_vix >= 20:
+        warnings.append(f"VIX elevated at {india_vix:.1f}")
 
     return SignalPreviewResponse(
         signal_id=signal.id,
@@ -109,8 +142,11 @@ async def preview_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
         entry_price=live_entry,
         stop_loss=sl,
         target_price=target,
-        capital_at_risk=capital_at_risk,
-        sizing_meta=signal.sizing_meta,
+        risk=risk,
+        notional=notional,
+        margin_required=margin_required,
+        sizing_meta=_sizing_meta,
+        warnings=warnings,
     )
 
 
@@ -147,20 +183,11 @@ async def execute_signal(
     else:
         lot_size = LOT_SIZES.get(signal.symbol, 75)
 
-    # Use user-supplied lots override → snapshotted lots → fallback compute
+    # Use user-supplied lots override, else compute fresh at execution time
     if body and body.lots is not None:
         lots = max(1, body.lots)
-    elif signal.lots is not None:
-        lots = signal.lots
     else:
-        cfg = await get_trading_config()
-        lots = calculate_lots(
-            capital=cfg.capital,
-            risk_per_trade_pct=cfg.max_risk_per_trade_pct,
-            entry_price=float(signal.entry_price),
-            stop_loss=float(signal.stop_loss),
-            lot_size=lot_size,
-        )
+        lots, _sizing_meta = await compute_lots_for_manual(signal, lot_size)
 
     quantity = lots * lot_size
     now = now_ist()
@@ -189,6 +216,9 @@ async def execute_signal(
 
     cfg = await get_trading_config()
 
+    # Compute margin
+    margin = compute_margin(signal.symbol, entry_price, quantity, signal.instrument_type)
+
     # Create Trade
     trade = Trade(
         signal_id=signal.id,
@@ -209,6 +239,7 @@ async def execute_signal(
         source=TradeSource.MANUAL.value,
         entry_time=now,
         fyers_option_symbol=trading_symbol,
+        margin_required=margin,
         is_permanent_watchlist=bool(signal.is_permanent_watchlist),
         signal_confidence=signal.confidence,
         signal_ai_action=signal.ai_action,
@@ -237,6 +268,7 @@ async def execute_signal(
         position_type=position_type,
         is_paper=cfg.paper_trading,
         opened_at=now,
+        margin_required=margin,
     )
     db.add(position)
     await db.flush()

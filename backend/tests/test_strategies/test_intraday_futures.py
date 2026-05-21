@@ -442,26 +442,6 @@ class TestConfidence:
         assert high > low
 
 
-class TestCrossPositionRisks:
-    def test_no_warnings_under_limits(self):
-        s = IntradayFuturesStrategy()
-        ctx = _make_ctx(params={"_active_position_count": 1, "_daily_trade_count": 2})
-        warnings = s._check_cross_position_risks(ctx, ctx.strategy_params)
-        assert warnings == []
-
-    def test_warns_at_max_positions(self):
-        s = IntradayFuturesStrategy()
-        params = {"max_simultaneous_positions": 3, "_active_position_count": 3}
-        warnings = s._check_cross_position_risks(_make_ctx(params=params), params)
-        assert any("max positions" in w for w in warnings)
-
-    def test_warns_at_max_trades(self):
-        s = IntradayFuturesStrategy()
-        params = {"max_trades_per_day": 5, "_daily_trade_count": 5}
-        warnings = s._check_cross_position_risks(_make_ctx(params=params), params)
-        assert any("max daily trades" in w for w in warnings)
-
-
 class TestShouldExit:
     def test_always_returns_none(self):
         s = IntradayFuturesStrategy()

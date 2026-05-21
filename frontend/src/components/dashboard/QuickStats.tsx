@@ -16,8 +16,8 @@ export function QuickStats() {
       value: `${positions.length}`,
     },
     {
-      label: "Capital at Risk",
-      value: formatINR(risk?.capital_at_risk ?? 0),
+      label: "Notional",
+      value: formatINR(risk?.notional ?? 0),
     },
   ];
 

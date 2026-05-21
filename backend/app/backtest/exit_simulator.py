@@ -109,7 +109,7 @@ async def _simulate_accurate(
             entry_premium=entry_premium, exit_premium=None,
             pnl_per_lot=0.0, pnl_pct=0.0,
             exit_reason=ExitReason.NO_DATA,
-            lots=signal.lots or 1,
+            lots=1,
             fyers_option_symbol=fyers_option_symbol,
             mode="accurate",
         )
@@ -144,7 +144,7 @@ async def _simulate_accurate(
         entry_premium=entry_premium, exit_premium=None,
         pnl_per_lot=0.0, pnl_pct=0.0,
         exit_reason=ExitReason.NO_DATA,
-        lots=signal.lots or 1,
+        lots=1,
         fyers_option_symbol=fyers_option_symbol,
         mode="accurate",
     )
@@ -204,7 +204,7 @@ def _simulate_fast(
         entry_premium=entry_premium, exit_premium=None,
         pnl_per_lot=0.0, pnl_pct=0.0,
         exit_reason=ExitReason.NO_DATA,
-        lots=signal.lots or 1,
+        lots=1,
         fyers_option_symbol=None,
         mode="fast",
     )
@@ -231,7 +231,6 @@ def _make_result(
 ) -> SimulatedTrade:
     from app.core.constants import LOT_SIZES
     lot_size = LOT_SIZES.get(signal.symbol, 1)
-    lots = signal.lots or 1
     pnl_per_lot = (exit_premium - entry_premium) * lot_size
     pnl_pct = (exit_premium - entry_premium) / entry_premium * 100 if entry_premium else 0.0
 
@@ -243,7 +242,7 @@ def _make_result(
         pnl_per_lot=pnl_per_lot,
         pnl_pct=pnl_pct,
         exit_reason=reason,
-        lots=lots,
+        lots=1,
         fyers_option_symbol=fyers_sym,
         mode=mode,
     )

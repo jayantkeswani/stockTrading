@@ -357,4 +357,11 @@ export const api = {
       method: "DELETE",
     }),
 
+  // Margin Analysis
+  marginAnalysis: (tradeIds: string[]) =>
+    request<{ peak_margin: number; peak_time: string | null; total_margin: number; trade_count: number }>(
+      `/api/v1/trades/margin-analysis`,
+      { method: "POST", body: JSON.stringify({ trade_ids: tradeIds }) }
+    ),
+
 };

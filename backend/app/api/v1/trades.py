@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.enums import TradeSource, TradeStatus
 from app.models.trade import Trade
-from app.schemas.trade import TradeResponse, TradeSummaryResponse
+from app.schemas.trade import MarginAnalysisRequest, MarginAnalysisResponse, TradeResponse, TradeSummaryResponse
 
 router = APIRouter()
 
@@ -132,6 +132,45 @@ async def trade_summary(
         profit_factor=gross_profit / gross_loss if gross_loss > 0 else 0,
         total_net_pnl=total_net_pnl,
         total_charges=total_charges,
+    )
+
+
+@router.post("/margin-analysis", response_model=MarginAnalysisResponse)
+async def margin_analysis(
+    body: MarginAnalysisRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Trade).where(Trade.id.in_(body.trade_ids))
+    )
+    trades = result.scalars().all()
+
+    total_margin = sum(Decimal(str(t.margin_required or 0)) for t in trades)
+
+    events: list[tuple[datetime, Decimal]] = []
+    for t in trades:
+        m = Decimal(str(t.margin_required or 0))
+        if m <= 0:
+            continue
+        events.append((t.entry_time, m))
+        if t.exit_time:
+            events.append((t.exit_time, -m))
+    events.sort(key=lambda e: e[0])
+
+    running = Decimal(0)
+    peak = Decimal(0)
+    peak_time = None
+    for ts, delta in events:
+        running += delta
+        if running > peak:
+            peak = running
+            peak_time = ts
+
+    return MarginAnalysisResponse(
+        peak_margin=peak,
+        peak_time=peak_time,
+        total_margin=total_margin,
+        trade_count=len(trades),
     )
 
 

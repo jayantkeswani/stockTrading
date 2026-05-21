@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { S5DailyStats } from "@/lib/types";
 
 const PHASE_COLORS: Record<string, string> = {
   PRE_MARKET: "bg-text-muted/20 text-text-muted",
@@ -25,21 +24,18 @@ export function DayStatusBar({
 }) {
   const [phase, setPhase] = useState("—");
   const [agentStatus, setAgentStatus] = useState("ACTIVE");
-  const [stats, setStats] = useState<S5DailyStats>({ total_trades: 0, active_positions: 0, closed_trades: 0, wins: 0, losses: 0, net_pnl: 0, win_rate: 0 });
   const [loading, setLoading] = useState(false);
 
   const isHistorical = date != null;
 
   const fetchData = async () => {
     try {
-      const [phaseRes, statusRes, statsRes] = await Promise.all([
+      const [phaseRes, statusRes] = await Promise.all([
         api.getIntradayFuturesPhase(date ?? undefined),
         isHistorical ? Promise.resolve({ status: "—" }) : api.getIntradayFuturesAgentStatus(),
-        api.getIntradayFuturesDailyStats(date ?? undefined),
       ]);
       setPhase(phaseRes.phase);
       setAgentStatus(statusRes.status);
-      setStats(statsRes);
     } catch {
       /* silent */
     }
@@ -99,17 +95,6 @@ export function DayStatusBar({
           <div className="w-px h-4 bg-border" />
         </>
       )}
-
-      {/* Stats */}
-      <span className="text-xs font-mono text-text-secondary">
-        Trades: {stats.total_trades}/{5}
-      </span>
-      <span className="text-xs font-mono text-text-secondary">
-        Pos: {stats.active_positions}/{3}
-      </span>
-      <span className={`text-xs font-mono ${stats.net_pnl >= 0 ? "text-profit" : "text-loss"}`}>
-        P&L: {stats.net_pnl.toFixed(0)}
-      </span>
 
       <div className="flex-1" />
 

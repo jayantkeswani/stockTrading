@@ -40,10 +40,13 @@ class TestShadowExecuteSignal:
         assert trades[0].source == TradeSource.SHADOW.value
         assert trades[0].is_paper is True
         assert trades[0].entry_price == 180.0
+        assert trades[0].margin_required is not None
+        assert trades[0].margin_required > 0
 
         assert len(positions) == 1
         assert positions[0].is_shadow is True
         assert positions[0].is_paper is True
+        assert positions[0].margin_required is not None
 
         assert len(logs) == 1
         assert logs[0].action_type == AgentActionType.SHADOW_EXECUTED.value
@@ -322,7 +325,6 @@ def _make_signal(signal_id, executable=True, blocked_reason=None, status=None, e
     s.confidence = confidence if confidence is not None else Decimal("70.0")
     s.fyers_option_symbol = "NSE:NIFTY26MAY24000CE"
     s.fyers_futures_symbol = None
-    s.lots = 2
     s.indicators = {}
     s.is_permanent_watchlist = False
     return s

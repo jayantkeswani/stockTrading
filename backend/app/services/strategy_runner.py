@@ -72,10 +72,6 @@ class StrategyRunner:
         # Cache previous-day levels per symbol (computed once per day)
         self._prev_day_cache: dict[str, tuple[date, PreviousDayLevels]] = {}
 
-        # Today's signal count per symbol, reset on new trading day
-        self._daily_signal_count: dict[str, int] = {}
-        self._signal_count_date: date | None = None
-
         # Index futures subscriptions for VWAP volume sourcing.
         # Maps index symbol → (fyers_symbol, expiry_date, internal_buffer_name)
         # e.g. "NIFTY" → ("NSE:NIFTY25MAYFUT", date(2025,5,27), "NIFTY_FUT")
@@ -160,7 +156,7 @@ class StrategyRunner:
                 return
 
             # Global risk limits (max trades, drawdown) — per-strategy checks run inside _evaluate_strategies
-            executable, blocked_reason = await self._check_global_risk_limits(symbol)
+            executable, blocked_reason = await self._check_regulatory_limits(symbol)
 
             ctx = await self._build_market_context(symbol, candle_data)
             if ctx is None:
@@ -211,7 +207,7 @@ class StrategyRunner:
         ):
             self._candle_buffers[symbol] = await self._load_todays_candles(symbol, today)
 
-        executable, blocked_reason = await self._check_global_risk_limits(symbol)
+        executable, blocked_reason = await self._check_regulatory_limits(symbol)
 
         ctx = await self._build_market_context(symbol, candle_data)
         if ctx is None:
@@ -290,15 +286,13 @@ class StrategyRunner:
             return False
         return True
 
-    async def _check_global_risk_limits(self, symbol: str) -> tuple[bool, str | None]:
-        """Check global risk limits (max trades/day, drawdown, F&O ban list).
+    async def _check_regulatory_limits(self, symbol: str) -> tuple[bool, str | None]:
+        """Check regulatory limits (F&O ban list only).
 
-        These are truly global — not strategy-specific. Trade windows and VIX
-        thresholds are now per-strategy (see _check_strategy_risk_limits).
+        Capital/risk gates (max trades, drawdown) are enforced at execution time
+        by the YOLO executor — not at signal generation. This keeps signals as
+        pure trading opportunities available for manual execution.
         """
-        # F&O ban list — block new positions in MWPL-breached securities (safety net;
-        # screener already filters these out pre-market, but intraday watchlist changes
-        # or manual evaluations could still reach here)
         today = now_ist().date()
         try:
             from app.core.redis import get_redis
@@ -312,22 +306,6 @@ class StrategyRunner:
                     return False, f"{symbol} is on NSE F&O ban list"
         except Exception:
             logger.debug("Could not read F&O ban list from Redis for %s — skipping check", symbol)
-
-        # Max trades per day
-        if self._signal_count_date != today:
-            self._daily_signal_count = {}
-            self._signal_count_date = today
-
-        cfg = await get_trading_config()
-        max_trades = cfg.max_trades_per_day
-        if self._daily_signal_count.get(symbol, 0) >= max_trades:
-            logger.info("Max trades (%d) reached for %s today — signal not executable", max_trades, symbol)
-            return False, f"Max trades reached ({max_trades}/day)"
-
-        # Drawdown limit
-        if await self._is_drawdown_breached():
-            logger.warning("Daily drawdown limit breached — signal not executable")
-            return False, "Drawdown limit breached"
 
         return True, None
 
@@ -356,30 +334,6 @@ class StrategyRunner:
             return False, f"VIX extreme ({india_vix:.1f} >= {vix_threshold})"
 
         return True, None
-
-    async def _is_drawdown_breached(self) -> bool:
-        """Check if realized + unrealized losses exceed the daily drawdown cap."""
-        today = now_ist().date()
-        today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
-
-        async with async_session_factory() as session:
-            result = await session.execute(
-                select(func.coalesce(func.sum(Trade.pnl), 0)).where(
-                    and_(
-                        Trade.entry_time >= today_start,
-                        Trade.status == "CLOSED",
-                    )
-                )
-            )
-            realized_pnl = float(result.scalar_one())
-
-        cfg = await get_trading_config()
-        max_dd_amount = cfg.max_drawdown_amount
-
-        # Negative PnL means loss
-        if realized_pnl < 0 and abs(realized_pnl) >= max_dd_amount:
-            return True
-        return False
 
     # ------------------------------------------------------------------
     # MarketContext construction
@@ -1584,14 +1538,10 @@ class StrategyRunner:
         if signal.index_target is not None:
             signal.indicators["index_target"] = signal.index_target
 
-        # Snapshot position sizing at resolution time so preview == execute
-        await self._snapshot_sizing(signal, ctx)
-
         logger.info(
-            "Option resolved: %s %s strike=%.0f expiry=%s premium=%.2f lots=%s",
+            "Option resolved: %s %s strike=%.0f expiry=%s premium=%.2f",
             signal.symbol, signal.fyers_option_symbol,
             resolution.strike_price, resolution.expiry_date, resolution.option_premium,
-            signal.lots,
         )
         return signal, executable, blocked_reason
 
@@ -1659,14 +1609,10 @@ class StrategyRunner:
         signal.indicators["futures_expiry"] = str(resolution.expiry_date)
         signal.indicators["futures_margin"] = resolution.margin_required
 
-        # Snapshot position sizing at resolution time so preview == execute
-        await self._snapshot_sizing(signal, ctx)
-
         logger.info(
-            "Futures resolved: %s → %s expiry=%s ltp=%.2f lot=%d lots=%s",
+            "Futures resolved: %s → %s expiry=%s ltp=%.2f lot=%d",
             signal.symbol, resolution.fyers_symbol,
             resolution.expiry_date, resolution.ltp, resolution.lot_size,
-            signal.lots,
         )
         return signal, executable, blocked_reason
 
@@ -1820,11 +1766,6 @@ class StrategyRunner:
 
         # Invalidate S5 counts cache so the next candle sees fresh position/trade counts
         self.invalidate_s5_counts_cache()
-
-        # Track daily count (only count executable signals toward limit)
-        if executable:
-            count = self._daily_signal_count.get(signal.symbol, 0)
-            self._daily_signal_count[signal.symbol] = count + 1
 
         # Broadcast to connected clients
         await self._broadcast_signal(signal, signal_record.id, now, executable, blocked_reason,
@@ -2039,9 +1980,6 @@ class StrategyRunner:
                     executable=existing.executable,
                     blocked_reason=existing.blocked_reason,
                     index_entry_price=existing.index_entry_price,
-                    lots=existing.lots,
-                    quantity=existing.quantity,
-                    sizing_meta=existing.sizing_meta,
                     ai_summary=existing.ai_summary,
                     ai_rationale=existing.ai_rationale,
                     ai_adjustment=existing.ai_adjustment,
@@ -2077,10 +2015,6 @@ class StrategyRunner:
                     existing.expiry_date = signal.expiry_date
                 if signal.strike_price is not None:
                     existing.strike_price = Decimal(str(signal.strike_price))
-                if signal.lots is not None:
-                    existing.lots = signal.lots
-                    existing.quantity = signal.quantity
-                    existing.sizing_meta = signal.sizing_meta
 
                 await session.commit()
                 await session.refresh(existing)
@@ -2098,58 +2032,6 @@ class StrategyRunner:
         except Exception:
             logger.exception("Error during signal dedup for %s", signal.symbol)
             return None
-
-    async def _snapshot_sizing(self, signal: StrategySignal, ctx: MarketContext) -> None:
-        """Compute and store lot sizing on the signal so preview == execute.
-
-        Wrapped in a broad try/except so a config miss never blocks signal generation.
-        """
-        try:
-            from app.strategies.registry import get_strategy
-
-            is_futures = (
-                signal.instrument_type.value == "FUTURE"
-                if hasattr(signal.instrument_type, "value")
-                else signal.instrument_type == "FUTURE"
-            )
-            if is_futures:
-                lot_size = int((signal.indicators or {}).get("futures_lot_size", 1))
-            else:
-                lot_size = LOT_SIZES.get(signal.symbol, 75)
-
-            try:
-                strat = get_strategy(signal.strategy_name)
-                max_lots = getattr(strat, "max_lots", None)
-            except Exception:
-                max_lots = None
-
-            vix_mult = vix_to_multiplier(getattr(ctx, "india_vix", None))
-            cfg = await get_trading_config()
-
-            lots = calculate_lots(
-                capital=cfg.capital,
-                risk_per_trade_pct=cfg.max_risk_per_trade_pct,
-                entry_price=float(signal.entry_price),
-                stop_loss=float(signal.stop_loss),
-                lot_size=lot_size,
-                vix_multiplier=vix_mult,
-                max_lots=max_lots,
-            )
-            signal.lots = lots
-            signal.quantity = lots * lot_size
-            signal.sizing_meta = {
-                "capital": cfg.capital,
-                "risk_pct": cfg.max_risk_per_trade_pct,
-                "vix": getattr(ctx, "india_vix", None),
-                "vix_multiplier": vix_mult,
-                "max_lots": max_lots,
-                "lot_size": lot_size,
-            }
-        except Exception:
-            logger.debug(
-                "Could not snapshot sizing for %s — will be computed at execute time",
-                signal.symbol,
-            )
 
     async def _persist_signal(
         self,
@@ -2192,9 +2074,6 @@ class StrategyRunner:
                     ),
                     fyers_option_symbol=signal.fyers_option_symbol,
                     fyers_futures_symbol=signal.fyers_futures_symbol,
-                    lots=signal.lots,
-                    quantity=signal.quantity,
-                    sizing_meta=signal.sizing_meta,
                     ai_summary=ai.get("ai_summary"),
                     ai_rationale=ai.get("ai_rationale"),
                     ai_adjustment=Decimal(str(ai["ai_adjustment"])) if ai.get("ai_adjustment") is not None else None,
@@ -2248,8 +2127,6 @@ class StrategyRunner:
             "executable": executable,
             "blocked_reason": blocked_reason,
             "generated_at": generated_at.isoformat(),
-            "lots": signal.lots,
-            "quantity": signal.quantity,
             "indicators": signal.indicators,
             "ai_summary": ai.get("ai_summary"),
             "ai_rationale": ai.get("ai_rationale"),

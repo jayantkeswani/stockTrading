@@ -28,6 +28,7 @@ class TradeResponse(BaseModel):
     pnl_percent: Decimal | None = None
     charges_json: dict | None = None
     net_pnl: Decimal | None = None
+    margin_required: Decimal | None = None
     entry_time: datetime
     exit_time: datetime | None = None
     notes: str | None = None
@@ -42,6 +43,17 @@ class TradeResponse(BaseModel):
     signal_is_permanent_watchlist: bool | None = None
 
     model_config = {"from_attributes": True}
+
+
+class MarginAnalysisRequest(BaseModel):
+    trade_ids: list[uuid.UUID]
+
+
+class MarginAnalysisResponse(BaseModel):
+    peak_margin: Decimal
+    peak_time: datetime | None = None
+    total_margin: Decimal
+    trade_count: int
 
 
 class TradeSummaryResponse(BaseModel):

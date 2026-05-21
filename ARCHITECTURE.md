@@ -110,6 +110,8 @@ SHARED PIPELINE (both paths converge here):
   strategy_runner evaluates strategy
       ├── Build MarketContext (price, VWAP, PDH/PDL, CPR, OI, VIX)
       ├── strategy.evaluate(ctx) → StrategySignal | None
+      │   NOTE: Signals are BARE TRADING OPPORTUNITIES — no lot sizing.
+      │         Lot computation happens at execution time via lot_sizing.py.
       └── If signal generated:
           ├── [OPTION signals only] option_resolver enriches:
           │   ├── Select ATM/ITM strike (STRIKE_GAPS per index)
@@ -121,6 +123,8 @@ SHARED PIPELINE (both paths converge here):
           │   ├── Resolve nearest-month futures contract (symbol, expiry, lot size)
           │   ├── Fetch futures LTP
           │   └── Proportionally adjust SL/target from spot to futures price (direction-aware)
+          ├── _check_regulatory_limits() — F&O ban list check ONLY
+          │   (max trades/drawdown gates are NOT here — they're in auto_executor)
           ├── Save to signals table (with executable flag)
           ├── Broadcast via WebSocket (signal:new)
           ├── YOLO mode → auto_executor.execute()
@@ -183,8 +187,33 @@ Phase 2: Today's Elapsed Candles (for late-start scenarios)
 ```
 
 ### 3. Trade Lifecycle
+
+**Three execution paths** — lot sizing and margin are computed at execution time by
+`lot_sizing.py` and `margin_calculator.py`, not during signal generation:
+
 ```
-Signal ──> Trade Created (OPEN) ──> Position Created
+Signal ──> Execution Path:
+           │
+           ├── SHADOW (shadow_executor.py):
+           │     Lots: always 1 via compute_lots_for_shadow() — clean per-lot P&L
+           │     Gates: confidence, F&O ban, close deadline, permanent watchlist
+           │     No risk gates (no drawdown, no max trades, no VIX, no trade window)
+           │     Margin: computed via compute_margin(), stored on Trade + Position
+           │
+           ├── YOLO (auto_executor.py):
+           │     Lots: strategy-aware via compute_lots_for_yolo()
+           │           (S5 delegates to strategy._compute_lots() for conviction sizing)
+           │     Gates (in _final_risk_check): drawdown breach, max trades/day,
+           │           confidence, F&O ban, permanent watchlist, duplicate position
+           │     Margin: computed via compute_margin(), stored on Trade + Position
+           │
+           └── MANUAL (signals.py preview + execute):
+                 Lots: recommended via compute_lots_for_manual() (same logic as YOLO)
+                 No gates — warnings only (user decides)
+                 Margin: computed via compute_margin(), shown in preview modal
+
+       ──> Trade Created (OPEN) ──> Position Created
+                                    ├── margin_required set on both Trade + Position
                                     ├── Agent monitors (2s loop)
                                     ├── SL hit → auto-close (all modes)
                                     ├── Target hit:
@@ -196,6 +225,11 @@ Signal ──> Trade Created (OPEN) ──> Position Created
        ──> Trade Updated (CLOSED) ──> Position deleted
                                   ──> Daily summary updated
                                   ──> P&L broadcast via WebSocket
+
+Risk gate split:
+  - strategy_runner._check_regulatory_limits(): F&O ban list ONLY
+  - auto_executor._final_risk_check(): drawdown + max trades (YOLO path only)
+  - strategy_runner._check_strategy_risk_limits(): trading windows + VIX (per-strategy)
 ```
 
 ### 4. Agent Decision Flow
@@ -308,7 +342,7 @@ but the REST batch endpoint remains as fallback for symbols not yet subscribed.
 - **Non-default ports**: PostgreSQL 5433, Redis 6380 (avoid conflicts with local instances)
 - **Fyers SDK**: Uses `fyers-apiv3` package — WebSocket via threaded `FyersDataSocket` bridged to asyncio
 - **Decoupled strategy evaluation**: FeedManager only produces candles. Strategy evaluation is triggered by auto_mode config (per strategy + per symbol) or manual API call. Both paths share the same MarketContext builder and signal pipeline.
-- **Signal pipeline**: `candle close → build_market_context (incl. intraday_bias + global_cues) → strategy.evaluate → composite confidence (10-factor) → fire threshold gate → option/futures resolve → LLM overlay (±15 adj, ai_summary/rationale) → persist (with ai_* fields) → broadcast → [YOLO: auto_executor] + [shadow_executor fire-and-forget]`. Strategy 5 adds skip logging (flush `_pending_logs` after each evaluate) and cross-position count injection into strategy params.
+- **Signal pipeline**: `candle close → build_market_context (incl. intraday_bias + global_cues) → strategy.evaluate → composite confidence (10-factor) → fire threshold gate → option/futures resolve → LLM overlay (±15 adj, ai_summary/rationale) → persist (with ai_* fields) → broadcast → [YOLO: auto_executor] + [shadow_executor fire-and-forget]`. Strategy 5 adds skip logging (flush `_pending_logs` after each evaluate) and cross-position count injection into strategy params. Signals are bare trading opportunities — **no lot sizing at signal time**. Sizing deferred to execution via `lot_sizing.py` (3 functions: shadow=1 lot, YOLO=strategy-aware, manual=same as YOLO). Margin estimated via `margin_calculator.py` (options=full premium, futures=contract value × tier %) and stored on Trade + Position at execution time.
 - **Shadow agent** (`backend/app/agent/shadow_executor.py`): every signal → `Trade(source="SHADOW") + Position(is_shadow=True)`, no gating. All default queries exclude shadows (`WHERE source != 'SHADOW'` / `WHERE is_shadow = FALSE`). Dashboard Active Positions widget + P&L bar have a Real/Signal Test toggle. `trade_monitor` monitors shadow positions identically to real ones. See `docs/ai/shadow-agent.md`.
 - **Phase 2 bias**: `intraday_bias` replaces the yesterday-only hard gate with a weighted live composite (6 factors). STRONG opposing bias still blocks; MODERATE/WEAK allows with confidence haircut.
 - **Backtest harness** (`backend/app/backtest/`): common replay framework — historical 1m candles → `context_builder.build_historical_context` → `strategy.evaluate` → `exit_simulator` → `BacktestReport`. No DB writes, no WS events. Accurate mode uses live-traded option candles from `market_data_1m`; fast mode uses delta approximation.

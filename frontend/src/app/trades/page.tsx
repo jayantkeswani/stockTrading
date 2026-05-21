@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { api } from "@/lib/api";
-import { startOfDayIST, endOfDayIST, startOfWeekIST, subDaysIST, subMonthsIST, isoDateIST } from "@/lib/formatters";
+import { startOfDayIST, endOfDayIST, startOfWeekIST, subDaysIST, subMonthsIST, isoDateIST, formatINR } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import type { Trade } from "@/lib/types";
 import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
@@ -89,6 +89,8 @@ export default function TradesPage() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [marginResult, setMarginResult] = useState<{ peak_margin: number; peak_time: string | null; total_margin: number; trade_count: number } | null>(null);
+  const [marginLoading, setMarginLoading] = useState(false);
 
   const mode = positionViewMode === "SHADOW" ? "SHADOW" : "REAL";
   const sim = tradesSim;
@@ -162,6 +164,30 @@ export default function TradesPage() {
     if (!selectedDay) return simTrades;
     return simTrades.filter((t) => isoDateIST(new Date(t.entry_time)) === selectedDay);
   }, [simTrades, selectedDay]);
+
+  const [peakMargin, setPeakMargin] = useState<number | undefined>();
+
+  useEffect(() => {
+    const ids = simTrades.filter((t) => t.margin_required != null).map((t) => t.id);
+    if (ids.length === 0) { setPeakMargin(undefined); return; }
+    let cancelled = false;
+    api.marginAnalysis(ids).then((r) => { if (!cancelled) setPeakMargin(r.peak_margin); }).catch(() => { if (!cancelled) setPeakMargin(undefined); });
+    return () => { cancelled = true; };
+  }, [simTrades]);
+
+  const handleMarginAnalysis = useCallback(async () => {
+    const ids = displayedTrades.map((t) => t.id);
+    if (ids.length === 0) return;
+    setMarginLoading(true);
+    try {
+      const result = await api.marginAnalysis(ids);
+      setMarginResult(result);
+    } catch {
+      setMarginResult(null);
+    } finally {
+      setMarginLoading(false);
+    }
+  }, [displayedTrades]);
 
   const periodLabel = `${period.start.toLocaleDateString("en-IN", {
     timeZone: "Asia/Kolkata", day: "2-digit", month: "short",
@@ -394,7 +420,7 @@ export default function TradesPage() {
         </div>
       )}
 
-      <SummaryStrip trades={simTrades} dailyPnL={dailyPnL} showNetPnL={showNetPnL} />
+      <SummaryStrip trades={simTrades} dailyPnL={dailyPnL} showNetPnL={showNetPnL} peakMargin={peakMargin} />
 
       <PnLHeatmap
         period={period}
@@ -402,6 +428,45 @@ export default function TradesPage() {
         selectedDay={selectedDay}
         onSelectDay={setSelectedDay}
       />
+
+      {/* Margin Analysis */}
+      <div className="rounded border border-border bg-bg-secondary px-3 py-2 flex items-center gap-4">
+        <span className="text-[9px] font-mono uppercase tracking-wider text-text-muted">Margin Analysis</span>
+        <button
+          onClick={handleMarginAnalysis}
+          disabled={marginLoading || displayedTrades.length === 0}
+          className="px-2 py-1 rounded border text-[10px] font-mono transition-colors border-border text-text-muted hover:border-accent/40 hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {marginLoading ? "Analyzing..." : "Analyze Margin"}
+        </button>
+        {marginResult && (
+          <>
+            <div className="w-px h-4 bg-border" />
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col">
+                <span className="text-[8px] font-mono uppercase tracking-wider text-text-muted/50">Peak Concurrent</span>
+                <span className="text-xs font-mono font-medium text-accent">{formatINR(marginResult.peak_margin)}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[8px] font-mono uppercase tracking-wider text-text-muted/50">Total Margin</span>
+                <span className="text-xs font-mono font-medium text-text-secondary">{formatINR(marginResult.total_margin)}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[8px] font-mono uppercase tracking-wider text-text-muted/50">Trades</span>
+                <span className="text-xs font-mono font-medium text-text-secondary">{marginResult.trade_count}</span>
+              </div>
+              {marginResult.peak_time && (
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-mono uppercase tracking-wider text-text-muted/50">Peak At</span>
+                  <span className="text-xs font-mono text-text-muted">
+                    {new Date(marginResult.peak_time).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })}
+                  </span>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
 
       <div className="rounded border border-border bg-bg-secondary overflow-hidden">
         {selectedDay && (
