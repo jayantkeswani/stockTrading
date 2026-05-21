@@ -91,16 +91,41 @@ export default function SettingsPage() {
 
   const handleSaveTradingSettings = async () => {
     if (!tradingDraft || Object.keys(tradingDraft).length === 0) return;
+
+    // Client-side validation: strip NaN/undefined and reject invalid values
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(tradingDraft)) {
+      if (v === undefined) continue;
+      if (typeof v === "number" && isNaN(v)) continue;
+      clean[k] = v;
+    }
+    if (Object.keys(clean).length === 0) return;
+
+    // Cross-field confidence check (same invariant as backend)
+    const cs = tradingSettings ? { ...tradingSettings, ...clean } : null;
+    if (cs) {
+      const p = cs.min_confidence_to_persist;
+      const s = cs.min_confidence_for_shadow;
+      const e = cs.min_confidence_for_execution;
+      if (!(p < s && s <= e)) {
+        setSaveMsg(`Confidence must satisfy persist (${p}) < shadow (${s}) ≤ execution (${e})`);
+        setTimeout(() => setSaveMsg(null), 5000);
+        return;
+      }
+    }
+
     setSaving(true);
     setSaveMsg(null);
     try {
-      const updated = await api.updateTradingSettings(tradingDraft) as TradingSettings;
+      const updated = await api.updateTradingSettings(clean) as TradingSettings;
       setTradingSettings(updated);
       setTradingDraft({});
       setSaveMsg("Saved");
       setTimeout(() => setSaveMsg(null), 2000);
-    } catch {
-      setSaveMsg("Error saving");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error saving";
+      setSaveMsg(msg);
+      setTimeout(() => setSaveMsg(null), 5000);
     } finally {
       setSaving(false);
     }
@@ -174,7 +199,7 @@ export default function SettingsPage() {
           </h2>
           <div className="flex items-center gap-2">
             {saveMsg && (
-              <span className={`text-[10px] font-mono ${saveMsg === "Saved" ? "text-profit" : "text-loss"}`}>
+              <span className={`text-[10px] font-mono max-w-xs truncate ${saveMsg === "Saved" ? "text-profit" : "text-loss"}`} title={saveMsg}>
                 {saveMsg}
               </span>
             )}

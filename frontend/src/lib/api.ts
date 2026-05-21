@@ -19,7 +19,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     let detail = response.statusText;
     try {
       const body = await response.json();
-      if (body.detail) detail = body.detail;
+      if (body.detail) {
+        if (typeof body.detail === "string") {
+          detail = body.detail;
+        } else if (Array.isArray(body.detail)) {
+          detail = body.detail.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join("; ");
+        } else {
+          detail = JSON.stringify(body.detail);
+        }
+      }
     } catch { /* no json body */ }
     throw new Error(detail);
   }
