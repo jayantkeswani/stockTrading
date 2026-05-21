@@ -268,7 +268,7 @@ export default function SignalsPage() {
     signalsMinConfidence, setSignalsMinConfidence,
     signalsPeriodLabel, signalsPeriodStart, signalsPeriodEnd, setSignalsPeriod,
     signalsStrategy, setSignalsStrategy,
-    signalsHideInformational, setSignalsHideInformational,
+    signalsHideInformational,
   } = useStore();
 
   const period = periodFromLabel(signalsPeriodLabel, signalsPeriodStart, signalsPeriodEnd);
@@ -378,15 +378,6 @@ export default function SignalsPage() {
             )}
           </div>
         </div>
-        <label className="flex items-center gap-1.5 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={signalsHideInformational}
-            onChange={e => setSignalsHideInformational(e.target.checked)}
-            className="accent-accent w-3 h-3"
-          />
-          <span className="text-[10px] font-mono text-text-muted">Hide informational</span>
-        </label>
       </div>
 
       <div className="rounded border border-border bg-bg-secondary overflow-hidden">

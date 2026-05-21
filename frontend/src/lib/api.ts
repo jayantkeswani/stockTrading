@@ -277,6 +277,8 @@ export const api = {
   },
 
   // Options (Strategy 2 — VWAP Pullback)
+  getOptionsWindowState: () =>
+    request<{ window_state: string; market_open: boolean }>("/api/v1/options/window-state"),
   getOptionsAgentLog: (date?: string, offset = 0, limit = 100) => {
     const params = new URLSearchParams();
     if (date) params.set("date", date);
