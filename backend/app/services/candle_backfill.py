@@ -193,8 +193,10 @@ def _fetch_history_via_sdk(token: str, fyers_symbol: str, day: date) -> list[dic
 
     if result.get("s") != "ok":
         logger.error(
-            "Fyers history error for %s: %s",
-            fyers_symbol, result.get("message", result.get("s")),
+            "Fyers history error for %s: %s (full: %s)",
+            fyers_symbol,
+            result.get("message") or result.get("s") or "unknown",
+            {k: v for k, v in result.items() if k != "candles"},
         )
         return []
 
@@ -286,7 +288,10 @@ async def backfill_previous_day():
         prev_day, len(symbols),
     )
 
+    import asyncio
+
     total = 0
+    fetched = 0
     for symbol, fyers_symbol in symbols.items():
         if await _has_candles_for_day(symbol, prev_day):
             logger.info("Candles already exist for %s on %s — skipping", symbol, prev_day)
@@ -295,6 +300,11 @@ async def backfill_previous_day():
         try:
             count = await _backfill_symbol(token, symbol, fyers_symbol, prev_day)
             total += count
+            fetched += 1
+            if fetched % 5 == 0:
+                await asyncio.sleep(1.0)
+            else:
+                await asyncio.sleep(0.3)
         except Exception:
             logger.exception("Failed to backfill %s", symbol)
 
@@ -338,8 +348,11 @@ async def backfill_today():
         MARKET_OPEN, now.strftime("%H:%M"), len(symbols),
     )
 
+    import asyncio as _asyncio
+
     total = 0
     skipped = 0
+    fetched = 0
     freshness_threshold = timedelta(minutes=2)
     for symbol, fyers_symbol in symbols.items():
         try:
@@ -349,6 +362,11 @@ async def backfill_today():
                 continue
             count = await _backfill_symbol(token, symbol, fyers_symbol, today)
             total += count
+            fetched += 1
+            if fetched % 5 == 0:
+                await _asyncio.sleep(1.0)
+            else:
+                await _asyncio.sleep(0.3)
         except Exception:
             logger.exception("Failed to backfill today's candles for %s", symbol)
 

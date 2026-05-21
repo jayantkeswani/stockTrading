@@ -487,6 +487,24 @@ _STRATEGY_LABELS = {
 }
 
 
+_SIGNAL_CONFIDENCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "confidence_adjustment": {"type": "integer"},
+        "summary": {"type": "string"},
+        "rationale": {"type": "string"},
+        "recommended_action": {"type": "string"},
+        "key_supports": {"type": "array", "items": {"type": "string"}},
+        "key_risks": {"type": "array", "items": {"type": "string"}},
+        "suggested_lot_adjustment": {"type": "string"},
+    },
+    "required": [
+        "confidence_adjustment", "summary", "rationale",
+        "recommended_action", "key_supports", "key_risks",
+    ],
+}
+
+
 async def _call_llm(context_json: str, strategy_name: str = "unknown", setup_type: str = "unknown") -> SignalConfidence:
     """Call Gemini and parse the structured response."""
     from app.research.llm_client import create_llm_client
@@ -505,6 +523,8 @@ async def _call_llm(context_json: str, strategy_name: str = "unknown", setup_typ
     raw = await llm.generate_json(
         prompt=prompt,
         system=system_prompt,
+        max_tokens=8192,
+        response_schema=_SIGNAL_CONFIDENCE_SCHEMA,
     )
 
     if not raw or not isinstance(raw, dict):

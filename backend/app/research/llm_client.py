@@ -35,6 +35,7 @@ class LLMClient(ABC):
         system: str = "",
         json_mode: bool = False,
         max_tokens: int = 4096,
+        response_schema: dict | None = None,
     ) -> str:
         """Generate text from prompt. Returns raw text response."""
         ...
@@ -54,9 +55,18 @@ class LLMClient(ABC):
         prompt: str,
         system: str = "",
         max_tokens: int = 4096,
+        response_schema: dict | None = None,
     ) -> dict:
-        """Generate and parse JSON response. Falls back to extracting JSON from text."""
-        text = await self.generate(prompt, system=system, json_mode=True, max_tokens=max_tokens)
+        """Generate and parse JSON response.
+
+        When response_schema is provided, the model constrains output to match
+        the schema exactly (structured output). Falls back to extracting JSON
+        from text when no schema is set.
+        """
+        text = await self.generate(
+            prompt, system=system, json_mode=True, max_tokens=max_tokens,
+            response_schema=response_schema,
+        )
         result = _extract_json(text)
         return result if isinstance(result, dict) else {}
 
@@ -105,6 +115,7 @@ class GeminiClient(LLMClient):
         system: str = "",
         json_mode: bool = False,
         max_tokens: int = 4096,
+        response_schema: dict | None = None,
     ) -> str:
         self._ensure_client()
         from google.genai import types
@@ -115,6 +126,8 @@ class GeminiClient(LLMClient):
             config_kwargs["system_instruction"] = system
         if json_mode:
             config_kwargs["response_mime_type"] = "application/json"
+        if response_schema:
+            config_kwargs["response_schema"] = response_schema
 
         config = types.GenerateContentConfig(**config_kwargs)
 
@@ -124,7 +137,25 @@ class GeminiClient(LLMClient):
             contents=prompt,
             config=config,
         )
-        return response.text or ""
+
+        if not response.text:
+            candidate = response.candidates[0] if response.candidates else None
+            finish = getattr(candidate, "finish_reason", None) if candidate else None
+            safety = getattr(candidate, "safety_ratings", None) if candidate else None
+            prompt_feedback = getattr(response, "prompt_feedback", None)
+            logger.warning(
+                "Gemini empty response: model=%s, finish_reason=%s, candidates=%d, "
+                "prompt_feedback=%s, safety=%s, json_mode=%s",
+                self._model_name,
+                finish,
+                len(response.candidates or []),
+                prompt_feedback,
+                safety,
+                json_mode,
+            )
+            return ""
+
+        return response.text
 
     async def generate_with_search(
         self,
@@ -167,6 +198,16 @@ class GeminiClient(LLMClient):
                             "url": getattr(web, "uri", ""),
                             "title": getattr(web, "title", ""),
                         })
+
+        if not response.text:
+            candidate = response.candidates[0] if response.candidates else None
+            finish = getattr(candidate, "finish_reason", None) if candidate else None
+            logger.warning(
+                "Gemini empty search response: model=%s, finish_reason=%s, candidates=%d",
+                self._model_name,
+                finish,
+                len(response.candidates or []),
+            )
 
         return SearchResult(
             text=response.text or "",
