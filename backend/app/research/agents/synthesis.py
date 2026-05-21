@@ -121,7 +121,7 @@ async def synthesize_report(
 
     # Generate structured report
     try:
-        report_json = await llm.generate_json(prompt, system=SYSTEM_PROMPT, max_tokens=4096)
+        report_json = await llm.generate_json(prompt, system=SYSTEM_PROMPT, max_tokens=8192)
     except Exception as e:
         logger.warning("Synthesis JSON generation failed: %s", e)
         report_json = _fallback_report(ctx, agent_results)
