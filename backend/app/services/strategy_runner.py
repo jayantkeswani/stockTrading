@@ -2073,6 +2073,10 @@ class StrategyRunner:
                     existing.fyers_option_symbol = signal.fyers_option_symbol
                 if signal.fyers_futures_symbol:
                     existing.fyers_futures_symbol = signal.fyers_futures_symbol
+                if signal.expiry_date is not None:
+                    existing.expiry_date = signal.expiry_date
+                if signal.strike_price is not None:
+                    existing.strike_price = Decimal(str(signal.strike_price))
                 if signal.lots is not None:
                     existing.lots = signal.lots
                     existing.quantity = signal.quantity
