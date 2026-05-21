@@ -25,9 +25,10 @@ class TestFeedManagerAutoStrategyTrigger:
         assert not hasattr(feed_manager, "_run_strategy_evaluation")
 
     @pytest.mark.asyncio
+    @patch("app.data_feed.feed_manager.is_market_open", return_value=True)
     @patch("app.data_feed.feed_manager.strategy_runner")
     @patch("app.services.strategy_runner.get_auto_strategies_for_symbol", new_callable=AsyncMock)
-    async def test_auto_eval_triggers_when_strategies_match(self, mock_get_auto, mock_runner):
+    async def test_auto_eval_triggers_when_strategies_match(self, mock_get_auto, mock_runner, _mock_market):
         """When auto strategies match the symbol, trigger on_candle_close with filter."""
         from app.data_feed.feed_manager import feed_manager
 
@@ -49,9 +50,10 @@ class TestFeedManagerAutoStrategyTrigger:
         )
 
     @pytest.mark.asyncio
+    @patch("app.data_feed.feed_manager.is_market_open", return_value=True)
     @patch("app.data_feed.feed_manager.strategy_runner")
     @patch("app.services.strategy_runner.get_auto_strategies_for_symbol", new_callable=AsyncMock)
-    async def test_auto_eval_skips_when_no_match(self, mock_get_auto, mock_runner):
+    async def test_auto_eval_skips_when_no_match(self, mock_get_auto, mock_runner, _mock_market):
         """When no auto strategies match the symbol, don't trigger evaluation."""
         from app.data_feed.feed_manager import feed_manager
 
@@ -71,8 +73,9 @@ class TestFeedManagerAutoStrategyTrigger:
         mock_runner.on_candle_close.assert_not_called()
 
     @pytest.mark.asyncio
+    @patch("app.data_feed.feed_manager.is_market_open", return_value=True)
     @patch("app.data_feed.feed_manager.strategy_runner")
-    async def test_auto_eval_forwards_futures_volume_symbols(self, mock_runner):
+    async def test_auto_eval_forwards_futures_volume_symbols(self, mock_runner, _mock_market):
         """Futures volume symbols (e.g. NIFTY_FUT) bypass strategy check and go directly to on_candle_close."""
         from app.data_feed.feed_manager import feed_manager
 
