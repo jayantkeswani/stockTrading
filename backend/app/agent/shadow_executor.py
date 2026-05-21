@@ -85,6 +85,13 @@ async def _do_shadow_execute(signal_id) -> None:
 
         cfg = await get_trading_config()
 
+        if signal.is_permanent_watchlist and cfg.shadow_skip_permanent_watchlist:
+            logger.info(
+                "Shadow skip: %s is a permanent watchlist signal (shadow_skip_permanent_watchlist=True)",
+                signal.symbol,
+            )
+            return
+
         # Confidence gate — skip shadow trades for low-confidence signals
         min_shadow_conf = cfg.min_confidence_for_shadow
         if signal.confidence is not None:
@@ -147,6 +154,7 @@ async def _do_shadow_execute(signal_id) -> None:
             source=TradeSource.SHADOW.value,
             entry_time=now,
             fyers_option_symbol=trading_symbol,
+            is_permanent_watchlist=bool(signal.is_permanent_watchlist),
         )
         session.add(trade)
         await session.flush()

@@ -453,6 +453,9 @@ async def _roll_futures_position(
     )
     if pos.is_shadow:
         trade_kwargs["source"] = TradeSource.SHADOW.value
+    original_trade = (await db.execute(select(Trade).where(Trade.id == pos.trade_id))).scalar_one_or_none()
+    if original_trade:
+        trade_kwargs["is_permanent_watchlist"] = original_trade.is_permanent_watchlist
     new_trade = Trade(**trade_kwargs)
     db.add(new_trade)
     await db.flush()

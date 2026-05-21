@@ -70,6 +70,9 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
               </td>
               <td className="px-3 py-1.5 font-mono">
                 <span className="font-medium">{trade.symbol}</span>
+                {(trade.is_permanent_watchlist || trade.signal_is_permanent_watchlist) && (
+                  <span className="ml-1 text-[9px] font-mono px-1 py-px rounded border border-accent/40 text-accent/70">P</span>
+                )}
                 {trade.option_type && (
                   <span
                     className={`ml-1 text-[10px] ${

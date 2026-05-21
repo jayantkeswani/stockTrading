@@ -55,6 +55,8 @@ interface TradingSettings {
   min_confidence_to_persist: number;
   min_confidence_for_shadow: number;
   min_confidence_for_execution: number;
+  shadow_skip_permanent_watchlist: boolean;
+  yolo_skip_permanent_watchlist: boolean;
 }
 
 export default function SettingsPage() {
@@ -206,6 +208,31 @@ export default function SettingsPage() {
               >
                 <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${currentSettings.paper_trading ? "left-4 bg-warning" : "left-0.5 bg-text-muted"}`} />
               </button>
+            </div>
+
+            {/* Permanent Watchlist Toggles */}
+            <div className="flex items-center justify-between mb-3 pb-3 border-b border-border/40">
+              <span className="text-xs font-mono font-medium text-text-primary">Skip Pinned Signals</span>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-mono text-text-muted">Shadow</span>
+                  <button
+                    onClick={() => setTradingDraft((d) => ({ ...d, shadow_skip_permanent_watchlist: !currentSettings.shadow_skip_permanent_watchlist }))}
+                    className={`w-8 h-4 rounded-full relative transition-colors ${currentSettings.shadow_skip_permanent_watchlist ? "bg-accent/40" : "bg-border"}`}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${currentSettings.shadow_skip_permanent_watchlist ? "left-4 bg-accent" : "left-0.5 bg-text-muted"}`} />
+                  </button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-mono text-text-muted">YOLO</span>
+                  <button
+                    onClick={() => setTradingDraft((d) => ({ ...d, yolo_skip_permanent_watchlist: !currentSettings.yolo_skip_permanent_watchlist }))}
+                    className={`w-8 h-4 rounded-full relative transition-colors ${currentSettings.yolo_skip_permanent_watchlist ? "bg-accent/40" : "bg-border"}`}
+                  >
+                    <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${currentSettings.yolo_skip_permanent_watchlist ? "left-4 bg-accent" : "left-0.5 bg-text-muted"}`} />
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Risk grid */}

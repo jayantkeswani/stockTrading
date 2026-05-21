@@ -785,7 +785,7 @@ class StrategyRunner:
                 "_briefing_approach", "_briefing_max_lots", "_briefing_sector_bias",
                 "_briefing_sector_avoid", "_screener_score", "_stock_gap_pct",
                 "_relative_gap_pct", "_gap_direction", "_stock_bias", "_stock_bias_source",
-                "_stock_trend_strength", "_stock_trend_score",
+                "_stock_trend_strength", "_stock_trend_score", "_is_permanent_watchlist",
             ):
                 if key in session_entry:
                     params[key] = session_entry[key]
@@ -822,6 +822,7 @@ class StrategyRunner:
                             entry["_stock_bias_source"] = item.get("bias_source")
                             entry["_stock_trend_strength"] = item.get("trend_strength")
                             entry["_stock_trend_score"] = item.get("trend_score")
+                            entry["_is_permanent_watchlist"] = item.get("manual", False)
                             break
             except Exception:
                 logger.debug("Could not load screener score for %s", symbol)
@@ -832,7 +833,7 @@ class StrategyRunner:
                 "_briefing_approach", "_briefing_max_lots", "_briefing_sector_bias",
                 "_briefing_sector_avoid", "_screener_score", "_stock_gap_pct",
                 "_relative_gap_pct", "_gap_direction", "_stock_bias", "_stock_bias_source",
-                "_stock_trend_strength", "_stock_trend_score",
+                "_stock_trend_strength", "_stock_trend_score", "_is_permanent_watchlist",
             ):
                 if key in entry:
                     params[key] = entry[key]
@@ -1469,6 +1470,8 @@ class StrategyRunner:
                 await self._flush_strategy_logs(strategy)
                 if signal is not None:
                     signal.indicators["window_state"] = window_state
+                    if strategy.name == StrategyName.INTRADAY_FUTURES:
+                        signal.indicators["is_permanent_watchlist"] = params.get("_is_permanent_watchlist", False)
                     await self._enrich_signal_snapshot(signal)
 
                     logger.info(
@@ -2192,6 +2195,7 @@ class StrategyRunner:
                     ai_rationale=ai.get("ai_rationale"),
                     ai_adjustment=Decimal(str(ai["ai_adjustment"])) if ai.get("ai_adjustment") is not None else None,
                     ai_action=ai.get("ai_action"),
+                    is_permanent_watchlist=signal.indicators.get("is_permanent_watchlist", False),
                 )
                 session.add(record)
                 await session.commit()
@@ -2249,6 +2253,7 @@ class StrategyRunner:
             "ai_action": ai.get("ai_action"),
             "fyers_option_symbol": signal.fyers_option_symbol,
             "fyers_futures_symbol": signal.fyers_futures_symbol,
+            "is_permanent_watchlist": signal.indicators.get("is_permanent_watchlist", False),
         }
         await ws_manager.broadcast(event, payload)
 

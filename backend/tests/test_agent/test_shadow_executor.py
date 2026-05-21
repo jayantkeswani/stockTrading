@@ -203,6 +203,51 @@ class TestShadowExecuteSignal:
         trades = [o for o in added_objects if type(o).__name__ == "Trade"]
         assert len(trades) == 1
 
+    @pytest.mark.asyncio
+    @patch("app.agent.shadow_executor.get_trading_config")
+    @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
+    async def test_shadow_skips_permanent_watchlist_signal(self, mock_deadline, mock_session_factory, mock_cfg):
+        """Signal with is_permanent_watchlist=True + config skip=True → no trade."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id)
+        signal.is_permanent_watchlist = True
+
+        session, added_objects = _mock_session(mock_session_factory, signal)
+        mock_cfg.return_value = _make_cfg()
+
+        from app.agent.shadow_executor import shadow_execute_signal
+        await shadow_execute_signal(signal_id)
+
+        assert added_objects == []
+
+    @pytest.mark.asyncio
+    @patch("app.agent.shadow_executor.ws_manager")
+    @patch("app.agent.shadow_executor.get_live_price")
+    @patch("app.agent.shadow_executor.get_trading_config")
+    @patch("app.agent.shadow_executor.async_session_factory")
+    @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
+    async def test_shadow_fires_permanent_watchlist_when_config_off(
+        self, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
+    ):
+        """Signal with is_permanent_watchlist=True but config skip=False → trade created."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id)
+        signal.is_permanent_watchlist = True
+
+        session, added_objects = _mock_session(mock_session_factory, signal)
+        cfg = _make_cfg()
+        cfg.shadow_skip_permanent_watchlist = False
+        mock_cfg.return_value = cfg
+        mock_price.return_value = 180.0
+        mock_ws.broadcast = AsyncMock()
+
+        from app.agent.shadow_executor import shadow_execute_signal
+        await shadow_execute_signal(signal_id)
+
+        trades = [o for o in added_objects if type(o).__name__ == "Trade"]
+        assert len(trades) == 1
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -228,6 +273,7 @@ def _make_signal(signal_id, executable=True, blocked_reason=None, status=None, e
     s.fyers_futures_symbol = None
     s.lots = 2
     s.indicators = {}
+    s.is_permanent_watchlist = False
     return s
 
 
@@ -238,6 +284,8 @@ def _make_cfg(min_confidence_for_shadow=45.0, min_confidence_for_execution=60.0)
     cfg.paper_trading = True
     cfg.min_confidence_for_shadow = min_confidence_for_shadow
     cfg.min_confidence_for_execution = min_confidence_for_execution
+    cfg.shadow_skip_permanent_watchlist = True
+    cfg.yolo_skip_permanent_watchlist = True
     return cfg
 
 

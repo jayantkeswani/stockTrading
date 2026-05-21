@@ -22,6 +22,8 @@ async def get_trading_settings():
         min_confidence_to_persist=cfg.min_confidence_to_persist,
         min_confidence_for_shadow=cfg.min_confidence_for_shadow,
         min_confidence_for_execution=cfg.min_confidence_for_execution,
+        shadow_skip_permanent_watchlist=cfg.shadow_skip_permanent_watchlist,
+        yolo_skip_permanent_watchlist=cfg.yolo_skip_permanent_watchlist,
     )
 
 
@@ -47,4 +49,6 @@ async def patch_trading_settings(body: TradingConfigUpdate):
         min_confidence_to_persist=cfg.min_confidence_to_persist,
         min_confidence_for_shadow=cfg.min_confidence_for_shadow,
         min_confidence_for_execution=cfg.min_confidence_for_execution,
+        shadow_skip_permanent_watchlist=cfg.shadow_skip_permanent_watchlist,
+        yolo_skip_permanent_watchlist=cfg.yolo_skip_permanent_watchlist,
     )

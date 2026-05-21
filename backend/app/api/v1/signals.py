@@ -209,6 +209,7 @@ async def execute_signal(
         source=TradeSource.MANUAL.value,
         entry_time=now,
         fyers_option_symbol=trading_symbol,
+        is_permanent_watchlist=bool(signal.is_permanent_watchlist),
     )
     db.add(trade)
     await db.flush()

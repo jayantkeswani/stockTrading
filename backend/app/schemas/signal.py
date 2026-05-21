@@ -35,6 +35,7 @@ class SignalResponse(BaseModel):
     ai_rationale: str | None = None
     ai_adjustment: Decimal | None = None
     ai_action: str | None = None
+    is_permanent_watchlist: bool = False
 
     model_config = {"from_attributes": True}
 

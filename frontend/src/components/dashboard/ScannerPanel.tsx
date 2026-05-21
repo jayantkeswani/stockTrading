@@ -283,6 +283,9 @@ function SignalCard({
             {formatSignalTime(signal.generated_at)}
           </span>
           <WindowBadge windowState={windowState} />
+          {signal.is_permanent_watchlist && (
+            <span className="text-[9px] font-mono px-1 py-px rounded border border-accent/40 text-accent/70">P</span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {signal.confidence != null && (

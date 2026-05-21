@@ -42,6 +42,7 @@ class Trade(Base, TimestampMixin):
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="MANUAL")
     charges_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     net_pnl: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    is_permanent_watchlist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         Index("idx_trades_status", "status"),

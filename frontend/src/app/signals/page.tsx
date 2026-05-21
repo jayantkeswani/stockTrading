@@ -128,6 +128,9 @@ function SignalCard({ signal }: { signal: Signal }) {
             </span>
           )}
           {windowState && <WindowBadge windowState={windowState} />}
+          {signal.is_permanent_watchlist && (
+            <span className="text-[9px] font-mono px-1 py-px rounded border border-accent/40 text-accent/70">P</span>
+          )}
           {isInformational && (
             <span className="text-[9px] font-mono text-text-muted italic">informational</span>
           )}

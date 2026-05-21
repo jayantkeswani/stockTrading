@@ -38,6 +38,7 @@ class TradeResponse(BaseModel):
     signal_ai_summary: str | None = None
     signal_instrument_type: str | None = None
     signal_type: str | None = None
+    signal_is_permanent_watchlist: bool | None = None
 
     model_config = {"from_attributes": True}
 

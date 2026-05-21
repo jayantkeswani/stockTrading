@@ -88,6 +88,7 @@ export const api = {
     // Trade-level sizing filter
     min_lots?: number;
     max_lots?: number;
+    exclude_permanent?: boolean;
   }) => {
     const query = new URLSearchParams();
     if (params?.status) query.set("status", params.status);
@@ -103,6 +104,7 @@ export const api = {
     if (params?.signal_type) query.set("signal_type", params.signal_type);
     if (params?.min_lots != null) query.set("min_lots", params.min_lots.toString());
     if (params?.max_lots != null) query.set("max_lots", params.max_lots.toString());
+    if (params?.exclude_permanent) query.set("exclude_permanent", "true");
     return request(`/api/v1/trades?${query}`);
   },
   getClosedTradesToday: (source?: string) => {
@@ -119,9 +121,12 @@ export const api = {
     if (source) query.set("source", source);
     return request<import("./types").Trade[]>(`/api/v1/trades?${query}`);
   },
-  getTradeSummary: (source?: string) => {
-    const query = source ? `?source=${source}` : "";
-    return request(`/api/v1/trades/summary${query}`);
+  getTradeSummary: (source?: string, exclude_permanent?: boolean) => {
+    const query = new URLSearchParams();
+    if (source) query.set("source", source);
+    if (exclude_permanent) query.set("exclude_permanent", "true");
+    const qs = query.toString();
+    return request(`/api/v1/trades/summary${qs ? `?${qs}` : ""}`);
   },
   // Signals
   getSignals: (params?: { status?: string; generated_since?: string; generated_until?: string; strategy?: string; limit?: number }) => {

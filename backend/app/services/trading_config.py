@@ -37,6 +37,8 @@ class TradingConfigDTO:
     min_confidence_to_persist: float
     min_confidence_for_shadow: float
     min_confidence_for_execution: float
+    shadow_skip_permanent_watchlist: bool
+    yolo_skip_permanent_watchlist: bool
 
     @property
     def yolo_mode(self) -> bool:
@@ -62,6 +64,8 @@ def _row_to_dto(row: TradingConfig) -> TradingConfigDTO:
         min_confidence_to_persist=float(row.min_confidence_to_persist),
         min_confidence_for_shadow=float(row.min_confidence_for_shadow),
         min_confidence_for_execution=float(row.min_confidence_for_execution),
+        shadow_skip_permanent_watchlist=bool(row.shadow_skip_permanent_watchlist),
+        yolo_skip_permanent_watchlist=bool(row.yolo_skip_permanent_watchlist),
     )
 
 
@@ -100,6 +104,7 @@ async def update_trading_config(**fields) -> TradingConfigDTO:
         "capital", "max_daily_drawdown_pct", "max_risk_per_trade_pct",
         "max_trades_per_day", "paper_trading", "autonomy_level",
         "min_confidence_to_persist", "min_confidence_for_shadow", "min_confidence_for_execution",
+        "shadow_skip_permanent_watchlist", "yolo_skip_permanent_watchlist",
     }
     invalid = set(fields) - allowed
     if invalid:
@@ -173,6 +178,8 @@ async def ensure_seeded() -> None:
             min_confidence_to_persist=30.0,
             min_confidence_for_shadow=70.0,
             min_confidence_for_execution=70.0,
+            shadow_skip_permanent_watchlist=True,
+            yolo_skip_permanent_watchlist=True,
         )
         session.add(row)
         await session.commit()

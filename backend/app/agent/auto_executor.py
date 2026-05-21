@@ -79,6 +79,13 @@ async def auto_execute_signal(signal_id) -> dict | None:
                 )
                 return None
 
+        if signal.is_permanent_watchlist and cfg.yolo_skip_permanent_watchlist:
+            logger.info(
+                "YOLO skip: %s is a permanent watchlist signal (yolo_skip_permanent_watchlist=True)",
+                signal.symbol,
+            )
+            return None
+
         # Check for existing open position on the same symbol + direction (exclude shadow)
         direction = signal.signal_type.replace("BUY_", "") if signal.instrument_type == "OPTION" else None
         pos_query = select(Position).where(
@@ -173,6 +180,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             source=TradeSource.YOLO.value,
             entry_time=now,
             fyers_option_symbol=trading_symbol,
+            is_permanent_watchlist=bool(signal.is_permanent_watchlist),
         )
         session.add(trade)
         await session.flush()  # Get trade.id

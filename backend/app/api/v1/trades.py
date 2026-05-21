@@ -23,6 +23,7 @@ def _to_response(trade: Trade, signal: Signal | None) -> TradeResponse:
         resp.signal_ai_summary = signal.ai_summary
         resp.signal_instrument_type = signal.instrument_type
         resp.signal_type = signal.signal_type
+        resp.signal_is_permanent_watchlist = signal.is_permanent_watchlist
     return resp
 
 
@@ -41,6 +42,7 @@ async def list_trades(
     signal_type: str | None = None,
     min_lots: int | None = None,
     max_lots: int | None = None,
+    exclude_permanent: bool | None = None,
     limit: int = Query(default=50, le=1000),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -59,6 +61,8 @@ async def list_trades(
         query = query.where(Trade.lots >= min_lots)
     if max_lots is not None:
         query = query.where(Trade.lots <= max_lots)
+    if exclude_permanent:
+        query = query.where(Trade.is_permanent_watchlist == False)  # noqa: E712
     # Signal-level simulation filters (trades with no linked signal are excluded when these are set)
     if min_confidence is not None:
         query = query.where(Signal.confidence >= min_confidence)
@@ -87,6 +91,7 @@ async def list_trades(
 @router.get("/summary", response_model=TradeSummaryResponse)
 async def trade_summary(
     source: str | None = None,
+    exclude_permanent: bool | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Trade).where(Trade.status == TradeStatus.CLOSED)
@@ -94,6 +99,8 @@ async def trade_summary(
         query = query.where(Trade.source == source)
     else:
         query = query.where(Trade.source != TradeSource.SHADOW.value)
+    if exclude_permanent:
+        query = query.where(Trade.is_permanent_watchlist == False)  # noqa: E712
     closed = await db.execute(query)
     trades = closed.scalars().all()
     if not trades:

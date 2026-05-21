@@ -26,3 +26,5 @@ class TradingConfig(Base, TimestampMixin):
     min_confidence_to_persist: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, server_default=text("30.00"))
     min_confidence_for_shadow: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, server_default=text("70.00"))
     min_confidence_for_execution: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, server_default=text("70.00"))
+    shadow_skip_permanent_watchlist: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    yolo_skip_permanent_watchlist: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))

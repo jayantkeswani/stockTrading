@@ -72,6 +72,7 @@ export interface Trade {
     total: number;
   } | null;
   net_pnl: number | null;
+  is_permanent_watchlist: boolean;
   entry_time: string;
   exit_time: string | null;
   notes: string | null;
@@ -82,6 +83,7 @@ export interface Trade {
   signal_ai_summary: string | null;
   signal_instrument_type: string | null;
   signal_type: string | null;
+  signal_is_permanent_watchlist: boolean | null;
 }
 
 export interface Signal {
@@ -112,6 +114,7 @@ export interface Signal {
   ai_rationale: string | null;
   ai_adjustment: number | null;
   ai_action: string | null;
+  is_permanent_watchlist: boolean;
 }
 
 export interface SignalHistory {

@@ -49,6 +49,7 @@ class Signal(Base, TimestampMixin):
     ai_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_adjustment: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
     ai_action: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    is_permanent_watchlist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         Index("idx_signals_status", "status"),

@@ -13,6 +13,8 @@ class TradingConfigResponse(BaseModel):
     min_confidence_to_persist: float
     min_confidence_for_shadow: float
     min_confidence_for_execution: float
+    shadow_skip_permanent_watchlist: bool
+    yolo_skip_permanent_watchlist: bool
 
     model_config = {"from_attributes": True}
 
@@ -27,3 +29,5 @@ class TradingConfigUpdate(BaseModel):
     min_confidence_to_persist: float | None = Field(default=None, ge=0, le=100)
     min_confidence_for_shadow: float | None = Field(default=None, ge=0, le=100)
     min_confidence_for_execution: float | None = Field(default=None, ge=0, le=100)
+    shadow_skip_permanent_watchlist: bool | None = None
+    yolo_skip_permanent_watchlist: bool | None = None

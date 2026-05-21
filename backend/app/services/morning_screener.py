@@ -524,7 +524,7 @@ async def run_morning_screener(as_of: date | None = None) -> list[dict]:
             else:
                 for c in candidates:
                     if c["symbol"] == sym:
-                        c["manual"] = True
+                        c["from_permanent"] = True
                         break
         await _append_agent_log(today, "SCREENER", f"Merged {len(permanent_symbols)} permanent watchlist stock(s)")
         logger.info("Screener: merged %d permanent symbols (%d injected, %d already present)", len(permanent_symbols), injected, len(permanent_symbols) - injected)
