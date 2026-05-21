@@ -250,6 +250,8 @@ export const api = {
       min_confidence_to_persist: number;
       min_confidence_for_shadow: number;
       min_confidence_for_execution: number;
+      shadow_skip_permanent_watchlist: boolean;
+      yolo_skip_permanent_watchlist: boolean;
     }>(`/api/v1/settings/trading`),
   updateTradingSettings: (patch: {
     capital?: number;
@@ -261,6 +263,8 @@ export const api = {
     min_confidence_to_persist?: number;
     min_confidence_for_shadow?: number;
     min_confidence_for_execution?: number;
+    shadow_skip_permanent_watchlist?: boolean;
+    yolo_skip_permanent_watchlist?: boolean;
   }) =>
     request(`/api/v1/settings/trading`, {
       method: "PATCH",
