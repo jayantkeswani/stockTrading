@@ -45,15 +45,16 @@ function formatSignalTime(isoString: string): string {
 }
 
 export function ScannerPanel() {
-  const { signals, updateSignal, removeSignal, scannerMinConfidence, setScannerMinConfidence } = useStore();
+  const { signals, updateSignal, removeSignal, scannerMinConfidence, setScannerMinConfidence, scannerShowExecuted, setScannerShowExecuted } = useStore();
   const [searchQuery, setSearchQuery] = useState("");
   const today = isoDateIST(new Date());
-  const allPending = signals.filter(
-    (s) => s.status === "PENDING" && isoDateIST(new Date(s.generated_at)) === today
+  const allowedStatuses = scannerShowExecuted ? ["PENDING", "EXECUTED"] : ["PENDING"];
+  const allMatching = signals.filter(
+    (s) => allowedStatuses.includes(s.status) && isoDateIST(new Date(s.generated_at)) === today
   );
   const confFiltered = scannerMinConfidence > 0
-    ? allPending.filter((s) => s.confidence != null && Number(s.confidence) >= scannerMinConfidence)
-    : allPending;
+    ? allMatching.filter((s) => s.confidence != null && Number(s.confidence) >= scannerMinConfidence)
+    : allMatching;
   const pendingSignals = searchQuery
     ? confFiltered.filter((s) => s.symbol.toLowerCase().includes(searchQuery.toLowerCase()))
     : confFiltered;
@@ -107,6 +108,17 @@ export function ScannerPanel() {
               </button>
             )}
           </div>
+          <div className="w-px h-3 bg-border" />
+          <button
+            onClick={() => setScannerShowExecuted(!scannerShowExecuted)}
+            className={`px-2 py-0.5 rounded border text-[10px] font-mono transition-colors ${
+              scannerShowExecuted
+                ? "border-accent/50 bg-accent/10 text-accent"
+                : "border-border text-text-muted hover:text-text-secondary"
+            }`}
+          >
+            + Executed
+          </button>
           <div className="w-px h-3 bg-border" />
           <label className="flex items-center gap-1.5 text-[9px] font-mono text-text-muted">
             <span>CONF</span>
@@ -201,6 +213,7 @@ function SignalCard({
   const [aiExpanded, setAiExpanded] = useState(false);
   const [watchlistStatus, setWatchlistStatus] = useState<"idle" | "adding" | "done" | "error">("idle");
 
+  const isExecuted = signal.status === "EXECUTED";
   const isFuture = signal.instrument_type === "FUTURE";
   const isCE = signal.signal_type === "BUY_CE";
   const isS5 = signal.strategy_name === "intraday_futures";
@@ -260,7 +273,7 @@ function SignalCard({
   };
 
   return (
-    <div className="px-3 py-2.5 hover:bg-bg-tertiary/30 transition-colors">
+    <div className={`px-3 py-2.5 hover:bg-bg-tertiary/30 transition-colors ${isExecuted ? "opacity-60" : ""}`}>
       {/* Row 1: Direction + Symbol + Time + Strategy + Confidence */}
       <div className="flex items-start justify-between gap-2 mb-1.5">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -403,24 +416,32 @@ function SignalCard({
 
       {/* Row 4: Actions */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onExec();
-          }}
-          className={`text-xs font-mono font-medium px-2 py-1 rounded transition-colors ${
-            signal.executable
-              ? "bg-profit/15 text-profit hover:bg-profit/25"
-              : "bg-warning/10 text-warning border border-warning/30 hover:bg-warning/20"
-          }`}
-          title={signal.executable ? undefined : `Manual override — ${signal.blocked_reason || "not executable"}`}
-        >
-          EXEC
-        </button>
-        {!signal.executable && signal.blocked_reason && (
-          <span className="text-[9px] font-mono text-warning/70 italic">
-            ⚠ {signal.blocked_reason}
+        {isExecuted ? (
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-profit/10 text-profit/70 border border-profit/20">
+            EXECUTED
           </span>
+        ) : (
+          <>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onExec();
+              }}
+              className={`text-xs font-mono font-medium px-2 py-1 rounded transition-colors ${
+                signal.executable
+                  ? "bg-profit/15 text-profit hover:bg-profit/25"
+                  : "bg-warning/10 text-warning border border-warning/30 hover:bg-warning/20"
+              }`}
+              title={signal.executable ? undefined : `Manual override — ${signal.blocked_reason || "not executable"}`}
+            >
+              EXEC
+            </button>
+            {!signal.executable && signal.blocked_reason && (
+              <span className="text-[9px] font-mono text-warning/70 italic">
+                ⚠ {signal.blocked_reason}
+              </span>
+            )}
+          </>
         )}
 
         <button
@@ -464,15 +485,17 @@ function SignalCard({
           </button>
         </div>
 
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDismiss(signal.id);
-          }}
-          className="text-[10px] font-mono px-1.5 py-1 rounded text-text-muted hover:text-loss hover:bg-loss/10 transition-colors"
-        >
-          ✕
-        </button>
+        {!isExecuted && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDismiss(signal.id);
+            }}
+            className="text-[10px] font-mono px-1.5 py-1 rounded text-text-muted hover:text-loss hover:bg-loss/10 transition-colors"
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       {/* Expanded: raw reason + signal history */}

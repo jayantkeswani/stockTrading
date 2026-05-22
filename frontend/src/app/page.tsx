@@ -19,19 +19,33 @@ export default function DashboardPage() {
   const [chartOpen, setChartOpen] = useState(false);
   const [chartSymbol, setChartSymbol] = useState<string | undefined>(undefined);
   const { setSelectedSymbol, setSignals, setPositions, setRisk, setAgentLogs } = useStore();
+  const scannerShowExecuted = useStore((s) => s.scannerShowExecuted);
 
-  // Load pending signals, open positions, risk dashboard, and agent logs on mount
+  // Load signals, open positions, risk dashboard, and agent logs on mount
   useEffect(() => {
     async function loadData() {
       try {
         const now = new Date();
-        const [signals, positions, risk, agentLogs] = await Promise.all([
-          api.getSignals({ status: "PENDING", generated_since: startOfDayIST(now).toISOString(), generated_until: endOfDayIST(now).toISOString(), limit: 50 }) as Promise<Signal[]>,
+        const dateRange = { generated_since: startOfDayIST(now).toISOString(), generated_until: endOfDayIST(now).toISOString() };
+        const signalFetches: Promise<Signal[]>[] = [
+          api.getSignals({ status: "PENDING", ...dateRange, limit: 50 }) as Promise<Signal[]>,
+        ];
+        if (scannerShowExecuted) {
+          signalFetches.push(
+            api.getSignals({ status: "EXECUTED", ...dateRange, limit: 50 }) as Promise<Signal[]>,
+          );
+        }
+        const [pendingSignals, positions, risk, agentLogs, ...extraSignals] = await Promise.all([
+          signalFetches[0],
           api.getPositions() as Promise<Position[]>,
           api.getRiskDashboard() as Promise<RiskDashboard>,
           api.getAgentLogs({ since: startOfDayIST(now).toISOString() }) as Promise<AgentLog[]>,
+          ...(signalFetches.length > 1 ? [signalFetches[1]] : []),
         ]);
-        setSignals(signals);
+        const allSignals = extraSignals.length > 0
+          ? [...pendingSignals, ...extraSignals[0]]
+          : pendingSignals;
+        setSignals(allSignals);
         setPositions(positions);
         setRisk(risk);
         setAgentLogs(agentLogs);
@@ -51,7 +65,7 @@ export default function DashboardPage() {
       }
     }, 30_000);
     return () => clearInterval(interval);
-  }, [setSignals, setPositions, setRisk, setAgentLogs]);
+  }, [setSignals, setPositions, setRisk, setAgentLogs, scannerShowExecuted]);
 
   const handleOpenChart = useCallback(
     (symbol?: string) => {

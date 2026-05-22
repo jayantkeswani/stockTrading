@@ -134,7 +134,9 @@ interface AppState {
   setTradesSim: (updates: Partial<AppState["tradesSim"]>) => void;
   resetTradesSim: () => void;
 
-  // Scanner confidence filter (persisted)
+  // Scanner filters (persisted)
+  scannerShowExecuted: boolean;
+  setScannerShowExecuted: (v: boolean) => void;
   scannerMinConfidence: number;
   setScannerMinConfidence: (v: number) => void;
 
@@ -364,7 +366,9 @@ export const useStore = create<AppState>()(
       setTradesSim: (updates) => set((state) => ({ tradesSim: { ...state.tradesSim, ...updates } })),
       resetTradesSim: () => set({ tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null } }),
 
-      // Scanner confidence filter
+      // Scanner filters
+      scannerShowExecuted: false,
+      setScannerShowExecuted: (v) => set({ scannerShowExecuted: v }),
       scannerMinConfidence: 0,
       setScannerMinConfidence: (v) => set({ scannerMinConfidence: v }),
 
@@ -405,6 +409,7 @@ export const useStore = create<AppState>()(
         tradesStrategy: state.tradesStrategy,
         tradesSimOpen: state.tradesSimOpen,
         tradesSim: state.tradesSim,
+        scannerShowExecuted: state.scannerShowExecuted,
         scannerMinConfidence: state.scannerMinConfidence,
         signalsMinConfidence: state.signalsMinConfidence,
         signalsPeriodLabel: state.signalsPeriodLabel,

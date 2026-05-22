@@ -133,6 +133,10 @@ async def _do_shadow_execute(signal_id) -> None:
             try:
                 entry_price = await get_live_price(trading_symbol)
             except Exception:
+                logger.warning(
+                    "Shadow: live price unavailable for %s, falling back to signal premium %.2f",
+                    trading_symbol, float(signal.entry_price),
+                )
                 entry_price = float(signal.entry_price)
         else:
             entry_price = float(signal.entry_price)
