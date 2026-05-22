@@ -52,7 +52,7 @@ export function PnLCard() {
   }, [activePositions]);
 
   const marginTotal = useMemo(() => {
-    return activePositions.reduce((total, pos) => total + (pos.margin_required ?? 0), 0);
+    return activePositions.reduce((total, pos) => total + Number(pos.margin_required ?? 0), 0);
   }, [activePositions]);
 
   const tradesCount = isShadow

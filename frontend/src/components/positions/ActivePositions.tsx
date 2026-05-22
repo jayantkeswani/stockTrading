@@ -480,6 +480,10 @@ function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, han
                       </div>
                     )}
                     <div>
+                      <span className="text-text-muted">Margin</span>
+                      <div className="text-text-primary mt-0.5">{pos.margin_required ? formatINR(Number(pos.margin_required)) : "—"}</div>
+                    </div>
+                    <div>
                       <span className="text-text-muted">Type</span>
                       <div className="text-text-primary mt-0.5">
                         {isShadow ? "SHADOW" : pos.is_paper ? "PAPER" : "LIVE"} / {pos.position_type}
