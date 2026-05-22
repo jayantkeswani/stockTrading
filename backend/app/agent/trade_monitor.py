@@ -275,7 +275,7 @@ async def _close_position(
     await db.delete(pos)
     await db.flush()
 
-    pnl_val = float(trade.pnl) if trade and trade.pnl else 0
+    pnl_val = float(trade.net_pnl if trade.net_pnl is not None else trade.pnl) if trade and trade.pnl else 0
 
     # Broadcast
     await ws_manager.broadcast("position:closed", {

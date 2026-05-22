@@ -55,7 +55,7 @@ def _paper() -> str:
 
 
 def _pnl_str(pnl: float, entry: float, exit_: float) -> str:
-    sign = "+" if pnl >= 0 else ""
+    sign = "+" if pnl >= 0 else "-"
     pct = ((exit_ - entry) / entry * 100) if entry else 0
     pct_sign = "+" if pct >= 0 else ""
     return f"{sign}₹{abs(pnl):,.0f}  ({pct_sign}{pct:.1f}%)"

@@ -99,19 +99,19 @@ async def send_daily_summary() -> None:
         total = len(trades)
         wins = sum(1 for t in trades if (t.pnl or 0) > 0)
         losses = sum(1 for t in trades if (t.pnl or 0) <= 0)
-        net_pnl = sum(
-            float(t.net_pnl) if t.net_pnl is not None else float(t.pnl or 0)
-            for t in trades
-        )
-        best = max(trades, key=lambda t: float(t.pnl or 0))
-        worst = min(trades, key=lambda t: float(t.pnl or 0))
+        def _trade_pnl(t) -> float:
+            return float(t.net_pnl) if t.net_pnl is not None else float(t.pnl or 0)
+
+        net_pnl = sum(_trade_pnl(t) for t in trades)
+        best = max(trades, key=_trade_pnl)
+        worst = min(trades, key=_trade_pnl)
 
         # Sector breakdown
         sector_pnl: dict[str, float] = {}
         for t in trades:
             sector = get_sector(t.symbol) or "OTHER"
             sector_pnl.setdefault(sector, 0.0)
-            sector_pnl[sector] += float(t.pnl or 0)
+            sector_pnl[sector] += _trade_pnl(t)
 
         # F&O build-up and OI levels
         from app.agent.notification import _classify_fo_buildup, _get_nifty_bn_oi_levels
@@ -161,8 +161,8 @@ async def send_daily_summary() -> None:
             nifty_ltp=nifty_ltp, nifty_prev=nifty_prev,
             bn_ltp=bn_ltp, bn_prev=bn_prev,
             total=total, wins=wins, losses=losses, net_pnl=net_pnl,
-            best_symbol=best.symbol, best_pnl=float(best.pnl or 0),
-            worst_symbol=worst.symbol, worst_pnl=float(worst.pnl or 0),
+            best_symbol=best.symbol, best_pnl=_trade_pnl(best),
+            worst_symbol=worst.symbol, worst_pnl=_trade_pnl(worst),
             sector_pnl=sector_pnl,
             fo_buildup=fo_buildup,
             oi_levels=oi_levels,
@@ -266,7 +266,8 @@ def _format_eod_message(
     net_pnl_str = f"+₹{net_pnl:,.0f}" if net_pnl >= 0 else f"−₹{abs(net_pnl):,.0f}"
     lines.append(f"Net PnL: {net_pnl_str}")
     best_str = f"+₹{best_pnl:,.0f}" if best_pnl >= 0 else f"−₹{abs(best_pnl):,.0f}"
-    lines.append(f"Best: {best_symbol} {best_str} | Worst: {worst_symbol} −₹{abs(worst_pnl):,.0f}")
+    worst_str = f"+₹{worst_pnl:,.0f}" if worst_pnl >= 0 else f"−₹{abs(worst_pnl):,.0f}"
+    lines.append(f"Best: {best_symbol} {best_str} | Worst: {worst_symbol} {worst_str}")
 
     # Trading assessment (LLM)
     assessment = llm_result.get("trading_assessment", "")
