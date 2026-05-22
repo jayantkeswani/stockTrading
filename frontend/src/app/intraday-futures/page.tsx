@@ -6,7 +6,6 @@ import { Watchlist } from "@/components/intraday-futures/Watchlist";
 import { AgentLog } from "@/components/intraday-futures/AgentLog";
 import { GlobalCues } from "@/components/intraday-futures/GlobalCues";
 import { SetupPerformance } from "@/components/intraday-futures/SetupPerformance";
-import { ConfigPanel } from "@/components/intraday-futures/ConfigPanel";
 import { PermanentWatchlist } from "@/components/intraday-futures/PermanentWatchlist";
 import { ChartModal } from "@/components/charts/ChartModal";
 import { useStore } from "@/store";
@@ -46,7 +45,6 @@ export default function IntradayFuturesPage() {
           <AgentLog date={selectedDate} />
           <SetupPerformance date={selectedDate} />
           <GlobalCues date={selectedDate} refreshKey={briefingKey} />
-          <ConfigPanel />
         </div>
       </div>
 

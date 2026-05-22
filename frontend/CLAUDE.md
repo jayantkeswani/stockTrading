@@ -22,7 +22,7 @@ All pages use `'use client'` directive.
 - `agent/page.tsx` — Agent dashboard: YOLO toggle, autonomy level badge, 5-card status grid (incl. Profit Cap card), activity log. PeriodFilter, action-type pills, strategy pills, All/Real/Shadow filter, symbol text input, "Pending" checkbox. `autonomy_level` badge comparisons use `.toLowerCase()` — do not change to direct equality.
 - `chart/page.tsx` — Full TradingView chart page. Symbol tab row (all 5 indices + watchlist items).
 - `options/page.tsx` — Strategy 2 (VWAP Pullback) dedicated page. DayStatusBar-style header + window state badge. AgentLog in col-span-8.
-- `intraday-futures/page.tsx` — Strategy 5 dedicated page. Fixed DayStatusBar, fixed-height two-column grid (`h-[calc(100vh-96px)]`) with per-column `overflow-y-auto`. 8-col left (Watchlist + PermanentWatchlist), 4-col right (AgentLog, SetupPerformance, GlobalCues). ChartModal overlay pattern.
+- `intraday-futures/page.tsx` — Strategy 5 dedicated page. Fixed DayStatusBar, fixed-height two-column grid (`h-[calc(100vh-96px)]`) with per-column `overflow-y-auto`. 8-col left (Watchlist + PermanentWatchlist), 4-col right (AgentLog, SetupPerformance, GlobalCues). Config managed via Settings page. ChartModal overlay pattern.
 
 ### `src/components/` - React Components (by domain)
 
@@ -79,7 +79,6 @@ All pages use `'use client'` directive.
 - `AgentLog.tsx` — Reverse-chronological Strategy 5 activity. Paginated (100/page), IntersectionObserver scroll, 10s poll for first page. Category badges with color coding. Category filter toggle pills. React keys use `timestamp-category-index`.
 - `SetupPerformance.tsx` — Collapsible per-setup win rate bars, W/L counts, P&L. Fetches via `getIntradayFuturesSetupPerformance()`.
 - `GlobalCues.tsx` — Collapsible morning briefing + global market cues. Manual `↻ refresh` button passes `force=true` to bypass Redis cache. Shows: overnight bias badge, global score bar (BiasBar), Nifty Gap, Nifty/S&P/Nasdaq/Dow Futures/Crude/USD-INR/DXY/India VIX/US VIX. `preopen_reassessed` shown as `pre-open ✓` badge.
-- `ConfigPanel.tsx` — Collapsible Strategy 5 parameter editor. Loads defaults via `getParameterDefaults("intraday_futures")`. Saves via `updateStrategy` API.
 
 **positions/**
 - `ActivePositions.tsx` — Dense table of open positions: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy, Close button. Expanded detail: Strategy, Expiry, Lots/Qty, Stop Loss, Target, Margin (`pos.margin_required` coerced via `Number()`). Watchlist button resolves symbol via `api.searchSymbols()`. Confidence filter from store. Real/Shadow toggle. Direction-aware P/L and SL distance. Trailing SL exit reason in amber. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks.
@@ -139,8 +138,8 @@ All API calls go through this module via a single `request()` helper (parses err
 - `api.getStrategies()` — `GET /api/v1/strategies`. Used by: settings/page
 - `api.toggleStrategy(name)` — `PATCH /api/v1/strategies/{name}/toggle`. Used by: settings/page
 - `api.toggleAutoMode(name)` — `PATCH /api/v1/strategies/{name}/auto-mode`. Used by: settings/page
-- `api.updateStrategy(name, body)` — `PUT /api/v1/strategies/{name}`. Used by: settings/page, intraday-futures/ConfigPanel
-- `api.getParameterDefaults(name)` — `GET /api/v1/strategies/{name}/parameter-defaults`. Used by: intraday-futures/ConfigPanel, settings/StrategyParams
+- `api.updateStrategy(name, body)` — `PUT /api/v1/strategies/{name}`. Used by: settings/page
+- `api.getParameterDefaults(name)` — `GET /api/v1/strategies/{name}/parameter-defaults`. Used by: settings/StrategyParams
 - `api.evaluateStrategy(strategyName, symbol)` — `POST /api/v1/strategies/evaluate`. Used by: ScannerHeader
 - `api.evaluateStrategyBatch(strategyName)` — `POST /api/v1/strategies/evaluate/batch`. Used by: ScannerHeader
 
