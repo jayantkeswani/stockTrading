@@ -1926,7 +1926,7 @@ class StrategyRunner:
                     Signal.status == SignalStatus.PENDING.value,
                 ]
                 if signal.strategy_name.value in self._INTRADAY_STRATEGIES:
-                    today_start = now_ist().replace(hour=0, minute=0, second=0, microsecond=0)
+                    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
                     filters.append(Signal.generated_at >= today_start)
 
                 result = await session.execute(
