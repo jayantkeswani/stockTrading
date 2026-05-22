@@ -22,6 +22,7 @@ from app.models.agent_log import AgentLog
 from app.models.position import Position
 from app.models.signal import Signal
 from app.models.trade import Trade, build_signal_snapshot
+from app.services.execution_utils import recompute_sl_target
 from app.services.live_price import get_live_price
 from app.services.margin_calculator import compute_margin
 from app.services.trading_config import get_trading_config
@@ -141,6 +142,16 @@ async def _do_shadow_execute(signal_id) -> None:
         else:
             entry_price = float(signal.entry_price)
 
+        # Recompute SL/target from the live fill price so R:R is preserved
+        stop_loss, target_price = recompute_sl_target(
+            float(signal.entry_price),
+            float(signal.stop_loss),
+            float(signal.target_price) if signal.target_price else None,
+            entry_price,
+            signal.instrument_type,
+            signal.signal_type,
+        )
+
         now = now_ist()
         instrument = "FUTURE" if is_futures else "OPTION"
         margin = compute_margin(signal.symbol, entry_price, quantity, instrument)
@@ -156,8 +167,8 @@ async def _do_shadow_execute(signal_id) -> None:
             quantity=quantity,
             lots=lots,
             entry_price=entry_price,
-            stop_loss=signal.stop_loss,
-            target_price=signal.target_price,
+            stop_loss=stop_loss,
+            target_price=target_price,
             status=TradeStatus.OPEN.value,
             position_type=position_type,
             is_paper=True,
@@ -185,8 +196,8 @@ async def _do_shadow_execute(signal_id) -> None:
             lots=lots,
             quantity=quantity,
             entry_price=entry_price,
-            stop_loss=signal.stop_loss,
-            target_price=signal.target_price,
+            stop_loss=stop_loss,
+            target_price=target_price,
             fyers_option_symbol=trading_symbol,
             strategy_name=signal.strategy_name,
             position_type=position_type,
@@ -207,8 +218,8 @@ async def _do_shadow_execute(signal_id) -> None:
                 "signal_type": signal.signal_type,
                 "strike_price": float(signal.strike_price),
                 "entry_price": entry_price,
-                "stop_loss": float(signal.stop_loss),
-                "target_price": float(signal.target_price) if signal.target_price else None,
+                "stop_loss": stop_loss,
+                "target_price": target_price,
                 "lots": lots,
                 "executable": signal.executable,
                 "blocked_reason": signal.blocked_reason,
@@ -253,8 +264,8 @@ async def _do_shadow_execute(signal_id) -> None:
             "entry_price": entry_price,
             "current_price": entry_price,
             "unrealized_pnl": 0.0,
-            "stop_loss": float(signal.stop_loss),
-            "target_price": float(signal.target_price) if signal.target_price else None,
+            "stop_loss": stop_loss,
+            "target_price": target_price,
             "strategy_name": signal.strategy_name,
             "is_paper": True,
             "is_shadow": True,

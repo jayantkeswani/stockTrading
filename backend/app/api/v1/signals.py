@@ -7,6 +7,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import IST, LOT_SIZES
+from app.services.execution_utils import recompute_sl_target
 from app.services.lot_sizing import compute_lots_for_manual
 from app.services.margin_calculator import compute_margin
 from app.services.live_price import get_live_price
@@ -88,8 +89,14 @@ async def preview_signal(signal_id: uuid.UUID, db: AsyncSession = Depends(get_db
     else:
         live_entry = float(signal.entry_price)
 
-    sl = float(signal.stop_loss)
-    target = float(signal.target_price) if signal.target_price else None
+    sl, target = recompute_sl_target(
+        float(signal.entry_price),
+        float(signal.stop_loss),
+        float(signal.target_price) if signal.target_price else None,
+        live_entry,
+        signal.instrument_type,
+        signal.signal_type,
+    )
     risk = abs(live_entry - sl) * quantity
     notional = live_entry * quantity
     margin_required = compute_margin(signal.symbol, live_entry, quantity, signal.instrument_type)
@@ -214,6 +221,16 @@ async def execute_signal(
     else:
         entry_price = float(signal.entry_price)
 
+    # Recompute SL/target from the live fill price so R:R is preserved
+    stop_loss, target_price = recompute_sl_target(
+        float(signal.entry_price),
+        float(signal.stop_loss),
+        float(signal.target_price) if signal.target_price else None,
+        entry_price,
+        signal.instrument_type,
+        signal.signal_type,
+    )
+
     cfg = await get_trading_config()
 
     # Compute margin
@@ -231,8 +248,8 @@ async def execute_signal(
         quantity=quantity,
         lots=lots,
         entry_price=entry_price,
-        stop_loss=signal.stop_loss,
-        target_price=signal.target_price,
+        stop_loss=stop_loss,
+        target_price=target_price,
         status=TradeStatus.OPEN.value,
         position_type=position_type,
         is_paper=cfg.paper_trading,
@@ -261,8 +278,8 @@ async def execute_signal(
         lots=lots,
         quantity=quantity,
         entry_price=entry_price,
-        stop_loss=signal.stop_loss,
-        target_price=signal.target_price,
+        stop_loss=stop_loss,
+        target_price=target_price,
         fyers_option_symbol=trading_symbol,
         strategy_name=signal.strategy_name,
         position_type=position_type,
@@ -303,8 +320,8 @@ async def execute_signal(
             "entry_price": entry_price,
             "current_price": entry_price,
             "unrealized_pnl": 0.0,
-            "stop_loss": float(signal.stop_loss),
-            "target_price": float(signal.target_price) if signal.target_price else None,
+            "stop_loss": stop_loss,
+            "target_price": target_price,
             "strategy_name": signal.strategy_name,
             "is_paper": cfg.paper_trading,
             "position_type": position_type,
@@ -328,8 +345,8 @@ async def execute_signal(
             signal_type=signal.signal_type,
             strategy_name=signal.strategy_name,
             entry=entry_price,
-            stop_loss=float(signal.stop_loss),
-            target=float(signal.target_price) if signal.target_price else 0,
+            stop_loss=stop_loss,
+            target=target_price if target_price is not None else 0,
             strike=float(signal.strike_price) if signal.strike_price else None,
             expiry=str(signal.expiry_date) if signal.expiry_date else None,
             lots=lots,

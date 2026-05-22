@@ -21,6 +21,7 @@ from app.core.constants import (
     LOT_SIZES,
     MARKET_OPEN,
 )
+from app.services.execution_utils import recompute_sl_target
 from app.services.live_price import get_live_price
 from app.services.lot_sizing import compute_lots_for_yolo
 from app.services.margin_calculator import compute_margin
@@ -163,6 +164,16 @@ async def auto_execute_signal(signal_id) -> dict | None:
         else:
             live_entry = float(signal.entry_price)
 
+        # Recompute SL/target from the live fill price so R:R is preserved
+        stop_loss, target_price = recompute_sl_target(
+            float(signal.entry_price),
+            float(signal.stop_loss),
+            float(signal.target_price) if signal.target_price else None,
+            live_entry,
+            signal.instrument_type,
+            signal.signal_type,
+        )
+
         # Compute margin
         instrument = "FUTURE" if is_futures else "OPTION"
         margin = compute_margin(signal.symbol, live_entry, quantity, instrument)
@@ -179,8 +190,8 @@ async def auto_execute_signal(signal_id) -> dict | None:
             quantity=quantity,
             lots=lots,
             entry_price=live_entry,
-            stop_loss=signal.stop_loss,
-            target_price=signal.target_price,
+            stop_loss=stop_loss,
+            target_price=target_price,
             status=TradeStatus.OPEN.value,
             position_type=position_type,
             is_paper=cfg.paper_trading,
@@ -209,8 +220,8 @@ async def auto_execute_signal(signal_id) -> dict | None:
             lots=lots,
             quantity=quantity,
             entry_price=live_entry,
-            stop_loss=signal.stop_loss,
-            target_price=signal.target_price,
+            stop_loss=stop_loss,
+            target_price=target_price,
             fyers_option_symbol=trading_symbol,
             strategy_name=signal.strategy_name,
             position_type=position_type,
@@ -234,9 +245,9 @@ async def auto_execute_signal(signal_id) -> dict | None:
                 "strategy_name": signal.strategy_name,
                 "signal_type": signal.signal_type,
                 "strike_price": float(signal.strike_price),
-                "entry_price": float(signal.entry_price),
-                "stop_loss": float(signal.stop_loss),
-                "target_price": float(signal.target_price) if signal.target_price else None,
+                "entry_price": live_entry,
+                "stop_loss": stop_loss,
+                "target_price": target_price,
                 "lots": lots,
                 "quantity": quantity,
                 "mode": "YOLO",
@@ -273,8 +284,8 @@ async def auto_execute_signal(signal_id) -> dict | None:
             "entry_price": live_entry,
             "current_price": live_entry,
             "unrealized_pnl": 0.0,
-            "stop_loss": float(signal.stop_loss),
-            "target_price": float(signal.target_price) if signal.target_price else None,
+            "stop_loss": stop_loss,
+            "target_price": target_price,
             "strategy_name": signal.strategy_name,
             "is_paper": cfg.paper_trading,
             "position_type": position_type,
@@ -300,8 +311,8 @@ async def auto_execute_signal(signal_id) -> dict | None:
         signal_type=signal.signal_type,
         strategy_name=signal.strategy_name,
         entry=live_entry,
-        stop_loss=float(signal.stop_loss),
-        target=float(signal.target_price) if signal.target_price else 0,
+        stop_loss=stop_loss,
+        target=target_price if target_price is not None else 0,
         strike=float(signal.strike_price) if signal.strike_price else None,
         expiry=str(signal.expiry_date) if signal.expiry_date else None,
         lots=lots,
