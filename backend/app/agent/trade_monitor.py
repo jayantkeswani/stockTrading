@@ -7,10 +7,10 @@ Supports multiple autonomy levels:
 """
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.retry import async_retry
@@ -19,15 +19,18 @@ from app.agent.notification import (
     notify_expiry_roll,
     notify_expiry_roll_failed,
     notify_profit_booked,
+    notify_profit_cap_halt,
     notify_sl_hit,
     notify_time_exit,
 )
+from app.core.constants import IST, MARKET_OPEN
 from app.core.enums import AgentActionType, ConfirmationStatus, ExitReason, TradeSource, TradeStatus
 from app.core.redis import get_cached_price
 from app.core.utils import is_past_close_deadline, now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
 from app.models.trade import Trade
+from app.services.trading_config import get_trading_config
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -42,6 +45,10 @@ async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[d
 
     Returns list of actions taken.
     """
+    cap_actions = await _check_profit_cap(db)
+    if cap_actions:
+        return cap_actions
+
     result = await db.execute(select(Position))
     positions = result.scalars().all()
     actions = []
@@ -51,6 +58,84 @@ async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[d
         if action:
             actions.append(action)
 
+    return actions
+
+
+async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
+    """Close all open non-shadow positions if daily profit cap is reached.
+
+    Returns list of close actions if cap was hit, None otherwise.
+    """
+    cfg = await get_trading_config()
+    if cfg.max_daily_profit <= 0:
+        return None
+
+    today = now_ist().date()
+    today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
+
+    # Realized PnL from today's closed non-shadow trades
+    pnl_result = await db.execute(
+        select(func.coalesce(func.sum(Trade.pnl), 0)).where(
+            and_(
+                Trade.entry_time >= today_start,
+                Trade.status == TradeStatus.CLOSED.value,
+                Trade.source != TradeSource.SHADOW.value,
+            )
+        )
+    )
+    realized_pnl = float(pnl_result.scalar_one())
+
+    # Unrealized PnL from open non-shadow positions
+    unrealized_result = await db.execute(
+        select(func.coalesce(func.sum(Position.unrealized_pnl), 0)).where(
+            Position.is_shadow == False,  # noqa: E712
+        )
+    )
+    unrealized_pnl = float(unrealized_result.scalar_one())
+
+    total_pnl = realized_pnl + unrealized_pnl
+    if total_pnl < cfg.max_daily_profit:
+        return None
+
+    # Profit cap hit — close all open non-shadow positions
+    result = await db.execute(
+        select(Position).where(Position.is_shadow == False)  # noqa: E712
+    )
+    open_positions = result.scalars().all()
+    if not open_positions:
+        return None
+
+    actions = []
+    for pos in open_positions:
+        price_symbol = pos.fyers_option_symbol or pos.symbol
+        price_data = await get_cached_price(price_symbol)
+        if price_data:
+            exit_price = Decimal(str(price_data.get("ltp", 0)))
+        else:
+            exit_price = pos.current_price or pos.entry_price
+
+        action = await _close_position(
+            db, pos, exit_price,
+            ExitReason.PROFIT_CAP,
+            AgentActionType.PROFIT_CAP_CLOSE,
+        )
+        actions.append(action)
+
+    await db.commit()
+
+    try:
+        await notify_profit_cap_halt(
+            daily_pnl=total_pnl,
+            limit=cfg.max_daily_profit,
+            positions_closed=len(open_positions),
+        )
+    except Exception:
+        logger.warning("Failed to send profit cap Telegram notification")
+
+    logger.info(
+        "Profit cap hit: total PnL ₹%.0f >= target ₹%.0f, closed %d positions",
+        total_pnl, cfg.max_daily_profit, len(open_positions),
+    )
     return actions
 
 

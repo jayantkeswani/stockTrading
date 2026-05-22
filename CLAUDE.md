@@ -54,7 +54,7 @@ stockTrading/
 │   ├── app/
 │   │   ├── api/v1/        # REST endpoints (14 routers, incl. watchlist, strategies, tasks, research, options)
 │   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
-│   │   ├── models/        # SQLAlchemy ORM models (16 tables incl. market_data_daily, global_market_snapshots, trading_config; signals has ai_* columns + market snapshot fields (nifty_spot, nifty_day_change_pct, trigger_candle, minutes_since_open) + is_permanent_watchlist flag; trades has is_permanent_watchlist + signal_snapshot (JSONB) + 5 signal_* columns snapshotted at execution + margin_required; positions has margin_required; trading_config has shadow_skip_permanent_watchlist + yolo_skip_permanent_watchlist toggles; signal_history archives Case-2 dedup snapshots)
+│   │   ├── models/        # SQLAlchemy ORM models (16 tables incl. market_data_daily, global_market_snapshots, trading_config; signals has ai_* columns + market snapshot fields (nifty_spot, nifty_day_change_pct, trigger_candle, minutes_since_open) + is_permanent_watchlist flag; trades has is_permanent_watchlist + signal_snapshot (JSONB) + 5 signal_* columns snapshotted at execution + margin_required; positions has margin_required; trading_config has max_daily_profit (INR amount, 0=disabled) + shadow_skip_permanent_watchlist + yolo_skip_permanent_watchlist toggles; signal_history archives Case-2 dedup snapshots)
 │   │   ├── schemas/       # Pydantic request/response schemas
 │   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill, strategy_params, morning_screener, agent_log, lot_sizing, margin_calculator, execution_utils)
 │   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
@@ -65,7 +65,7 @@ stockTrading/
 │   │   ├── backtest/      # Backtest module (context_builder, harness, exit_simulator, option_data_fetcher, strike_selector, report)
 │   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP, NSE_HOLIDAYS, MARGIN_TIER_MAP), enums, utils, task_registry
 │   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh, global_market every 15m, Strategy 5 morning workflow, NSE bhav copy daily, F&O ban list 7:00 AM)
-│   ├── tests/             # pytest test suite (980 tests, incl. signal_history archiving)
+│   ├── tests/             # pytest test suite (999 tests, incl. signal_history archiving)
 │   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
     └── src/
@@ -103,12 +103,12 @@ stockTrading/
 ## Agent Autonomy Levels
 - **MANUAL**: Alerts only via Telegram, user executes manually. No capital gates — lot sizing computed at execution time with a warning shown if limits would be exceeded.
 - **SEMI**: Auto-closes on SL hit, requests confirmation for profit booking
-- **YOLO**: Fully autonomous — auto-executes signals, auto-books profits, auto-closes on SL. Enforces drawdown and max-trades gates before executing.
+- **YOLO**: Fully autonomous — auto-executes signals, auto-books profits, auto-closes on SL. Enforces drawdown, max-trades, and daily profit cap gates before executing.
 
 ### Shadow + YOLO Isolation
 Three independent consumers of every signal, fully isolated:
 1. **Shadow executor** — creates SHADOW trade/position based on global `min_confidence_for_shadow` (in `trading_config`). Always uses 1 lot, no capital gates. Invisible to signal lifecycle, dedup, and YOLO position checks. One open shadow per signal — closed shadows don't block (allows fresh shadow on Case-2 re-fire when confidence re-crosses threshold on a new day).
-2. **YOLO executor** — creates YOLO trade/position based on global `min_confidence_for_execution` (in `trading_config`). Only checks non-shadow positions for dedup. Enforces drawdown and max-trades gates; lot sizing computed at execution time via `compute_lots_for_yolo`.
+2. **YOLO executor** — creates YOLO trade/position based on global `min_confidence_for_execution` (in `trading_config`). Only checks non-shadow positions for dedup. Enforces drawdown, max-trades, and daily profit cap gates; lot sizing computed at execution time via `compute_lots_for_yolo`.
 3. **Manual execution** — signal stays PENDING and available for user to click EXEC regardless of shadow/YOLO state. Lot sizing computed at execution time via `compute_lots_for_manual`; no blocking gates, warnings shown instead.
 
 All three confidence thresholds (`min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`) are global in `trading_config` — they apply uniformly to all strategies. Cross-field validation enforces `persist < shadow <= execution`.
@@ -138,7 +138,8 @@ Signals store SL and target computed at the moment the signal fires. Because all
 
 ### Risk Gate Responsibilities
 - `_check_regulatory_limits` (strategy_runner.py) — F&O ban list only; called for all execution paths
-- Drawdown / max-trades gates — YOLO executor only
+- Drawdown / max-trades / **daily profit cap** gates — YOLO executor only (`_final_risk_check` in `auto_executor.py`)
+- **Daily profit cap** (`max_daily_profit` in `trading_config`, INR amount, 0 = disabled): when realized + unrealized PnL (non-shadow) >= `max_daily_profit`, trade monitor closes all open non-shadow positions at market price (`ExitReason.PROFIT_CAP`) and blocks further YOLO executions. Drawdown gate uses realized PnL only; profit cap uses realized + unrealized.
 - Shadow executor — zero capital gates (always 1 lot, no risk checks)
 - Manual executor — no blocking gates; warnings computed but not enforced
 

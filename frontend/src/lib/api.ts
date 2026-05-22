@@ -251,6 +251,7 @@ export const api = {
     request<{
       capital: number;
       max_daily_drawdown_pct: number;
+      max_daily_profit: number;
       max_risk_per_trade_pct: number;
       max_trades_per_day: number;
       paper_trading: boolean;
@@ -264,6 +265,7 @@ export const api = {
   updateTradingSettings: (patch: {
     capital?: number;
     max_daily_drawdown_pct?: number;
+    max_daily_profit?: number;
     max_risk_per_trade_pct?: number;
     max_trades_per_day?: number;
     paper_trading?: boolean;

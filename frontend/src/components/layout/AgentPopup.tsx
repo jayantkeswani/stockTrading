@@ -2,11 +2,18 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import { api } from "@/lib/api";
-import type { AgentStatus } from "@/lib/types";
+import { formatINR } from "@/lib/formatters";
+import type { AgentStatus, RiskDashboard } from "@/lib/types";
 
 export function AgentPopup() {
-  const { agentStatus, setAgentStatus } = useStore();
+  const { agentStatus, setAgentStatus, risk, setRisk } = useStore(useShallow((s) => ({
+    agentStatus: s.agentStatus,
+    setAgentStatus: s.setAgentStatus,
+    risk: s.risk,
+    setRisk: s.setRisk,
+  })));
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -25,12 +32,21 @@ export function AgentPopup() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      const status = await api.getAgentStatus() as AgentStatus;
+      const [status, riskData] = await Promise.all([
+        api.getAgentStatus() as Promise<AgentStatus>,
+        api.getRiskDashboard() as Promise<RiskDashboard>,
+      ]);
       setAgentStatus(status as never);
+      setRisk(riskData);
     } catch {
       // ignore
     }
-  }, [setAgentStatus]);
+  }, [setAgentStatus, setRisk]);
+
+  // Fetch fresh risk + status when popup opens
+  useEffect(() => {
+    if (open) refreshStatus();
+  }, [open, refreshStatus]);
 
   const handleStartStop = useCallback(async () => {
     setLoading("power");
@@ -164,6 +180,16 @@ export function AgentPopup() {
                   <div className="flex justify-between text-[9px] font-mono">
                     <span className="text-text-muted">uptime</span>
                     <span className="text-text-secondary">{formatUptime(agentStatus.uptime_seconds)}</span>
+                  </div>
+                )}
+                {risk && risk.max_daily_profit > 0 && (
+                  <div className="flex justify-between text-[9px] font-mono">
+                    <span className="text-text-muted">profit cap</span>
+                    <span className={risk.is_profit_capped ? "text-profit font-bold" : "text-text-secondary"}>
+                      {risk.is_profit_capped
+                        ? "HIT"
+                        : `${formatINR(risk.daily_pnl)} / ${formatINR(risk.max_daily_profit)}`}
+                    </span>
                   </div>
                 )}
               </div>

@@ -296,6 +296,16 @@ async def notify_drawdown_halt(daily_pnl: float, limit: float) -> None:
     await send_telegram(msg)
 
 
+async def notify_profit_cap_halt(daily_pnl: float, limit: float, positions_closed: int) -> None:
+    msg = (
+        f"🎯 <b>Trading Halted — Daily Profit Target Hit</b>\n"
+        f"Daily PnL  +₹{daily_pnl:,.0f}\n"
+        f"Target  ₹{limit:,.0f}\n"
+        f"Closed {positions_closed} position(s). No new trades today."
+    )
+    await send_telegram(msg)
+
+
 # ── Daily summary ──────────────────────────────────────────────────────────────
 
 async def notify_daily_summary(

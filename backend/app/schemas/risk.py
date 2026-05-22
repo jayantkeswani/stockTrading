@@ -15,6 +15,8 @@ class RiskDashboardResponse(BaseModel):
     risk: Decimal
     margin_utilized: Decimal
     is_halted: bool
+    max_daily_profit: float
+    is_profit_capped: bool
     positions_open: int
 
 

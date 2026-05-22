@@ -15,7 +15,7 @@ from decimal import Decimal
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.notification import notify_auto_executed, notify_drawdown_halt
+from app.agent.notification import notify_auto_executed, notify_drawdown_halt, notify_profit_cap_halt
 from app.core.constants import (
     IST,
     LOT_SIZES,
@@ -374,6 +374,24 @@ async def _final_risk_check(session: AsyncSession, symbol: str) -> tuple[bool, s
         except Exception:
             pass
         return False, "Drawdown limit breached"
+
+    # Check profit cap — realized + unrealized vs daily target
+    if cfg.max_daily_profit > 0:
+        unrealized_result = await session.execute(
+            select(func.coalesce(func.sum(Position.unrealized_pnl), 0)).where(
+                Position.is_shadow == False,  # noqa: E712
+            )
+        )
+        unrealized_pnl = float(unrealized_result.scalar_one())
+        total_pnl = realized_pnl + unrealized_pnl
+        if total_pnl >= cfg.max_daily_profit:
+            try:
+                await notify_profit_cap_halt(
+                    daily_pnl=total_pnl, limit=cfg.max_daily_profit, positions_closed=0,
+                )
+            except Exception:
+                pass
+            return False, "Daily profit cap reached"
 
     return True, None
 

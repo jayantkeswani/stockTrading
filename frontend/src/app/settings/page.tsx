@@ -48,6 +48,7 @@ const INDEX_SYMBOLS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"]
 interface TradingSettings {
   capital: number;
   max_daily_drawdown_pct: number;
+  max_daily_profit: number;
   max_risk_per_trade_pct: number;
   max_trades_per_day: number;
   paper_trading: boolean;
@@ -278,6 +279,17 @@ export default function SettingsPage() {
                   step="0.5"
                   value={currentSettings.max_daily_drawdown_pct}
                   onChange={(e) => setTradingDraft((d) => ({ ...d, max_daily_drawdown_pct: Number(e.target.value) }))}
+                  className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">Daily Profit Target (INR)</label>
+                <input
+                  type="number"
+                  step="1000"
+                  min="0"
+                  value={currentSettings.max_daily_profit ?? 0}
+                  onChange={(e) => setTradingDraft((d) => ({ ...d, max_daily_profit: Number(e.target.value) }))}
                   className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
                 />
               </div>

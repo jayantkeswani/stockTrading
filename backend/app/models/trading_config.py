@@ -19,6 +19,7 @@ class TradingConfig(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     capital: Mapped[int] = mapped_column(Integer, nullable=False)
     max_daily_drawdown_pct: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
+    max_daily_profit: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0.00"))
     max_risk_per_trade_pct: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
     max_trades_per_day: Mapped[int] = mapped_column(Integer, nullable=False)
     paper_trading: Mapped[bool] = mapped_column(Boolean, nullable=False)

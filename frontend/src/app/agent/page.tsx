@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { api } from "@/lib/api";
-import { formatTime, formatDate, startOfDayIST, endOfDayIST } from "@/lib/formatters";
+import { formatTime, formatDate, formatINR, startOfDayIST, endOfDayIST } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
-import type { AgentLog } from "@/lib/types";
+import type { AgentLog, RiskDashboard } from "@/lib/types";
 import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
 
 function defaultPeriod(): Period {
@@ -25,10 +25,12 @@ const ACTION_COLORS: Record<string, string> = {
   AUTO_EXECUTED: "text-accent",
   MANUAL_EXECUTED: "text-accent",
   SHADOW_EXECUTED: "text-purple-400",
+  PROFIT_CAP_CLOSE: "text-profit",
 };
 
 export default function AgentPage() {
-  const { agentStatus, setAgentStatus } = useStore();
+  const { agentStatus, setAgentStatus, setRisk } = useStore();
+  const risk = useStore((s) => s.risk);
   const [logs, setLogs] = useState<AgentLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>(defaultPeriod);
@@ -43,14 +45,18 @@ export default function AgentPage() {
   useEffect(() => {
     async function loadStatus() {
       try {
-        const status = await api.getAgentStatus();
+        const [status, riskData] = await Promise.all([
+          api.getAgentStatus(),
+          api.getRiskDashboard() as Promise<RiskDashboard>,
+        ]);
         setAgentStatus(status as never);
+        setRisk(riskData);
       } catch {
         // API not running yet
       }
     }
     loadStatus();
-  }, [setAgentStatus]);
+  }, [setAgentStatus, setRisk]);
 
   useEffect(() => {
     setLoading(true);
@@ -213,7 +219,7 @@ export default function AgentPage() {
       </div>
 
       {/* Status Cards */}
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-6 gap-2">
         <div className="rounded border border-border bg-bg-secondary px-3 py-2">
           <div className="text-[10px] text-text-muted font-mono uppercase mb-1">Status</div>
           <div className="flex items-center gap-1.5">
@@ -255,6 +261,20 @@ export default function AgentPage() {
             {agentStatus?.uptime_seconds
               ? `${Math.floor(agentStatus.uptime_seconds / 60)}m`
               : "—"}
+          </div>
+        </div>
+        <div className={`rounded border px-3 py-2 ${
+          risk?.is_profit_capped ? "border-profit/30 bg-profit/5" : "border-border bg-bg-secondary"
+        }`}>
+          <div className="text-[10px] text-text-muted font-mono uppercase mb-1">Profit Cap</div>
+          <div className={`text-sm font-mono font-bold ${
+            risk?.is_profit_capped ? "text-profit" : risk && risk.max_daily_profit > 0 ? "text-text-secondary" : "text-text-muted"
+          }`}>
+            {risk?.is_profit_capped
+              ? "HIT"
+              : risk && risk.max_daily_profit > 0
+                ? formatINR(risk.max_daily_profit)
+                : "OFF"}
           </div>
         </div>
       </div>

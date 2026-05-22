@@ -79,6 +79,12 @@ async def risk_dashboard(db: AsyncSession = Depends(get_db)):
     )
     margin_utilized = result.scalar() or Decimal(0)
 
+    profit_cap_pnl = float(daily_pnl + unrealized)
+    is_profit_capped = (
+        cfg.max_daily_profit > 0
+        and profit_cap_pnl >= cfg.max_daily_profit
+    )
+
     return RiskDashboardResponse(
         capital=capital,
         daily_pnl=total_daily_pnl,
@@ -91,6 +97,8 @@ async def risk_dashboard(db: AsyncSession = Depends(get_db)):
         risk=risk,
         margin_utilized=margin_utilized,
         is_halted=drawdown_pct >= cfg.max_daily_drawdown_pct,
+        max_daily_profit=cfg.max_daily_profit,
+        is_profit_capped=is_profit_capped,
         positions_open=positions_open,
     )
 

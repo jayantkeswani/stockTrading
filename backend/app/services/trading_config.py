@@ -30,6 +30,7 @@ _PUBSUB_CHANNEL = "config:trading:updated"
 class TradingConfigDTO:
     capital: int
     max_daily_drawdown_pct: float
+    max_daily_profit: float
     max_risk_per_trade_pct: float
     max_trades_per_day: int
     paper_trading: bool
@@ -57,6 +58,7 @@ def _row_to_dto(row: TradingConfig) -> TradingConfigDTO:
     return TradingConfigDTO(
         capital=int(row.capital),
         max_daily_drawdown_pct=float(row.max_daily_drawdown_pct),
+        max_daily_profit=float(row.max_daily_profit),
         max_risk_per_trade_pct=float(row.max_risk_per_trade_pct),
         max_trades_per_day=int(row.max_trades_per_day),
         paper_trading=bool(row.paper_trading),
@@ -101,7 +103,7 @@ async def update_trading_config(**fields) -> TradingConfigDTO:
     global _cache
 
     allowed = {
-        "capital", "max_daily_drawdown_pct", "max_risk_per_trade_pct",
+        "capital", "max_daily_drawdown_pct", "max_daily_profit", "max_risk_per_trade_pct",
         "max_trades_per_day", "paper_trading", "autonomy_level",
         "min_confidence_to_persist", "min_confidence_for_shadow", "min_confidence_for_execution",
         "shadow_skip_permanent_watchlist", "yolo_skip_permanent_watchlist",
@@ -171,6 +173,7 @@ async def ensure_seeded() -> None:
             id=1,
             capital=settings.trading_capital,
             max_daily_drawdown_pct=settings.max_daily_drawdown_pct,
+            max_daily_profit=0.0,
             max_risk_per_trade_pct=settings.max_risk_per_trade_pct,
             max_trades_per_day=settings.max_trades_per_day,
             paper_trading=settings.paper_trading,

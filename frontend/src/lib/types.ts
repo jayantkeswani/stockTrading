@@ -185,6 +185,8 @@ export interface RiskDashboard {
   risk: number;
   margin_utilized: number;
   is_halted: boolean;
+  max_daily_profit: number;
+  is_profit_capped: boolean;
   positions_open: number;
 }
 
