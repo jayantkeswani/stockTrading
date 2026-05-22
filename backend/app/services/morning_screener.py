@@ -906,43 +906,71 @@ async def _stage2_news_sentiment(candidates: list[dict]) -> list[dict]:
     agent = _ScreenerNewsAgent()
     news_sem = asyncio.Semaphore(5)
 
+    # Build company name lookup from symbol master for better search queries
+    display_names: dict[str, str] = {}
+    try:
+        r = get_redis()
+        raw_master = await r.get("symbols:master")
+        if raw_master:
+            for sym in json.loads(raw_master):
+                short = sym.get("n", "")
+                company = sym.get("d", "")
+                if short and company and sym.get("g") == "EQ":
+                    display_names[short.upper()] = company.title()
+    except Exception:
+        logger.debug("Could not load symbol master for display names", exc_info=True)
+
+    NEWS_TIMEOUT = 90
+
     async def _fetch_news(candidate: dict) -> dict:
         symbol = candidate["symbol"]
-        ctx = ResearchContext(symbol=symbol, display_name=symbol)
+        company_name = display_names.get(symbol.upper(), symbol)
+        ctx = ResearchContext(symbol=symbol, display_name=company_name)
         async with news_sem:
-            try:
-                result = await asyncio.wait_for(
-                    agent.research(ctx, llm),
-                    timeout=60,
-                )
-                findings = result.findings
-                sentiment_score = findings.get("sentiment_score", 0.0)
+            last_err: Exception | None = None
+            for attempt in range(2):
+                try:
+                    result = await asyncio.wait_for(
+                        agent.research(ctx, llm),
+                        timeout=NEWS_TIMEOUT,
+                    )
+                    findings = result.findings
+                    sentiment_score = findings.get("sentiment_score", 0.0)
 
-                # Adjust composite score based on sentiment
-                adjustment = sentiment_score * 10  # -10 to +10
-                candidate["composite_score"] = round(candidate["composite_score"] + adjustment, 1)
-                candidate["news"] = {
-                    "sentiment": findings.get("overall_sentiment", "neutral"),
-                    "score": sentiment_score,
-                    "key_themes": findings.get("key_themes", [])[:3],
-                    "risk_events": findings.get("risk_events", []),
-                    "catalyst_events": findings.get("catalyst_events", []),
-                    "articles_count": len(findings.get("articles", [])),
-                    "headlines": [
-                        a["headline"]
-                        for a in findings.get("articles", [])[:3]
-                        if a.get("headline")
-                    ],
-                }
+                    adjustment = sentiment_score * 10  # -10 to +10
+                    candidate["composite_score"] = round(candidate["composite_score"] + adjustment, 1)
+                    candidate["news"] = {
+                        "sentiment": findings.get("overall_sentiment", "neutral"),
+                        "score": sentiment_score,
+                        "key_themes": findings.get("key_themes", [])[:3],
+                        "risk_events": findings.get("risk_events", []),
+                        "catalyst_events": findings.get("catalyst_events", []),
+                        "articles_count": len(findings.get("articles", [])),
+                        "headlines": [
+                            a["headline"]
+                            for a in findings.get("articles", [])[:3]
+                            if a.get("headline")
+                        ],
+                    }
 
-                # Flag severe negative news
-                risk_events = findings.get("risk_events", [])
-                if sentiment_score < -0.5 and risk_events:
-                    candidate["news"]["flagged"] = True
+                    risk_events = findings.get("risk_events", [])
+                    if sentiment_score < -0.5 and risk_events:
+                        candidate["news"]["flagged"] = True
 
-            except Exception as e:
-                err_msg = str(e) or type(e).__name__
-                logger.warning("News sentiment failed for %s: [%s] %s", symbol, type(e).__name__, err_msg)
+                    last_err = None
+                    break
+                except asyncio.TimeoutError:
+                    if attempt == 0:
+                        logger.warning("News sentiment timed out for %s, retrying once", symbol)
+                        continue
+                    last_err = asyncio.TimeoutError()
+                except Exception as e:
+                    last_err = e
+                    break
+
+            if last_err is not None:
+                err_msg = str(last_err) or type(last_err).__name__
+                logger.warning("News sentiment failed for %s: [%s] %s", symbol, type(last_err).__name__, err_msg)
                 candidate["news"] = {"sentiment": "unknown", "score": 0.0, "error": err_msg}
 
         return candidate
