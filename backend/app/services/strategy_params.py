@@ -135,7 +135,11 @@ def parse_dead_zone(params: dict) -> tuple[time, time] | None:
 
 
 async def _load_from_db(strategy_name: str, session=None) -> dict:
-    """Load parameters JSONB from strategy_configs table."""
+    """Load parameters JSONB from strategy_configs table.
+
+    Uses the provided session if given, otherwise opens its own.
+    Returns an empty dict on miss or on any DB error (caller merges with defaults).
+    """
     try:
         from sqlalchemy import select as sa_select
         from app.models.strategy_config import StrategyConfig
@@ -165,7 +169,7 @@ async def _load_from_db(strategy_name: str, session=None) -> dict:
 
 
 def _parse_time(s: str) -> time | None:
-    """Parse 'HH:MM' string to a time object."""
+    """Parse an 'HH:MM' string to a time object. Returns None on invalid input."""
     if not s:
         return None
     try:

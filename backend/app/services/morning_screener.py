@@ -330,6 +330,7 @@ async def _summarize_agent_log(log_date: date) -> dict:
 
 
 def _compute_trade_stats(trades: list) -> dict:
+    """Compute aggregate win/loss/PnL stats from a list of Trade ORM objects."""
     wins = sum(1 for t in trades if t.pnl and t.pnl > 0)
     losses = sum(1 for t in trades if t.pnl and t.pnl <= 0)
     total_pnl = sum(float(t.pnl or 0) for t in trades)
@@ -850,6 +851,7 @@ async def _stage2_news_sentiment(candidates: list[dict]) -> list[dict]:
         """Narrower search window for the morning screener context."""
 
         async def research(self, ctx, llm):
+            """Run 48-hour news search and sentiment scoring for a screener candidate."""
             search_prompt = _SCREENER_SEARCH_PROMPT.format(
                 symbol=ctx.symbol, display_name=ctx.display_name
             )
@@ -923,6 +925,7 @@ async def _stage2_news_sentiment(candidates: list[dict]) -> list[dict]:
     NEWS_TIMEOUT = 90
 
     async def _fetch_news(candidate: dict) -> dict:
+        """Fetch news sentiment for one candidate and merge the score into composite_score."""
         symbol = candidate["symbol"]
         company_name = display_names.get(symbol.upper(), symbol)
         ctx = ResearchContext(symbol=symbol, display_name=company_name)
@@ -1191,6 +1194,7 @@ async def _get_confidence_fundamentals(symbols: list[str]) -> dict[str, dict]:
     from app.tasks.fundamental_data_task import _fetch_and_store_symbol
 
     def _row_to_dict(row: StockFundamental) -> dict:
+        """Convert a StockFundamental ORM row to a plain dict for the LLM prompt."""
         return {
             "market_cap_cr": float(row.market_cap_cr) if row.market_cap_cr else None,
             "eps_growth_qtr_pct": float(row.latest_qtr_eps_growth_pct) if row.latest_qtr_eps_growth_pct else None,
@@ -1304,6 +1308,7 @@ async def _build_rvol_baselines(symbols: list[str], today: date) -> None:
     sem = asyncio.Semaphore(FYERS_SEMAPHORE_LIMIT)
 
     async def _build_one(symbol: str) -> None:
+        """Build and cache the RVOL baseline profile for a single watchlist symbol."""
         cache_key = f"strat5:rvol_baseline:{symbol}"
         existing = await r.get(cache_key)
         if existing:
@@ -1400,6 +1405,7 @@ async def _provision_watchlist_symbols(symbols: list[str], today: date) -> None:
     sem = asyncio.Semaphore(FYERS_SEMAPHORE_LIMIT)
 
     async def _backfill_one(sym: str, fyers_sym: str) -> None:
+        """Backfill previous day + today's 1m candles for a single watchlist symbol."""
         async with sem:
             await asyncio.sleep(FYERS_INTER_REQUEST_DELAY)
             try:
@@ -1508,6 +1514,7 @@ async def _fetch_daily_data_batch(
     sem = asyncio.Semaphore(FYERS_SEMAPHORE_LIMIT)
 
     async def _fetch_one(symbol: str) -> None:
+        """Fetch daily candles from Fyers for a symbol missing from market_data_daily."""
         async with sem:
             await asyncio.sleep(FYERS_INTER_REQUEST_DELAY)
             client = FyersClient(access_token=token)
@@ -1891,7 +1898,12 @@ async def run_preopen_reassessment(as_of: date | None = None) -> dict:
 
 
 def _compute_gap_adjusted_bias(original_bias: str, relative_gap_pct: float) -> str:
-    """Override bias based on relative gap (stock gap minus Nifty gap)."""
+    """Override bias based on relative gap (stock gap minus Nifty gap).
+
+    Hard override (|relative_gap| >= 1%): forces bias to gap direction.
+    Nudge (0.5-1%): conflicting bias moves to NEUTRAL; NEUTRAL moves toward gap.
+    Below threshold: original bias unchanged.
+    """
     abs_gap = abs(relative_gap_pct)
 
     # Hard override: large relative gap forces bias
@@ -1912,7 +1924,11 @@ def _compute_gap_adjusted_bias(original_bias: str, relative_gap_pct: float) -> s
 
 
 def _compute_gap_alignment_bonus(bias: str, stock_gap_pct: float) -> float:
-    """Bonus to composite score when gap direction aligns with bias."""
+    """Bonus to composite score when gap direction aligns with bias.
+
+    Returns 0 for NEUTRAL bias or misaligned gap. Otherwise scales with
+    gap magnitude up to _GAP_ALIGNMENT_BONUS_CAP (5.0 points).
+    """
     if bias == "NEUTRAL":
         return 0.0
 

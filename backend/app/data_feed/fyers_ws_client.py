@@ -60,6 +60,7 @@ class FyersWSClient:
 
     @property
     def is_connected(self) -> bool:
+        """True if the Fyers WebSocket is currently connected."""
         return self._connected
 
     async def _get_access_token(self) -> str | None:

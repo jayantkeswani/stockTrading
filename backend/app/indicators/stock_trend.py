@@ -83,6 +83,7 @@ def compute_stock_trend(daily_candles: list[Candle]) -> StockTrend:
 
 
 def _sma(values: list[float], period: int) -> float | None:
+    """Compute simple moving average of the last `period` values. Returns None if insufficient data."""
     if len(values) < period:
         return None
     return sum(values[-period:]) / period

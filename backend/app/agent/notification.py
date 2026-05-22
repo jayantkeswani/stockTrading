@@ -49,12 +49,14 @@ async def send_telegram(message: str) -> bool:
 
 
 def _paper() -> str:
+    """Return '📄 ' prefix when paper trading is active, empty string otherwise."""
     from app.services.trading_config import _cache as _cfg_cache
     paper = _cfg_cache.paper_trading if _cfg_cache is not None else True
     return "📄 " if paper else ""
 
 
 def _pnl_str(pnl: float, entry: float, exit_: float) -> str:
+    """Format PnL as '+₹1,234  (+5.6%)' with sign and percentage."""
     sign = "+" if pnl >= 0 else "-"
     pct = ((exit_ - entry) / entry * 100) if entry else 0
     pct_sign = "+" if pct >= 0 else ""
@@ -62,6 +64,7 @@ def _pnl_str(pnl: float, entry: float, exit_: float) -> str:
 
 
 def _strategy_label(name: str) -> str:
+    """Return a human-readable strategy label for Telegram messages."""
     labels = {
         "vwap_pullback": "VWAP Pullback",
         "orb": "ORB",
@@ -86,6 +89,11 @@ async def notify_signal_generated(
     instrument_type: str = "OPTION",
     blocked_reason: str | None = None,
 ) -> None:
+    """Send a new signal notification via Telegram.
+
+    Includes strike/expiry for options, expiry for futures, R:R ratio, confidence,
+    and an optional blocked reason if the signal is not executable.
+    """
     direction = signal_type.replace("BUY_", "")
     rr = ""
     if stop_loss and target and entry:
@@ -129,6 +137,7 @@ async def notify_auto_executed(
     quantity: int,
     instrument_type: str = "OPTION",
 ) -> None:
+    """Send a YOLO auto-execution notification via Telegram."""
     direction = signal_type.replace("BUY_", "")
     strike_line = ""
     if instrument_type == "OPTION" and strike:
@@ -160,6 +169,7 @@ async def notify_manual_executed(
     quantity: int,
     instrument_type: str = "OPTION",
 ) -> None:
+    """Send a manual execution notification via Telegram."""
     direction = signal_type.replace("BUY_", "")
     strike_line = ""
     if instrument_type == "OPTION" and strike:
@@ -190,6 +200,11 @@ async def notify_sl_hit(
     instrument_type: str = "OPTION",
     is_trailing: bool = False,
 ) -> None:
+    """Send a stop-loss hit notification via Telegram.
+
+    Uses yellow emoji and 'Trailing Stop Hit' title when is_trailing=True,
+    red emoji and 'Stop Loss Hit' otherwise.
+    """
     emoji = "🟡" if is_trailing else "🔴"
     title = "Trailing Stop Hit" if is_trailing else "Stop Loss Hit"
     msg = (
@@ -209,6 +224,7 @@ async def notify_profit_booked(
     pnl: float,
     lots: int,
 ) -> None:
+    """Send a profit-booked (target hit) notification via Telegram."""
     msg = (
         f"{_paper()}🟢 <b>Profit Booked</b>\n"
         f"{symbol}  ·  {_strategy_label(strategy_name)}\n"
@@ -226,6 +242,7 @@ async def notify_time_exit(
     pnl: float,
     lots: int,
 ) -> None:
+    """Send a 3:15 PM time-exit notification via Telegram."""
     msg = (
         f"{_paper()}🕐 <b>EOD Exit</b>\n"
         f"{symbol}  ·  {_strategy_label(strategy_name)}\n"
@@ -264,6 +281,7 @@ async def notify_expiry_roll(
     new_sl: float,
     new_target: float,
 ) -> None:
+    """Send a futures expiry roll notification via Telegram."""
     pnl_sign = "+" if old_pnl >= 0 else ""
     msg = (
         f"{_paper()}🔄 <b>Expiry Roll</b>\n"
@@ -275,6 +293,7 @@ async def notify_expiry_roll(
 
 
 async def notify_expiry_roll_failed(symbol: str, expiry: str) -> None:
+    """Send a failed expiry roll alert via Telegram — requires manual intervention."""
     msg = (
         f"⚠️ <b>Expiry Roll Failed</b>\n"
         f"{symbol}  ·  Expiry {expiry}\n"
@@ -286,6 +305,7 @@ async def notify_expiry_roll_failed(symbol: str, expiry: str) -> None:
 # ── Risk events ────────────────────────────────────────────────────────────────
 
 async def notify_drawdown_halt(daily_pnl: float, limit: float) -> None:
+    """Send a drawdown-limit-hit halt notification via Telegram."""
     pct = abs(daily_pnl) / limit * 5 if limit else 0  # approximate
     msg = (
         f"🚨 <b>Trading Halted — Drawdown Limit Hit</b>\n"
@@ -297,6 +317,7 @@ async def notify_drawdown_halt(daily_pnl: float, limit: float) -> None:
 
 
 async def notify_profit_cap_halt(daily_pnl: float, limit: float, positions_closed: int) -> None:
+    """Send a daily-profit-cap-hit halt notification via Telegram."""
     msg = (
         f"🎯 <b>Trading Halted — Daily Profit Target Hit</b>\n"
         f"Daily PnL  +₹{daily_pnl:,.0f}\n"
@@ -318,6 +339,7 @@ async def notify_daily_summary(
     worst_symbol: str | None,
     worst_pnl: float | None,
 ) -> None:
+    """Send the 3:35 PM EOD daily summary via Telegram (excludes shadow trades)."""
     emoji = "📈" if net_pnl >= 0 else "📉"
     sign = "+" if net_pnl >= 0 else ""
     lines = [

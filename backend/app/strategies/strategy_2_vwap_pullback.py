@@ -46,11 +46,17 @@ class VWAPPullbackStrategy(BaseStrategy):
     _pending_logs: list[tuple[str, str]] = []
 
     def drain_pending_logs(self) -> list[tuple[str, str]]:
+        """Return and clear all pending log entries [(category, message), ...].
+
+        Called by strategy_runner._flush_strategy_logs() after each candle close
+        to persist GATE/SIGNAL entries to Redis agent log.
+        """
         logs = self._pending_logs
         self._pending_logs = []
         return logs
 
     def _log(self, category: str, message: str) -> None:
+        """Append a (category, message) entry to the pending log queue."""
         self._pending_logs.append((category, message))
 
     def evaluate(self, ctx: MarketContext) -> StrategySignal | None:
@@ -251,6 +257,7 @@ class VWAPPullbackStrategy(BaseStrategy):
         stop_loss: float,
         target_price: float | None,
     ) -> ExitSignal | None:
+        """Check VWAP Pullback exit conditions: SL hit, target hit, or VWAP invalidation."""
         price = ctx.current_price
 
         if price <= stop_loss:
@@ -279,6 +286,11 @@ class VWAPPullbackStrategy(BaseStrategy):
         index_sl,
         index_target,
     ) -> dict:
+        """Build the indicators JSONB dict for signal persistence and LLM context.
+
+        Includes VWAP, PDH/PDL/PDC, CPR levels, OI analysis, intraday bias components,
+        global score, index SL/target, and the full confidence factor breakdown.
+        """
         snapshot: dict = {
             "vwap": vwap,
             "vwap_distance_pct": distance,

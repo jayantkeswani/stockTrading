@@ -28,10 +28,12 @@ _polling_task: asyncio.Task | None = None
 
 
 def _api_url(method: str) -> str:
+    """Build the full Telegram Bot API URL for the given method name."""
     return f"{_TELEGRAM_API.format(token=settings.telegram_bot_token)}/{method}"
 
 
 def _fetch_updates_sync(offset: int, timeout: int = 30, limit: int = 100) -> list[dict]:
+    """Synchronous long-poll to getUpdates. Run via asyncio.to_thread to avoid blocking."""
     with httpx.Client(timeout=timeout + 5) as client:
         r = client.get(
             _api_url("getUpdates"),
@@ -42,6 +44,7 @@ def _fetch_updates_sync(offset: int, timeout: int = 30, limit: int = 100) -> lis
 
 
 async def _get_updates(offset: int, timeout: int = 30) -> list[dict]:
+    """Async wrapper around _fetch_updates_sync. Returns empty list on any error."""
     try:
         return await asyncio.to_thread(_fetch_updates_sync, offset, timeout)
     except Exception as e:
@@ -79,6 +82,11 @@ async def _skip_old_updates() -> int:
 
 
 async def _poll_loop() -> None:
+    """Main long-poll loop: advances past stale updates on startup, then dispatches commands.
+
+    Runs forever until cancelled. Ignores messages from unknown chat IDs.
+    On error sleeps 5s before resuming.
+    """
     global _update_offset
     from app.agent.telegram_commands import handle_command
 
@@ -111,6 +119,7 @@ async def _poll_loop() -> None:
 
 
 def start_telegram_bot() -> asyncio.Task | None:
+    """Start the Telegram bot long-polling task. Returns None if Telegram is not configured or disabled."""
     global _polling_task
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
         logger.info("Telegram not configured — bot polling skipped")
@@ -124,6 +133,7 @@ def start_telegram_bot() -> asyncio.Task | None:
 
 
 async def stop_telegram_bot() -> None:
+    """Cancel and await the polling task. Safe to call even if not running."""
     global _polling_task
     if _polling_task and not _polling_task.done():
         _polling_task.cancel()

@@ -8,6 +8,7 @@ redis_pool = redis.ConnectionPool.from_url(
 
 
 def get_redis() -> redis.Redis:
+    """Return a shared async Redis client from the connection pool."""
     return redis.Redis(connection_pool=redis_pool)
 
 

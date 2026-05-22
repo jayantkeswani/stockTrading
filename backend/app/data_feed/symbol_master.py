@@ -128,10 +128,12 @@ class SymbolMaster:
 
     @property
     def is_loaded(self) -> bool:
+        """True if symbol master has been loaded and contains at least one symbol."""
         return self._loaded and len(self._symbols) > 0
 
     @property
     def count(self) -> int:
+        """Total number of symbols currently in memory."""
         return len(self._symbols)
 
     async def load(self):

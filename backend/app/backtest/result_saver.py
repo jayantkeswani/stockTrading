@@ -48,6 +48,7 @@ def save_run(
 
 
 def _write_summary(run_dir: Path, report: "BacktestReport", run_ts: str) -> None:
+    """Write summary.json with all report stats and run metadata to the run directory."""
     settled = report.wins + report.losses
     win_rate = round(report.wins / settled * 100, 2) if settled else 0.0
 
@@ -85,6 +86,7 @@ def _write_trades_csv(
     trades: list["SimulatedTrade"],
     signals_meta: list[dict],
 ) -> None:
+    """Write trades.csv with one row per simulated trade (entry/exit times, PnL, exit reason)."""
     fieldnames = [
         "trade_num",
         "date",
@@ -142,6 +144,7 @@ def _write_trades_csv(
 
 
 def _write_signals_csv(run_dir: Path, signals_meta: list[dict]) -> None:
+    """Write signals.csv with one row per generated signal (confidence, OI availability, entry price)."""
     if not signals_meta:
         return
 

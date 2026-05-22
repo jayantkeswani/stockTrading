@@ -151,6 +151,7 @@ class IntradayFuturesStrategy(BaseStrategy):
         return None
 
     def _get_dispatch_order(self, phase: str) -> list[str]:
+        """Return the ordered list of sub-setups to evaluate for the given phase."""
         if phase == "MORNING_ACTIVE":
             return ["ORB", "GAP_CONTINUATION", "PDH_PDL", "VWAP_BOUNCE"]
         if phase == "CAUTION_ZONE":
@@ -162,6 +163,7 @@ class IntradayFuturesStrategy(BaseStrategy):
     def _dispatch_setup(
         self, setup: str, ctx: MarketContext, phase: str, params: dict
     ) -> StrategySignal | None:
+        """Route a setup name to its handler method and call it."""
         dispatch = {
             "ORB": self._check_orb_breakout,
             "VWAP_BOUNCE": self._check_vwap_bounce,
@@ -176,6 +178,11 @@ class IntradayFuturesStrategy(BaseStrategy):
     def _store_pending_confirmation(
         self, ctx: MarketContext, signal: StrategySignal, setup_type: str
     ) -> None:
+        """Store a signal for caution-zone confirmation on the next candle close.
+
+        The signal fires only if the next 5m candle close holds the breakout direction.
+        Stored entries expire after 10 minutes.
+        """
         self._pending_confirmations[ctx.symbol] = {
             "setup_type": setup_type,
             "signal": signal,
@@ -188,6 +195,10 @@ class IntradayFuturesStrategy(BaseStrategy):
     def _check_pending_confirmations(
         self, ctx: MarketContext, phase: str
     ) -> StrategySignal | None:
+        """Check if a stored caution-zone signal is confirmed by the latest candle close.
+
+        Returns the stored signal if confirmed, None otherwise (and discards stale entries).
+        """
         pending = self._pending_confirmations.get(ctx.symbol)
         if not pending:
             return None
@@ -261,6 +272,7 @@ class IntradayFuturesStrategy(BaseStrategy):
             self._orb_levels[symbol] = orb_data
 
     def _skip(self, symbol: str, reason: str) -> None:
+        """Append a SKIP log entry for a rejected signal condition."""
         self._pending_logs.append(("SKIP", f"{symbol}: {reason}"))
 
     def _check_stock_trend_filter(

@@ -25,6 +25,7 @@ class TechnicalAgent(BaseResearchAgent):
     description = "Analyzing price trends, patterns, and key levels"
 
     async def research(self, ctx: ResearchContext, llm: LLMClient) -> AgentResult:
+        """Compute moving averages, RSI, volume, support/resistance, and chart patterns from 1Y price history."""
         data_sources = []
         findings: dict = {}
 

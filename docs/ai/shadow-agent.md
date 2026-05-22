@@ -11,7 +11,7 @@ After ~4 weeks of live shadow execution you can compare:
 
 ## Invariants
 
-1. **No gating.** No `executable` check, no `_final_risk_check`, no `yolo_mode` flag. Every PENDING signal → one shadow trade. **Open-shadow dedup**: only an OPEN shadow trade blocks a new one for the same signal. Closed shadows don't block — the signal may evolve across days via Case-2 dedup and each day's conditions deserve a fresh shadow entry.
+1. **Minimal gating.** No `executable` check, no `_final_risk_check`, no `yolo_mode` flag. Gates that DO apply (in order): (a) signal must be PENDING; (b) **open-shadow dedup** — if an OPEN shadow trade already exists for this signal, skip (but CLOSED shadow trades don't block — the signal may evolve across days via Case-2 dedup and each day's conditions deserve a fresh shadow entry); (c) past 3:15 PM IST deadline; (d) symbol on F&O ban list; (e) option/futures contract not resolved; (f) confidence below `min_confidence_for_shadow`; (g) permanent watchlist gate (`shadow_skip_permanent_watchlist` flag). Intentionally does NOT gate on: VIX extreme, drawdown breach, max trades, outside trade window — these blocked signals are still shadow-executed to measure what would have happened.
 2. **Always-on.** Triggered on every `_handle_signal` call in `strategy_runner.py`. Shadow execution is naturally bounded to market hours because signal generation is upstream-gated by `is_past_close_deadline`.
 3. **Fire-and-forget.** The shadow call is `asyncio.create_task(shadow_execute_signal(...))` — it never blocks the main signal path and exceptions are swallowed.
 4. **Paper-only.** `Trade.is_paper = True` always. The shadow agent never submits a broker order.

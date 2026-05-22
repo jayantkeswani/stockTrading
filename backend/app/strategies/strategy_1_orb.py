@@ -16,8 +16,10 @@ class ORBStrategy(BaseStrategy):
     name = StrategyName.ORB
 
     def evaluate(self, ctx: MarketContext) -> StrategySignal | None:
+        """Stub — ORB strategy not yet implemented. Always returns None."""
         logger.debug("ORB strategy not yet implemented")
         return None
 
     def should_exit(self, ctx, entry_price, stop_loss, target_price) -> ExitSignal | None:
+        """Stub — ORB exit logic not yet implemented. Always returns None."""
         return None

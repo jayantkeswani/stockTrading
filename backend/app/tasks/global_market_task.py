@@ -182,6 +182,7 @@ async def _override_nifty_from_fyers(cues: GlobalCues) -> None:
 
 
 async def _write_to_redis(cues: GlobalCues) -> None:
+    """Write global cues fields to Redis with 20-minute TTL."""
     from app.core.redis import get_redis
 
     r = get_redis()
@@ -212,6 +213,7 @@ async def _write_to_redis(cues: GlobalCues) -> None:
 
 
 async def _persist_snapshot(cues: GlobalCues) -> None:
+    """Insert a GlobalMarketSnapshot row; skips on duplicate timestamp (unique constraint)."""
     from datetime import datetime
 
     from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -284,6 +286,7 @@ async def _get_global_cues_from_redis() -> GlobalCues | None:
 # ---------------------------------------------------------------------------
 
 async def start_global_market_scheduler() -> None:
+    """Start the global market data scheduler (every 15 minutes) and register with TaskRegistry."""
     global _scheduler
 
     from app.core.task_registry import TaskStatus, TaskType, task_registry
@@ -313,6 +316,7 @@ async def start_global_market_scheduler() -> None:
 
 
 async def stop_global_market_scheduler() -> None:
+    """Stop the global market data scheduler gracefully."""
     global _scheduler
     if _scheduler and _scheduler.running:
         _scheduler.shutdown(wait=False)

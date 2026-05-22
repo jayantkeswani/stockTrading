@@ -43,6 +43,7 @@ class _TaskEntry:
         self.metadata: dict[str, Any] = metadata or {}
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize task entry to a JSON-safe dict for the tasks API."""
         return {
             "name": self.name,
             "type": self.task_type,
@@ -103,6 +104,7 @@ class TaskRegistry:
         status: TaskStatus,
         error: str | None = None,
     ) -> None:
+        """Update the status (and optional error message) of a registered task."""
         entry = self._tasks.get(name)
         if entry is None:
             return
@@ -114,9 +116,11 @@ class TaskRegistry:
     # -- Query ------------------------------------------------------------------
 
     def get_all(self) -> list[dict[str, Any]]:
+        """Return all registered task statuses as a list of dicts."""
         return [e.to_dict() for e in self._tasks.values()]
 
     def get(self, name: str) -> dict[str, Any] | None:
+        """Return a single task status dict by name, or None if not registered."""
         entry = self._tasks.get(name)
         return entry.to_dict() if entry else None
 

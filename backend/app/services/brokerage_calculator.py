@@ -28,6 +28,7 @@ _TWO_DECIMAL = Decimal("0.01")
 
 
 def _round2(val: Decimal) -> Decimal:
+    """Round a Decimal to 2 places using ROUND_HALF_UP."""
     return val.quantize(_TWO_DECIMAL, rounding=ROUND_HALF_UP)
 
 

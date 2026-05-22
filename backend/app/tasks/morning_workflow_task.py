@@ -24,6 +24,7 @@ scheduler = AsyncIOScheduler(timezone=IST)
 
 
 async def _run_briefing() -> None:
+    """Run the 8:00 AM morning briefing: snapshot global cues + LLM synthesis + Telegram report."""
     today = now_ist().date()
     if not is_trading_day(today):
         logger.debug("Not a trading day — skipping morning briefing")
@@ -54,6 +55,7 @@ async def _run_briefing() -> None:
 
 
 async def _run_screener() -> None:
+    """Run the 8:30 AM 3-stage morning screener pipeline (quant → news → LLM confidence)."""
     today = now_ist().date()
     if not is_trading_day(today):
         logger.debug("Not a trading day — skipping morning screener")
@@ -69,6 +71,7 @@ async def _run_screener() -> None:
 
 
 async def _run_preopen_reassessment() -> None:
+    """Run the 9:08 AM pre-open reassessment: gap-adjusted bias, watchlist re-rank + Telegram update."""
     today = now_ist().date()
     if not is_trading_day(today):
         logger.debug("Not a trading day — skipping pre-open reassessment")
@@ -134,6 +137,7 @@ async def _log_orb_levels() -> None:
 
 
 async def _run_eod_summary() -> None:
+    """Log EOD trade summary for Strategy 5 to the agent log at 3:15 PM IST."""
     today = now_ist().date()
     if not is_trading_day(today):
         return
@@ -177,6 +181,7 @@ async def _run_eod_summary() -> None:
 
 
 async def start_morning_workflow_scheduler() -> None:
+    """Register all 5 Strategy 5 workflow jobs and start the scheduler."""
     scheduler.add_job(
         _run_briefing,
         CronTrigger(hour=8, minute=0, timezone=IST),
@@ -212,6 +217,7 @@ async def start_morning_workflow_scheduler() -> None:
 
 
 async def stop_morning_workflow_scheduler() -> None:
+    """Shut down the morning workflow scheduler gracefully."""
     if scheduler.running:
         scheduler.shutdown(wait=False)
         logger.info("Morning workflow scheduler stopped")

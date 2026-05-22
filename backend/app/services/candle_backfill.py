@@ -457,7 +457,11 @@ async def backfill_deep_history(days: int = 120) -> None:
 def _fetch_history_range_via_sdk(
     token: str, fyers_symbol: str, from_date: date, to_date: date
 ) -> list[dict]:
-    """Fetch 1m candles for a date range using the Fyers SDK."""
+    """Fetch 1m candles for a multi-day date range using the Fyers SDK (synchronous).
+
+    Used by backfill_deep_history in weekly chunks to stay within API limits.
+    Returns raw candle dicts with timestamp/open/high/low/close/volume keys.
+    """
     from fyers_apiv3.fyersModel import FyersModel
 
     fyers = FyersModel(client_id=settings.fyers_app_id, token=token)
@@ -487,7 +491,10 @@ def _fetch_history_range_via_sdk(
 
 
 async def _persist_candles(symbol: str, candles: list[dict]) -> int:
-    """Persist a list of candle dicts to MarketData1m. Returns count inserted."""
+    """Persist raw Fyers candle dicts to MarketData1m, filtering to market hours.
+
+    Inserts via ON CONFLICT DO NOTHING. Returns the number of rows inserted.
+    """
     rows = []
     for c in candles:
         ts = datetime.fromtimestamp(c["timestamp"], tz=IST)

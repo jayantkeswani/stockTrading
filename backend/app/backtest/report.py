@@ -52,6 +52,7 @@ def build_report(
     trades: list[SimulatedTrade],
     signals_meta: list[dict],  # [{confidence, signal_type, oi_available}, ...]
 ) -> BacktestReport:
+    """Aggregate simulated trades into a BacktestReport with hit rate, expectancy, and confidence calibration."""
     from app.backtest.exit_simulator import ExitReason
 
     r = BacktestReport(
@@ -138,6 +139,7 @@ def _conf_bucket(confidence: float) -> str:
 
 
 def print_report(r: BacktestReport) -> None:
+    """Print a formatted backtest report summary to stdout."""
     settled = r.wins + r.losses
     win_rate = r.wins / settled * 100 if settled else 0.0
 

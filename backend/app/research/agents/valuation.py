@@ -25,6 +25,7 @@ class ValuationAgent(BaseResearchAgent):
     description = "Analyzing valuation metrics and fair value"
 
     async def research(self, ctx: ResearchContext, llm: LLMClient) -> AgentResult:
+        """Fetch PE/PB/PEG/dividend metrics from yfinance and produce a valuation verdict via LLM."""
         data_sources = []
         findings: dict = {}
 

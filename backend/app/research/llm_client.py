@@ -129,6 +129,7 @@ class GeminiClient(LLMClient):
         max_tokens: int = 4096,
         response_schema: dict | None = None,
     ) -> str:
+        """Generate text from the Gemini model. Returns raw text response (empty string on failure)."""
         self._ensure_client()
         from google.genai import types
 
@@ -175,6 +176,7 @@ class GeminiClient(LLMClient):
         system: str = "",
         max_tokens: int = 4096,
     ) -> SearchResult:
+        """Generate text with Google Search grounding enabled. Returns text and source citations."""
         self._ensure_client()
         from google.genai import types
 

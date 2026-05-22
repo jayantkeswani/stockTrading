@@ -21,210 +21,773 @@ docker exec -i st-postgres psql -U trader -d stocktrading -c "SELECT strategy_na
 ```
 Credentials: user=`trader`, password=`trader_dev_123`, db=`stocktrading`, port=5433 (host) / 5432 (inside container). Defined in `.env` as `DATABASE_URL_SYNC`.
 
+---
+
+## Execution Architecture
+
+### Shadow + YOLO Isolation
+Three independent consumers of every signal, fully isolated:
+1. **Shadow executor** (`shadow_executor.py`) — creates SHADOW trade/position based on global `min_confidence_for_shadow`. Always 1 lot, no capital gates. One open shadow per signal; closed shadows don't block (allows fresh shadow on Case-2 re-fire).
+2. **YOLO executor** (`auto_executor.py`) — creates YOLO trade/position based on global `min_confidence_for_execution`. Enforces drawdown, max-trades, and daily profit cap gates; lot sizing via `compute_lots_for_yolo`.
+3. **Manual execution** (`signals.py`) — signal stays PENDING, user clicks EXEC. Lot sizing via `compute_lots_for_manual`; no blocking gates, warnings shown instead.
+
+All three confidence thresholds (`min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`) are global in `trading_config`. Cross-field validation enforces `persist < shadow <= execution`.
+
+### Signal Dedup
+"Acted on" = `executed_trade_id` set OR any Trade with `signal_id = existing.id` (catches shadow). Shadow trades never trigger Case 3. **Same-day scoping**: intraday strategies only dedup against `generated_at >= today 00:00`. **EOD signal expiry**: at 3:30 PM IST, `signal_expiry_task` bulk-expires all remaining PENDING intraday signals.
+
+### Lot Sizing at Execution
+Signals carry no `lots`/`quantity`/`sizing_meta`. Lot sizing happens at execution time only via `lot_sizing.py`:
+- `compute_lots_for_shadow` — always 1 lot
+- `compute_lots_for_yolo` — full risk-based sizing (capital, risk %, VIX multiplier, strategy-specific for S5)
+- `compute_lots_for_manual` — same logic as YOLO; no blocking gates
+
+### SL/Target Recomputation at Execution
+All three paths fill at the live LTP (not the stale signal premium). SL/target are recomputed via `execution_utils.recompute_sl_target()`:
+- **Options**: preserves original SL% and target%: `new_sl = live_entry × (1 - sl_pct)`, `new_target = live_entry × (1 + target_pct)`
+- **Futures**: SL stays at structural level (ORB low/high, VWAP band, PDH/PDL); target recomputed using original R:R from `live_entry`
+- Applies to: YOLO, Shadow, Manual execute, and the preview endpoint
+- Fallback to originals on degenerate input (zero entry, entry == SL, live price past structural SL)
+
+### Margin Tracking
+`margin_required` stored on Trade and Position at execution time via `margin_calculator.py`:
+- Options: full premium paid (`entry_price × quantity`)
+- Futures: per-symbol tiered heuristic using `MARGIN_TIER_MAP` in `constants.py`
+- Dashboard shows: NOTIONAL (`entry×qty`), RISK (`|entry−SL|×qty`), MARGIN (sum `margin_required`)
+- `POST /api/v1/trades/margin-analysis` — peak concurrent margin calculation
+
+### Risk Gate Responsibilities
+- `_check_regulatory_limits` (`strategy_runner.py`) — F&O ban list only; all execution paths
+- Drawdown / max-trades / **daily profit cap** — YOLO executor only (`_final_risk_check` in `auto_executor.py`)
+- **Daily profit cap** (`max_daily_profit`, INR, 0 = disabled): when realized + unrealized PnL ≥ cap, monitor closes all open non-shadow positions (`ExitReason.PROFIT_CAP`) and blocks further YOLO executions
+- Shadow executor — zero capital gates
+- Manual executor — no blocking gates; warnings computed but not enforced
+
+---
+
+## Test Coverage
+~999 tests in `backend/tests/`. See root CLAUDE.md for the full test index. Key patterns:
+- All service tests mock DB/Redis via pytest fixtures; `conftest.py` clears per-candle in-memory caches before each test
+- Integration tests for LLM calls (research module) auto-skipped without `GOOGLE_API_KEY`
+
+---
+
 ## Module Map
 
-### `app/config.py` - Application Settings
-Pydantic Settings loading from `.env`. Key settings: database URLs, Redis URL, Fyers credentials, trading capital, risk limits, agent mode, ports. AI Research: `google_api_key` (AI Studio mode), `gcp_project_id` (Vertex AI mode — when set, takes precedence over `google_api_key`; ADC via GCE metadata server), `vertex_ai_location` (default "global" — Gemini API global endpoint, auto-routes to nearest region with capacity; infrastructure stays in asia-south1), `research_llm_provider` (default "gemini"), `research_llm_model` (default "gemini-3.5-flash"), `research_llm_model_pro` (default "gemini-3.1-pro-preview" — used by high-impact single calls: morning briefing, Stage 3 screener, research synthesis), `research_agent_timeout_seconds` (90), `research_max_concurrent` (3). **Telegram**: `telegram_enabled` (bool, default True — set False to disable all Telegram activity: both inbound polling and outbound notifications; for running local dev alongside production). **Phase 2**: `ai_confidence_enabled` (bool, default True — LLM overlay for signals), `ai_confidence_timeout_seconds` (int, default 25 — raised from 15 to cover Gemini latency spikes; pairs with the per-symbol 5-min cooldown in `signal_confidence.py` for sustained rate-limit storms). `model_config` uses `extra="ignore"` so unrecognized `.env` vars (e.g. `TELEGRAM_API_ID/HASH/PHONE/SESSION_NAME` used by `scripts/telegram/`) don't crash backend startup — add fields here only when the backend itself needs to read them. **Version**: `app_version` (str, default "dev" — set to semver tag by deploy pipeline via `.env`), `deployed_at` (str, default "" — ISO timestamp of deploy). Exposed via `GET /api/v1/health`.
+### `app/config.py` — Application Settings
+Pydantic Settings loading from `.env`. Key groups:
+- **DB/Redis**: `DATABASE_URL`, `DATABASE_URL_SYNC`, `REDIS_URL`
+- **Fyers**: `FYERS_CLIENT_ID`, `FYERS_SECRET_KEY`, `FYERS_REDIRECT_URI`, `FYERS_TOTP_KEY`
+- **Trading**: `CAPITAL`, `MAX_DAILY_DRAWDOWN_PCT`, `MAX_RISK_PER_TRADE_PCT`, `MAX_TRADES_PER_DAY`
+- **AI**: `GOOGLE_API_KEY` (AI Studio), `GCP_PROJECT_ID` (Vertex AI, takes precedence), `VERTEX_AI_LOCATION` (default "global"), `RESEARCH_LLM_MODEL` (flash), `RESEARCH_LLM_MODEL_PRO` (pro — for briefing, Stage 3, synthesis), `AI_CONFIDENCE_ENABLED`, `AI_CONFIDENCE_TIMEOUT_SECONDS` (25)
+- **Telegram**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ENABLED` (set False to disable all Telegram I/O — single kill switch for local dev alongside production)
+- **Version**: `APP_VERSION` (semver tag set by deploy pipeline), `DEPLOYED_AT`
+- `model_config = extra="ignore"` — unrecognized `.env` vars (Telegram MTProto keys, etc.) don't crash startup
 
-### `app/main.py` - FastAPI Application
-**File logging**: configured at module load via `logging.basicConfig` + `RotatingFileHandler` on the root logger. Writes to `backend/logs/app.log` (10 MB × 5 rotations). Because all module loggers propagate to root by default, every `logging.getLogger(__name__)` call anywhere in the backend lands in this file automatically — no per-module wiring needed. Logs directory is created on first start if absent.
+---
 
-Lifespan startup: always force-downloads a fresh symbol master via `symbol_master.refresh()` **inline** (blocking, before the data feed starts) so rolled contracts are resolved correctly on the very first candle. Then starts Fyers login scheduler, bhav copy scheduler, auto-starts data feed if token exists in Redis, **auto-starts `agent_runner`** (trade monitor runs at 2s interval from boot — autonomy level read from DB so SEMI/YOLO/MANUAL is config-driven). On startup, subscribes ALL symbol sources on WS: FYERS_SYMBOL_MAP indices, strategy config symbols, dashboard watchlist, S5 screener watchlist (`strat5:watchlist:{today}`), and open position `fyers_option_symbol`s. CORS enabled for all origins (single-user system, accessed from multiple machines via Tailscale).
+### `app/main.py` — FastAPI Application + Startup Sequence
 
-### `app/core/` - Foundation
-- `database.py` - Async SQLAlchemy engine + session factory (`get_db` dependency)
-- `redis.py` - Redis connection pool + pub/sub helpers (`get_redis`, `publish_event`). Price cache uses 24h TTL (`price:{symbol}`). Pool capped at `max_connections=50` to prevent FD exhaustion during tick bursts (default was 2^31 — unlimited).
-- `constants.py` - Market hours (9:15-15:30 IST), lot sizes, strike gaps per index (`STRIKE_GAPS`), expiry schedule (`WEEKLY_EXPIRY_DAYS`, `MONTHLY_ONLY_INDICES`, `MONTHLY_EXPIRY_DOW`), option exchange mapping, premium range (150-400), exchange codes, VWAP_PROXIMITY_PCT, `NSE_HOLIDAYS: frozenset[date]` (2024-2026 NSE trading holidays for holiday-aware backfill and `_previous_trading_day`). **Index futures**: `INDEX_FUTURES_EXPIRY_DOW` (index → last-dow-of-month for near-month futures expiry; NSE indices=Tuesday, SENSEX=Thursday), `INDEX_SYMBOLS` (frozenset of the 5 tradeable indices, derived from `INDEX_FUTURES_EXPIRY_DOW`). **Margin**: `MARGIN_TIER_DEFAULT = 0.20` (fallback SPAN+exposure fraction for unknown futures symbols), `MARGIN_TIER_MAP` (per-symbol margin percentages for ~60 F&O stocks — used by `margin_calculator.py`).
-- `enums.py` - All enums: OptionType, OrderSide, TradeStatus, ExitReason (incl. TRAILING_SL, EXPIRY_ROLL, MARKET_EXIT, **PROFIT_CAP**), SignalStatus, SignalType, StrategyName (incl. CAN_SLIM, **INTRADAY_FUTURES**), IndexSymbol, InstrumentType (OPTION/FUTURE/EQUITY), PositionType (INTRADAY/POSITIONAL), AgentAutonomyLevel, AgentActionType (incl. MANUAL_EXECUTED, AUTO_EXECUTED, EXPIRY_ROLL, **SHADOW_EXECUTED**, **PROFIT_CAP_CLOSE**), ConfirmationStatus, DayBias, CPRType, **TradeSource** (MANUAL/YOLO/SHADOW)
-- `task_registry.py` - Singleton `TaskRegistry` tracking all background tasks/schedulers/services with status, timestamps, errors. `task_registry.register()` for schedulers/services, `task_registry.track_asyncio_task()` for fire-and-forget tasks (auto-updates via done callback). Queryable via `GET /api/v1/tasks`.
-- `exceptions.py` - Custom exception hierarchy
-- `utils.py` - IST timezone helpers (`now_ist()`, `is_market_open()`), market hour checks. **All window/deadline helpers accept an optional `as_of: datetime | None` param** (defaults to `now_ist()` so live paths are unchanged; backtest passes historical timestamps). New: `is_trading_day(d: date)` (checks weekday + NSE_HOLIDAYS), `get_window_state(as_of)` (returns `"IN_WINDOW" | "DEAD_ZONE" | "OUT_OF_WINDOW"`), `is_in_custom_trading_window(as_of, windows)` and `get_custom_window_state(as_of, windows, dead_zone)` — per-strategy trading window checks used by `strategy_runner` for custom window configs from `strategy_params`.
-- `retry.py` - Async retry helper. `async_retry(func, *args, retries, base_delay, max_delay, jitter, retry_on, should_retry, on_retry, label, **func_kwargs)` — exponential backoff with jitter, no third-party deps. `with_retry(**kwargs)` is the decorator form. Used by: `fyers_client` (REST + 401 reauth), `notification.send_telegram` (3×), `trade_monitor._fetch_option_price_rest` (2×), `fyers_ws_client._run_gap_backfill` (per-symbol range fetch).
+**Startup (lifespan)**:
+1. Force-download fresh symbol master via `symbol_master.refresh()` (inline/blocking — ensures rolled contracts resolve on the very first candle)
+2. `ensure_seeded()` — insert singleton `trading_config` row if absent
+3. Start config listener pubsub (`start_config_listener()`)
+4. Start Fyers login scheduler (`start_fyers_login_scheduler()`)
+5. Start bhav copy scheduler (`start_nse_bhav_copy_scheduler()`)
+6. Start global market scheduler (`start_global_market_scheduler()`)
+7. Start F&O ban list scheduler (`start_fo_ban_list_scheduler()`)
+8. Start fundamental data background task (5s delay, non-blocking)
+9. Start morning workflow scheduler (`start_morning_workflow_scheduler()`)
+10. Start OI snapshot scheduler (`start_oi_snapshot_scheduler()`)
+11. Start signal expiry scheduler (`start_signal_expiry_scheduler()`)
+12. Auto-start data feed if Fyers token in Redis (subscribes indices + strategy symbols + watchlist + S5 watchlist + open positions)
+13. Auto-start `agent_runner` (trade monitor at 2s interval — autonomy from DB config)
+14. Start Telegram bot polling (`start_telegram_bot()`)
 
-### `app/models/` - SQLAlchemy ORM (16 tables)
-- `base.py` - BaseModel: UUID primary key, created_at/updated_at timestamps
-- `trade.py` - Trade: entry/exit prices, P&L, status, strategy link. **`source` column** (`VARCHAR(20)`, default `"MANUAL"`, indexed): `"MANUAL"` = user clicked EXEC, `"YOLO"` = agent auto-executed, `"SHADOW"` = shadow agent for accuracy testing. Backfilled on migration from `agent_logs`. **`charges_json`** (JSONB, nullable): full brokerage/tax breakdown computed at trade close (brokerage, STT, exchange txn, GST, SEBI, stamp duty, total). **`net_pnl`** (`NUMERIC(12,2)`, nullable): `pnl - charges_total`, convenience column for SQL queries. Both NULL for open trades and historical trades closed before the feature was added. **`is_permanent_watchlist` column** (`BOOLEAN`, default `false`): copied from the linked Signal at trade creation time (all 4 creation sites: manual execute, YOLO, shadow, expiry roll). **`margin_required` column** (`NUMERIC(12,2)`, nullable): margin committed at trade creation — options = full premium paid, futures = contract value × symbol tier from `MARGIN_TIER_MAP`; set by all execution paths (manual, YOLO, shadow) via `compute_margin()`. **Signal snapshot columns** (6 columns, all nullable, snapshotted at trade creation from the linked Signal — immune to Case-2 dedup overwrites): `signal_confidence` (`NUMERIC(5,2)`), `signal_ai_action` (`VARCHAR(30)`), `signal_ai_summary` (`VARCHAR(300)`), `signal_instrument_type` (`VARCHAR(10)`), `signal_type` (`VARCHAR(10)`) — individual columns for SQL WHERE sim filters; `signal_snapshot` (JSONB) — full signal state at execution time (confidence, reason, indicators, AI fields, prices, sizing) for the trade Details view. Partial index on `signal_confidence` (WHERE NOT NULL). **`build_signal_snapshot(signal)`** helper (module-level function) constructs the JSONB dict from a Signal ORM object — used by all 3 signal-based creation sites (manual, YOLO, shadow); expiry roll copies from the original trade.
-- `position.py` - Position: active positions with unrealized P&L tracking. **`is_shadow` column** (`BOOLEAN`, default `false`, indexed): `true` for shadow agent positions — excluded from all default API queries and the Active Positions widget. **`high_since_entry` column** (`NUMERIC(10,2)`, nullable): tracks highest price since entry for progressive trailing SL (used by Strategy 5 intraday futures). **`margin_required` column** (`NUMERIC(12,2)`, nullable): margin committed at position open — same value as the linked Trade's `margin_required`; set by all execution paths (manual, YOLO, shadow) via `compute_margin()`.
-- `market_data.py` - MarketData1m: 1-minute OHLCV candles (intraday only — 9:15–15:30 IST)
-- `market_data_daily.py` - **MarketDataDaily**: one OHLCV + delivery_pct row per symbol per trading date. Populated daily at 7:30 AM by `nse_bhav_copy_task` (fresh from NSE bhav copy CSV — never from Redis cache). Unique on `(symbol, date)`. Used by the morning screener for all 8 quantitative scoring factors. Replaces the old midnight-UTC timestamp hack that co-mingled daily bars inside `market_data_1m`.
-- `oi_snapshot.py` - OISnapshot: open interest by strike price. `option_type` is `String(3)`: `"CE"`, `"PE"` for index options, `"FUT"` for stock futures (strike_price=0). Used by both the 3-min index OI task and the daily stock futures OI task.
-- `agent_log.py` - AgentLog: agent action audit trail
-- `daily_summary.py` - DailySummary: daily P&L, win/loss counts, drawdown
-- `signal.py` - Signal: strategy output, strike, expiry, confidence, `executable` flag, `blocked_reason`. **Phase 2 additions**: `ai_summary String(300)`, `ai_rationale Text`, `ai_adjustment Numeric(4,1)` (LLM ±30 adj), `ai_action String(30)`. `indicators` JSONB also carries `confidence_factors`, `intraday_bias`, `window_state`, `ai_key_supports`, `ai_key_risks`, and **market snapshot fields** (`nifty_spot`, `nifty_day_change_pct`, `trigger_candle` {o,h,l,c,v,ts}, `minutes_since_open`) injected by `strategy_runner._enrich_signal_snapshot()` on every signal. **`is_permanent_watchlist` column** (`BOOLEAN`, default `false`): marks signals from permanently-pinned watchlist stocks — set by `strategy_runner._persist_signal()` from `signal.indicators["_is_permanent_watchlist"]` for INTRADAY_FUTURES signals; copied to Trade at creation. **`lots`, `quantity`, `sizing_meta` columns removed** — signals are now bare trading opportunities; lot sizing happens at execution time only (see `lot_sizing.py` service).
-- `signal_history.py` - **SignalHistory**: immutable snapshot of a Signal captured just before a Case-2 dedup update overwrites it. FK `signal_id → signals.id` (cascade delete). Columns: `version` (1-based int, ascending), all volatile signal fields (`entry_price`, `stop_loss`, `target_price`, `confidence`, `reason`, `indicators`, `executable`, `blocked_reason`, `index_entry_price`, `ai_summary`, `ai_rationale`, `ai_adjustment`, `ai_action`, `generated_at`), plus `captured_at` (when the snapshot was taken). Legacy nullable columns `lots`, `quantity`, `sizing_meta` remain in the DB schema for backward compatibility but are always NULL going forward — Signal no longer carries these fields. No `created_at`/`updated_at` — `captured_at` is the sole timestamp. Query: `GET /api/v1/signals/{id}/history` returns versions DESC (latest first).
-- `strategy_config.py` - StrategyConfig: per-index strategy enable/disable + parameters + `auto_mode` (bool) + `symbols` (JSONB list) + `symbol_map` (JSONB dict: short_name → fyers_symbol, populated at insertion time from symbol master search results)
-- `trading_config.py` - TradingConfig: singleton row for user-editable trading parameters (capital, max drawdown %, **max daily profit %** (0 = disabled), risk per trade %, max trades/day, paper_trading flag, autonomy_level, min_confidence_to_persist, min_confidence_for_shadow, min_confidence_for_execution). All three confidence thresholds are global — apply to all strategies. **`shadow_skip_permanent_watchlist`** (`BOOLEAN`, server_default `true`): when true, shadow executor skips signals from permanently-pinned stocks. **`yolo_skip_permanent_watchlist`** (`BOOLEAN`, server_default `true`): when true, YOLO executor skips signals from permanently-pinned stocks. Both are user-editable via Settings page. Read/written via `trading_config.py` service; cached in-memory after first load.
-- `fundamental_data.py` - StockFundamental (CAN SLIM scores + raw fundamentals per stock, updated by periodic task) + FundamentalHistory (quarterly snapshots for trend analysis)
-- `research_report.py` - ResearchReport (persisted AI research report: recommendation, confidence, report_json/markdown, agent tracking) + ResearchAgentRun (individual sub-agent run: findings_json, summary, duration, data sources). FK cascade delete.
-- `global_market_snapshot.py` - **GlobalMarketSnapshot** (Phase 1): 15-min snapshots of world indices + FX + commodities. Columns: `timestamp, dow_futures_pct, sp500_close_pct, nasdaq_close_pct, nifty_pct, crude_pct, usdinr_pct, dxy_pct, us_vix, pre_open_gap_pct, global_score` (derived [-1,+1]) + raw absolute prices. Unique constraint on `timestamp`. Used by backtest `context_builder` for historical `global_cues`.
+**File logging**: `RotatingFileHandler` on root logger → `backend/logs/app.log` (10 MB × 5 rotations). All `logging.getLogger(__name__)` calls propagate automatically.
 
-### `app/schemas/` - Pydantic Schemas
-Request/response schemas. Convention: `{Entity}Create`, `{Entity}Response`, `{Entity}Update`.
-- `trade.py` — added `margin_required` to `TradeResponse`; new `MarginAnalysisRequest` / `MarginAnalysisResponse` for the peak-margin endpoint
-- `signal.py` — `SignalPreviewResponse` now has `risk`, `notional`, `margin_required`, `sizing_meta`, `warnings` (replaced `capital_at_risk`)
-- `risk.py` — `RiskDashboardResponse` now has `notional`, `risk`, `margin_utilized` (replaced `capital_at_risk`), `max_daily_profit`, `is_profit_capped`
-- `position.py` — added `margin_required` to `PositionResponse`
-- `agent.py`, `market_data.py`, `websocket.py`, `research.py`, `settings.py` — unchanged
+**CORS**: Enabled for all origins (single-user, multi-machine via Tailscale).
 
-### `app/api/v1/` - REST API (14 routers, all under `/api/v1/`)
-- `trades.py` - CRUD for trades (create from signal, close, list, history). `GET /trades` queries the `trades` table directly — sim filters (`min_confidence`, `max_confidence`, `ai_action`, `instrument_type`, `signal_type`) operate on the Trade's snapshotted `signal_*` columns (no Signal JOIN needed). `_to_response()` populates `signal_is_permanent_watchlist` from `trade.is_permanent_watchlist`. `GET /trades/{id}` also routes through `_to_response()` so signal snapshot fields are always present. Supports optional query params: `status`, `strategy`, `source` (default excludes SHADOW; pass `source=SHADOW` to see only shadow trades), `closed_since`, `entry_since`, `entry_until`, `limit` up to 1000, **`exclude_permanent=true`** (hides trades where `is_permanent_watchlist=true`). **Trade-level size filter**: `min_lots`, `max_lots`. `GET /trades/summary` also accepts `?source=SHADOW` and `?exclude_permanent=true` to compute hit rate / P&L stats excluding permanent-watchlist trades. **`POST /{id}/close`**: closes a single trade — fetches live LTP from Redis cache if no `exit_price` provided, deletes the linked Position row, broadcasts `position:closed` with the real `position_id` (not null). **`POST /close-all`**: closes ALL open trades (including shadow) — fetches live LTP per trade from Redis cache, deletes all linked Positions, broadcasts `position:closed` per trade. Returns `{closed: int, trades: [...]}`. Route registered before `{trade_id}` paths to avoid path parameter conflict. **`POST /margin-analysis`**: accepts `{trade_ids: [uuid]}` and returns peak concurrent margin utilization across the given trades — walks entry/exit intervals to find maximum simultaneous `margin_required` across overlapping open windows; response: `MarginAnalysisResponse` with `peak_margin`, `peak_time`, `total_margin`, `trade_count`.
-- `signals.py` - List/filter signals by strategy, status, date. `GET /signals` supports `status`, `strategy`, `generated_since` (ISO datetime), `generated_until` (ISO datetime), `limit` (default 50, max 200), `offset`. `GET /{id}/preview` returns live entry price + lot sizing for the confirm modal — calls `compute_lots_for_manual` from `lot_sizing` service (lot count computed at execution time, not from signal), **recomputes SL/target from live LTP via `execution_utils.recompute_sl_target()`** so the confirm modal shows correct risk, adds `margin_required` via `compute_margin`; response fields: `risk`, `notional`, `margin_required`, `sizing_meta`, `warnings` (replaced `capital_at_risk`); warnings include drawdown proximity, trade count limit, and VIX elevated (>=20) alerts. `POST /{id}/execute` accepts optional `{lots: int}` override; if omitted, calls `compute_lots_for_manual` fresh at execution time (signals no longer carry `lots`/`sizing_meta`); fetches live LTP via `live_price.get_live_price()` as the trade entry price; **recomputes SL/target from live LTP** so Trade/Position carry the correct risk levels relative to actual fill; sets `margin_required` on both the new Trade and Position. `POST /{id}/reject` marks signal as rejected. **`GET /{id}/history`** returns all `SignalHistory` rows for a signal ordered by `version DESC` (latest snapshot first) — empty list if the signal was never updated via Case-2 dedup.
-- `positions.py` - Active positions, close, update SL/target. `GET /positions` LEFT JOINs `trades` (single join, no Signal join) to populate `signal_confidence` from `trade.signal_confidence` on each `PositionResponse`. Enriches positions with live prices from Redis cache (computes `current_price` and direction-aware `unrealized_pnl` at query time — detects SHORT via `target_price < entry_price`). Manual close uses `trade.side` for P&L sign.
-- `agent.py` - Agent start/stop/status, confirm actions, YOLO toggle (`PATCH /yolo`). `GET /logs` supports `since` (ISO datetime), `until` (ISO datetime), `limit` (default 100, max 500), `offset` for date-filtered activity log.
-- `risk.py` - Daily P&L (total + `closed_pnl` separated for frontend live calculation), drawdown %, configured limits. Response now includes `notional` (total contract value of open positions), `risk` (total capital at risk from SL levels), `margin_utilized` (sum of `margin_required` across open non-shadow positions), `max_daily_profit` (INR amount), `is_profit_capped` (true when realized + unrealized PnL >= profit cap amount). `capital_at_risk` field removed.
-- `market_data.py` - `GET /prices` (all symbols incl. watchlist items, auto-refreshes via REST if cache empty), `POST /prices/batch` (fetch prices for arbitrary Fyers symbols, used by watchlist), `GET /ohlcv/{symbol}?resolution=5&days=15` (chart data — proxies to Fyers history API with pagination for large ranges, deduped + sorted ascending; resolutions: "1"/"5"/"15"/"60"/"D"; falls back to PostgreSQL if Fyers unavailable; `_resolve_symbol_for_chart` handles short names, Fyers symbols, and strategy symbol_map), `POST /feed/start` (mirrors full reconnect flow: preserves existing subscriptions incl. index futures, collects dynamic symbols from Redis, sets `_last_disconnect_at` to trigger gap backfill, resets `strategy_runner._futures_init_done` so index futures re-subscribe on first candle close), `POST /feed/stop|refresh`, `GET /symbols/search` (local symbol master, min 1 char, supports stocks/futures/options: "TCS", "NIFTY 24000CE", "RELIANCE FUT", "industries" via display name substring)
-- `watchlist.py` - `GET /watchlist`, `POST /watchlist`, `DELETE /watchlist/{symbol}` — Redis-backed watchlist (agent can add symbols programmatically). `body.symbol` is stored as the Redis hash key and must be a **full Fyers-format symbol** (e.g. `NSE:RELIANCE26MAYFUT`, `NSE:TCS-EQ`) — this is what the frontend sends from symbol-master search results. On add, `body.symbol` is used directly for WS subscription (do not reconstruct from segment suffix — that caused a double-prefix bug: `NSE:NSE:RELIANCE26MAYFUTFUT`). Each item stores `added_at: time.time()` in its metadata; `GET` sorts by `added_at` ascending so insertion order is preserved across reloads (Redis hashes don't guarantee order).
-- `strategies.py` - List/update strategy configs, toggle `is_active`/`auto_mode`, `POST /evaluate` (manual single symbol), `POST /evaluate/batch` (manual all configured symbols). When symbols are added to a strategy via PUT, the `symbol_map` (short_name → fyers_symbol) is stored alongside; any symbols missing from the map are auto-resolved server-side via the symbol master. Background task provisions new symbols: REST quote fetch → Redis, candle backfill → PostgreSQL, WebSocket subscription — using the stored Fyers symbols (no reconstruction). `PUT /{name}` calls `clear_strategy_params_cache(name)` after commit so parameter changes take effect immediately. `GET /{name}/parameter-defaults` returns raw default parameters for frontend form rendering.
-- `intraday_futures.py` - **Strategy 5 endpoints** under `/api/v1/intraday-futures/`. `GET /watchlist?date=`, `GET /agent-log?date=&offset=0&limit=100` (paginated: returns `{entries, total}` when `limit > 0`; without limit returns bare list for internal callers), `GET /global-cues?date=&force=false` (`force=true` bypasses the strat5 Redis cache and re-reads live `indicator:global:*` keys), `GET /morning-briefing?date=`, `GET /daily-stats?date=` (excludes shadow trades/positions), `GET /phase?date=` (historical dates read from Redis `strat5:phase:{date}`, defaults to "DONE" if not found), `GET /agent-status`, `GET /setup-performance?date=&days=5` (per-setup win rate/P&L via `get_setup_performance()`), `POST /screener/run`, `POST /briefing/run`, `POST /preopen/run` (manually triggers pre-open reassessment — gap-adjusted bias, live VIX, watchlist re-rank), `POST /backfill-symbols` (one-shot: fetches today's candles from Fyers REST, computes ORB from 9:15-9:30 candles, stores in Redis, loads into strategy, subscribes on WS — for recovering missed symbols mid-session), `POST /agent/{action}` (pause/resume). **Permanent watchlist**: `GET /permanent-watchlist` (reads `strat5:watchlist:permanent` from Redis; falls back to `strategy_configs.symbols` for `intraday_futures` and re-hydrates Redis on miss; no TTL), `POST /permanent-watchlist` (body: `{"symbol": "VEDL"}`; validates F&O eligibility via `get_fo_lot_sizes()`; raises 422 if not F&O-eligible; idempotent; syncs to both Redis + DB), `DELETE /permanent-watchlist/{symbol}` (removes from Redis + DB; returns updated list). DB sync helper `_sync_perm_watchlist_to_db()` updates `strategy_configs.symbols` for `intraday_futures`. All dates default to today. Reads from Redis `strat5:*` keys.
-- `options.py` - **Options (Strategy 2) endpoints** under `/api/v1/options/`. `GET /window-state` — returns `{window_state, market_open}` computed from VWAP Pullback strategy `trading_windows` and `dead_zone` params via `get_custom_window_state()`; polled every 5s by the frontend Options page for a live status badge. `GET /agent-log?date=&offset=0&limit=100` — paginated agent log for VWAP Pullback strategy gate diagnostics. Reads from Redis `strat2:agent_log:{date}`. Same pagination pattern as intraday-futures agent-log (newest-first when `limit > 0`, bare list when `limit=0`).
-- `settings.py` - `GET /settings/trading` (returns current `TradingConfigDTO`), `PATCH /settings/trading` (partial update; validates field names + autonomy_level enum; all changes take effect immediately via pubsub cache invalidation). Includes `shadow_skip_permanent_watchlist` and `yolo_skip_permanent_watchlist` in the DTO and allowed field set.
-- `tasks.py` - `GET /tasks` — lists all registered background tasks with type, status, timestamps, errors, metadata
-- `auth.py` - Fyers OAuth flow (login redirect, callback, token storage)
-- `research.py` - `POST /start` (validate symbol, create report, launch orchestrator task), `GET /reports` (list past reports, ?symbol filter), `GET /reports/{id}` (full report with agent runs), `DELETE /reports/{id}`. Returns 429 if max concurrent sessions reached.
+---
 
-### `app/websocket/` - Real-Time Layer
-- `manager.py` - WebSocketManager: connect/disconnect/broadcast. Single `/ws` endpoint. Events: `price:update`, `signal:new`, `signal:updated` (dedup update — both include `indicators`, `ai_summary`, `ai_rationale`, `ai_adjustment`, `ai_action`, `fyers_option_symbol`, `fyers_futures_symbol`), `trade:open`, `trade:close`, `position:pnl`, `agent:action`, `market:status`
+### `app/core/` — Foundation
 
-### `app/services/` - Business Logic
-- `trading_config.py` - Single source of truth for user-editable trading parameters. `TradingConfigDTO` (frozen dataclass) with `capital`, `max_daily_drawdown_pct`, **`max_daily_profit`** (INR amount, 0 = disabled), `max_risk_per_trade_pct`, `max_trades_per_day`, `paper_trading`, `autonomy_level`, `min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`, **`shadow_skip_permanent_watchlist`**, **`yolo_skip_permanent_watchlist`**. All three confidence thresholds are **global** — they apply to all strategies (persist gate in Strategy 2/signal_confidence, shadow executor, YOLO auto-executor all read from here). Cross-field validation enforces `persist < shadow <= execution`. `get_trading_config()` returns cached DTO (O(1) after startup). `get_trading_config_sync()` returns cached DTO or None (no DB call, for sync code paths like strategy `evaluate()`). `update_trading_config(**fields)` writes to DB, refreshes cache, publishes `config:trading:updated` pubsub event. `ensure_seeded()` inserts the singleton row from `.env` on first boot. `start_config_listener()` subscribes to pubsub and reloads cache when any writer publishes. Allowed field set includes `shadow_skip_permanent_watchlist` and `yolo_skip_permanent_watchlist`.
-- `position_sizing.py` - `calculate_lots(capital, risk_per_trade_pct, entry_price, stop_loss, lot_size, *, vix_multiplier=1.0, max_lots=None) -> int`. Single source of truth for position sizing — absorbed VIX-aware and max-lots-cap behavior. `vix_to_multiplier(india_vix)` converts a VIX level to a 0.8–1.1 multiplier. Each strategy sets `max_lots` as a class attribute on `BaseStrategy`.
-- `lot_sizing.py` - **Execution-time lot computation**. Three public functions called by their respective execution paths: `compute_lots_for_yolo(signal, lot_size, india_vix) -> int` (reads capital/risk from `trading_config`, applies VIX multiplier via `calculate_lots`; for INTRADAY_FUTURES signals delegates to `strategy._compute_lots()` for conviction-based sizing), `compute_lots_for_shadow(lot_size) -> int` (always returns 1 for clean per-lot simulation P&L), `compute_lots_for_manual(signal, lot_size, india_vix) -> int` (same logic as YOLO, used by `signals.py` preview and execute endpoints). Signals no longer carry `lots`/`sizing_meta` — sizing is deferred to execution time so each path can apply its own rules.
-- `margin_calculator.py` - **Pure margin estimator** for F&O trades. `compute_margin(symbol, entry_price, quantity, instrument_type) -> float`. Options: returns full premium paid (`entry_price * quantity`, no leverage). Futures: returns `entry_price * quantity * tier_pct` where `tier_pct` is looked up from `MARGIN_TIER_MAP` in `constants.py` (per-symbol SPAN+exposure %, defaults to `MARGIN_TIER_DEFAULT=0.20` for unknown symbols). Index symbols (NIFTY, BANKNIFTY, etc.) have `tier_pct=1.0` in the map since index futures carry full margin. Called by `signals.py` `GET /{id}/preview` to populate `margin_required` in the confirm modal, and by all three execution paths (manual, YOLO, shadow) to set `Trade.margin_required` and `Position.margin_required`.
-- `brokerage_calculator.py` - **Pure charges calculator** for Indian F&O trades (Zerodha rate structure). `compute_charges(instrument_type, entry_price, exit_price, quantity, side) -> ChargesBreakdown`. Computes brokerage (₹20/leg), STT, exchange txn charges, GST, SEBI charges, stamp duty — all in Decimal. `ChargesBreakdown.to_dict()` returns JSONB-safe float dict. Called by `trade_monitor._close_position()` and `positions.close_position()` at trade close time; result stored in `Trade.charges_json`.
-- `live_price.py` - `get_live_price(fyers_symbol) -> float`. Fetches live LTP: tries Redis price cache first, falls back to Fyers REST `/quotes` API. Raises `HTTPException(503)` if both fail. Used by `signals.py` (manual execute) and `auto_executor.py` (YOLO) so trades are always filled at current market price, never a stale signal premium.
-- `execution_utils.py` - **Execution-time SL/target recomputation** shared by all three execution paths. `recompute_sl_target(signal_entry, signal_sl, signal_target, live_entry, instrument_type, signal_type) -> (new_sl, new_target)`. Signals store SL/target computed at signal-fire time; because fills happen at the current LTP, R:R must be recomputed relative to the actual fill. **Options**: preserves original SL% and target% — `new_sl = live_entry × (1 - sl_pct)`, `new_target = live_entry × (1 + target_pct)`. **Futures**: SL stays at the structural price level (ORB low/high, VWAP band, PDH/PDL — moving it would invalidate the setup's invalidation point); target recomputed using the original R:R multiplier from `live_entry`. Fallback to originals on degenerate inputs (zero entry, entry == SL, live price already past structural SL). Pure function — no ORM or async dependencies. Called after `get_live_price()` in all four sites: `auto_executor.py`, `shadow_executor.py`, `signals.py` execute endpoint, and `signals.py` preview endpoint.
-- `strategy_runner.py` - Strategy evaluation engine. Two trigger paths: (1) **auto-mode**: FeedManager checks `strategy_configs` for `auto_mode=True` + symbol match on each candle close, (2) **manual**: `evaluate_manual()` called by the strategies API endpoint. Both paths share the same MarketContext builder, signal deduplication, persistence, and broadcast pipeline. **Market snapshot enrichment** (`_enrich_signal_snapshot`): called in both paths after `window_state` is set; injects `nifty_spot`, `nifty_day_change_pct` (from Redis price cache + in-memory candle buffer), `trigger_candle` (OHLCV dict of the triggering 1m candle), and `minutes_since_open` into every signal's indicators JSONB for later quality analysis. **Per-strategy parameters**: both paths load params via `get_strategy_params()`, set `ctx.strategy_params`, and apply per-strategy risk limits (trading windows, VIX caps) from those params. Computes custom `window_state` from strategy-specific trading windows and passes it to `compute_confidence()`. **Confidence gating**: signals below the global `min_confidence_to_persist` (from `trading_config`) are dropped before persistence. **Risk limit split**: `_check_regulatory_limits()` (async — F&O ban list check only; max trades/drawdown checks removed here) and `_check_strategy_risk_limits(params, india_vix, as_of=None)` (sync — trading windows/VIX per-strategy params; `as_of` is the candle timestamp so window checks use the candle's time, not wall-clock time — prevents the last candle in a window from being misclassified as "outside" because evaluation runs a few hundred ms after the minute boundary). **`_is_drawdown_breached` removed** — drawdown checks moved to the YOLO executor's `_final_risk_check`; the orphaned method in `strategy_runner` has been deleted. **`_snapshot_sizing` removed** — signals no longer carry lots/quantity/sizing_meta; that data is computed by `lot_sizing.py` at execution time. **Signal persistence no longer includes lots/quantity/sizing_meta** — `_persist_signal` only writes the bare opportunity fields. **F&O ban list safety net**: `_check_regulatory_limits()` reads `nse:fo_ban_list:{today}` from Redis and blocks signal generation for any banned symbol — this catches manual evaluations and intraday watchlist changes that bypass the screener's pre-market filter. **Open position check**: `_has_open_position()` skips signal generation entirely if an open position exists for the same symbol+direction. **Signal dedup** (all strategies, `_dedup_signal`): three cases — (Case 1) pure noise: entry change <0.3% AND confidence change <5 pts, no execution → "skip" silently; (Case 2) meaningful update not yet executed: entry moved ≥0.3% OR confidence shifted ≥5 pts → **archive current signal state to `signal_history` first** (incrementing `version`), then update the existing PENDING signal in place (same UUID, refreshes `generated_at`/prices/expiry_date/strike_price/indicators/AI fields/**`is_permanent_watchlist`**), **then re-fires `shadow_execute_signal`** (because confidence may have improved past `min_confidence_for_shadow` since the original create — `_dedup_signal` already confirmed no trade exists so there is no duplicate risk); (Case 3) existing signal has been acted on (`executed_trade_id` set OR any Trade row with `signal_id = existing.id`, which catches shadow trades) → return None so caller creates a brand-new signal, preserving the original as an immutable audit record. Thresholds are class constants `_DEDUP_ENTRY_CHANGE_PCT=0.3`, `_DEDUP_CONF_CHANGE=5.0`. **Same-day scoping** (`_INTRADAY_STRATEGIES` frozenset): both `_is_dedup_skip` and `_dedup_signal` add a `Signal.generated_at >= today 00:00` filter for intraday strategies (VWAP Pullback, Intraday Futures, ORB, Gamma Scalping) so yesterday's stale PENDING signals are invisible to today's dedup — each trading day starts with a clean slate. Positional strategies (CAN SLIM) omit this filter and dedup across days as before. **AI overlay gate** (`_is_dedup_skip`): read-only pre-check called after instrument resolution but before `_run_ai_confidence_overlay` — if an identical PENDING signal exists (entry Δ ≤ 0.3% AND conf Δ ≤ 5 pts, no execution), the entire Gemini call + DB write is skipped; only genuinely new or changed signals reach the AI. `get_auto_strategies_for_symbol()` queries which strategies should auto-evaluate for a given symbol. **Index futures volume**: on first candle close, `_init_index_futures()` resolves and subscribes the near-month futures contract for each index (e.g. `NIFTY_FUT` → `NSE:NIFTY25MAYFUT`). These ticks populate `_candle_buffers["NIFTY_FUT"]` but skip strategy evaluation (`_is_futures_volume_symbol()`). `_calculate_vwap_from_buffer` always uses futures candle volumes for index symbols (index volume from Fyers is unreliable — mostly zero with sporadic cumulative spikes on reconnect). **Futures buffer DB fallback** (in `_build_market_context`): if the in-memory futures buffer for an index is empty (e.g. after a reconnect before any live futures tick arrives, or after the daily 7:45 AM reauth drops the futures WS subscription), `_build_market_context` pre-loads the futures buffer from `market_data_1m` via `_load_todays_candles` before calling `_calculate_vwap_from_buffer`. This ensures the gap-backfill candles written to DB are available for VWAP computation even when no live WS tick has been received yet. `_aggregate_5m_candles_with_futures_volume()` builds 5m candles with index OHLC + futures volume — used by Strategy 2's volume filter and confidence `volume_quality` factor via `MarketContext.candles_5m_futures_volume`. `_check_index_futures_roll()` re-subscribes on contract expiry (O(1) date check per candle close). **`_is_permanent_watchlist` extraction**: `_enrich_strategy5_params` reads the watchlist item's `manual` field and stores it as `_is_permanent_watchlist` in params. The flag is injected into `signal.indicators` **immediately after `strategy.evaluate()` returns and before any `await`** — this prevents async race conditions where concurrent coroutines for different symbols overwrite the shared `params` dict (same class of bug as the RVOL profile contamination fixed in `9ec98f5`). `_persist_signal` then copies it from `signal.indicators` to the `Signal.is_permanent_watchlist` column. `_broadcast_signal` includes the flag in the WebSocket payload. **Permanent watchlist "P" tag semantics**: only stocks injected into the watchlist solely because they are pinned (`manual=True`) get `is_permanent_watchlist=true` on signals/trades. Stocks that passed Stage 1 on merit AND happen to be permanent get `from_permanent=True` in the screener (for watchlist UI display) but NOT `manual=True` — their signals/trades show no "P" tag.
+#### `database.py`
+- `get_db() -> AsyncGenerator[AsyncSession, None]` — FastAPI dependency; yields async SQLAlchemy session. Used by: all API routers
 
-**Strategy 5 enrichment** (`_enrich_strategy5_params(symbol, params, india_vix=None)`): loads RVOL profiles (per-symbol cache in `_s5_rvol_profiles`, NOT in the shared `params` dict — avoids cross-symbol contamination), cross-position counts, Nifty bias, ORB levels, morning briefing output, and **global cues mid-day shift detection** (compares current crude/VIX against morning `strat5:global_cues:{today}` snapshot; logs `GLOBAL` via `_append_agent_log` when crude shifts >=2% or VIX shifts >=2 absolute; debounced per shift type with 60-min Redis TTL; **throttled to once per 5 min per symbol** via `_s5_shift_last_checked` dict — skips the 2 Redis reads entirely on every intervening candle). Also injects screener score, **per-stock gap data** (`_stock_gap_pct`, `_relative_gap_pct`, `_gap_direction`, `_stock_bias`, `_stock_bias_source` from watchlist), **stock trend data** (`_stock_trend_strength`, `_stock_trend_score` from watchlist), India VIX level (**passed by caller as `india_vix=ctx.india_vix`** — reuses the value already fetched in `_build_market_context`; no extra Redis read inside this function), ORB levels, global cues mid-day shift data, and **intraday FUT OI direction** (`_oi_change_pct`, `_oi_direction`: 4-way classification — "long_buildup"/"short_buildup"/"short_covering"/"long_unwinding"/"flat" — correlates OI change with price change from candle buffer; latest 2 `oi_snapshots` FUT rows for the symbol, refreshed every 10 min from 9:20 IST by `fetch_s5_watchlist_oi`) into strategy params. ORB levels and phase state persisted to Redis for cross-candle continuity. **Per-candle in-memory caches** (all on `self`, plain Python dicts, reset on process restart): `_daily_candles_cache` (daily bars from `market_data_daily`, keyed by symbol, TTL = trading day); `_canslim_symbol_cache` (CAN SLIM membership, keyed by symbol, TTL = trading day); `_oi_analysis_cache` (OIAnalysis for index symbols only, TTL = 180s matching 3-min OI task); `_s5_session_cache` (briefing + screener enrichment per symbol, TTL = trading day, invalidated by `clear_s5_session_cache()`); `_s5_oi_cache` (FUT OI direction per symbol, TTL = 600s matching 10-min watchlist OI task); `_s5_shift_last_checked` (global cues shift detection throttle, 5-min minimum between checks per symbol); `_s5_counts_cache` (S5 position/trade counts, TTL = 60s, also invalidated on new signal via `invalidate_s5_counts_cache()`); `_s5_rvol_profiles` (RVOL baseline profile per symbol, loaded once from Redis, stable for session); `_last_nifty_bias_score` (float | None — updated every NIFTY candle close, passed as `nifty_bias_score` to `compute_intraday_bias` for all non-NIFTY symbols so the benchmark index direction feeds into BANKNIFTY/stock bias). **`_get_oi_analysis` is skipped for non-index symbols** (stock symbols have no CE/PE rows — only FUT rows which `_get_oi_analysis` ignores — so the call was pure waste; Strategy 5 OI direction comes from `_enrich_strategy5_params` instead). **`_get_daily_candles` reads from `market_data_daily`** (not `market_data_1m`) — 69 rows per symbol instead of 35 000; result cached for the day.
-- `option_resolver.py` - Resolves index-level signals to tradeable option contracts: strike selection (ATM/ITM), expiry selection (weekly for NIFTY/SENSEX, monthly for BANKNIFTY/FINNIFTY/MIDCPNIFTY), symbol master lookup, premium fetch (Redis → Fyers REST). SL/target computed via delta approximation from index-level SL/target (ATM delta=0.50, ITM delta=0.60); falls back to fixed-percentage on premium if index levels unavailable. `_compute_premium_sl_target` validates `sl_pct` is a 0-1 fraction (guards against percentage-vs-fraction confusion). Only runs for `instrument_type=OPTION` signals.
-- `futures_resolver.py` - Resolves stock symbols to nearest-month futures contracts: expiry (last Thursday), Fyers symbol lookup, LTP fetch, lot size, margin estimation. Only runs for `instrument_type=FUTURE` signals. `resolve_futures_contract(symbol, entry_price, from_date=None)` — pass `from_date=current_expiry + 1 day` to resolve the *next* month's contract (used by expiry roll). **Index futures helpers**: `find_index_futures_expiry(index, from_date)` — computes near-month expiry using `INDEX_FUTURES_EXPIRY_DOW`; `resolve_index_futures_symbol(index, from_date=None) -> (fyers_symbol, expiry) | None` — looks up the near-month index futures Fyers symbol via the symbol master (used by strategy_runner for VWAP volume sourcing).
-- `strategy_params.py` - **Per-strategy parameter management**. `VWAP_DEFAULTS`, `CANSLIM_DEFAULTS`, and `INTRADAY_FUTURES_DEFAULTS` dicts with all tunable parameters per strategy (thresholds, SL/target %, trading windows, trailing SL config). All confidence thresholds (persist, shadow, execution) are now global in `trading_config` — none remain in per-strategy defaults. `get_strategy_params(strategy_name)` loads from DB `strategy_configs.parameters` JSONB, merges with defaults, caches in-memory. `get_strategy_params_sync(strategy_name)` returns cached or defaults without DB call (for sync code like `trade_monitor`). `clear_strategy_params_cache(strategy_name)` for API-triggered invalidation. `get_defaults_for_strategy(strategy_name)` returns raw defaults for frontend form rendering. `parse_trading_windows(params)` / `parse_dead_zone(params)` parse time window dicts.
-- `morning_screener.py` - **Strategy 5 pre-market workflow**. `run_morning_briefing(as_of, force=False)` — gathers enriched context (per-trade details, per-sector P&L, per-setup win rates from `Signal.indicators`, VIX 5-day trend, yesterday's agent log summary, today's global cues, drawdown streak), sends to LLM with a decision-framework system prompt (approach rules with priority-ordered conditions, setup-specific priority guidance for ORB/VWAP_BOUNCE/PDH_PDL/GAP_CONTINUATION based on expected regime, global-cues-aware sector bias that weighs forward-looking cues over backward-looking P&L, mixed-signal handling rules, lot cap), `max_tokens=4096`, `response_schema=_BRIEFING_SCHEMA` (structured output), **Pro model** (`create_llm_client(pro=True)`), stores in Redis `strat5:morning_briefing:{date}`. **`force=True` bypasses the cache check** so the manual `/briefing/run` endpoint always re-runs the LLM. Empty `summary` strings from the LLM are replaced with `"No briefing available."` (guards against LLM returning `""` which would silently cache a useless result). Briefing output (`approach`, `max_lots_recommendation`, `sector_bias`) is injected into strategy params by `strategy_runner._enrich_strategy5_params()` and consumed by `IntradayFuturesStrategy._compute_lots()`. `run_morning_screener(as_of)` — 3-stage pipeline: (1) quantitative scoring of ~180 F&O stocks on 8 factors (RS percentile, range position, volume trend, OI change, ADR, trend quality, delivery %, 52w high proximity) — **ban list filter applied first**: calls `get_fo_ban_list(today)` and excludes MWPL-banned symbols before scoring; excluded symbols logged via `_append_agent_log`; OI scoring via `_fetch_stock_oi_changes()` from `oi_snapshots` FUT rows (long buildup/short buildup/short covering/long unwinding), delivery % scoring from bhav copy via `nse_bhav_copy_task.get_bhav_copy()`. **`_stage1_quantitative` returns `(candidates, all_scores_lookup)`** — `candidates` is the threshold-filtered list; `all_scores_lookup` is a `{symbol: score_dict}` map of every stock scored (including those that didn't pass), reusing already-computed data at zero extra cost. **Three-way origin**: `screener_only` (passed Stage 1 threshold, `manual=False`) gets no special treatment; `permanent_only` (injected from permanent watchlist, didn't clear Stage 1, `manual=True`) gets protective exemptions throughout all three stages; `both` (passed Stage 1 AND is in permanent watchlist, tagged `manual=True` in place) is treated identically to `screener_only` — only injection-origin `manual=True` stocks receive exemptions. **Permanent watchlist merge** (between Stage 1 and Stage 2): reads `strat5:watchlist:permanent` from Redis and injects any permanent stocks that didn't clear `MIN_COMPOSITE_SCORE`. For injected stocks, checks `all_scores_lookup` first — if found, uses real Stage 1 data (actual price, pdh/pdl/pdc, lot_size, rs_percentile, trend factors, all 8 quant factors); only falls back to zeroed placeholder dict if the stock had no daily candles at all (e.g. newly listed, price < ₹100). Stocks already in candidates from Stage 1 are tagged `manual=True` in place. Logged via `_append_agent_log`. (2) news sentiment via a screener-specific `_ScreenerNewsAgent` (narrows search to 48 hours vs 30 days in the research module, ~20 parallel Gemini calls) — **hard-pin rule**: `manual=True` stocks are never dropped by the severe-negative-news filter even if flagged (they still receive news data); **Stage 2 truncation**: after enrichment, non-manual stocks are sorted by `composite_score` and capped at `TOP_N_FOR_CONFIDENCE=20`; `manual=True` stocks are partitioned out before the cap and re-appended unconditionally so permanent pins always reach Stage 3 regardless of score; (3) batched LLM confidence check (8192 max_tokens, 60s timeout, `response_schema=_STAGE3_CONFIDENCE_SCHEMA`, **Pro model**) enriched with today's global cues, morning briefing output, `stock_fundamentals` data (market cap, EPS growth, FII/MF flows), and our own per-stock Strategy 5 trade history — drops LOW-rated stocks and correlated sector duplicates, **but `manual=True` stocks are exempt from both LOW-rating drops and correlated-duplicate drops** (hard-pin rule extends through all three stages). **Stage 3 prompt (v2)**: LLM rates all candidates blindly (does NOT know which are permanent — unbiased assessment); code handles drop exemptions for `manual=True` stocks. Prompt includes briefing integration rules (sector_avoid → downgrade, conservative → stricter HIGH criteria), trade history interpretation guide (0 trades = neutral, 1-2 = too small, 3+ with <30% = concern), aggressive correlated-group detection (3+ same sector → keep 1-2 strongest), stricter LOW criteria (only concrete stock-specific dangers), and token-efficiency mandate (every candidate must have a non-empty reason). `manual=True` flag is preserved through to the final watchlist Redis save. **`_get_confidence_fundamentals(symbols)`**: reads `stock_fundamentals` for LLM context; if a symbol is absent or `last_refreshed_at` is older than 12 hours, fetches on demand via `_fetch_and_store_symbol()` (same function as CAN SLIM task, runs concurrently for all stale/missing symbols) — Strategy 5 watchlist symbols are refreshed automatically each morning screener run without a dedicated scheduler. Output: ranked watchlist in Redis `strat5:watchlist:{date}`. Also: `snapshot_global_cues(today, force=False)` (VIX halt check, gap flag; reads both `_pct` and `_price` fields from `indicator:global:*` Redis keys; computes and stores `global_score` via `combined_global_score()` and `overnight_bias` via `overnight_bias()` from `global_market.py`; `force=True` bypasses the `strat5:global_cues:{date}` cache and re-reads live `indicator:global:*` values — used by the manual refresh button; **preserves IST pre-open fields** `nifty_gap_pct` + `preopen_reassessed` from the existing key since yfinance has no equivalent, and re-reads `india_vix_live` live from `price:INDIA VIX` Redis cache so the UI always shows current VIX on manual refresh), `run_preopen_reassessment(as_of)` (9:08 AM — fetches pre-open quotes, computes relative gap per stock vs Nifty, overrides bias when |relative_gap| > 1%, nudges when 0.5-1%, updates global cues with live VIX + nifty_gap_pct, applies gap alignment bonus to scores, re-sorts watchlist — pure math, no LLM; **writes `price:INDIA VIX` as JSON dict `{"ltp": live_vix}` — same format as `feed_manager.cache_price()` so `_get_india_vix()` reads it correctly; `_enrich_strategy5_params()` receives this value via `ctx.india_vix` (no direct Redis read)**), `_build_rvol_baselines()` (20-day 5-min volume profiles via Fyers, rate-limited), Redis readers (`get_watchlist` (enriches items with ORB levels from Redis `strat5:orb:{date}:{symbol}` — adds `orb_high`, `orb_low`, `orb_range` fields), `get_morning_briefing`, `get_agent_log`, `get_global_cues`, `get_agent_status`, `set_agent_status`), `get_setup_performance(end_date, days=5)` (queries trades, joins signals for setup_type, computes per-setup wins/losses/win_rate/net_pnl/avg_pnl). All Redis keys use `strat5:*` prefix with 90-day TTL. **Fyers rate limiting**: all batch Fyers fetches (daily data, RVOL baselines, candle backfill) use semaphore(2) + 1.0s inter-request delay + exponential backoff retry on 429/rate-limit errors (4 retries, 8s base delay). Helper: `_fyers_history_with_retry()`. **Daily candle source**: `_fetch_daily_data_batch()` reads from `market_data_daily` (populated by `nse_bhav_copy_task` at 7:30 AM — authoritative NSE data, clean `date` column, no timestamp tricks). Fyers fallback only for symbols with zero rows (newly listed stocks); fallback data written to `market_data_daily` so subsequent runs are DB-only. Logs a warning if latest date < yesterday (signals bhav copy task failure) but proceeds with available data. **RS threshold**: lowered to 20 candles minimum (from 60) so RS is computed even with ~6-8 weeks of daily data. **News sentiment**: semaphore(5) + 90s timeout (`NEWS_TIMEOUT = 90`) + retry-once on `asyncio.TimeoutError` (catches transient Gemini Search grounding slowness; other exceptions are not retried). Gemini grounded search prompt uses real company names (e.g. "Reliance Industries Ltd") loaded from Redis `symbols:master`; falls back to ticker symbol if master is unavailable. Stage 2 news payload stored per stock: `sentiment`, `score`, `key_themes`, `risk_events`, `catalyst_events`, `articles_count`, **`headlines`** (top-3 article headline strings — displayed as a tooltip in the frontend Watchlist). **Quant score persistence**: all Stage 1 quant scores (not just qualifying ones) stored in Redis `strat5:quant_scores:{date}` (90-day TTL) for future LLM enrichment.
-- `agent_log.py` - **Shared agent log utility**. Prefix-parameterized Redis list for strategy diagnostics. `append_agent_log(prefix, today, category, message)` — `rpush` to `{prefix}:agent_log:{today}` with 90-day TTL. `get_agent_log(prefix, date_str, offset, limit)` — paginated (newest-first when `limit > 0`) or full list (oldest-first when `limit=0`). Strategy 2 uses prefix `"strat2"`, Strategy 5 uses `"strat5"`. Consumed by `options.py` API and `strategy_runner._flush_strategy_logs()`.
-- `candle_backfill.py` - On startup, backfills candles from Fyers historical API into `MarketData1m`: (1) previous trading day — so strategies have PDH/PDL/PDC/CPR context (per-symbol skip via `_has_candles_for_day`), (2) today's elapsed candles — so a late start doesn't miss the 9:45 trading window (`backfill_today` skips weekends **and NSE holidays** via `is_trading_day()`; **per-symbol freshness check**: `_latest_candle_time()` skips symbols whose latest candle is within 2 minutes of now, still gap-fills symbols with stale/missing data), (3) deep history (120 days in weekly chunks) for CAN SLIM symbols with < 50 days of data — needed for chart pattern detection. Backfills for all symbols: FYERS_SYMBOL_MAP indices (minus VIX) + symbols from active strategy configs + **S5 permanent watchlist** (`strat5:watchlist:permanent` Redis — user-pinned stocks that may not appear in the dynamic screener output until 8:30 AM) + **near-month index futures** (`{INDEX}_FUT` → resolved Fyers symbol, e.g. `NIFTY_FUT` → `NSE:NIFTY25MAYFUT`) so futures-volume buffers are populated on mid-day restart + **S5 dynamic watchlist** (`strat5:watchlist:{today}` Redis — dynamically-screened stocks absent from `strategy_configs.symbols`; ensures mid-day reconnect gap-fills these symbols too). Uses `symbol_map` from strategy_configs for correct Fyers symbols (stored at insertion time); falls back to `NSE:{SYM}-EQ` for legacy data and S5 watchlist symbols. Uses ON CONFLICT DO NOTHING for idempotency. **Fyers rate limiting**: `backfill_previous_day()` and `backfill_today()` sleep 0.3s between symbols (1.0s every 5th) to avoid Fyers API rate limits. Error logging includes the full response dict (minus candles) for diagnostics.
+#### `redis.py`
+- `get_redis() -> redis.Redis` — returns shared Redis connection (pool capped at 50, decode_responses=True). Used by: all services/tasks reading Redis
+- `publish_event(channel, message)` — publishes JSON string to Redis pub/sub. Used by: trading_config, strategy_runner
+- `cache_price(symbol, price_data)` — writes price dict to `price:{symbol}` with 24h TTL. Used by: feed_manager, morning_screener
+- `get_cached_price(symbol) -> dict | None` — reads `price:{symbol}`. Used by: signals.py, positions.py, risk.py
 
-### `app/strategies/` - Strategy Engine
-- `base.py` - `BaseStrategy` ABC with `evaluate(ctx) -> StrategySignal | None`, `should_exit()`, `async get_symbols() -> list[str] | None` (override for dynamic symbol selection; default returns None = use DB config). Class attribute `max_lots: int | None = None` — subclasses override to cap position size (VWAP: 5, CAN SLIM: 2, Intraday Futures: 2). `StrategySignal` carries `instrument_type` (OPTION/FUTURE/EQUITY) to control post-processing. **`StrategySignal` no longer has `lots`, `quantity`, `sizing_meta`** — signals are bare trading opportunities; sizing computed at execution time by `lot_sizing.py`. `MarketContext` includes `strategy_params: dict | None = None` — loaded from `strategy_params.py` per strategy, gives strategies access to their tunable parameters at evaluation time. `candles_5m_futures_volume: list[Candle] | None` — 5m candles with index OHLC + futures volume for reliable volume analysis on index symbols (None for stocks).
-- `registry.py` - Discovers and instantiates active strategies from DB config
-- `strategy_1_orb.py` - Opening Range Breakout (STUB - not implemented)
-- `strategy_2_vwap_pullback.py` - VWAP Pullback + Previous Day Bias + OI (PRIMARY - fully implemented). Sets `instrument_type=OPTION`. Reads `vwap_proximity_pct`, `sl_pct_aligned`/`sl_pct_unaligned` (direction-aware SL fractions), `default_target_multiplier` from `ctx.strategy_params`; reads `min_confidence_to_persist` from global `trading_config` via `get_trading_config_sync()`. Volume filter and confidence `volume_quality` factor use `ctx.candles_5m_futures_volume` (reliable futures volume) for index symbols, falling back to `ctx.candles_5m` for non-index symbols. Computes index-level SL/target from market structure via `market_levels.select_index_sl_target()` (VWAP bands, PDH/PDL, CPR, OI walls, swing levels); falls back to fixed `sl_pct`/`rr_multiplier` if no valid levels found (tighter SL when bias aligns with trade direction, wider otherwise). Skips signal if R:R < 1:1. **Agent log**: `_pending_logs` queue + `drain_pending_logs()` (same pattern as Strategy 5); logs every gate check (GATE category: missing indicators, insufficient candles, VWAP proximity, bias block, reversal pattern, volume spike, confidence threshold) and successful signals (SIGNAL category). Flushed by `strategy_runner._flush_strategy_logs()` to Redis `strat2:agent_log:{date}`.
-- `strategy_3_gamma_scalping.py` - Expiry Day Gamma Scalping (STUB - not implemented)
-- `strategy_5_intraday_futures.py` - **Intraday Stock Futures** (IN DEVELOPMENT). Sets `instrument_type=FUTURE`, `holding_type=INTRADAY`, `max_lots=2`. AI-agent-driven with 4 sub-setups (ORB Breakout, VWAP Bounce, PDH/PDL Breakout, Gap Continuation) and 7-phase state machine (PRE_MARKET → ORB_FORMING → MORNING_ACTIVE → CAUTION_ZONE → AFTERNOON → CLOSING → DONE). Phase-based dispatch routes each phase to eligible setups. `get_symbols()` reads from Redis watchlist (populated by morning screener, cached 60s). ORB formation during 9:15-9:30. CAUTION_ZONE (11:30-12:30) requires confirmation candle before signal. Filters: ADR/RVOL/VWAP/volume/Nifty bias/**stock trend direction** (STRONG opposing blocks, MODERATE adds risk_warning). **`_check_cross_position_risks` removed** — cross-position enforcement now uses soft `risk_warnings` only, surfaced in the signal. **Price sourcing convention**: ORB Breakout, PDH/PDL Breakout, and Gap Continuation use `last_candle.close` (not `ctx.current_price`) as the entry/SL/target reference — the candle close is the confirmed breakout price and prevents SL landing on the wrong side of entry when the live tick diverges. VWAP Bounce uses `ctx.current_price` — its SL is anchored to VWAP (always correct since the proximity check ensures live price is near VWAP). **ORB range validation**: rejects ranges outside `min_orb_range_pct` (0.4%) – `max_orb_range_pct` (2.0%) of price. PDH/PDL includes a post-computation SL sanity guard (rejects if SL is on the wrong side of entry). PDH/PDL target fallback: if measured move (PDH−PDL) gives R:R < 1.5 — common for SHORT signals where SL is anchored above PDL — falls back to `entry ± risk × 1.5` (same pattern as GAP_CONTINUATION). `_compute_confidence()` 9-factor composite (RVOL 0.15, setup quality 0.14, Nifty bias 0.12, phase 0.12, volume 0.10, gap alignment 0.10, stock trend 0.10, OI direction 0.10, screener rank 0.07); weights sum to 1.0; missing-data defaults are 0.2 (not 0.5) to penalise signals without full context; rank_factor uses `score/100` denominator; `oi_factor` uses `_oi_direction`/`_oi_change_pct` from params (4-way direction-aware: long_buildup/short_buildup scale with `abs(oi_change_pct)` and align with trade direction; short_covering mildly bullish 0.6/0.4; long_unwinding mildly bearish 0.4/0.6; flat → 0.5, missing → 0.2); accepts optional `indicators` param and injects `confidence_factors` dict (9 keys: vol_factor, rvol_factor, bias_factor, phase_factor, setup_factor, rank_factor, gap_factor, trend_factor, oi_factor) into signal indicators JSONB for frontend display. `_build_indicator_snapshot(ctx, params, indicators)` enriches indicators dict with full context for the LLM overlay: VWAP + distance%, PDH/PDL/PDC, CPR, India VIX, intraday bias components, global score, FUT OI direction/change%, stock trend score/strength — called in all 4 setup methods after `_compute_confidence()`. `_compute_lots()` full 6-condition position sizing (RVOL, Nifty bias, screener score, briefing, enhanced ORB, **trend STRONG/MODERATE**, VIX cap) — **preserved but only called by `lot_sizing.compute_lots_for_yolo`/`compute_lots_for_manual` at execution time, not during `evaluate()`**. ORB levels and phase state persisted to Redis. Exits handled by trade_monitor.
-- `strategy_4_canslim.py` - CAN SLIM Growth Breakout (ACTIVE). Sets `instrument_type=FUTURE`, `holding_type=POSITIONAL`. Reads `min_total_score`, `max_vix`, `breakout_volume_multiplier`, `sl_pct`, `target_pct`, `trailing_sl_activation_pct` from `ctx.strategy_params` (falls back to constants if absent). Reads pre-fetched fundamentals from `stock_fundamentals` table, detects chart patterns from daily bars, confirms volume breakout. Entry: BUY_FUT. SL/target derived from pattern structure: SL at base_low × 0.98 (capped at `sl_pct`), target from measured move (floored at `target_pct`). Trailing stop at breakeven after `trailing_sl_activation_pct` gain.
-- `canslim/` - CAN SLIM sub-package:
-  - `scoring.py` - Pure scoring functions for each CAN SLIM factor (C/A/N/S/L/I/M), composite score. Re-exports `compute_rs_raw_score` and `percentile_rank_rs` from `app.indicators.relative_strength`
-  - `base_patterns.py` - Chart base pattern detection: cup-with-handle, flat base, double bottom. `BasePattern` includes `base_low` (pattern's lowest price) used for SL placement.
+#### `constants.py`
+Key constants (not functions):
+- `FYERS_SYMBOL_MAP` — index short-name → Fyers symbol (NIFTY, BANKNIFTY, etc.)
+- `NSE_HOLIDAYS: frozenset[date]` — 2024-2026 trading holidays
+- `STRIKE_GAPS` — per-index strike increment
+- `WEEKLY_EXPIRY_DAYS`, `MONTHLY_ONLY_INDICES` — expiry schedule
+- `INDEX_FUTURES_EXPIRY_DOW` — index → last-DOW-of-month for near-month futures
+- `INDEX_SYMBOLS` — frozenset of 5 tradeable indices
+- `MARGIN_TIER_MAP` — per-symbol SPAN+exposure % for ~60 F&O stocks
+- `MARGIN_TIER_DEFAULT = 0.20` — fallback for unknown futures symbols
 
-### `app/indicators/` - Technical Indicators (pure functions, no side effects)
-- `vwap.py` - VWAP calculation from candles, `is_pullback_to_vwap()`, `price_distance_from_vwap()`, VWAP bands
-- `cpr.py` - Central Pivot Range: pivot, TC, BC, support/resistance levels, CPR type (WIDE/NARROW)
-- `previous_day.py` - PDH, PDL, PDC, day bias (BULLISH/BEARISH/NEUTRAL), range calculation
-- `open_interest.py` - PCR ratio, max pain, `is_oi_supporting_direction()`, sentiment analysis
-- `vix.py` - India VIX fetch/mock
-- `candle_patterns.py` - `is_bullish_reversal()`, `is_bearish_reversal()`, `average_volume()`
-- `relative_strength.py` - IBD-style RS: `compute_rs_raw_score()` returns raw weighted return, `percentile_rank_rs()` converts to 1-99 percentile across stock universe. Also: 50-day moving average, `is_above_50_dma()`
-- `volume_analysis.py` - Volume breakout detection (`is_volume_breakout()`), `compute_avg_volume()`, `volume_ratio()`
-- `market_levels.py` - Index-level SL/target selection from market structure. `select_index_sl_target()` picks nearest support/resistance from VWAP bands, PDH/PDL, CPR levels, OI walls, swing highs/lows. `find_swing_low()`/`find_swing_high()` for intraday swing detection. Used by option-based strategies to emit meaningful SL/target for delta-based premium conversion.
-- `global_market.py` - **Global market context** (Phase 1). Pure functions + `GlobalCues` dataclass. `compute_pre_open_gap(sgx_nifty, prev_close)`, `overnight_bias(dow_pct, sp500_pct, us_vix) -> DayBias`, `combined_global_score(cues) -> float [-1,+1]`, `global_alignment_factor(cues, direction) -> float [0,1]`. Injected into `MarketContext.global_cues`. No DB/Redis access (pure).
-- `intraday_bias.py` - **Composite intraday directional bias** (Phase 2). `compute_intraday_bias(prev_day, candles_1m, vwap, current_price, global_cues, as_of, nifty_bias_score) -> IntradayBias(bias, score [-1,+1], strength STRONG/MODERATE/WEAK, components)`. 8 factors: yesterday close_position 0.20 (decays), gap_vs_pdc 0.15 (decays), **intraday_drift 0.10+** (`(current_price − today_open) / today_open`, captures sustained intraday moves; grows with freed weight), VWAP slope 0.25+, price-vs-VWAP 0.10+, global 0.10, candle momentum 0.10+, **nifty_bias_score 0.05** (pass NIFTY's score for non-NIFTY symbols; omit for NIFTY itself to avoid circular reference). Freed weight from decaying static factors redistributed to dynamic factors (vwap_slope 45%, intraday_drift 20%, price_vs_vwap 15%, candle_momentum 20%). `strategy_runner` caches `_last_nifty_bias_score` on every NIFTY candle close and injects it for all other symbols. `is_blocked_by_bias(direction, bias)` — returns True only when bias is STRONG and opposite direction.
-- `adr.py` - Average Daily Range. `compute_adr(daily_candles, period=20)` — mean of (high-low)/close*100 over N days. `adr_qualifies(adr_pct, min_adr=1.5)` — minimum movement filter. Used by Strategy 5 screener.
-- `rvol.py` - Relative Volume (time-of-day normalized). `build_volume_profile(historical_5m)` — builds avg volume per 5-min bucket from 20 days of intraday candles (~75 buckets). `compute_rvol(current_volume, bucket_avg)` — ratio of current vs historical avg for same time bucket. `serialize_profile()`/`deserialize_profile()` — Redis JSON storage. Used by Strategy 5 for volume confirmation.
-- `atr.py` - Average True Range. `compute_atr(candles_5m, period=14)` — ATR from 5-minute candles using Wilder's smoothing. Used by Strategy 5 for volatility-aware stop-loss and position sizing.
-- `gap_analysis.py` - Gap detection and continuation. `detect_gap(prev_close, today_open)` — identifies gap direction and magnitude. `is_gap_continuation(candles, gap_direction)` — checks if price action continues in the gap direction after open. Used by Strategy 5 Gap Continuation sub-setup.
-- `stock_trend.py` - Multi-day stock trend direction from daily candles. `compute_stock_trend(daily_candles) -> StockTrend(direction, strength, score, components)`. 6 weighted factors: price vs 20 DMA (0.25), 5/20 DMA crossover (0.20), higher-highs/higher-lows pattern (0.20), ADR trend (0.10), close position in range (0.15), RS momentum (0.10). Score -1.0 to +1.0; direction BULLISH (>0.3) / BEARISH (<-0.3) / NEUTRAL; strength STRONG (>0.6) / MODERATE (>0.3) / WEAK. Gracefully degrades to NEUTRAL/WEAK with <10 bars. Uses 20 DMA (not 50) because only ~45 daily bars available. Used by morning screener to set per-stock directional bias and by Strategy 5 as a direction filter + confidence factor.
-- `confidence.py` - **Deterministic confidence composite** (Phase 2). `compute_confidence(..., window_state: str | None = None, candles_5m_futures_volume: list[Candle] | None = None) -> ConfidenceResult(score 0-100, factors dict, rationale_short str)`. 10 weighted factors: bias_alignment 0.20, vwap_slope 0.10, reversal_quality 0.15, volume_quality 0.10, rr_ratio 0.10, oi_support 0.10, cpr_narrow 0.05, vix_regime 0.05, global_alignment 0.10, time_of_day 0.05. `window_state` param allows per-strategy custom window state to influence the time_of_day factor. `candles_5m_futures_volume` provides reliable volume for the `volume_quality` factor on index symbols (falls back to `candles_5m` when None). Replaces inline `base=70 ± constants`.
+#### `enums.py`
+Key enums: `OptionType`, `OrderSide`, `TradeStatus`, `ExitReason` (incl. `TRAILING_SL`, `PROFIT_CAP`), `SignalStatus`, `SignalType`, `StrategyName` (incl. `CAN_SLIM`, `INTRADAY_FUTURES`), `IndexSymbol`, `InstrumentType`, `PositionType`, `AgentAutonomyLevel`, `AgentActionType` (incl. `SHADOW_EXECUTED`, `PROFIT_CAP_CLOSE`), `TradeSource` (`MANUAL`/`YOLO`/`SHADOW`)
 
-### `app/data/` - Static Data & Lookups
-- `sector_classification.json` - Static JSON mapping ~180 F&O stocks to ~15 sectors (IT, BANKING_PRIVATE, BANKING_PSU, NBFC, AUTO, PHARMA, FMCG, ENERGY, METALS, CEMENT, TELECOM, INFRA_REALTY, CHEMICALS, CONSUMER_DURABLES, DEFENCE_RAIL, MEDIA_ENTERTAINMENT, MISCELLANEOUS). Used by Strategy 5 screener for cross-position sector dedup.
-- `sectors.py` - `get_sector(symbol) -> str | None`, `get_sector_stocks(sector) -> list[str]`, `get_all_sectors() -> list[str]`. Loads JSON once via `@lru_cache`.
+#### `task_registry.py`
+- `TaskRegistry.register(name, task_type, ...)` — registers a background task/scheduler with status tracking. Used by: all tasks/schedulers
+- `TaskRegistry.track_asyncio_task(name, coro, ...)` — wraps a fire-and-forget asyncio task; auto-updates status via done callback. Used by: main.py (startup tasks)
+- `TaskRegistry.update_status(name, status, ...)` — updates task status. Used by: all tasks
+- `TaskRegistry.get_all() -> list[dict]` — all task statuses. Used by: `GET /api/v1/tasks`
+- `TaskRegistry.get(name) -> dict | None` — single task status
 
-### `app/data_feed/` - Fyers API Integration
-- `fyers_auth.py` - OAuth flow using `SessionModel` from fyers_apiv3 SDK
-- `fyers_auto_login.py` - Headless auto-login: base64-encoded credentials, TOTP generation via pyotp. `auto_login_and_store()` runs the TOTP flow and caches the token in Redis (`fyers:access_token`, 10h TTL). Uses **sync httpx in `asyncio.to_thread`** — anyio's async TLS wrapper is broken on some OpenSSL 3.6 + macOS combos (BrokenResourceError during handshake). `trigger_reauth()` is the lock-guarded public entry point for mid-session auth recovery — uses a 60s cooldown + `asyncio.Lock` to collapse concurrent 401s into a single TOTP login. **TOTP window guard**: before calling `verify_otp`, checks if < 5s remain in the current 30s TOTP window — if so, sleeps into the next window to prevent the code expiring in transit when `send_login_otp` takes time on slow networks. **App consent gate**: Fyers v3 `/api/v3/token` returns an HTTP 308 with `Url` containing the auth code when the app has been approved. If the app hasn't been approved (e.g. after SEBI compliance resets or for new apps), it returns HTTP 200 with a consent page (`data.auth` JWT + `permissions`). The `data.auth` JWT is NOT usable as an auth code — a one-time browser approval via the `generate-authcode` URL is required. The error message includes the exact URL to open.
-- `fyers_client.py` - REST client: quotes, historical data, option chain (v3 endpoint), OI. Uses separate `API_URL` and `DATA_URL` base URLs. `get_option_chain()` resolves short names via `FYERS_SYMBOL_MAP`. All four public methods route through `_request_with_auth()` which: (1) reads the freshest token from Redis each call, (2) detects HTTP 401 or Fyers JSON auth error codes (`-16`, `-17`, `-300`), (3) calls `trigger_reauth()` once and retries, (4) retries transient 5xx/network errors up to 3× via `async_retry`.
-- `fyers_ws_client.py` - WebSocket client: `FyersDataSocket` (threaded SDK bridged to asyncio), auto-fetches prices on start. Maintains `_reverse_map` (Fyers symbol → internal short name) seeded from `FYERS_SYMBOL_MAP` (indices) and extended via `register_symbol_map()` when stock symbols are subscribed. `_fyers_to_internal()` converts all incoming ticks to short names (O(1) lookup). `subscribe_symbols()` deduplicates against already-subscribed symbols and accepts optional `symbol_map` for reverse lookup registration. `is_symbol_subscribed(fyers_symbol)` checks the current subscription list. **Important**: `connect()` must be called before `subscribe()` — the SDK's subscribe silently no-ops if the token hasn't been validated yet (which happens during connect). **Managed reconnection** (`reconnect=False`): the Fyers SDK's built-in `reconnect=True` reuses the same `FyersDataSocket` instance, which preserves stale `topic_id→symbol` mappings (`scrips_sym`, `index_sym`, `resp` dicts) after reconnect — the server assigns new topic_ids but the SDK uses old mappings, causing tick data from one symbol (e.g. NIFTY at ~25000) to be attributed to another (e.g. GAIL at ~161). We disable SDK auto-reconnect and manage it ourselves: `_on_close` during market hours schedules `_managed_reconnect()` which does `stop()+start()` after a 5s backoff, creating a fresh `FyersDataSocket` with clean internal state. On trading days before 9:15, `_on_close` schedules `_premarket_reconnect()` at 9:00 AM (or immediately if already past 9:00) via `_schedule_premarket_reconnect(delay)` — same symbol-preservation logic as managed reconnect but without the `is_market_open()` gate. After 15:30 or on non-trading days, `_on_close` just logs and stays disconnected (next morning's 7:45 AM reauth creates a fresh connection). During market hours, `_on_close` always schedules reconnect regardless of `_was_ever_connected` — the `_on_error` auth handler (`_trigger_reauth_and_restart`) is the safety net for bad tokens, so no token pre-check is needed. `_on_connect` schedules gap backfill for the disconnect window. **Reconnect loop guard**: `stop()` nulls `_ws` BEFORE calling `close_connection()` so the `_on_close` callback (fired synchronously by the SDK thread) sees `_ws is None` and skips scheduling a duplicate reconnect — this breaks the cascade where `_managed_reconnect() → stop() → _on_close → _managed_reconnect → ...` looped infinitely. Additionally, `_reconnect_task` tracks the pending reconnect asyncio task; `_schedule_reconnect()` checks `_reconnect_task.done()` before creating a new one; `stop()` and `start()` cancel any pending reconnect task. **Self-cancellation guard**: `_premarket_reconnect()` and `_managed_reconnect()` null out `self._reconnect_task` BEFORE calling `stop()` — both methods run inside `_reconnect_task` itself, so without this, `stop()`'s `cancel()` kills the task mid-flight and `start()` never executes (silent dead WS). **Orphan prevention**: `start()` always calls `stop()` first if an existing `FyersDataSocket` is live — prevents orphaned SDK threads with stale topic_id mappings from delivering cross-symbol ticks into the same `_on_message` callback. **Dynamic symbol collection on reconnect**: `_collect_dynamic_symbols()` reads S5 daily watchlist (`strat5:watchlist:{today}`), S5 permanent watchlist (`strat5:watchlist:permanent`), and dashboard watchlist (`watchlist:items`) from Redis; called by `_managed_reconnect()` and `_trigger_reauth_and_restart()` so symbols provisioned while the WS was down (e.g. screener ran at 8:30 but WS dropped at 7:47) are subscribed on the fresh connection. **Reconnect + backfill**: `_on_close` records `_last_disconnect_at` during market hours and calls `feed_manager.clear_in_progress_candles()`. `_on_connect` schedules `_run_gap_backfill(disconnect_at, reconnect_at)` which fetches the candle gap from Fyers using `candle_backfill._fetch_history_range_via_sdk` and persists via `candle_backfill._persist_candles` (idempotent, no strategy re-eval). **Auth-error recovery**: `_on_error` handles both dict errors and plain string errors. Auth codes: `{-16, -17, -99}` always trigger reauth. Code `-300` is ambiguous — Fyers uses it for both `"Please provide valid token"` (auth failure) **and** `"Please provide a valid symbol"` (invalid symbol subscription, has `invalid_symbols` field in the dict). Only treat `-300` as auth when `invalid_symbols` is absent; otherwise log and ignore (don't reauth — that caused a reauth storm when a bad symbol was subscribed). **Tick concurrency**: `_process_tick_async` gates on `_tick_semaphore(20)` — limits concurrent tick processing to 20 tasks, preventing FD exhaustion during reconnect bursts (51 symbols × multiple ticks = 100+ tasks all hitting Redis simultaneously). Heavy work (candle persist, strategy eval) is spawned outside the semaphore. **Liveness watchdog**: `_watchdog_loop()` runs as an asyncio task for the lifetime of the WS connection; polls every 30s during market hours and triggers `_trigger_reauth_and_restart()` if `feed_manager._last_tick_at` has not been updated in >90s — catches silent hangs where no error frame is sent by the Fyers server (network partition, server-side freeze). Watchdog is started in `start()` and cancelled in `stop()`; exits after scheduling a restart so the fresh `start()` call creates a new watchdog.
-- `symbol_master.py` - Downloads Fyers symbol master CSVs (NSE_CM/FO, BSE_CM/FO), parses ~127K symbols, stores as plain JSON in Redis (keys: `symbols:master`, `symbols:master:updated_at`; 24h TTL; plain JSON required because the shared Redis pool uses `decode_responses=True`), provides in-memory search. Search supports: exact/prefix/substring on short name, substring on display name + Fyers symbol (scored 100→20). Refreshed daily.
-- `feed_manager.py` - Aggregates ticks into candles, persists completed 1m candles to `MarketData1m`, publishes to Redis, triggers `strategy_runner.on_candle_close()`. `process_tick()` accepts optional `fyers_alias` — when provided, caches and broadcasts the price under **both** the internal short name and the Fyers-qualified name (dual-name publishing). This ensures DB/strategies use short names while watchlist/positions can look up prices by Fyers symbol. **Volume delta tracking**: Fyers sends `vol_traded_today` (cumulative day total) not per-tick volume; `_last_vol_today` dict tracks the last seen value per symbol and `_aggregate_candle` computes per-tick deltas so each 1m candle accumulates only the volume actually traded in that minute. **First-tick seeding**: when a symbol has no entry in `_last_vol_today` (process restart or newly subscribed mid-session), the first tick seeds the baseline and produces zero delta — prevents the entire morning's cumulative volume from being dumped into one candle (which caused RVOL spikes after restarts). Subsequent ticks compute normal `max(0, current − last)` deltas. `clear_in_progress_candles()` clears in-progress candles on WS disconnect but preserves `_last_vol_today` baselines — Fyers cumulative volume continues from where it left off after reconnect, so keeping the old baseline produces the correct delta (volume traded during the gap). Day-boundary resets are handled by the `max(0, ...)` clamp. **Liveness tracking**: `_last_tick_at: datetime | None` is updated on every `process_tick()` call (WS and REST); read by `FyersWSClient._watchdog_loop()` to detect frozen connections. **Market hours guard**: `_run_auto_strategy_evaluation` early-returns when `is_market_open()` is False — prevents spurious GATE log entries from REST quote fetches and WS ticks outside market hours (e.g. startup at 2 AM, daily reauth at 7:45 AM). Candle persistence and price caching still happen (only strategy evaluation is skipped). **Index futures volume forwarding**: `_run_auto_strategy_evaluation` checks `strategy_runner._is_futures_volume_symbol()` first — index futures symbols (e.g. `NIFTY_FUT`) bypass the auto-mode strategy check and are forwarded directly to `on_candle_close()` so the strategy runner populates its in-memory VWAP volume buffer from live ticks (previously these buffers were only seeded from DB, causing VWAP to be unavailable until a restart triggered backfill).
+#### `utils.py`
+All window/deadline helpers accept optional `as_of: datetime | None` (defaults to `now_ist()` — backtest passes historical timestamps):
+- `now_ist() -> datetime` — current time in IST. Used by: everywhere
+- `is_trading_day(d: date) -> bool` — weekday + NSE_HOLIDAYS check. Used by: candle_backfill, signal_expiry_task
+- `is_market_open(as_of=None) -> bool` — 9:15–15:30 IST check. Used by: feed_manager, trade_monitor, tasks
+- `is_in_trading_window(as_of=None) -> bool` — within standard trade window (9:15-15:00). Used by: strategy_runner
+- `get_window_state(as_of=None) -> str` — returns `"IN_WINDOW"` / `"DEAD_ZONE"` / `"OUT_OF_WINDOW"`. Used by: strategy_runner (default), confidence.py
+- `is_in_dead_zone(as_of=None) -> bool` — 11:30-12:30 check. Used by: strategy_runner
+- `is_past_close_deadline(as_of=None) -> bool` — after 3:15 PM. Used by: shadow_executor, trade_monitor
+- `time_to_market_close_minutes(as_of=None) -> int` — minutes until 3:30 PM. Used by: confidence.py (time_of_day factor)
+- `is_in_custom_trading_window(as_of, windows) -> bool` — per-strategy window check. Used by: strategy_runner
+- `get_custom_window_state(as_of, windows, dead_zone) -> str` — per-strategy window state. Used by: strategy_runner, options API
 
-### `app/research/` - AI Research Agent System
-Multi-agent stock research system. User searches for any stock → orchestrator spawns 6 specialized agents in parallel → synthesis agent combines findings → report persisted to DB.
-- `orchestrator.py` - Coordinates research: creates `asyncio.Task`, launches agents via `asyncio.gather(return_exceptions=True)`, broadcasts progress via WebSocket, persists to `ResearchReport`/`ResearchAgentRun` tables. Supports up to 3 concurrent sessions. Registered in `TaskRegistry`. Persist phase wrapped in try/except with fallback minimal persist. `_sanitize_for_jsonb()` cleans NaN/Infinity/Decimal/datetime before JSONB storage (yfinance returns NaN for missing ratios, PostgreSQL JSONB rejects NaN). **Synthesis uses Pro model**: `create_llm_client(pro=True)` for the final synthesis call (high-impact single call); sub-agents use the default Flash model.
-- `llm_client.py` - Provider-agnostic LLM wrapper. `LLMClient` ABC with `generate()`, `generate_with_search()`, and `generate_json()`. Default impl: `GeminiClient` (google-genai SDK, supports both AI Studio and Vertex AI). **Dual-mode auth**: when `GCP_PROJECT_ID` is set, uses `genai.Client(vertexai=True, project=..., location=...)` with ADC (GCE metadata server in production); when only `GOOGLE_API_KEY` is set, uses `genai.Client(api_key=...)` (AI Studio, local dev). `generate_with_search()` uses Gemini's Google Search grounding for real-time news. `generate_json()` accepts optional `response_schema: dict` — when provided, passes it to `GenerateContentConfig.response_schema` which constrains Gemini to produce valid JSON matching the schema (structured output); calls `_extract_json()` and **guards the return with `isinstance(result, dict)`** — Gemini occasionally returns a JSON array instead of an object; without the guard this propagates as a list and crashes any caller doing `.get()` on the result. **Retry-once on empty**: `generate_json()` retries the LLM call once if the first attempt returns empty/unparseable JSON (Gemini intermittently returns empty text with `finish_reason=STOP`); logs a warning with the raw text on the first failure. **Empty response diagnostics**: `generate()` logs `finish_reason`, `safety_ratings`, `prompt_feedback`, and candidate count when Gemini returns an empty response — covers all 13 call sites in one place. `_extract_json()` logs the first 500 chars of raw text on parse failure for diagnostics. Factory: `create_llm_client(pro=False)` from config — `pro=True` uses `research_llm_model_pro` (gemini-3.1-pro-preview) for high-impact single calls; Vertex AI takes precedence over API key when both are configured. **Schema compatibility**: `additionalProperties` in `response_schema` is only supported by Vertex AI, not AI Studio — all schemas use arrays of objects instead of dynamic-key maps to ensure portability across both modes.
-- `data_gatherer.py` - Pre-fetches shared context (stock info, 1Y price history, existing fundamentals) into `ResearchContext` dataclass. Runs once before agents to avoid redundant API calls. **On-demand fundamental fetch**: if `stock_fundamentals` row is missing or stale (>24h), calls `_fetch_and_store_symbol()` from `fundamental_data_task` to populate it — so research works for any stock, not just CAN SLIM-configured ones.
-- `report_builder.py` - Template-based fallback report if LLM synthesis fails.
-- `agents/base.py` - `BaseResearchAgent` ABC, `AgentResult` dataclass, `ResearchContext` dataclass. Each agent: fetch data → LLM interpret → return structured findings + summary.
-- `agents/fundamental.py` - Quarterly earnings, annual financials, CAN SLIM scores (reuses `canslim/scoring.py`)
-- `agents/technical.py` - Trend (50/200 DMA), RS rating, RSI, chart patterns (reuses `indicators/` + `base_patterns.py`), support/resistance
-- `agents/oi_derivatives.py` - PCR, max pain, OI buildup. Only runs for F&O-eligible stocks (graceful skip otherwise).
-- `agents/institutional.py` - FII/DII/MF shareholding from NSE API, QoQ trend analysis
-- `agents/news_sentiment.py` - Uses Gemini grounded search for real-time Indian stock news. Returns articles with URLs + sentiment scores. `SENTIMENT_PROMPT_TEMPLATE` includes a calibrated scoring guide (±1.0 scale with defined bands: >0.7 requires stock-specific catalyst, 0.0 is default for no news, routine results are +0.2-0.3 not +0.8) because `sentiment_score × 10` directly adjusts the quant composite score. `risk_events`/`catalyst_events` scoped to stock-specific, time-bound items only (not general sector trends). Reused by both the research module (30-day window) and morning screener (48-hour window via `_ScreenerNewsAgent`).
-- `agents/valuation.py` - PE/PB/PEG ratios, dividend yield, sector comparison from yfinance
-- `agents/synthesis.py` - Combines all agent findings via LLM → executive summary, BUY/HOLD/SELL recommendation, confidence score, actionable entry/SL/target levels
-- `agents/signal_confidence.py` - **LLM confidence overlay** (Phase 2). `score_signal(signal, ctx, prior_signals=None) -> SignalConfidence`. Builds complete JSON context (all indicator values + up to 5 prior signals today for the same symbol), sends to Gemini with a structured system prompt, returns `confidence_adjustment ±30`, `summary`, `rationale`, `key_supports`, `key_risks`, `recommended_action`, `suggested_lot_adjustment`. Called in `strategy_runner._run_ai_confidence_overlay` after option/futures resolve, before `_persist_signal`. 25-second timeout (raised from 15 to handle Gemini latency spikes); never blocks signal on failure. Controlled by `settings.ai_confidence_enabled`. **Adjustment scale**: -30 to -20 = fundamental flaw (repeat signal, counter-setup); -10 to +10 = normal range; +20 to +30 = exceptional convergence. SKIP suggested when adjustment ≤ -20. **Prior signal history**: `strategy_runner` queries today's prior signals for the same symbol+strategy and passes them as `prior_signals_today` in the JSON payload, enabling the LLM to detect repetition and context drift. **Per-strategy prompts (v2)**: separate system + user prompt pairs per strategy (`_SYSTEM_PROMPTS` / `_USER_PROMPT_TEMPLATES` dicts, keyed by strategy name; falls back to VWAP Pullback prompt for unknown strategies). Both prompts include: strategy mechanics explanation, factor interpretation guide (0.0-0.3 WEAK, 0.3-0.5 BELOW AVG, 0.5-0.7 ADEQUATE, 0.7-1.0 STRONG), risk severity tiers (DEAL-BREAKER/MAJOR/MODERATE/MINOR/NOT-A-CONCERN with adjustment ranges), confluence patterns (factor combinations), 2-4 analytical examples showing reasoning. VWAP Pullback prompt covers: 9 confidence factors with weights, OI/PCR interpretation, counter-bias rules. Intraday Futures prompt covers: 4 setup-specific evaluation criteria (ORB/VWAP_BOUNCE/PDH_PDL/GAP_CONTINUATION with quality markers and red flags per setup), 9 confidence factors with weights, **rvol_factor=0.0 means MISSING DATA not zero volume** (critical distinction), FUT OI 4-way interpretation, phase-specific guidance. `_build_context_json` emits FUT OI (`fut_oi_direction`, `fut_oi_change_pct`) in `oi_analysis` when option-chain OI (PCR) is absent; adds `stock_futures_context` block (rvol, phase, adr_pct, ORB levels, enhanced_orb, gap data, stock trend, risk_warnings) when `rvol` is present; includes `stop_loss`/`target_price` in signal section; R:R fallback computes from `signal.stop_loss`/`target_price` when `index_sl`/`index_target` are absent (futures signals). **Value accuracy**: prompts enforce verbatim quoting of input JSON values with strategy-specific good/bad examples. **Global cues de-emphasized**: only `global_score` is sent; prompt instructs LLM to only cite global if |global_score| > 0.5. **LLM call uses `llm.generate_json(prompt=..., system=..., max_tokens=8192, response_schema=_SIGNAL_CONFIDENCE_SCHEMA)` — do not use `system_prompt`/`user_prompt` kwargs (wrong names, causes silent TypeError → FALLBACK).** `_SIGNAL_CONFIDENCE_SCHEMA` dict enforces structured output at the Gemini API level (confidence_adjustment, summary, rationale, recommended_action, key_supports, key_risks required).
+#### `retry.py`
+- `async_retry(func, *args, retries, base_delay, max_delay, jitter, retry_on, ...) -> Any` — exponential backoff with jitter, no third-party deps. Used by: fyers_client (REST + 401 reauth), notification.send_telegram (3×), trade_monitor (option price REST fallback)
+- `with_retry(**kwargs) -> Callable` — decorator form of async_retry
 
-### `app/agent/` - AI Trading Agent
-- `agent_runner.py` - Main agent loop (2s interval). Singleton. Exposes `is_running` (bool) and `started_at` (datetime | None) — the status API reads these directly, no separate `_agent_state` dict. Auto-started from `main.py` lifespan so the monitor is always running. Manages YOLO mode toggle, dispatches to monitor/executor. `on_new_signal()` **gates Telegram notification on confidence floor**: only sends when `signal.confidence >= min_confidence_for_execution` (signals with `confidence=None` still notify for backward compat; signals below threshold are silently skipped with a debug log). Also called from `strategy_runner` Case-2 dedup path so updated signals crossing the threshold trigger both notification and YOLO auto-execution. Auto-executes only if YOLO + running + signal is executable. Non-executable signals show the blocked reason in Telegram.
-- `trade_monitor.py` - **Profit cap check** (`_check_profit_cap`): runs at the top of every `monitor_positions()` cycle (every 2s); when `max_daily_profit > 0` and realized + unrealized PnL (non-shadow) >= `max_daily_profit`, closes all open non-shadow positions at market price (`ExitReason.PROFIT_CAP`, `AgentActionType.PROFIT_CAP_CLOSE`), sends single `notify_profit_cap_halt` Telegram, and short-circuits the per-position loop. Checks open positions: fetches price via `fyers_option_symbol` (Redis cache → Fyers REST fallback with 2 retries via `async_retry`). **Direction detection**: uses `target_price` vs `entry_price` (target below entry = SHORT) — robust because target is immutable during trailing, unlike SL which moves. SL hit → auto-close, target hit → confirm (SEMI) or auto-book (YOLO). **SHORT position support**: direction-aware SL hit (`>=` for shorts, `<=` for longs), target hit, unrealized PnL, HWM tracking (lowest price for shorts), breakeven (SL moves down to entry for shorts), progressive trail (`LWM * (1 + trail%)` for shorts), PnL calculation on close. **INTRADAY** positions: 3:15 PM time exit. **Trailing SL** (unified): POSITIONAL positions always trail; INTRADAY positions trail when `trailing_sl_enabled=True` in strategy params. Breakeven threshold: `trailing_sl_breakeven_pct` (Strategy 5: 0.5%) falls back to `trailing_sl_activation_pct` (CAN SLIM: 10%). **Progressive trail**: when `trailing_sl_trail_pct` is configured, tracks `high_since_entry` (HWM for longs, LWM for shorts) and trails SL at `HWM * (1 - trail_pct/100)` for longs or `LWM * (1 + trail_pct/100)` for shorts. SL only moves favorably (up for longs, down for shorts). CAN SLIM behavior preserved: no `trailing_sl_trail_pct` in its params → progressive trail never fires. **Trailing SL exit reason**: on SL hit, fetches the linked Trade and compares `trade.stop_loss` (original, never mutated) vs `pos.stop_loss` (live, trailed in place) — if they differ, uses `ExitReason.TRAILING_SL` instead of `ExitReason.AGENT_SL` so closed positions and Telegram clearly distinguish a managed trailing exit from a raw SL loss. **POSITIONAL** positions: expiry roll 3 days before expiry (`_roll_futures_position` closes old contract + opens next month via `futures_resolver`, broadcasts `trade:open`; preserves `source=SHADOW` and `is_shadow=True` on rolled positions). **`agent:action` broadcast shape**: `_close_position` and `_request_profit_confirmation` return a dict matching `AgentLogResponse` (`id`, `action_type`, `trade_id`, `details`, `requires_confirmation`, `confirmation_status`, `confirmed_at`, `created_at`) — `id` is the Python-side UUID from the saved `AgentLog`, `created_at` uses `now_ist().isoformat()` (server_default is PostgreSQL-side so not available without refresh). The caller in `agent_runner.py` broadcasts this dict verbatim as `agent:action`. **Do not change this back to a flat dict** — the frontend `AgentFeed` expects `log.id` for React keys and `log.details.{symbol,pnl,strategy_name}` for display. `_request_profit_confirmation` guards against repeat requests (checks for existing PENDING log before creating another). **Shadow position handling**: monitored with same SL/target/EOD logic as real positions; target hits auto-book without confirmation (bypass SEMI mode); stale shadows (expired contract, no price available) are closed at entry price via `_close_stale_shadow()` so they don't stay OPEN forever. **`is_shadow` in log details**: all `AgentLog` entries from `_close_position`, `_roll_futures_position`, and `_request_profit_confirmation` include `"is_shadow": pos.is_shadow` in the JSONB `details` dict so the frontend can distinguish shadow vs real actions without joining to Trade.
-- `auto_executor.py` - Executes signals automatically in YOLO mode. Gate order: (1) signal must be PENDING + executable; (2) **confidence gate** — reads `min_confidence_for_execution` from global `trading_config`, skips if `signal.confidence` is below threshold (default 70); (3) duplicate open position check; (4) final risk check (POSITIONAL and **SHADOW** trades excluded from daily trade count and drawdown P&L; **daily profit cap** checks realized + unrealized PnL vs `max_daily_profit`); (5) **permanent watchlist gate** (Gate 5) — skips if `signal.is_permanent_watchlist and cfg.yolo_skip_permanent_watchlist`. **Lot sizing via `compute_lots_for_yolo`** from `lot_sizing` service (conviction-based for S5, `calculate_lots` for others). **SL/target recomputed from live LTP via `execution_utils.recompute_sl_target()`** after the live price fetch so Trade/Position carry correct risk levels relative to actual fill. Sets `margin_required` on both `Trade` and `Position` via `compute_margin()`. Sets `Trade.source = "YOLO"`, copies `is_permanent_watchlist` from Signal. Broadcasts `trade:open` (position in UI immediately, **includes `margin_required`** in payload so the Zustand store has it without a REST re-fetch) then `agent:auto_executed`. Sends Telegram via `notify_auto_executed`. Drawdown breach triggers `notify_drawdown_halt`. All action dicts use `"action_type"` key.
-- `shadow_executor.py` - **Shadow agent** for signal accuracy measurement. `shadow_execute_signal(signal_id)` is called fire-and-forget from `strategy_runner._handle_signal` on every signal regardless of `executable` flag. **Gates (in order)**: (1) signal must be `PENDING`; (2) **open shadow dedup** — skips if an OPEN shadow trade already exists for this signal (but CLOSED shadow trades do NOT block — the signal may have evolved across days via Case-2 dedup and deserves a fresh shadow entry); (3) past close deadline (3:15 PM IST) → skip; (4) F&O ban list — `blocked_reason` contains "F&O ban" → skip (illegal instrument, no point simulating); (5) resolution failure — OPTION signal with no `fyers_option_symbol`, or FUTURE signal with no `fyers_futures_symbol` → skip (no valid contract to price against); (6) confidence gate — reads `min_confidence_for_shadow` from global `trading_config`, skips if below threshold; (7) **permanent watchlist gate** — skips if `signal.is_permanent_watchlist and cfg.shadow_skip_permanent_watchlist`. Intentionally does NOT gate on: VIX extreme, drawdown breach, max trades, outside trade window — these blocked signals are still shadow-executed to measure what would have happened. **Lot sizing via `compute_lots_for_shadow`** (always 1 lot — clean per-lot simulation P&L). **SL/target recomputed from live LTP via `execution_utils.recompute_sl_target()`** after the live price fetch so shadow trades measure accuracy against the correct risk levels. Sets `margin_required` on both `Trade` and `Position` via `compute_margin()`. Creates `Trade(source="SHADOW", is_paper=True, is_permanent_watchlist=signal.is_permanent_watchlist)` + `Position(is_shadow=True)`. Logs `AgentLog(SHADOW_EXECUTED)`. **Entry price**: calls `get_live_price(trading_symbol)` (Redis → Fyers REST) for real market price; falls back to `signal.entry_price` with a warning log if live price unavailable. Broadcasts both `agent:action` (so AgentFeed shows SHADOW_EXECUTED in real-time) and `trade:open` with `is_shadow=True` and **`margin_required`** in payload (frontend drops from main positions slice; shadow positions in ActivePositions/PnLCard Shadow mode have margin data immediately). See `docs/ai/shadow-agent.md` for isolation guarantees and month-end query templates.
-- `notification.py` - All Telegram notifications. **No ORM imports** — callers pass plain scalars. Functions: `notify_profit_cap_halt` (daily PnL, limit, positions closed count), `notify_signal_generated` (accepts optional `blocked_reason` — shown as ⚠️ italic line when signal is non-executable; **confidence floor**: only called from `agent_runner.on_new_signal()` when `signal.confidence >= min_confidence_for_execution` — signals below the YOLO threshold are silently skipped), `notify_auto_executed`, `notify_manual_executed` (✋ Manual Exec header — called from `signals.py` execute endpoint after trade creation), `notify_sl_hit` (accepts `is_trailing: bool = False` — when True sends 🟡 "Trailing Stop Hit" instead of 🔴 "Stop Loss Hit"), `notify_profit_booked`, `notify_time_exit`, `notify_confirmation_request`, `notify_expiry_roll`, `notify_expiry_roll_failed`, `notify_drawdown_halt`, `notify_daily_summary`, **`notify_morning_premarket(briefing, global_cues)`** (8:00 AM pre-market report with LLM-drafted global cues overview, sector bias, F&O build-up, OI levels, briefing approach — called from `morning_workflow_task._run_briefing()`), **`notify_morning_preopen(watchlist, global_cues)`** (9:08 AM pre-open update with watchlist, gap commentary — pure formatting, no LLM; called from `morning_workflow_task._run_preopen_reassessment()`). **Data helpers**: `_classify_fo_buildup(symbols)` queries OI snapshots FUT rows + Redis price for 4-way OI classification (long_buildup/short_buildup/short_covering/long_unwinding), returns top 5 per category; `_get_nifty_bn_oi_levels()` returns top 2 OI-based support/resistance strikes for Nifty and BankNifty within ±3% of current price. `send_telegram(message)` early-returns False when `TELEGRAM_ENABLED=false` (same gate as polling — single kill switch for all Telegram I/O); otherwise retries up to 3× with 2s base delay via `async_retry` — Telegram 429/5xx are handled silently (log-and-return-False). Paper trading prefixes messages with 📄. **TLS fix**: uses sync `httpx.Client` via `asyncio.to_thread` — `httpx.AsyncClient` raises `ConnectError('')` on macOS 15.2 due to anyio async TLS regression (same root cause as Fyers auto-login fix). **HTML safety**: all messages use `parse_mode="HTML"`; `blocked_reason` is wrapped with `html.escape()` before embedding in `<i>` tags (unescaped `<` or `&` in strings like "Confidence below threshold (50 < 70)" or "F&O ban" causes Telegram 400); P&L label written as "PnL" (not "P&L") to avoid the literal `&`.
-- `telegram_bot.py` - **Inbound Telegram command polling**. Long-polls `getUpdates` (timeout=30) in an asyncio background task started from `main.py` lifespan. On startup, calls `getUpdates(offset=-1, limit=1)` to advance past any queued messages so stale commands are not replayed after a restart. Security gate: ignores messages from any `chat_id` other than `settings.telegram_chat_id`. Registers all 7 commands in the Telegram command menu via `setMyCommands`. Routes parsed commands to `telegram_commands.handle_command()`. `start_telegram_bot()` / `stop_telegram_bot()` wired into lifespan; task tracked in `TaskRegistry` as `telegram_bot_poll`. Silently skips startup if `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` is not configured, or if `TELEGRAM_ENABLED=false` (disables all Telegram: both inbound polling and outbound notifications — for running local dev alongside production). **TLS fix**: same sync `httpx.Client` via `asyncio.to_thread` pattern as `notification.py`.
-- `telegram_commands.py` - **Telegram bot command handlers** (6 commands). `handle_command(cmd, chat_id)` dispatches to per-command functions via `_HANDLERS` dict. All messages use phone-friendly card format (no `<pre>` monospace blocks, emoji indicators, 2-line-per-item layout). Shared formatter `_send_trade_report()` used by `/shadow`, `/yolo`. All timestamps converted to IST via `_to_ist()` before display. Futures trades/positions show LONG/SHORT direction via `_direction()` (options hide it since CE/PE already implies direction). Commands: `/status` (system snapshot: market open/closed, agent status + autonomy, feed liveness, S2 window state, S5 phase, signal/trade counts), `/market` (indices + VIX from Redis price cache, global cues score + bias, briefing approach), `/shadow` (shadow trade P&L: `source = SHADOW`), `/yolo` (YOLO trade P&L: `source = YOLO`, positions via trade_id subquery), `/signals` (today's signals above `min_confidence_for_execution`, grouped PENDING then EXECUTED), `/help` (static command list). Uses `async_session_factory` directly (not a FastAPI request, so no `Depends`). All notification output goes via `send_telegram()` in `notification.py`. Each data section in `/status` and `/market` wrapped in try/except for graceful degradation.
+---
 
-### `app/tasks/` - Scheduled Tasks
-- `fyers_login_task.py` - APScheduler job: auto-refreshes Fyers token via TOTP login at 7:45 AM IST (before morning workflow at 8:00 AM). **On startup**: skips TOTP if a valid token already exists in Redis (`fyers:access_token`) — just starts the data feed directly. If no token is present, **blocks startup** with a synchronous retry loop (up to 10 attempts, 2 min apart) until login succeeds; raises `RuntimeError` after exhausting all retries so the application does not start in a broken state. **Daily 7:45 AM job**: non-blocking — on failure schedules APScheduler retries every 2 min (up to 10 attempts via `_retry_auto_login` + `DateTrigger`), Telegram alert only after exhausting all retries. **Symbol preservation**: `_start_data_feed_after_login()` passes `extra_symbols=existing_symbols` to `start()` so any subscriptions added after the initial connect (e.g. index futures for VWAP volume, added by `strategy_runner._init_index_futures()`) survive the daily reauth cycle. Without this, `start()` resets `self._symbols` to the 6 base index symbols and futures subscriptions are silently dropped, leaving NIFTY_FUT etc. in-memory buffers empty and causing VWAP to return None for all index symbols all day.
-- `symbol_master_task.py` - APScheduler job: refreshes symbol master daily at 8:00 AM IST.
-- `oi_snapshot_task.py` - APScheduler job with three schedules: (1) fetches option chain OI data from Fyers v3 API every 3 minutes during market hours (CE/PE per strike for indices), (2) `fetch_stock_futures_oi()` daily at 3:25 PM IST (fetches OI for all ~180 F&O stocks' near-month futures, stores as `option_type="FUT"` with `strike_price=0`), (3) **`fetch_s5_watchlist_oi()`** every 10 min via `CronTrigger(minute="*/10", hour="9-15")` — first real run at 9:20 IST (9:00/9:10 skipped by `is_market_open()` guard), then 9:30, 9:40... (reads `strat5:watchlist:{today}` from Redis, resolves each symbol to its near-month futures, batch-fetches live quotes for OI — targeted to 10-15 symbols so signals generated intraday see current-day OI rather than prior-day EOD snapshot; same `oi_snapshots` table/schema). **Fyers REST quotes API field name**: the `v` dict uses `"oi"` (not `"open_interest"`); code reads `quote.get("oi", 0) or quote.get("open_interest", 0) or 0` — do not change to `"open_interest"` only or all OI will silently be 0. Parses flat option chain format (per-row `option_type`/`oi`/`oich` fields, DD-MM-YYYY expiry dates). Persists to `oi_snapshots` table. **Rate limiting**: `FYERS_SEMAPHORE_LIMIT=2` + `FYERS_INTER_REQUEST_DELAY=0.3s` applied inside both `_resolve` (per-symbol futures resolution) and `_fetch_batch` (batch quote fetch) — prevents 429s when resolving 200+ symbols at EOD. **Gap-fill on startup**: `_fill_stock_futures_oi_gaps()` checks last 7 trading days in DB for FUT OI rows, fetches missing from NSE FO bhav copy archives (`nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{YYYYMMDD}_F_0000.csv.zip`, requires cookie session). Launched as fire-and-forget task via `task_registry.track_asyncio_task()`. Feeds `strategy_runner._get_oi_analysis()` and morning screener OI scoring.
-- `nse_bhav_copy_task.py` - **NSE CM bhav copy fetcher** (APScheduler, daily 7:30 AM IST). Downloads previous trading day's bhav copy CSV from `nsearchives.nseindia.com/products/content/sec_bhavdata_full_{DDMMYYYY}.csv` (new NSE format, plain CSV with cookie session — preflight GET to nseindia.com required). Parses full OHLCV per stock: `OPEN_PRICE`, `HIGH_PRICE`, `LOW_PRICE`, `CLOSE_PRICE`, `TTL_TRD_QNTY` (volume), `DELIV_PER` (EQ series only). **Two outputs per fetch**: (1) Redis key `nse:bhav_copy:{date}` (90-day TTL) — slim payload `{delivery_pct, close, prev_close}` for the screener's delivery % scoring factor; (2) `market_data_daily` DB table — full OHLCV + delivery_pct upserted via `_persist_daily_to_db()`, sourced fresh from the CSV (never from Redis). **Gap-fill on startup**: `_fill_bhav_copy_gaps()` checks last 7 trading days in Redis, fetches and persists to both Redis and DB for any missing dates. Launched as fire-and-forget task via `task_registry.track_asyncio_task()`.
-- `global_market_task.py` - **APScheduler job every 15 minutes** (Phase 1). Fetches 8 tickers (YM=F, ^GSPC, ^IXIC, ^NSEI, CL=F, INR=X, DX-Y.NYB, ^VIX) via **yfinance** (`yf.Ticker(ticker).history(period="5d")`) — each ticker fetched individually so one failure never blocks the others; 0.5s inter-ticker delay. Computes % change from last two daily closes. Writes to Redis keys `indicator:global:{field}` (TTL 20 min) AND inserts `GlobalMarketSnapshot` row to DB. Runs once immediately on startup inside `start_global_market_scheduler()`, then every 15 min. `_get_global_cues_from_redis()` is called by `strategy_runner._build_market_context` to populate `MarketContext.global_cues`. **NIFTY override**: after the yfinance fetch, `_override_nifty_from_fyers()` reads `price:NIFTY` from Redis (Fyers live feed) and overwrites `nifty_price` and `nifty_pct` — yfinance `^NSEI` has a consistent 1-day lag (it returns the previous session's close as "latest"), so the Fyers value is always more accurate.
-- `fundamental_data_task.py` - APScheduler job: fetches CAN SLIM fundamental data (yfinance + NSE) at **06:00, 12:00, 18:00 IST** (CronTrigger). Also runs once on startup via `_fetch_fundamentals_background` task in `main.py` (5s delay, non-blocking). Loops over CAN SLIM-configured symbols with 5s inter-symbol delay. Per symbol: fetches quarterly earnings, annual financials, stock info, price history concurrently via `yfinance_client`; shareholding from `nse_client`; computes CAN SLIM factor scores; upserts to `stock_fundamentals` (committed per symbol). Post-processing: percentile-ranks RS ratings across all symbols. `_fetch_and_store_symbol(symbol, lot_sizes)` is the per-symbol worker — also called on demand by `morning_screener._get_confidence_fundamentals` for Strategy 5 watchlist symbols. Feeds `strategy_runner._get_canslim_fundamentals()`.
-- `daily_summary_task.py` - APScheduler job: sends rich AI-drafted post-market report via Telegram at 3:35 PM IST. **Excludes shadow trades** (`Trade.source != TradeSource.SHADOW`). Gathers market data (Nifty/BN prices from Redis, global cues, morning briefing), computes sector P&L via `get_sector()`, fetches F&O build-up via `_classify_fo_buildup` and OI levels via `_get_nifty_bn_oi_levels`. LLM draft (Gemini Pro): `market_wrap` + `trading_assessment` with graceful fallback on LLM failure. `_format_eod_message()` assembles rich HTML: market close, sector P&L, F&O build-up, OI levels, trade summary (wins/losses/net PnL/best/worst). **All PnL figures (net, best, worst, sector) use `net_pnl` (charges-deducted) when available**, falling back to gross `pnl` only for legacy trades where `net_pnl` is NULL.
-- `morning_workflow_task.py` - **Strategy 5 daily workflow scheduler** (APScheduler, 5 jobs): morning briefing (8:00 AM — LLM synthesis of yesterday's trades, **then sends pre-market Telegram report via `notify_morning_premarket()`**), morning screener (8:30 AM — 3-stage pipeline: quant → news → LLM), **pre-open reassessment (9:08 AM — gap-adjusted bias, live VIX, watchlist re-rank, then sends pre-open Telegram update via `notify_morning_preopen()`)**, ORB level logging (9:31 AM — logs ORB high/low/range for watchlist stocks after formation window), EOD summary (3:15 PM — queries DB for Strategy 5 trades, logs stats). Telegram hooks wrapped in try/except so failures don't block core workflow. All idempotent per day, skip non-trading days.
-- `fo_ban_list_task.py` - **NSE F&O ban list fetcher** (APScheduler, daily 7:00 AM IST). Calls `get_fo_ban_list()` from `nse_client` to fetch and cache today's MWPL ban list before the screener runs. Also seeds on startup via `_fetch_on_startup()` (fire-and-forget, skips if already cached). Redis key: `nse:fo_ban_list:{date}` (24h TTL). `start_fo_ban_list_scheduler()` / `stop_fo_ban_list_scheduler()` wired into `main.py` lifespan.
-- `signal_expiry_task.py` - **EOD signal expiry** (APScheduler, daily 3:30 PM IST). Bulk-updates ALL remaining PENDING signals from intraday strategies (`_INTRADAY_STRATEGIES`: VWAP Pullback, Intraday Futures, ORB, Gamma Scalping) to EXPIRED status — no date filter, so stale signals from prior days (e.g. task failure, first deploy) are cleaned up too. Positional strategies (CAN SLIM) are exempt — their signals may persist across days. Only runs on trading days (`is_trading_day()`). `start_signal_expiry_scheduler()` / `stop_signal_expiry_scheduler()` wired into `main.py` lifespan.
+### `app/models/` — SQLAlchemy ORM (16 tables)
 
-### `app/data_sources/` - External Data Sources for Fundamentals
-- `yfinance_client.py` - Async wrappers for quarterly earnings, annual financials, stock info, price history. Uses `.NS` suffix for NSE stocks. All four sync fetch functions use **yfinance library** (`yf.Ticker`) dispatched via `asyncio.to_thread`. **Rate-limit protection**: `Semaphore(2)` caps concurrent calls, 1.0s inter-request delay, `_yf_call_with_retry` retries up to 3× with exponential backoff on connection-reset / 429 errors.
-- `nse_client.py` - Fetches FII/DII/MF shareholding patterns from NSE India API, F&O lot sizes, and the daily F&O ban list. Rate-limited (2s between requests). Uses httpx with NSE-compatible headers. Two-step shareholding fetch: (1) master endpoint (`/api/corporate-share-holdings-master`) for quarterly records with promoter/public percentages + XBRL URLs, (2) XBRL XML parsing for detailed FII/DII/MF breakdown. Enriches latest 2 quarters automatically. `get_fo_lot_sizes()` primary source: Fyers symbol master (NSE FUT segment, already in Redis), fallback: NSE JSON API (`equity-stockIndices?index=SECURITIES IN F&O`). Old NSE CSV endpoint (`fo_mktlots.csv`) was retired by NSE (redirects to PDF). **`get_fo_ban_list(trade_date)`**: returns `set[str]` of banned short symbol names — checks Redis cache (`nse:fo_ban_list:{date}`, 24h TTL) first; on miss fetches from `https://www.nseindia.com/api/live-analysis-oi-ban-securities` (JSON, primary) or `https://nsearchives.nseindia.com/content/fo/fo_secban.csv` (CSV, fallback); sync fetch via `asyncio.to_thread`; returns empty set on failure so callers degrade gracefully.
-- `schemas.py` - Data transfer objects: `QuarterlyEarnings`, `AnnualFinancials`, `ShareholdingPattern`, `PriceHistory`, `StockInfo`.
+All models extend `BaseModel` (UUID PK, `created_at`/`updated_at` TIMESTAMPTZ).
 
-### `app/backtest/` - Backtest Harness (Phase 1)
-Common replay framework for all strategies. Bypasses `strategy_runner` entirely — calls `strategy.evaluate(ctx)` directly, so no DB writes, no WS events, no agent auto-execution.
+| Model | Table | Key Columns |
+|---|---|---|
+| `Trade` | `trades` | `entry_price`, `exit_price`, `pnl`, `net_pnl` (pnl minus charges), `charges_json` (JSONB breakdown), `source` (MANUAL/YOLO/SHADOW), `is_permanent_watchlist`, `margin_required`, `signal_confidence`, `signal_ai_action`, `signal_ai_summary`, `signal_instrument_type`, `signal_type`, `signal_snapshot` (JSONB full snapshot at execution) |
+| `Position` | `positions` | `entry_price`, `stop_loss`, `target_price`, `is_shadow`, `high_since_entry` (HWM for trailing SL), `margin_required` |
+| `Signal` | `signals` | `entry_price`, `stop_loss`, `target_price`, `confidence`, `executable`, `blocked_reason`, `is_permanent_watchlist`, `ai_summary`, `ai_rationale`, `ai_adjustment`, `ai_action`, `indicators` (JSONB: includes `confidence_factors`, `intraday_bias`, `nifty_spot`, `nifty_day_change_pct`, `trigger_candle`, `minutes_since_open`, `_is_permanent_watchlist`) |
+| `SignalHistory` | `signal_history` | Immutable snapshot before Case-2 dedup update. `version` (1-based), all volatile signal fields, `captured_at` |
+| `MarketData1m` | `market_data_1m` | 1-minute OHLCV for intraday candles (9:15–15:30 IST) |
+| `MarketDataDaily` | `market_data_daily` | One OHLCV + `delivery_pct` per symbol per trading date. Unique on `(symbol, date)`. Populated by `nse_bhav_copy_task`. Used by morning screener for all 8 quant scoring factors. |
+| `OISnapshot` | `oi_snapshots` | `option_type` (`"CE"`, `"PE"`, or `"FUT"` for stock futures with `strike_price=0`) |
+| `StrategyConfig` | `strategy_configs` | `is_active`, `auto_mode`, `parameters` (JSONB), `symbols` (JSONB list), `symbol_map` (JSONB: short_name → fyers_symbol, stored at insertion time) |
+| `TradingConfig` | `trading_config` | Singleton row: `capital`, `max_daily_drawdown_pct`, `max_daily_profit` (INR, 0=disabled), `max_risk_per_trade_pct`, `max_trades_per_day`, `autonomy_level`, `min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`, `shadow_skip_permanent_watchlist`, `yolo_skip_permanent_watchlist` |
+| `StockFundamental` | `stock_fundamentals` | CAN SLIM scores + raw fundamentals per stock |
+| `FundamentalHistory` | `fundamental_history` | Quarterly snapshots for trend analysis |
+| `GlobalMarketSnapshot` | `global_market_snapshots` | 15-min world indices + FX + commodities snapshot; unique on `timestamp` |
+| `AgentLog` | `agent_logs` | Agent action audit trail with `action_type`, `details` (JSONB incl. `is_shadow`), `requires_confirmation`, `confirmation_status` |
+| `DailySummary` | `daily_summaries` | Daily P&L, win/loss counts, drawdown |
+| `ResearchReport` | `research_reports` | AI research report: recommendation, confidence, report_json/markdown |
+| `ResearchAgentRun` | `research_agent_runs` | Per-agent run findings, summary, duration, data sources. FK cascade delete |
 
-- `context_builder.py` - `build_historical_context(symbol, as_of: datetime, session) -> MarketContext | None`. Builds MarketContext from historical `MarketData1m` + `OISnapshot` + `GlobalMarketSnapshot` rows filtered by `timestamp <= as_of`. Replays VWAP calculation from today's candles up to `as_of`; previous-day from `_previous_trading_day()` (holiday-aware); OI from latest snapshot `<= as_of`; global_cues from latest `GlobalMarketSnapshot`. Returns None if insufficient data.
-- `harness.py` - `Backtester(mode, window_filter).run(strategy, symbol, start, end) -> BacktestReport`. Walks minute-by-minute through historical data. Supports `accurate` mode (real option premiums via Fyers history) and `fast` mode (delta approximation). `window_filter=True` only evaluates within trade windows. Loads strategy params via `get_strategy_params()` and uses per-strategy trading windows (from `strategy_params`) instead of hardcoded windows.
-- `exit_simulator.py` - `simulate_exit(signal, entry_ts, spot_candles_after, fyers_option_symbol, entry_premium, mode)`. Accurate mode: walks option 1m candles via `ensure_option_candles`; wick-based SL/target detection. Fast mode: delta-approximates from spot moves (ATM δ=0.50, ITM δ=0.60). Returns `SimulatedTrade` with `pnl_per_lot`, `pnl_pct`, `exit_reason`.
-- `option_data_fetcher.py` - `ensure_option_candles(fyers_option_symbol, start_ts, end_ts)`. Checks DB first (option candles stored in `MarketData1m`); fetches from Fyers SDK and persists if missing. In-memory cache per symbol within a backtest run. **Free-plan Fyers history only works while the contract is actively listed (expiry ≥ today); expired contracts return `s="error"` and are purged from the symbol master**. So historical replay of expired signals relies on the DB path (candles captured live by our own WS feed) or falls through to fast mode. Re-verified Apr 2026 via `scripts/telegram/probe_fyers_history.py`.
-- `strike_selector.py` - `select_expiry_as_of(symbol, as_of_date)` and `resolve_option_symbol(symbol, index_price, signal_type, as_of_date)`. Holiday-aware expiry selection using historical date instead of `now_ist()`.
-- `report.py` - `BacktestReport` + `build_report()` + `print_report()`. Metrics: hit rate, avg win/loss, expectancy, profit factor, CE/PE breakdown, `oi_coverage_pct`, confidence-bucket calibration (does a 90-conf signal win more often than a 70-conf one?).
+**Helper function** (module-level, `models/trade.py`):
+- `build_signal_snapshot(signal) -> dict` — constructs JSONB dict from Signal ORM for `Trade.signal_snapshot`. Used by: all 3 signal-based Trade creation sites (manual, YOLO, shadow)
 
-**CLI usage:**
-```bash
-source backend/.venv/bin/activate
+---
 
-# Run historical data backfill first (requires Fyers token in Redis)
-python scripts/backfill_for_backtest.py --symbols NIFTY,BANKNIFTY --start 2025-10-01 --end 2026-04-24
+### `app/schemas/` — Pydantic Schemas
 
-# Run backtest
-python scripts/backtest.py --strategy vwap_pullback --symbol NIFTY --start 2025-10-01 --end 2026-04-24
+Convention: `{Entity}Create`, `{Entity}Response`, `{Entity}Update`.
 
-# Fast mode (no Fyers API calls)
-python scripts/backtest.py --strategy vwap_pullback --symbol NIFTY --start 2025-10-01 --end 2026-04-24 --mode fast
-```
+Key additions (other schemas are standard CRUD):
+- `trade.py`: `MarginAnalysisRequest(trade_ids: list[UUID])`, `MarginAnalysisResponse(peak_margin, peak_time, total_margin, trade_count)`, `TradeResponse` includes `margin_required`, `signal_*` snapshot columns
+- `signal.py`: `SignalPreviewResponse(risk, notional, margin_required, sizing_meta, warnings, entry_price, stop_loss, target_price, lots)`
+- `risk.py`: `RiskDashboardResponse(notional, risk, margin_utilized, max_daily_profit, is_profit_capped, closed_pnl, total_pnl, drawdown_pct)`
+- `position.py`: `PositionResponse` includes `margin_required`, `signal_confidence`, `unrealized_pnl`, `current_price`
 
-**OI coverage:** OI snapshots only exist from when `oi_snapshot_task` began running. Backtest reports `oi_coverage_pct` so you know how much of the replay had OI context. Pre-task dates use `ctx.oi_analysis = None` (strategy's soft filter allows this gracefully).
+---
 
-**Option history:** Fyers retains ~6 months of 1m option contract data. Accurate mode requires a Fyers token in Redis. Candles are persisted to `MarketData1m` after first fetch so subsequent runs are instant.
+### `app/api/v1/` — REST API (14 routers, all under `/api/v1/`)
+
+| Router | File | Key Endpoints |
+|---|---|---|
+| Trades | `trades.py` | `GET /trades` (sim filters on signal_* cols), `GET /trades/{id}`, `GET /trades/summary`, `POST /{id}/close`, `POST /close-all`, `POST /margin-analysis` |
+| Signals | `signals.py` | `GET /signals`, `GET /{id}/preview` (live LTP + SL recompute), `POST /{id}/execute` (live LTP fill + SL recompute), `POST /{id}/reject`, `GET /{id}/history` |
+| Positions | `positions.py` | `GET /positions` (LEFT JOIN trades, enriched with live prices), `POST /{id}/close`, `PATCH /{id}/sl-target` |
+| Agent | `agent.py` | `POST /start`, `POST /stop`, `GET /status`, `PATCH /confirm/{log_id}`, `PATCH /yolo`, `GET /logs` |
+| Risk | `risk.py` | `GET /risk` (daily P&L, drawdown, notional, margin, profit cap state) |
+| Market Data | `market_data.py` | `GET /prices`, `POST /prices/batch`, `GET /ohlcv/{symbol}`, `POST /feed/start\|stop\|refresh`, `GET /symbols/search` |
+| Watchlist | `watchlist.py` | `GET /watchlist`, `POST /watchlist`, `DELETE /watchlist/{symbol}` — Redis-backed, sorted by insertion time |
+| Strategies | `strategies.py` | `GET /strategies`, `PUT /strategies/{name}`, `POST /evaluate` (manual single), `POST /evaluate/batch` (all configured symbols), `GET /{name}/parameter-defaults` |
+| Intraday Futures | `intraday_futures.py` | `GET /watchlist`, `GET /agent-log`, `GET /global-cues`, `GET /morning-briefing`, `GET /phase`, `GET /agent-status`, `GET /setup-performance`, `GET /daily-stats`, `POST /screener/run`, `POST /briefing/run`, `POST /preopen/run`, `POST /backfill-symbols`, `POST /agent/{action}`, `GET/POST/DELETE /permanent-watchlist` |
+| Options | `options.py` | `GET /window-state` (VWAP pullback custom window state), `GET /agent-log` |
+| Settings | `settings.py` | `GET /settings/trading`, `PATCH /settings/trading` (partial update; includes `shadow_skip_permanent_watchlist`, `yolo_skip_permanent_watchlist`) |
+| Tasks | `tasks.py` | `GET /tasks` (all registered background tasks) |
+| Auth | `auth.py` | Fyers OAuth: login redirect + callback + token storage |
+| Research | `research.py` | `POST /start`, `GET /reports`, `GET /reports/{id}`, `DELETE /reports/{id}` |
+
+**Key router behaviors**:
+- `GET /trades` supports `source=SHADOW` to see shadow-only trades, `exclude_permanent=true` to hide permanent-watchlist trades, `min_lots`/`max_lots` filters
+- `POST /close-all` registered BEFORE `{trade_id}` paths to avoid path conflict
+- `GET /signals/{id}/preview` calls `compute_lots_for_manual` + `recompute_sl_target` + `compute_margin` so confirm modal shows correct risk
+- `GET /intraday-futures/agent-log` returns `{entries, total}` when `limit > 0`; bare list when `limit=0` (internal callers)
+- `POST /watchlist` stores full Fyers-format symbol (e.g. `NSE:RELIANCE26MAYFUT`) — never reconstruct from short name (causes double-prefix bug)
+
+---
+
+### `app/websocket/` — Real-Time Layer
+
+#### `manager.py` — WebSocketManager
+Single `/ws` endpoint. Events published via `broadcast_event(event, data)`:
+
+| Event | Published by | Payload |
+|---|---|---|
+| `price:update` | feed_manager | `{symbol, ltp, change_pct, ...}` |
+| `signal:new` | strategy_runner | Full signal dict incl. `indicators`, `ai_*`, `fyers_option_symbol`, `fyers_futures_symbol`, `is_permanent_watchlist` |
+| `signal:updated` | strategy_runner (Case-2 dedup) | Same as `signal:new` |
+| `trade:open` | auto_executor, shadow_executor, manual | Includes `margin_required`, `is_shadow` |
+| `trade:close` | trade_monitor, positions API | `{trade_id, position_id, pnl, exit_reason}` |
+| `position:pnl` | trade_monitor | `{position_id, unrealized_pnl, current_price}` |
+| `agent:action` | agent_runner | `AgentLogResponse` dict (id, action_type, trade_id, details, requires_confirmation, ...)  |
+| `market:status` | startup | `{is_open: bool}` |
+
+---
+
+### `app/services/` — Business Logic
+
+#### `trading_config.py`
+- `get_trading_config() -> TradingConfigDTO` — async; returns cached DTO (O(1) after startup). Used by: auto_executor, shadow_executor, strategy_runner, agent_runner
+- `get_trading_config_sync() -> TradingConfigDTO | None` — sync; returns cache or None (no DB call). Used by: strategy_2 evaluate()
+- `update_trading_config(**fields) -> TradingConfigDTO` — writes to DB, refreshes cache, publishes pubsub event. Used by: settings API
+- `ensure_seeded() -> None` — inserts singleton row from `.env` on first boot. Used by: main.py
+- `start_config_listener() -> None` — subscribes to pubsub, reloads cache on updates. Used by: main.py
+
+`TradingConfigDTO` fields: `capital`, `max_daily_drawdown_pct`, `max_daily_profit` (INR, 0=disabled), `max_risk_per_trade_pct`, `max_trades_per_day`, `paper_trading`, `autonomy_level`, `min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`, `shadow_skip_permanent_watchlist`, `yolo_skip_permanent_watchlist`.
+
+#### `position_sizing.py`
+- `calculate_lots(capital, risk_per_trade_pct, entry_price, stop_loss, lot_size, *, vix_multiplier=1.0, max_lots=None) -> int` — single source of truth for position sizing. Used by: lot_sizing.py
+- `vix_to_multiplier(india_vix) -> float` — converts VIX level to 0.8–1.1 multiplier. Used by: lot_sizing.py
+
+#### `lot_sizing.py`
+- `compute_lots_for_yolo(signal, lot_size, india_vix) -> int` — reads capital/risk from trading_config; for INTRADAY_FUTURES delegates to `strategy._compute_lots()`. Used by: auto_executor
+- `compute_lots_for_shadow(lot_size) -> int` — always returns 1. Used by: shadow_executor
+- `compute_lots_for_manual(signal, lot_size, india_vix) -> int` — same logic as YOLO; no blocking gates. Used by: signals.py (preview + execute)
+
+#### `margin_calculator.py`
+- `compute_margin(symbol, entry_price, quantity, instrument_type) -> float` — Options: full premium (`entry_price × quantity`). Futures: `entry_price × quantity × tier_pct` (from `MARGIN_TIER_MAP`; defaults to 0.20 for unknowns; index symbols at 1.0). Used by: signals.py preview, auto_executor, shadow_executor, manual execute
+
+#### `brokerage_calculator.py`
+- `compute_charges(instrument_type, entry_price, exit_price, quantity, side) -> ChargesBreakdown` — Zerodha rate structure: brokerage (₹20/leg), STT, exchange txn, GST, SEBI, stamp duty, all in Decimal. `ChargesBreakdown.to_dict()` returns JSONB-safe float dict. Used by: trade_monitor._close_position(), positions.close_position()
+
+#### `live_price.py`
+- `get_live_price(fyers_symbol) -> float` — Redis cache first, falls back to Fyers REST `/quotes`. Raises `HTTPException(503)` if both fail. Used by: signals.py (manual execute), auto_executor, shadow_executor
+
+#### `execution_utils.py`
+- `recompute_sl_target(signal_entry, signal_sl, signal_target, live_entry, instrument_type, signal_type) -> (new_sl, new_target)` — pure function, no ORM or async. Preserves SL%/target% for options; keeps structural SL for futures. Fallback to originals on degenerate inputs. Used by: auto_executor, shadow_executor, signals.py (execute + preview)
+
+#### `agent_log.py`
+- `append_agent_log(prefix, today, category, message) -> None` — rpush to `{prefix}:agent_log:{today}` with 90-day TTL. Used by: strategy_2, strategy_5, strategy_runner
+- `get_agent_log(prefix, date_str, offset, limit) -> list` — newest-first when `limit > 0`, oldest-first when `limit=0`. Used by: options.py, intraday_futures.py APIs
+
+Strategy 2 uses prefix `"strat2"`, Strategy 5 uses `"strat5"`.
+
+#### `strategy_params.py`
+- `get_strategy_params(strategy_name, session=None) -> dict` — async; loads from DB `strategy_configs.parameters` JSONB, merges with defaults, caches in-memory. Used by: strategy_runner, morning_screener
+- `get_strategy_params_sync(strategy_name) -> dict` — sync; returns cache or defaults (no DB call). Used by: trade_monitor
+- `clear_strategy_params_cache(strategy_name=None) -> None` — invalidates cache (all strategies if None). Used by: strategies API PUT endpoint
+- `get_defaults_for_strategy(strategy_name) -> dict` — raw defaults for frontend form rendering. Used by: strategies API
+- `parse_trading_windows(params) -> list[tuple[time, time]]` — parses `trading_windows` list from params dict. Used by: strategy_runner, options API
+- `parse_dead_zone(params) -> tuple[time, time] | None` — parses `dead_zone` from params dict. Used by: strategy_runner
+
+Default dicts: `VWAP_DEFAULTS`, `CANSLIM_DEFAULTS`, `INTRADAY_FUTURES_DEFAULTS`.
+
+#### `option_resolver.py`
+- `select_strike(index_price, option_type, symbol) -> int` — ATM or 1-strike ITM per delta target. Used by: resolve_option_details
+- `select_expiry(symbol) -> date` — weekly for NIFTY/SENSEX, monthly for others. Used by: resolve_option_details
+- `find_option_symbol(symbol, strike, expiry, option_type) -> str | None` — symbol master lookup. Used by: resolve_option_details
+- `fetch_option_premium(fyers_symbol) -> float | None` — Redis → Fyers REST fallback. Used by: resolve_option_details
+- `resolve_option_details(signal, ctx) -> signal | None` — full pipeline: strike → expiry → symbol → premium → SL/target. Only runs for `instrument_type=OPTION`. Used by: strategy_runner
+
+#### `futures_resolver.py`
+- `resolve_futures_contract(symbol, entry_price, from_date=None) -> dict | None` — stock symbol → nearest-month futures (last Thursday expiry). Pass `from_date=current_expiry + 1 day` for roll. Used by: strategy_runner, trade_monitor (expiry roll)
+- `find_index_futures_expiry(index, from_date) -> date` — near-month expiry via `INDEX_FUTURES_EXPIRY_DOW`. Used by: resolve_index_futures_symbol
+- `resolve_index_futures_symbol(index, from_date=None) -> (fyers_symbol, expiry) | None` — near-month index futures symbol lookup. Used by: strategy_runner (VWAP volume sourcing)
+
+#### `candle_backfill.py`
+- `backfill_previous_day() -> None` — previous trading day candles for PDH/PDL/PDC context. Per-symbol skip if already populated. Used by: main.py startup
+- `backfill_today() -> None` — today's elapsed candles (skips weekends + NSE holidays; per-symbol freshness check: skips if latest candle < 2 min ago). Used by: main.py startup
+- `backfill_deep_history(days=120) -> None` — 120-day deep backfill for CAN SLIM symbols with < 50 days. Used by: main.py startup
+
+All three backfill from Fyers historical API + persist via `ON CONFLICT DO NOTHING`. Rate-limited: 0.3s between symbols, 1.0s every 5th.
+
+#### `morning_screener.py`
+- `run_morning_briefing(as_of=None, force=False) -> dict` — LLM synthesis of yesterday's trades (Pro model, `response_schema=_BRIEFING_SCHEMA`); stores in Redis `strat5:morning_briefing:{date}`. `force=True` bypasses cache. Used by: morning_workflow_task
+- `run_morning_screener(as_of=None) -> list[dict]` — 3-stage pipeline (quant → news → LLM confidence); outputs ranked watchlist to Redis `strat5:watchlist:{date}`. Used by: morning_workflow_task
+- `snapshot_global_cues(today=None, force=False) -> dict` — VIX halt check, gap flag; reads `indicator:global:*` Redis keys; computes `global_score` and `overnight_bias`; `force=True` bypasses cache and re-reads live values. Used by: morning_workflow_task, intraday_futures API
+- `run_preopen_reassessment(as_of=None) -> dict` — 9:08 AM: pre-open quotes, relative gap per stock vs Nifty, bias overrides, gap alignment bonus, watchlist re-sort; pure math, no LLM. Used by: morning_workflow_task
+- `get_watchlist(date_str) -> list[dict]` — reads `strat5:watchlist:{date}`; enriches with ORB levels from `strat5:orb:{date}:{symbol}`. Used by: intraday_futures API
+- `get_morning_briefing(date_str) -> dict` — reads `strat5:morning_briefing:{date}`. Used by: intraday_futures API
+- `get_global_cues(date_str) -> dict` — reads `strat5:global_cues:{date}`. Used by: intraday_futures API, strategy_runner
+- `get_agent_log(prefix, date_str, offset, limit) -> ...` — delegates to `agent_log.get_agent_log`. Used by: intraday_futures API
+- `get_agent_status(date_str) -> str` — reads `strat5:agent_status:{date}`. Used by: intraday_futures API
+- `set_agent_status(date_str, status) -> None` — writes `strat5:agent_status:{date}`. Used by: morning_workflow_task
+- `get_setup_performance(end_date, days=5) -> dict` — queries trades JOIN signals for setup_type; per-setup win rate / net PnL. Used by: intraday_futures API
+
+**Redis key prefix**: all S5 keys use `strat5:*` with 90-day TTL.
+
+#### `strategy_runner.py`
+Core evaluation engine. Two trigger paths: (1) auto-mode on candle close, (2) manual via strategies API.
+
+- `get_auto_strategies_for_symbol(symbol) -> list[StrategyName]` — which strategies auto-evaluate for a symbol. Used by: feed_manager
+
+Key private methods (documented because they're central to flow):
+- `_build_market_context(symbol, candle_data)` — builds full `MarketContext` from in-memory buffers + Redis
+- `_enrich_signal_snapshot(signal, ...)` — injects `nifty_spot`, `nifty_day_change_pct`, `trigger_candle`, `minutes_since_open` into every signal's indicators JSONB
+- `_enrich_strategy5_params(symbol, params, india_vix=None)` — loads RVOL profiles, cross-position counts, Nifty bias, ORB levels, briefing, global cues shift, per-stock gap/trend data, FUT OI direction into strategy params; throttled to once per 5 min per symbol for global cues check
+- `_dedup_signal(existing, new)` — Case-1 (noise: skip), Case-2 (meaningful: archive to `signal_history` → update → re-fire shadow), Case-3 (acted on: return None → create new signal)
+- `_persist_signal(signal)` — writes signal to DB; copies `_is_permanent_watchlist` from indicators to `Signal.is_permanent_watchlist`; gates on `min_confidence_to_persist`
+- `_check_regulatory_limits(symbol)` — F&O ban list check (reads `nse:fo_ban_list:{today}`)
+- `_is_dedup_skip(existing, new)` — AI gate pre-check; if identical signal exists, skips Gemini call + DB write
+- `_init_index_futures()` — on first candle close, resolves + subscribes near-month futures for each index (NIFTY_FUT, etc.)
+- `_calculate_vwap_from_buffer(symbol)` — always uses futures candle volumes for index symbols (Fyers index volume is unreliable)
+- `_is_permanent_watchlist` extraction: extracted from watchlist `manual` field and injected into `signal.indicators` immediately after `strategy.evaluate()` returns and BEFORE any `await` (prevents async race condition with shared params dict)
+
+**Per-candle in-memory caches** (all reset on process restart):
+- `_daily_candles_cache` — daily bars from `market_data_daily`, TTL = trading day
+- `_s5_session_cache` — briefing + screener enrichment per symbol, TTL = trading day
+- `_s5_oi_cache` — FUT OI direction per symbol, TTL = 600s
+- `_s5_shift_last_checked` — global cues shift detection throttle, 5-min min between checks per symbol
+- `_s5_counts_cache` — S5 position/trade counts, TTL = 60s
+- `_s5_rvol_profiles` — RVOL baseline profile per symbol, stable for session
+- `_oi_analysis_cache` — OI analysis for index symbols only, TTL = 180s
+- `_canslim_symbol_cache` — CAN SLIM membership, TTL = trading day
+- `_last_nifty_bias_score` — float | None, updated every NIFTY candle close
+
+---
+
+### `app/strategies/` — Strategy Engine
+
+#### `base.py`
+- `BaseStrategy.evaluate(ctx: MarketContext) -> StrategySignal | None` — abstract; implement in each strategy
+- `BaseStrategy.should_exit(position, current_price, params) -> bool` — abstract; override for custom exit logic
+- `BaseStrategy.get_symbols() -> list[str] | None` — override for dynamic symbol selection (default: None = use DB config)
+- `BaseStrategy.max_lots: int | None = None` — class attribute; override to cap sizing (VWAP: 5, CAN SLIM: 2, S5: 2)
+- `BaseStrategy.drain_pending_logs() -> list[tuple[str, str]]` — flushes the `_pending_logs` queue for flushing to Redis agent log. Used by: strategy_runner._flush_strategy_logs()
+
+`StrategySignal` fields: `instrument_type`, `signal_type` (CE/PE), `entry_price`, `stop_loss`, `target_price`, `confidence`, `reason`, `indicators` (JSONB), `index_sl`, `index_target`, `fyers_option_symbol`, `fyers_futures_symbol`. No `lots`/`quantity`/`sizing_meta` — signals are bare opportunities.
+
+`MarketContext` key fields: `symbol`, `current_price`, `candles_1m`, `candles_5m`, `candles_5m_futures_volume`, `vwap`, `prev_day`, `oi_analysis`, `india_vix`, `global_cues`, `canslim_data`, `strategy_params`, `intraday_bias`, `daily_candles`
+
+#### `registry.py`
+Auto-discovers and instantiates active strategies from DB config. Returns `dict[StrategyName, BaseStrategy]`.
+
+#### `strategy_1_orb.py` — ORB (STUB, not implemented)
+
+#### `strategy_2_vwap_pullback.py` — VWAP Pullback + PDH/PDL + OI (PRIMARY)
+- `evaluate(ctx) -> StrategySignal | None` — checks VWAP proximity, bias alignment, reversal pattern, volume filter, OI support, confidence threshold
+- `should_exit(position, current_price, params) -> bool` — SL/target based on option premium
+- `drain_pending_logs() -> list[tuple[str, str]]` — GATE/SIGNAL logs flushed to `strat2:agent_log:{date}`
+
+Sets `instrument_type=OPTION`. Volume filter uses `ctx.candles_5m_futures_volume` for index symbols. SL/target from `market_levels.select_index_sl_target()` (VWAP bands, PDH/PDL, CPR, OI walls, swing levels); falls back to `sl_pct`/`rr_multiplier`. Skips if R:R < 1:1.
+
+#### `strategy_3_gamma_scalping.py` — Expiry Day Gamma (STUB, not implemented)
+
+#### `strategy_4_canslim.py` — CAN SLIM Growth Breakout (ACTIVE, positional)
+- `evaluate(ctx) -> StrategySignal | None` — checks CAN SLIM score, chart base pattern, volume breakout
+- `should_exit(position, current_price, params) -> bool` — trailing stop after `trailing_sl_activation_pct` gain
+
+Sets `instrument_type=FUTURE`, `holding_type=POSITIONAL`. Entry: BUY_FUT. SL at `base_low × 0.98` (capped at `sl_pct`); target from measured move (floored at `target_pct`). Same auto/manual pipeline as VWAP Pullback. Fundamental data from `stock_fundamentals` table (refreshed by `fundamental_data_task` every 6h). Chart patterns from daily bars. `futures_resolver` handles contract resolution + expiry roll.
+
+**Architecture note**: same pattern as VWAP Pullback — `strategy_configs` with `auto_mode + symbols`, evaluated on candle close or manual scan. `PositionType.POSITIONAL` on Trade/Position gates trade_monitor's EOD exit skip and trailing stop behavior.
+
+#### `strategy_5_intraday_futures.py` — Intraday Stock Futures (IN DEVELOPMENT)
+- `evaluate(ctx) -> StrategySignal | None` — phase-based dispatch to 4 sub-setups
+- `should_exit(position, current_price, params) -> bool` — 3:15 PM time exit; trailing SL handled by trade_monitor
+- `get_symbols() -> list[str]` — reads Redis watchlist `strat5:watchlist:{today}` (60s cache); populated by morning screener
+- `drain_pending_logs() -> list[tuple[str, str]]` — GATE/SIGNAL logs to `strat5:agent_log:{date}`
+- `drain_pending_orb_writes() -> dict[str, dict]` — ORB levels to write to Redis after candle close
+- `get_pending_phase() -> str | None` — phase transition to persist to Redis
+- `load_orb_from_redis(symbol, orb_data) -> None` — restores ORB state from Redis on startup
+- `get_current_phase(as_of=None) -> str` (module-level) — current phase string from 7-phase state machine
+
+Sets `instrument_type=FUTURE`, `holding_type=INTRADAY`, `max_lots=2`. Full spec: `docs/strategies/strategy-5-intraday-futures.md`, phase 1 ref: `docs/strategies/strategy-5-phase1-reference.md`.
+
+**Sub-setups**: ORB Breakout, VWAP Bounce, PDH/PDL Breakout, Gap Continuation. **Phase machine**: PRE_MARKET → ORB_FORMING → MORNING_ACTIVE → CAUTION_ZONE → AFTERNOON → CLOSING → DONE. **Price sourcing**: ORB, PDH/PDL, Gap Continuation use `last_candle.close`; VWAP Bounce uses `ctx.current_price`.
+
+**`_compute_confidence(ctx, params, indicators=None) -> float`** — 9-factor composite (RVOL 0.15, setup quality 0.14, Nifty bias 0.12, phase 0.12, volume 0.10, gap alignment 0.10, stock trend 0.10, OI direction 0.10, screener rank 0.07); injects `confidence_factors` dict (9 keys) into signal indicators JSONB.
+
+**`_compute_lots(signal, ctx, params) -> int`** — 6-condition sizing (RVOL, Nifty bias, screener score, briefing, enhanced ORB, trend STRONG/MODERATE, VIX cap); called by `lot_sizing.compute_lots_for_yolo`/`compute_lots_for_manual` at execution time only (not during evaluate).
+
+#### `canslim/scoring.py` — CAN SLIM Factor Scoring (pure functions)
+- `score_c(quarterly_eps, ...) -> float` — C factor: quarterly EPS acceleration
+- `score_a(annual_eps, ...) -> float` — A factor: annual EPS growth
+- `score_n(pct_from_52w_high) -> float` — N factor: new highs
+- `score_s(volume_ratio, ...) -> float` — S factor: supply/demand (volume)
+- `score_l(relative_strength_rating) -> float` — L factor: leader vs laggard
+- `score_i(fii_change_pct, ...) -> float` — I factor: institutional sponsorship
+- `score_m(nifty_above_50dma, india_vix) -> float` — M factor: market direction
+- `compute_canslim_total(*factor_scores) -> float` — weighted composite. Used by: strategy_4, research/agents/fundamental.py
+
+Re-exports `compute_rs_raw_score` and `percentile_rank_rs` from `indicators/relative_strength.py`.
+
+#### `canslim/base_patterns.py` — Chart Base Pattern Detection
+- `detect_cup_with_handle(daily_bars) -> BasePattern | None` — cup with handle pattern (includes `base_low` for SL placement)
+- `detect_flat_base(daily_bars) -> BasePattern | None` — flat base pattern
+- `detect_double_bottom(daily_bars) -> BasePattern | None` — double bottom pattern
+- `detect_any_base_pattern(daily_bars) -> BasePattern | None` — tries all patterns, returns first match. Used by: strategy_4
+
+---
+
+### `app/indicators/` — Technical Indicators (pure functions, no side effects)
+
+#### `vwap.py`
+- `calculate_vwap(candles) -> float | None` — VWAP from OHLCV candle list. Used by: strategy_runner._calculate_vwap_from_buffer()
+- `price_distance_from_vwap(price, vwap) -> float` — % distance from VWAP. Used by: strategy_2, strategy_5 (VWAP Bounce)
+- `is_pullback_to_vwap(price, vwap, proximity_pct) -> bool` — proximity check for VWAP Bounce entry. Used by: strategy_2, strategy_5
+
+#### `cpr.py`
+- `calculate_cpr(prev_high, prev_low, prev_close) -> CPRLevels` — pivot, TC, BC, support/resistance. `CPRLevels.cpr_type` is `WIDE` or `NARROW`. Used by: strategy_runner (previous day context builder)
+
+#### `previous_day.py`
+- `analyze_previous_day(prev_candles) -> PreviousDay` — PDH, PDL, PDC, `day_bias` (BULLISH/BEARISH/NEUTRAL), range. Used by: strategy_runner._build_market_context()
+- `is_gap_up(current_open, pdc, threshold_pct=0.3) -> bool`. Used by: strategy_5 (Gap Continuation)
+- `is_gap_down(current_open, pdc, threshold_pct=0.3) -> bool`. Used by: strategy_5 (Gap Continuation)
+
+#### `open_interest.py`
+- `analyze_option_chain(oi_snapshots) -> OIAnalysis` — PCR ratio, max pain, support/resistance strikes. Used by: strategy_runner._get_oi_analysis()
+- `is_oi_supporting_direction(oi_analysis, direction) -> bool` — checks PCR and max pain alignment. Used by: strategy_2, confidence.py
+
+#### `candle_patterns.py`
+- `is_bullish_engulfing(prev, curr) -> bool`
+- `is_bearish_engulfing(prev, curr) -> bool`
+- `is_bullish_pin_bar(candle) -> bool`
+- `is_bearish_pin_bar(candle) -> bool`
+- `is_doji(candle, threshold_pct=0.05) -> bool`
+- `is_bullish_reversal(candles) -> bool` — checks last 2-3 candles for bullish patterns. Used by: strategy_2, confidence.py
+- `is_bearish_reversal(candles) -> bool` — checks last 2-3 candles for bearish patterns. Used by: strategy_2, confidence.py
+- `average_volume(candles, periods=20) -> float`. Used by: volume_analysis.py
+
+#### `relative_strength.py`
+- `compute_rs_raw_score(daily_closes) -> float` — IBD-style weighted return (recent quarters weighted more). Used by: canslim/scoring.py, morning_screener
+- `percentile_rank_rs(raw_scores: dict[str, float]) -> dict[str, float]` — converts raw scores to 1-99 percentile across universe. Used by: fundamental_data_task (post-processing), morning_screener
+- `compute_50_dma(daily_closes) -> float | None`. Used by: canslim/scoring.py, research/agents/technical.py
+- `is_above_50_dma(current_price, daily_closes) -> bool | None`. Used by: canslim/scoring.py
+
+#### `volume_analysis.py`
+- `compute_avg_volume(daily_volumes, period=20) -> int`. Used by: strategy_2, strategy_5, research
+- `is_volume_breakout(current_volume, avg_volume_20d, multiplier=1.5) -> bool`. Used by: strategy_4, strategy_5
+- `volume_ratio(current_volume, avg_volume_20d) -> float`. Used by: strategy_2, strategy_5
+
+#### `market_levels.py`
+- `find_swing_low(candles, lookback=10) -> float | None`. Used by: select_index_sl_target()
+- `find_swing_high(candles, lookback=10) -> float | None`. Used by: select_index_sl_target()
+- `select_index_sl_target(direction, vwap, candles_1m, prev_day, cpr, oi_analysis, current_price) -> (sl, target) | None` — picks nearest support/resistance from VWAP bands, PDH/PDL, CPR, OI walls, swing levels. Used by: strategy_2
+- `compute_rr_ratio(entry, sl, target) -> float`. Used by: strategy_2, strategy_5 (validation)
+
+#### `global_market.py`
+- `compute_pre_open_gap(sgx_or_nifty_price, prev_close) -> float` — gap % from previous close. Used by: morning_screener.snapshot_global_cues()
+- `overnight_bias(dow_pct, sp500_pct, us_vix) -> DayBias`. Used by: morning_screener.snapshot_global_cues()
+- `combined_global_score(cues: GlobalCues) -> float` — [-1, +1] composite. Used by: morning_screener, strategy_runner
+- `global_alignment_factor(cues, direction) -> float` — [0, 1] alignment with trade direction. Used by: confidence.py
+
+#### `intraday_bias.py`
+- `compute_intraday_bias(prev_day, candles_1m, vwap, current_price, global_cues, as_of, nifty_bias_score) -> IntradayBias` — 8-factor composite: close_position (decays), gap_vs_pdc (decays), intraday_drift, VWAP slope, price-vs-VWAP, global, candle momentum, nifty_bias_score. Returns `IntradayBias(bias, score [-1,+1], strength STRONG/MODERATE/WEAK, components)`. Used by: strategy_runner (all strategies)
+- `is_blocked_by_bias(direction, bias) -> bool` — True only when bias is STRONG and opposite direction. Used by: strategy_2, strategy_5
+
+**Nifty benchmark**: `strategy_runner` caches `_last_nifty_bias_score` on every NIFTY candle close and passes it as `nifty_bias_score` for all non-NIFTY symbols. Pass None for NIFTY itself (avoids circular reference).
+
+#### `adr.py`
+- `compute_adr(daily_candles, period=20) -> float` — mean of (high-low)/close × 100 over N days. Used by: morning_screener, strategy_5
+- `adr_qualifies(adr_pct, min_adr=1.5) -> bool` — minimum movement filter. Used by: strategy_5, morning_screener Stage 1
+
+#### `rvol.py`
+- `build_volume_profile(historical_5m) -> dict[str, float]` — avg volume per 5-min bucket from 20 days of intraday candles (~75 buckets). Used by: morning_screener._build_rvol_baselines()
+- `compute_rvol(current_volume, bucket_avg) -> float` — ratio of current vs historical avg for same time bucket. Used by: strategy_5, morning_screener Stage 1
+- `serialize_profile(profile) -> str` — JSON for Redis storage. Used by: morning_screener
+- `deserialize_profile(json_str) -> dict[str, float]`. Used by: strategy_runner._enrich_strategy5_params()
+
+#### `atr.py`
+- `compute_atr(candles, period=14) -> float` — ATR from candles using Wilder's smoothing. Used by: strategy_5 (volatility-aware SL + sizing)
+
+#### `gap_analysis.py`
+- `detect_gap(prev_close, today_open) -> GapInfo` — gap direction and magnitude. Used by: strategy_5 (Gap Continuation)
+- `is_gap_continuation(candles, gap_direction) -> bool` — price action continues in gap direction. Used by: strategy_5 (Gap Continuation setup)
+
+#### `stock_trend.py`
+- `compute_stock_trend(daily_candles) -> StockTrend` — 6-factor composite: price vs 20 DMA (0.25), 5/20 DMA crossover (0.20), HH/HL pattern (0.20), ADR trend (0.10), close position in range (0.15), RS momentum (0.10). Score [-1, +1]. Direction: BULLISH (>0.3) / BEARISH (<-0.3) / NEUTRAL. Strength: STRONG (>0.6) / MODERATE (>0.3) / WEAK. Gracefully degrades with <10 bars. Uses 20 DMA (not 50 — only ~45 daily bars available). Used by: morning_screener, strategy_5 (direction filter + confidence factor)
+
+#### `vix.py`
+- India VIX fetch from Redis (`price:INDIA VIX`) or mock. Used by: strategy_runner._build_market_context()
+
+#### `confidence.py`
+- `compute_confidence(prev_day, candles_1m, vwap, candles_5m, oi_analysis, india_vix, global_cues, signal_type, rr_ratio, as_of=None, window_state=None, candles_5m_futures_volume=None) -> ConfidenceResult` — 10-factor composite (bias_alignment 0.20, reversal_quality 0.15, global_alignment 0.10, vwap_slope 0.10, volume_quality 0.10, oi_support 0.10, rr_ratio 0.10, cpr_narrow 0.05, vix_regime 0.05, time_of_day 0.05). `window_state` influences time_of_day factor. `candles_5m_futures_volume` for reliable index volume. Used by: strategy_2
+
+---
+
+### `app/data/` — Static Data & Lookups
+- `sector_classification.json` — ~180 F&O stocks → ~15 sectors
+- `sectors.py`:
+  - `get_sector(symbol) -> str | None`. Used by: morning_screener (correlated-duplicate drop), daily_summary_task (sector P&L)
+  - `get_sector_stocks(sector) -> list[str]`. Used by: morning_screener
+  - `get_all_sectors() -> list[str]`. Used by: morning_screener
+
+---
+
+### `app/data_feed/` — Fyers API Integration
+
+#### `fyers_auth.py`
+OAuth flow using `SessionModel` from fyers_apiv3 SDK. Used by: `auth.py` API router.
+
+#### `fyers_auto_login.py`
+- `auto_login() -> str` — runs full TOTP headless login (sync httpx in asyncio.to_thread, BrokenResourceError workaround). Used by: auto_login_and_store()
+- `trigger_reauth() -> str` — lock-guarded entry point for mid-session auth recovery; 60s cooldown + asyncio.Lock to collapse concurrent 401s into a single TOTP login. Used by: fyers_client._request_with_auth(), fyers_ws_client._on_error()
+- `auto_login_and_store() -> str` — runs TOTP flow, caches token in Redis (`fyers:access_token`, 10h TTL). Used by: fyers_login_task
+
+**TOTP window guard**: if < 5s remain in the current 30s window, sleeps into the next window before calling `verify_otp` to prevent code expiring in transit.
+
+**App consent gate**: Fyers v3 `/api/v3/token` returns HTTP 308 with `Url` containing auth code when app is approved. If not approved (e.g. after SEBI compliance resets for new deployments), returns HTTP 200 with consent page — `data.auth` JWT is NOT usable as auth code. Error message includes the exact `generate-authcode` URL to open in a browser. After one-time browser approval, headless login works normally. `FYERS_REDIRECT_URI` must point to production callback: `http://8.231.84.44/api/v1/auth/fyers/callback`.
+
+#### `fyers_client.py` — REST Client
+Class: `FyersClient(access_token=None)`
+- `get_quotes(symbols) -> dict` — batch quotes. Used by: option_resolver, live_price fallback, market_data API
+- `get_historical_data(symbol, resolution, date_from, date_to) -> list[Candle]` — historical OHLCV. Used by: candle_backfill, option_data_fetcher
+- `get_option_chain(symbol, expiry_date=None) -> dict` — option chain (Fyers v3 endpoint). Used by: oi_snapshot_task
+- `get_market_depth(symbol) -> dict` — Level 2 order book
+
+All public methods route through `_request_with_auth()`: (1) reads freshest token from Redis per call, (2) detects HTTP 401 or Fyers JSON auth errors (-16, -17, -300), (3) calls `trigger_reauth()` once + retries, (4) retries transient 5xx via `async_retry` (3×).
+
+#### `fyers_ws_client.py` — WebSocket Client
+Class: `FyersWSClient`
+- `is_connected() -> bool`
+- `fetch_quotes_rest(extra_symbols=None)` — fetches live prices via REST on connect. Used by: managed_reconnect
+- `start(symbols, extra_symbols=None)` — connects WS, subscribes symbols, starts watchdog. Used by: main.py, fyers_login_task
+- `stop()` — disconnects, cancels reconnect task, nulls `_ws` BEFORE close to break reconnect cascade loop
+- `register_symbol_map(symbol_map: dict[str, str])` — extends `_reverse_map` for new symbols. Used by: strategy_runner (when new S5 symbols added)
+- `is_symbol_subscribed(fyers_symbol) -> bool`
+- `subscribe_symbols(symbols, symbol_map=None)` — deduplicates; extends reverse map. Used by: market_data API, main.py startup
+
+**Reconnect architecture**:
+- SDK's `reconnect=True` disabled (causes stale topic_id → symbol mapping). Own managed reconnect via `_on_close` → `_managed_reconnect()` (stop() + start() after 5s backoff)
+- `_on_close` records `_last_disconnect_at`, calls `feed_manager.clear_in_progress_candles()`
+- `_on_connect` schedules gap backfill for the disconnect window
+- `_watchdog_loop()` polls every 30s; triggers reauth+restart if no tick in >90s (catches silent server-side hangs)
+- **Self-cancellation guard**: both reconnect methods null `self._reconnect_task` BEFORE calling `stop()` to prevent killing themselves mid-flight
+- **Orphan prevention**: `start()` always calls `stop()` first if a live `FyersDataSocket` exists
+
+**Auth error -300**: only treat as auth failure when `invalid_symbols` is absent (Fyers uses -300 for both "invalid token" AND "invalid symbol" — treating the latter as auth caused reauth storms).
+
+#### `symbol_master.py`
+Class: `SymbolMaster`
+- `load()` — downloads NSE_CM/FO + BSE_CM/FO CSVs, parses ~127K symbols, stores as JSON in Redis (`symbols:master`, 24h TTL)
+- `refresh()` — re-downloads (called inline at startup, daily at 8:00 AM)
+- `search(query, min_score=20) -> list[dict]` — in-memory search: exact/prefix/substring on short name + display name + Fyers symbol. Used by: market_data API (`GET /symbols/search`)
+- `is_loaded -> bool`, `count -> int`
+
+#### `feed_manager.py`
+Class: `FeedManager`
+- `start(symbols) -> None` — initializes in-progress candle state. Used by: fyers_ws_client.start()
+- `stop() -> None`. Used by: fyers_ws_client.stop()
+- `process_tick(symbol, price, volume, fyers_alias=None) -> None` — aggregates tick into in-progress candle; on minute boundary emits + persists + triggers strategy eval. `fyers_alias` causes dual-name publish (short name + Fyers alias). Used by: fyers_ws_client._on_message()
+- `clear_in_progress_candles() -> None` — resets in-progress candle state on WS disconnect (preserves `_last_vol_today` baselines — Fyers cumulative volume continues from where it left off). Used by: fyers_ws_client._on_close()
+
+**Volume delta tracking**: Fyers sends `vol_traded_today` (cumulative). `_aggregate_candle` computes `max(0, current − last)` delta per tick. First-tick seeding produces zero delta on restart (prevents entire morning's volume dumping into one candle — the RVOL spike bug).
+
+**Market hours guard**: `_run_auto_strategy_evaluation` returns early when `is_market_open()` is False — prevents GATE log spam from REST quote fetches outside market hours.
+
+---
+
+### `app/research/` — AI Research Agent System
+
+Multi-agent research: user searches stock → orchestrator spawns 6 agents in parallel → synthesis → persisted report.
+
+#### `orchestrator.py`
+- `start_research(symbol, report_id)` — creates asyncio.Task, launches 6 agents via `asyncio.gather(return_exceptions=True)`, broadcasts progress via WebSocket, persists to `ResearchReport`/`ResearchAgentRun`. Max 3 concurrent sessions. Used by: research API
+- `get_active_research_count() -> int`. Used by: research API (429 gate)
+
+Synthesis uses Pro model (`create_llm_client(pro=True)`); sub-agents use Flash. `_sanitize_for_jsonb()` cleans NaN/Infinity/Decimal/datetime before JSONB storage.
+
+#### `llm_client.py`
+Abstract: `LLMClient` with `generate()`, `generate_with_search()`, `generate_json()`.
+Implementation: `GeminiClient`
+- `generate(prompt, system=None, max_tokens=2048) -> str` — plain text generation. Used by: all 6 research agents
+- `generate_with_search(prompt, system=None) -> str` — Gemini Google Search grounding for real-time news. Used by: news_sentiment agent
+- `generate_json(prompt, system=None, max_tokens=2048, response_schema=None) -> dict` — extracts JSON; retry-once on empty/unparseable; guards against Gemini returning JSON array instead of object. Used by: signal_confidence, morning_screener (briefing + Stage 3)
+
+Factory:
+- `create_llm_client(pro=False) -> LLMClient` — `pro=True` uses `RESEARCH_LLM_MODEL_PRO` (gemini-3.1-pro-preview); Vertex AI takes precedence over API key. Used by: orchestrator (synthesis), morning_screener (briefing + Stage 3), signal_confidence
+
+**Auth modes**: `GCP_PROJECT_ID` set → Vertex AI with ADC; only `GOOGLE_API_KEY` → AI Studio.
+**Critical**: `generate_json` params are `prompt` and `system` — NOT `user_prompt`/`system_prompt` (wrong names cause silent TypeError → FALLBACK).
+
+#### `data_gatherer.py`
+- Prefetches shared context (`StockInfo`, 1Y price history, existing fundamentals) into `ResearchContext`. On-demand fundamental fetch if row missing/stale. Used by: orchestrator
+
+#### `report_builder.py`
+- Template-based fallback report if LLM synthesis fails. Used by: orchestrator
+
+#### `agents/`
+All extend `BaseResearchAgent` (`agents/base.py`), return `AgentResult(findings: dict, summary: str)`.
+
+| Agent | Description | Data Sources |
+|---|---|---|
+| `fundamental.py` | Quarterly earnings, CAN SLIM scores | yfinance, `canslim/scoring.py` |
+| `technical.py` | Trend, RS rating, RSI, chart patterns | `indicators/`, `canslim/base_patterns.py` |
+| `oi_derivatives.py` | PCR, max pain, OI buildup | Fyers option chain (F&O stocks only; graceful skip otherwise) |
+| `institutional.py` | FII/DII/MF shareholding, QoQ trend | NSE API (`nse_client.get_shareholding_pattern()`) |
+| `news_sentiment.py` | Real-time Indian stock news (30-day window) | Gemini grounded search |
+| `valuation.py` | PE/PB/PEG, dividend yield, sector comparison | yfinance |
+| `signal_confidence.py` | LLM overlay ±30 confidence adjustment | Gemini (per-strategy system + user prompts) |
+
+**`signal_confidence.py`** (`score_signal(signal, ctx, prior_signals=None) -> SignalConfidence`):
+- Per-strategy prompts (`_SYSTEM_PROMPTS` / `_USER_PROMPT_TEMPLATES` keyed by strategy name)
+- Sends full indicator JSON context + up to 5 prior signals today for same symbol+strategy
+- 25s timeout; never blocks signal on failure; controlled by `settings.ai_confidence_enabled`
+- Per-symbol 5-min cooldown in strategy_runner prevents rate-limit storms
+- Adjustment scale: -30 to -20 = fundamental flaw; -10 to +10 = normal; +20 to +30 = exceptional
+- SKIP suggested when adjustment ≤ -20
+- Uses `response_schema=_SIGNAL_CONFIDENCE_SCHEMA` for structured output
+
+---
+
+### `app/agent/` — AI Trading Agent
+
+#### `agent_runner.py`
+- `is_running: bool` — property. Used by: agent API status
+- `started_at: datetime | None` — property
+- `start()` — starts 2s trade monitor loop. Used by: main.py, agent API
+- `stop()`. Used by: agent API
+- `on_new_signal(signal_id)` — gates Telegram notification on confidence floor (`signal.confidence >= min_confidence_for_execution`; None confidence still notifies); auto-executes if YOLO + running + executable. Used by: strategy_runner._handle_signal()
+
+#### `trade_monitor.py`
+- `monitor_positions(db, yolo_mode=False) -> list[dict]` — called every 2s by agent_runner; checks profit cap first, then monitors each open position. Used by: agent_runner
+
+Internal flow per position check:
+1. `_check_profit_cap(db)` — if cap enabled and realized+unrealized ≥ cap: close all non-shadow positions (`ExitReason.PROFIT_CAP`), send Telegram, short-circuit loop
+2. `_check_position(db, pos, yolo_mode)` — SL hit? Target hit? Time exit? Trailing SL update?
+3. `_close_position(db, pos, exit_price, exit_reason, ...)` — closes trade, computes `brokerage_calculator.compute_charges()`, stores in `Trade.charges_json`, broadcasts `trade:close` + `agent:action`
+4. `_request_profit_confirmation(db, pos)` — for SEMI mode target hits; guards against duplicate confirmation requests
+5. `_roll_futures_position(db, pos)` — 3 days before expiry: close old + open next month via `futures_resolver`; preserves `source=SHADOW` and `is_shadow=True`
+
+**Direction detection**: uses `target_price < entry_price` (target below entry = SHORT). **SHORT position support**: direction-aware SL hit, target hit, unrealized PnL, HWM (lowest price for shorts), trailing SL direction.
+
+**Trailing SL**: POSITIONAL always trails; INTRADAY trails when `trailing_sl_enabled=True`. Breakeven at `trailing_sl_breakeven_pct` (S5: 0.5%); progressive trail when `trailing_sl_trail_pct` is set. SL only moves favorably. `ExitReason.TRAILING_SL` vs `ExitReason.AGENT_SL` distinguished by comparing `trade.stop_loss` (original) vs `pos.stop_loss` (live, trailed).
+
+**`agent:action` broadcast shape**: must match `AgentLogResponse` (id, action_type, trade_id, details, requires_confirmation, confirmation_status, confirmed_at, created_at) — frontend `AgentFeed` reads `log.id` for React keys and `log.details.{symbol,pnl,strategy_name}` for display. Do NOT change to a flat dict.
+
+#### `auto_executor.py`
+- `auto_execute_signal(signal_id) -> dict | None` — YOLO gate order: (1) PENDING + executable; (2) confidence gate (`min_confidence_for_execution`); (3) open position dedup (non-shadow only); (4) `_final_risk_check` (drawdown, max-trades, daily profit cap); (5) permanent watchlist gate (`yolo_skip_permanent_watchlist`). Sets `Trade.source = "YOLO"`. Used by: agent_runner.on_new_signal()
+
+Lot sizing via `compute_lots_for_yolo()`. SL/target recomputed from live LTP via `recompute_sl_target()`. Sets `margin_required` on Trade + Position. Broadcasts `trade:open` (includes `margin_required`) + `agent:auto_executed`.
+
+#### `shadow_executor.py`
+- `shadow_execute_signal(signal_id) -> None` — fire-and-forget; gate order: (1) PENDING; (2) open shadow dedup (CLOSED shadows don't block — allows fresh shadow on Case-2 re-fire); (3) past close deadline; (4) F&O ban; (5) resolution failure; (6) confidence gate (`min_confidence_for_shadow`); (7) permanent watchlist gate (`shadow_skip_permanent_watchlist`). Creates `Trade(source="SHADOW")` + `Position(is_shadow=True)`. Used by: strategy_runner._handle_signal(), strategy_runner._dedup_signal() (Case-2)
+
+Always 1 lot. No capital gates (even VIX extreme, drawdown, max-trades, outside window — these blocked signals are shadow-executed to measure what would have happened). SL/target recomputed from live LTP. See `docs/ai/shadow-agent.md` for isolation guarantees.
+
+#### `notification.py`
+All outbound Telegram messages. No ORM imports — callers pass plain scalars.
+
+- `send_telegram(message) -> bool` — early-returns False when `TELEGRAM_ENABLED=false`; retries 3× with 2s base delay. Uses sync `httpx.Client` via `asyncio.to_thread` (TLS fix for macOS 15.2 async TLS regression)
+- `notify_signal_generated(signal, ...)` — confidence floor gate; `blocked_reason` HTML-escaped before embedding
+- `notify_auto_executed(trade, signal)` — YOLO execution notification
+- `notify_manual_executed(trade, signal)` — ✋ Manual Exec notification; called from signals.py
+- `notify_sl_hit(position, pnl, is_trailing=False)` — 🟡 "Trailing Stop Hit" when `is_trailing=True`
+- `notify_profit_booked(position, pnl)` — target hit notification
+- `notify_time_exit(position, pnl)` — 3:15 PM time exit
+- `notify_confirmation_request(log)` — SEMI mode profit confirmation
+- `notify_expiry_roll(old_trade, new_trade)` / `notify_expiry_roll_failed(symbol, expiry)` — futures roll
+- `notify_drawdown_halt(daily_pnl, limit)` — drawdown gate triggered
+- `notify_profit_cap_halt(daily_pnl, limit, positions_closed)` — daily profit cap hit
+- `notify_daily_summary(trades, market_data, global_cues, briefing)` — 3:35 PM EOD report (excludes shadow, uses `net_pnl` when available, LLM-drafted market wrap with Pro model)
+- `notify_morning_premarket(briefing, global_cues)` — 8:00 AM pre-market report with LLM-drafted global cues, sector bias, F&O build-up, OI levels
+- `notify_morning_preopen(watchlist, global_cues)` — 9:08 AM pre-open update with watchlist + gap commentary; pure formatting, no LLM
+
+**P&L safety**: P&L label written as "PnL" (not "P&L") — literal `&` in HTML parse_mode causes Telegram 400. `blocked_reason` wrapped with `html.escape()` before embedding.
+
+#### `telegram_bot.py`
+- `start_telegram_bot()` / `stop_telegram_bot()` — wired into main.py lifespan; task tracked in TaskRegistry as `telegram_bot_poll`
+- Long-polls `getUpdates` (timeout=30); on startup advances past queued messages (avoids replaying stale commands after restart)
+- Security gate: ignores messages from any `chat_id` ≠ `settings.telegram_chat_id`
+- Skips startup if `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` missing, or `TELEGRAM_ENABLED=false`
+
+#### `telegram_commands.py`
+- `handle_command(cmd, chat_id)` — dispatches via `_HANDLERS` dict. Used by: telegram_bot
+
+Commands: `/status` (market open, agent mode, feed liveness, S2 window, S5 phase, counts), `/market` (indices + VIX, global cues score, briefing approach), `/shadow` (shadow trade P&L), `/yolo` (YOLO trade P&L), `/signals` (today's signals above execution threshold, grouped PENDING then EXECUTED), `/help` (command list)
+
+Phone-friendly card format (no monospace blocks). Futures show LONG/SHORT via `_direction()`; options hide it (CE/PE implies direction). All timestamps via `_to_ist()`. Each section wrapped in try/except for graceful degradation.
+
+---
+
+### `app/tasks/` — Scheduled Tasks
+
+| Task | Schedule | What it does |
+|---|---|---|
+| `fyers_login_task.py` | 7:45 AM IST daily | TOTP auto-login; on startup: blocks until token obtained (up to 10 retries × 2 min) or raises RuntimeError. Daily: non-blocking, retries up to 10× via DateTrigger on failure. Symbol preservation: passes `extra_symbols=existing_symbols` to `start()` so index futures subscriptions survive reauth. |
+| `symbol_master_task.py` | 8:00 AM IST daily | Refreshes symbol master CSVs |
+| `oi_snapshot_task.py` | Every 3 min market hours (CE/PE); 3:25 PM daily (stock futures); Every 10 min 9:20-15:30 (S5 watchlist OI) | Fyers option chain OI → `oi_snapshots` table. `fetch_stock_futures_oi()` fetches ~180 F&O stocks' FUT OI at EOD. `fetch_s5_watchlist_oi()` fetches targeted 10-15 S5 watchlist symbols' live OI every 10 min. **Fyers field**: use `"oi"` not `"open_interest"` in the `v` dict. Rate-limited: semaphore(2) + 0.3s delay. Gap-fill on startup via `_fill_stock_futures_oi_gaps()` from NSE FO bhav copy archives. |
+| `nse_bhav_copy_task.py` | 7:30 AM IST daily | Downloads NSE CM bhav copy CSV → (1) Redis `nse:bhav_copy:{date}` (90-day TTL, slim payload for delivery % scoring), (2) `market_data_daily` table (full OHLCV upsert). Gap-fills last 7 trading days on startup. Cookie session required (preflight GET to nseindia.com). |
+| `global_market_task.py` | Every 15 min; once on startup | yfinance 8 tickers (Dow, S&P500, Nasdaq, Nifty, Crude, USDINR, DXY, VIX); 0.5s inter-ticker. Writes `indicator:global:{field}` Redis keys (20-min TTL) + `GlobalMarketSnapshot` DB row. **NIFTY override**: after yfinance, reads `price:NIFTY` from Redis (Fyers live) to override — yfinance `^NSEI` has 1-day lag. |
+| `fundamental_data_task.py` | 06:00, 12:00, 18:00 IST; once on startup | Fetches CAN SLIM fundamentals (yfinance + NSE) for all CAN SLIM symbols; 5s inter-symbol. `_fetch_and_store_symbol(symbol, lot_sizes)` — also called on demand by morning screener for S5 watchlist symbols. |
+| `daily_summary_task.py` | 3:35 PM IST daily | EOD Telegram report (excludes shadow); LLM-drafted market wrap + trading assessment with graceful fallback. Uses `net_pnl` when available. |
+| `morning_workflow_task.py` | 8:00 AM, 8:30 AM, 9:08 AM, 9:31 AM, 3:15 PM IST | Strategy 5 daily workflow: briefing → screener → pre-open reassessment → ORB level logging → EOD summary. Telegram hooks wrapped in try/except. All idempotent per day, skip non-trading days. |
+| `fo_ban_list_task.py` | 7:00 AM IST daily; once on startup | Fetches and caches NSE F&O ban list to `nse:fo_ban_list:{date}` (24h TTL). JSON primary source, CSV fallback. Returns empty set on failure (graceful degradation). |
+| `signal_expiry_task.py` | 3:30 PM IST daily | Bulk-expires ALL remaining PENDING intraday strategy signals (`_INTRADAY_STRATEGIES`: VWAP Pullback, Intraday Futures, ORB, Gamma Scalping). No date filter — cleans up stale signals from prior days too. Positional strategies (CAN SLIM) exempt. Only runs on trading days. |
+
+---
+
+### `app/data_sources/` — External Data Sources
+
+#### `yfinance_client.py`
+All use `asyncio.to_thread` (yfinance is sync). Rate-limited: semaphore(2) + 1.0s delay + 3× retry with exponential backoff.
+- `get_quarterly_earnings(symbol) -> list[QuarterlyEarnings]` — uses `.NS` suffix. Used by: fundamental_data_task, research/fundamental
+- `get_annual_financials(symbol) -> list[AnnualFinancials]`. Used by: fundamental_data_task, research/fundamental
+- `get_stock_info(symbol) -> StockInfo | None`. Used by: fundamental_data_task, research/fundamental
+- `get_price_history(symbol, period="1y") -> list[PriceHistory]`. Used by: fundamental_data_task, research/technical
+
+#### `nse_client.py`
+- `get_shareholding_pattern(symbol) -> list[ShareholdingPattern]` — two-step: master endpoint + XBRL XML for FII/DII/MF breakdown. Used by: research/institutional
+- `get_fo_lot_sizes() -> dict[str, int]` — primary: Fyers symbol master (Redis); fallback: NSE JSON API. Used by: morning_screener, option_resolver
+- `get_fo_ban_list(trade_date=None) -> set[str]` — Redis cache (`nse:fo_ban_list:{date}`, 24h TTL) first; fetches NSE JSON or CSV on miss. Returns empty set on failure. Used by: fo_ban_list_task, strategy_runner._check_regulatory_limits(), morning_screener Stage 1
+
+---
+
+### `app/backtest/` — Backtest Harness
+
+Bypasses `strategy_runner` — calls `strategy.evaluate(ctx)` directly. No DB writes, WS events, or auto-execution.
+
+#### `context_builder.py`
+- `build_historical_context(symbol, as_of: datetime, session) -> MarketContext | None` — builds MarketContext from historical `MarketData1m` + `OISnapshot` + `GlobalMarketSnapshot` rows filtered by `timestamp <= as_of`. Replays VWAP from today's candles up to `as_of`. Returns None if insufficient data. Used by: harness.py
+
+#### `harness.py`
+Class: `Backtester(mode, window_filter)`
+- `run(strategy, symbol, start, end) -> BacktestReport` — walks minute-by-minute. `accurate` mode: real option premiums via Fyers. `fast` mode: delta approximation. `window_filter=True`: only evaluates within trade windows (loaded from `get_strategy_params()`). Used by: `scripts/backtest.py`
+
+#### `exit_simulator.py`
+- `simulate_exit(signal, entry_ts, spot_candles_after, fyers_option_symbol, entry_premium, mode) -> SimulatedTrade` — accurate mode walks option 1m candles; fast mode delta-approximates (ATM δ=0.50, ITM δ=0.60). Returns `SimulatedTrade(pnl_per_lot, pnl_pct, exit_reason)`. Used by: harness.py
+
+#### `option_data_fetcher.py`
+- `ensure_option_candles(fyers_option_symbol, start_ts, end_ts) -> list[Candle]` — DB first; fetches from Fyers SDK and persists if missing; in-memory cache per run. **Fyers free plan only serves 1m history while contract is actively listed** — expired contracts return `s="error"`. Historical replay of expired signals relies on DB-cached candles from live WS feed or falls through to fast mode. Used by: exit_simulator (accurate mode)
+
+#### `strike_selector.py`
+- `select_expiry_as_of(symbol, as_of_date) -> date` — holiday-aware historical expiry selection
+- `resolve_option_symbol(symbol, index_price, signal_type, as_of_date) -> str | None` — historical option symbol resolution. Used by: harness.py
+
+#### `report.py`
+- `build_report(trades, signals_meta) -> BacktestReport` — metrics: hit rate, avg win/loss, expectancy, profit factor, CE/PE breakdown, `oi_coverage_pct`, confidence-bucket calibration. Used by: harness.py
+- `print_report(r: BacktestReport) -> None` — formatted console output. Used by: `scripts/backtest.py`
+
+#### `result_saver.py`
+- `save_run(run_dir, report, signals_meta, run_ts) -> None` — saves backtest results: summary JSON + trades CSV + signals CSV into a timestamped run directory. Used by: `scripts/backtest.py`, `scripts/backtest_strategy5.py`
+
+---
 
 ## Conventions
 - All async functions use `async def`
 - Database sessions via FastAPI dependency injection (`Depends(get_db)`)
 - Type hints on all function signatures
-- IST timezone for all market-related times, stored as TIMESTAMPTZ
+- IST timezone for all market-related times, stored as TIMESTAMPTZ (UTC in DB; use `AT TIME ZONE 'Asia/Kolkata'` in raw SQL)
 - UUID for all primary keys
 - Services never import from `api/` — only the reverse
 - Indicators are pure functions: candle data in, values out, no DB/Redis access
 - Config loaded from `.env` via Pydantic Settings (see `.env.example`)
+- When updating docs: add new functions to the registry in the relevant section above, update `Used by:` lists for callers, update the API endpoint table for new routes
+
+---
 
 ## How-To Guides
 
@@ -234,24 +797,28 @@ python scripts/backtest.py --strategy vwap_pullback --symbol NIFTY --start 2025-
 3. Add name to `StrategyName` enum in `app/core/enums.py`
 4. Strategy is auto-discovered by `registry.py` — just needs a `strategy_configs` DB row
 5. Add strategy doc in `docs/strategies/strategy-N-name.md`
+6. Add function registry entry in this CLAUDE.md under `app/strategies/`
 
 ### Add a New API Endpoint
 1. Add or edit router in `app/api/v1/{resource}.py`
 2. Add Pydantic schemas in `app/schemas/{resource}.py`
 3. If new router file, include in `app/api/router.py`
 4. Service logic goes in `app/services/`, not in the router
+5. Update the endpoint table in this CLAUDE.md
 
 ### Add a New Indicator
 1. Create pure function in `app/indicators/{name}.py`
 2. Add fields to `MarketContext` in `app/strategies/base.py`
 3. Populate in `app/services/strategy_runner.py` when building context
 4. Write tests in `tests/test_indicators/test_{name}.py`
+5. Add function registry entry in this CLAUDE.md under `app/indicators/`
 
 ### Add a New Database Table
 1. Create model in `app/models/{name}.py` extending `BaseModel`
 2. Import in `app/models/__init__.py` so Alembic discovers it
 3. Run `make migration msg="add {name} table"`
 4. Run `make migrate`
+5. Add model to the table in this CLAUDE.md under `app/models/`
 
 ### Run Tests
 ```bash

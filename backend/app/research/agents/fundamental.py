@@ -25,6 +25,7 @@ class FundamentalAgent(BaseResearchAgent):
     description = "Analyzing earnings, growth, and financial health"
 
     async def research(self, ctx: ResearchContext, llm: LLMClient) -> AgentResult:
+        """Fetch earnings/financials from yfinance, compute CAN SLIM scores, and summarize via LLM."""
         data_sources = []
         findings: dict = {}
 

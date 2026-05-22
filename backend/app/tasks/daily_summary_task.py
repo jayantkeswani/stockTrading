@@ -188,6 +188,7 @@ def _format_eod_message(
     oi_levels: dict,
     llm_result: dict,
 ) -> str:
+    """Format the full EOD Telegram message from pre-computed stats and LLM result."""
     from app.agent.notification import _paper
 
     pnl_emoji = "📈" if net_pnl >= 0 else "📉"
@@ -282,6 +283,7 @@ def _format_eod_message(
 
 
 async def start_daily_summary_scheduler() -> None:
+    """Start the daily P&L summary scheduler (3:35 PM IST)."""
     scheduler.add_job(
         send_daily_summary,
         CronTrigger(hour=15, minute=35, timezone=IST),
@@ -293,6 +295,7 @@ async def start_daily_summary_scheduler() -> None:
 
 
 async def stop_daily_summary_scheduler() -> None:
+    """Shut down the daily summary scheduler gracefully."""
     if scheduler.running:
         scheduler.shutdown(wait=False)
         logger.info("Daily summary scheduler stopped")

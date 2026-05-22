@@ -19,10 +19,12 @@ _STRATEGIES: dict[StrategyName, BaseStrategy] = {
 
 
 def get_strategy(name: StrategyName) -> BaseStrategy | None:
+    """Return the singleton strategy instance for the given name, or None if unknown."""
     return _STRATEGIES.get(name)
 
 
 def get_all_strategies() -> dict[StrategyName, BaseStrategy]:
+    """Return a copy of the full strategy registry keyed by StrategyName."""
     return _STRATEGIES.copy()
 
 

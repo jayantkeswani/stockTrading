@@ -45,6 +45,7 @@ class FeedManager:
 
     @property
     def db_semaphore(self) -> asyncio.Semaphore:
+        """Lazy-init semaphore that limits concurrent DB-heavy operations to 10."""
         if self._db_semaphore is None:
             self._db_semaphore = asyncio.Semaphore(10)
         return self._db_semaphore

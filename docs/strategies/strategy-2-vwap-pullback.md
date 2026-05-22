@@ -35,16 +35,18 @@ Signals generated outside the active windows are persisted as **informational** 
 
 **File:** `backend/app/indicators/intraday_bias.py`
 
-The strategy does not use a hard yesterday-only gate. Instead, a live composite score in `[-1, +1]` is computed each minute from six factors:
+The strategy does not use a hard yesterday-only gate. Instead, a live composite score in `[-1, +1]` is computed each minute from eight factors. Static factors (yesterday, gap) decay over the trading day, redistributing weight to dynamic factors:
 
-| Factor | Weight | Description |
+| Factor | Base Weight | Description |
 |---|---|---|
-| Yesterday's close_position | 0.25 | Where yesterday closed relative to its range (0=at low, 1=at high) |
-| Gap vs PDC | 0.20 | Today's opening gap vs previous close |
-| VWAP slope (last 10 candles) | 0.25 | Intraday trend direction |
-| Price vs VWAP | 0.10 | Which side of VWAP price is on |
+| Yesterday's close_position | 0.20 (decays) | Where yesterday closed relative to its range (0=at low, 1=at high) |
+| Gap vs PDC | 0.15 (decays) | Today's opening gap vs previous close |
+| VWAP slope (last 10 candles) | 0.25+ | Intraday trend direction (grows with freed weight) |
+| Price vs VWAP | 0.10+ | Which side of VWAP price is on |
 | Global overnight cues | 0.10 | Weighted Dow futures, S&P close, USD/INR, crude composite |
-| Candle momentum (last 5 bars) | 0.10 | Net bullish/bearish body direction |
+| Candle momentum (last 5 bars) | 0.10+ | Net bullish/bearish body direction |
+| Intraday drift | 0.10+ | `(current_price − today_open) / today_open` — captures sustained intraday moves |
+| Nifty bias score | 0.05 | NIFTY's own computed bias score injected for non-NIFTY symbols (pass-through for NIFTY itself is omitted to avoid circular reference) |
 
 **Strength thresholds:**
 - `|score| ≥ 0.50` → STRONG

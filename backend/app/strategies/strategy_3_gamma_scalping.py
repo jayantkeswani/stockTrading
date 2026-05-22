@@ -16,8 +16,10 @@ class GammaScalpingStrategy(BaseStrategy):
     name = StrategyName.GAMMA_SCALPING
 
     def evaluate(self, ctx: MarketContext) -> StrategySignal | None:
+        """Stub — Gamma Scalping strategy not yet implemented. Always returns None."""
         logger.debug("Gamma Scalping strategy not yet implemented")
         return None
 
     def should_exit(self, ctx, entry_price, stop_loss, target_price) -> ExitSignal | None:
+        """Stub — Gamma Scalping exit logic not yet implemented. Always returns None."""
         return None

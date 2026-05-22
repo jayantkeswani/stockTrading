@@ -21,6 +21,11 @@ async_session_factory = async_sessionmaker(
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI dependency that yields an async SQLAlchemy session.
+
+    Commits on success and rolls back on exception. Used by all API routers
+    via ``Depends(get_db)``.
+    """
     async with async_session_factory() as session:
         try:
             yield session

@@ -87,6 +87,7 @@ class NewsSentimentAgent(BaseResearchAgent):
     description = "Searching for recent news and analyzing sentiment"
 
     async def research(self, ctx: ResearchContext, llm: LLMClient) -> AgentResult:
+        """Search for recent stock news via Gemini grounded search, then classify sentiment via LLM."""
         data_sources = ["google_search_grounding"]
 
         # Step 1: Search for news using Gemini's grounded search

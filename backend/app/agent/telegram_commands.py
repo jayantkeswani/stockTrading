@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
 def _ist_today_range():
+    """Return (today_start, today_end) as IST-aware datetimes for DB queries."""
     from app.core.utils import now_ist
     now = now_ist()
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -31,29 +32,34 @@ def _ist_today_range():
 
 
 def _instrument_label(symbol: str, strike_price, option_type: str | None) -> str:
+    """Return a compact label: 'NIFTY 24000 CE' for options, plain symbol for futures."""
     if option_type in ("CE", "PE"):
         return f"{symbol} {int(float(strike_price))} {option_type}"
     return symbol
 
 
 def _pnl_str(pnl) -> str:
+    """Format PnL as '+₹1,234' or '-₹567' with sign."""
     v = float(pnl) if pnl is not None else 0.0
     sign = "+" if v >= 0 else "-"
     return f"{sign}₹{abs(v):,.0f}"
 
 
 def _pnl_emoji(pnl) -> str:
+    """Return green circle for non-negative PnL, red circle for negative."""
     v = float(pnl) if pnl is not None else 0.0
     return "🟢" if v >= 0 else "🔴"
 
 
 def _pct_str(pct) -> str:
+    """Format a percentage value as '+5.1%' or '-2.3%'."""
     v = float(pct) if pct is not None else 0.0
     sign = "+" if v >= 0 else ""
     return f"{sign}{v:.1f}%"
 
 
 def _exit_label(reason: str | None) -> str:
+    """Map an ExitReason value to a short display label for Telegram cards."""
     return {
         "AGENT_PROFIT": "TARGET",
         "TARGET_HIT":   "TARGET",
@@ -70,6 +76,7 @@ def _exit_label(reason: str | None) -> str:
 
 
 def _strategy_short(name: str) -> str:
+    """Return abbreviated strategy code (S1–S5) for Telegram card display."""
     return {
         "vwap_pullback": "S2",
         "intraday_futures": "S5",
@@ -79,16 +86,19 @@ def _strategy_short(name: str) -> str:
 
 
 def _chg_emoji(pct) -> str:
+    """Return green circle for non-negative change, red circle for negative."""
     return "🟢" if float(pct or 0) >= 0 else "🔴"
 
 
 def _to_ist(dt) -> str:
+    """Format a datetime as 'HH:MM' in IST, or '—' if None."""
     if dt is None:
         return "—"
     return dt.astimezone(IST).strftime("%H:%M")
 
 
 def _direction(entry_price, target_price) -> str:
+    """Infer LONG/SHORT direction from entry vs target price. Returns '' if either is None."""
     if entry_price is None or target_price is None:
         return ""
     return "SHORT" if float(target_price) < float(entry_price) else "LONG"
@@ -558,6 +568,7 @@ _HANDLERS = {
 
 
 async def handle_command(cmd: str, chat_id: str) -> None:
+    """Dispatch a Telegram command string to its handler. Silently ignores unknown commands."""
     handler = _HANDLERS.get(cmd)
     if handler is None:
         return

@@ -10,88 +10,286 @@
 
 ## Module Map
 
-### `src/app/` - Pages (App Router)
+### `src/app/` - Pages (App Router, 10 pages)
 All pages use `'use client'` directive.
-- `page.tsx` - Dashboard: **sticky** PnL strip at top (`position: sticky; top: 0; z-index: 10`), then 8-col left (ScannerHeader, ScannerPanel, ActivePositions, FuturesWatchlist) + 4-col right (Watchlist, ScanFeed, AgentFeed). Loads pending signals and open positions from DB on mount. ChartModal overlay (`isOpen={chartOpen}`, `initialSymbol={chartSymbol}`). FuturesWatchlist imports `components/intraday-futures/Watchlist` as `FuturesWatchlist` and passes `onOpenChart={handleOpenChart}` so symbol clicks open the same ChartModal.
-- `layout.tsx` - Root layout with AppShell wrapper
-- `trades/page.tsx` - Kite-style P&L dashboard. **All filter state (period, strategy, Shadow/Real, sim panel) lives in Zustand store** — persisted via `persist` middleware, survives both navigation and browser refresh. Reads `tradesPeriodLabel/Start/End`, `tradesStrategy`, `tradesSimOpen`, `tradesSim` from store; derives `period: Period` via `periodFromLabel()` (Custom uses stored ISO dates). `key={tradesPeriodLabel}` on `PeriodFilter` forces remount so active pill re-syncs when restored period changes. SummaryStrip (total P&L, win rate, best/worst day), PnLHeatmap (calendar grid). **Real / Shadow toggle**: default "Real" shows only `source != SHADOW` trades; "Shadow" fetches `?source=SHADOW` and shows an info banner. Clicking a heatmap cell filters the table to that day. **Net P&L toggle**: pill button next to Real/Shadow — reads `showNetPnL` from store; when active, all P&L surfaces use `net_pnl` (after brokerage/STT/GST/exchange/SEBI/stamp deductions); `applySimLots()` scales charges proportionally; `effectivePnl()` helper falls back to gross `pnl` for trades without `charges_json` (historical). **"+ Open" toggle**: pill button — reads `tradesShowOpen` from store (persisted); default off (only closed trades shown); when active, passes no `status` filter to the API so both OPEN and CLOSED trades are returned. Open trades have null P&L and are excluded from heatmap/summary stats. **"− Pinned" toggle**: pill button — reads `tradesExcludePermanent` from store (persisted); default off; when active, passes `exclude_permanent=true` to `getTrades` and `getTradeSummary` so permanent-watchlist trades are hidden from the table and all summary stats. **Simulation filter panel**: toggled by "Sim ▲/▾" button (amber when panel open + active filters). Panel has 5 sections: (1) **Min Confidence** — range slider 0–100, step 5, shows "X% and above" or "Any"; (2) **AI Action** — 2×2 pill grid (PROCEED/RECONSIDER/SKIP/Any), single-select; (3) **Simulate Lots** — `−`/`+` stepper, null = off (shows "—"), set to N to recalculate P&L as `(pnl / actual_lots) × N` for every trade — purely client-side via `applySimLots()`; (4) **Instrument Type** — pill grid (FUTURE/OPTION/EQUITY), single-select; (5) **Signal Type** — 2×2 multi-select pill grid (BUY_FUT/SELL_FUT/BUY_CE/BUY_PE). Data pipeline: `trades` (raw API) → `filteredTrades` (signal_types client-side) → `simTrades` (lot recalculation via `applySimLots`) — SummaryStrip, PnLHeatmap dailyPnL, and TradesTable all receive `simTrades` so all stats reflect the simulation. Confidence/AI/instrument send to backend as query params when `simOpen=true`; `simLots` and signal_types are purely client-side. `FilterPill` is a module-level component. **Margin Analysis section**: inline bar between PnLHeatmap and TradesTable — "Analyze Margin" button calls `api.marginAnalysis()` with IDs of currently displayed trades; shows peak concurrent margin (amber accent), total margin committed, trade count, and peak time (IST formatted). Disabled when no trades are displayed.
-- `signals/page.tsx` - Signal history feed with PeriodFilter (default = This Week) + strategy filter pills (ALL / per-strategy, client-side, only shown when >1 strategy present in results) + **min-confidence slider** (0–100, step 5, client-side filter) + **symbol/reason search bar** (client-side substring match on `symbol`, `reason`, and `ai_summary`; clear button when query is non-empty). Signal cards show a **`P` badge** when `signal.is_permanent_watchlist=true`. **All filters persisted** in Zustand store (`signalsPeriodLabel`, `signalsStrategy`, `signalsMinConfidence`, `signalsHideInformational`) — survive navigation and browser refresh. Re-fetches from API on period change using `generated_since`/`generated_until` params. **Strategy-aware confidence factor bars**: `ConfidenceFactorsBar` accepts a `labelMap` prop; `SignalCard` picks `S5_CONFIDENCE_FACTOR_LABELS` (9 factors: vol/rvol/bias/phase/setup/rank/gap/trend/oi) for `intraday_futures` signals and `VWAP_CONFIDENCE_FACTOR_LABELS` (10 factors) for all others — both read from `indicators.confidence_factors` JSONB. **Signal version history**: `SignalCard` renders `<SignalHistoryPanel signalId={signal.id} />` at the bottom of the `▼ more` panel — the panel manages its own fetch and state.
-- `settings/page.tsx` - Strategy configuration (is_active, auto_mode, symbols per strategy with autocomplete + group presets), risk parameters. Wired to backend `/api/v1/strategies` endpoints. When a symbol is added via autocomplete, the full Fyers symbol is sent alongside (`symbol_map`) so the backend never needs to reconstruct it. Group-add symbols are auto-resolved server-side via the symbol master. **StrategyParams component**: collapsible section per strategy showing numeric inputs for tunable parameters (loaded via `getParameterDefaults`); values are saved to `strategy_configs.parameters` JSONB on submit. **"Skip Pinned Signals"** row in the trading config section with inline Shadow and YOLO toggles (`shadow_skip_permanent_watchlist`, `yolo_skip_permanent_watchlist`, both default on); both send `PATCH /settings/trading` on change. **Save validation**: `handleSaveTradingSettings` strips NaN/undefined values from the draft before sending, validates confidence tier ordering client-side (`persist < shadow ≤ execution`), and shows the actual API error detail (with hover tooltip for long messages) on failure instead of generic "Error saving".
-- `research/page.tsx` - AI Research: symbol search, real-time agent progress, full report with expandable cards, past reports history
-- `agent/page.tsx` - Agent dashboard: YOLO toggle, autonomy level badge, 5-card status grid (incl. Profit Cap card), activity log. Fetches both agent status and risk dashboard on mount (so profit cap status is available without visiting the dashboard first). **Filters**: PeriodFilter (default = Today, re-fetches via `since`/`until` API params) + action-type toggle pills (ALL + one per type found in results, colored by severity) + strategy pills (only shown when >1 strategy present) + **All/Real/Shadow segmented filter** (same pattern as dashboard AgentFeed — filters by `action_type === "SHADOW_EXECUTED" || details.is_shadow === true`; Shadow button uses purple styling) + symbol text input (client-side substring match) + "Pending" checkbox (surfaces unresolved confirmation requests). Filter state resets on period change. Result count shown as `filtered / total` when any filter is active. Log rows show action type, symbol, strategy badge, P&L, date+time; message detail on second line. **autonomy_level casing**: DB stores `"SEMI"`/`"YOLO"` (uppercase); TypeScript type is lowercase. Badge comparisons use `.toLowerCase()` — do not change to direct equality.
-- `chart/page.tsx` - Full TradingView chart page. Symbol tab row (all 5 indices + watchlist items, horizontally scrollable). Fetches watchlist on mount to populate extra tabs.
-- `options/page.tsx` - Options (Strategy 2 — VWAP Pullback) dedicated page. **DayStatusBar-style header**: title + live window state badge (`IN WINDOW` / `DEAD ZONE` / `OFF WINDOW` polled every 5s via `GET /api/v1/options/window-state`, hidden in historical mode) + date controls (Today/Custom pills). 12-col grid with AgentLog in col-span-8 (room for future widgets in col-span-4). Agent log shows gate check diagnostics (GATE/SIGNAL/SKIP categories) via `GET /api/v1/options/agent-log`.
-- `intraday-futures/page.tsx` - Strategy 5 dedicated page. Fixed DayStatusBar at top, then fixed-height two-column grid (`h-[calc(100vh-96px)]`) with per-column `overflow-y-auto` — same pattern as dashboard so `<main>` doesn't scroll and the status bar stays pinned. 8-col left (Watchlist + PermanentWatchlist), 4-col right (AgentLog, SetupPerformance, GlobalCues). Polls phase/stats every 5s, agent log every 10s, loads watchlist/briefing/cues on mount. **ChartModal overlay**: separate `chartOpen` (bool) + `chartSymbol` (string | undefined) state — same pattern as dashboard page. `handleOpenChart(symbol)` sets `selectedSymbol` in Zustand, updates `chartSymbol`, sets `chartOpen=true`. `handleCloseChart` only sets `chartOpen=false` so `chartSymbol` is never reset — reopening the modal remembers the last viewed symbol. **`Watchlist` component**: `date` prop optional (default `null` = live mode); `onOpenChart` prop optional (symbol names become clickable amber-hover buttons).
+
+- `layout.tsx` — Root layout with AppShell wrapper
+- `page.tsx` — Dashboard: sticky PnLStrip at top, 8-col left (ScannerHeader, ScannerPanel, ActivePositions, FuturesWatchlist) + 4-col right (Watchlist, ScanFeed, AgentFeed). ChartModal overlay.
+- `trades/page.tsx` — Kite-style P&L dashboard. Filter state (period, strategy, Shadow/Real, sim panel) lives in Zustand store, persisted via `persist` middleware. SummaryStrip, PnLHeatmap, TradesTable, Margin Analysis section. Real/Shadow toggle, Net P&L toggle, "+ Open" toggle, "− Pinned" toggle. Simulation filter panel: min confidence, AI action, simulate lots, instrument type, signal type — all applied client-side via `applySimLots()`.
+- `signals/page.tsx` — Signal history feed. PeriodFilter + strategy pills + min-confidence slider + symbol/reason search bar. All filters persisted. `ConfidenceFactorsBar` uses strategy-aware label maps. `SignalCard` includes `SignalHistoryPanel`.
+- `settings/page.tsx` — Strategy config (is_active, auto_mode, symbols with autocomplete + group presets), risk params, StrategyParams collapsible numeric inputs, "Skip Pinned Signals" row with Shadow/YOLO toggles. Save validation includes confidence tier ordering check.
+- `research/page.tsx` — AI Research: symbol search, real-time agent progress, full report with expandable cards, past reports history.
+- `agent/page.tsx` — Agent dashboard: YOLO toggle, autonomy level badge, 5-card status grid (incl. Profit Cap card), activity log. PeriodFilter, action-type pills, strategy pills, All/Real/Shadow filter, symbol text input, "Pending" checkbox. `autonomy_level` badge comparisons use `.toLowerCase()` — do not change to direct equality.
+- `chart/page.tsx` — Full TradingView chart page. Symbol tab row (all 5 indices + watchlist items).
+- `options/page.tsx` — Strategy 2 (VWAP Pullback) dedicated page. DayStatusBar-style header + window state badge. AgentLog in col-span-8.
+- `intraday-futures/page.tsx` — Strategy 5 dedicated page. Fixed DayStatusBar, fixed-height two-column grid (`h-[calc(100vh-96px)]`) with per-column `overflow-y-auto`. 8-col left (Watchlist + PermanentWatchlist), 4-col right (AgentLog, SetupPerformance, GlobalCues). ChartModal overlay pattern.
 
 ### `src/components/` - React Components (by domain)
 
 **layout/**
-- `AppShell.tsx` - Main wrapper: sidebar (48px, fixed) + header (36px, fixed) + content area. `<main>` is `fixed top-9 left-12 right-0 bottom-0` with `overflow-y-auto` — this makes it the scroll container so `sticky` elements (like PnLCard) work correctly. Applies `noise-bg` texture class.
-- `Header.tsx` - Thin status bar (36px): IST clock, market status, VIX, Tasks/Fyers/Agent/WS indicators with monospace labels. Polls `getAllPrices()` + market status every 10s.
-- `TasksPopup.tsx` - Background tasks popup (click-to-open). Shows all registered tasks with status dots, type badges (scheduler/startup/service), schedule/description metadata, timestamps, errors. Fetches once on mount (so the dot color is accurate before first open), then polls `GET /api/v1/tasks` every 5s while open. Click-outside to close.
-- `AgentPopup.tsx` - Agent control popup (click-to-open). Start/stop agent, toggle SEMI/YOLO mode. Shows positions monitored, pending confirmations, uptime, and profit cap status (when `max_daily_profit > 0`). Fetches both agent status and risk dashboard on popup open so profit cap data is always fresh. Reads from Zustand store, writes via API. Click-outside to close.
-- `Sidebar.tsx` - Narrow icon rail (48px): page links with hover tooltips, paper trading indicator. Nav order: Dashboard → Futures (trending-up icon) → Options (bar chart icon) → Research → Trades → Signals (zap) → Agent → Settings. Futures uses a distinct trending-up icon; Options uses a bar chart icon; Signals keeps the zap bolt.
+- `AppShell.tsx` — Main wrapper: sidebar (48px, fixed) + header (36px, fixed) + content area. `<main>` is `fixed top-9 left-12 right-0 bottom-0` with `overflow-y-auto` — makes it the scroll container so `sticky` elements work. Applies `noise-bg` texture.
+- `Header.tsx` — Thin status bar (36px): IST clock, market status, VIX, Tasks/Fyers/Agent/WS indicators. Polls `getAllPrices()` + market status every 10s.
+- `TasksPopup.tsx` — Background tasks popup (click-to-open). Shows all registered tasks with status dots, type badges, schedule/description, timestamps, errors. Polls every 5s while open.
+- `AgentPopup.tsx` — Agent control popup: start/stop, SEMI/YOLO toggle, positions monitored, pending confirmations, uptime, profit cap status. Reads Zustand store, writes via API. Click-outside to close.
+- `Sidebar.tsx` — Narrow icon rail (48px): Dashboard → Futures (trending-up) → Options (bar chart) → Research → Trades → Signals (zap) → Agent → Settings.
 
 **charts/**
-- `PriceChart.tsx` - TradingView candlestick chart with real data from Fyers (via backend proxy `GET /ohlcv`). Supports 1m/5m/15m/1h/1D timeframes. **Active timeframe** stored in Zustand (`activeTimeframe`). **Refresh button** in header re-fetches OHLCV without recreating the chart (separate data-load effect keyed by `refreshKey`). **Live updates**: watches `prices[selectedSymbol]` from the store and updates the current candle via `series.update()`. Creates new candles when IST-aligned bucket time advances. **IST display**: backend timestamps are fed as UTC unix seconds — do NOT shift them (library won't render "future" candles). IST display is via `localization.timeFormatter`: adds `IST_OFFSET` (19800s) for axis labels and crosshair only. `currentBucketTime()` aligns bucket boundaries in IST then returns UTC (`- IST_OFFSET`). **Last candle always visible**: no save/restore of logical range (stale ranges hide newly added candles); always calls `fitContent()` after data loads. `timeScale.rightOffset: 5` reserves 5 bars of space so the last candle is never clipped at the edge. **OHLC legend**: `subscribeCrosshairMove` populates an `OHLCInfo` state overlay rendered top-left of the chart — shows timestamp (IST), O/H/L/C, candle % change, and volume (formatted K/L/Cr). Falls back to last candle values when crosshair leaves. `lastVolRef` tracks the last-loaded candle's volume for the fallback. Helper functions `fmtPrice`, `fmtVol`, `fmtTimeIST` are module-level pure functions. Three-effect architecture: Effect 1 creates/destroys chart + subscribes crosshair; Effect 2 loads data; Effect 3 handles live ticks.
-- `ChartModal.tsx` - Modal wrapper (90vw × 85vh) for detailed chart view. Symbol tab row shows all 5 default indices plus any custom watchlist items (fetched via `api.getWatchlist()` when modal opens, horizontally scrollable). Pop-out opens `/chart?symbol=…` in a new tab.
+- `PriceChart.tsx` — TradingView candlestick chart (1m/5m/15m/1h/1D). Active timeframe stored in Zustand. Refresh button re-fetches without recreating chart. Live updates via `prices[selectedSymbol]` store. IST display via `localization.timeFormatter` adding `IST_OFFSET` (19800s) for axis labels only — backend timestamps fed as UTC unix seconds, do NOT shift them. `fitContent()` always called after data load; `rightOffset: 5` reserves space. OHLC legend via `subscribeCrosshairMove`. Three-effect architecture: create/destroy chart, load data, live ticks.
+- `ChartModal.tsx` — Modal (90vw × 85vh) for detailed chart view. Symbol tabs: 5 default indices + custom watchlist items (fetched on open). Pop-out opens `/chart?symbol=…` in a new tab.
 
 **dashboard/**
-- `PnLCard.tsx` - Single-line horizontal strip: Day P&L (total, hero number) with inline breakdown `(U: ₹X + R: ₹X)`, drawdown (with thin bar), trades count, three risk metrics — **NOTIONAL** (entry × qty sum), **RISK** (|entry − SL| × qty sum), **MARGIN** (margin_required sum) — all inline with dividers. "Day P&L" is the primary bold colored value (unrealized + realized); unrealized and realized shown as compact 10px colored text in parentheses so the split is visible without dominating. **Confidence filter**: reads `positionsMinConfidence` from store; filters both open positions and shadow closed trades before computing P&L/counts/metrics so PnLCard stays in sync with ActivePositions filter. **Shadow mode**: reads `positionViewMode` from store; when SHADOW, computes P&L from `shadowPositions` + `shadowClosedToday` (client-side), shows `Shadow` pill, hides drawdown bar, purple border tint. Real mode: unchanged — combines `closed_pnl` from risk endpoint with live unrealized from store. Direction-aware P&L: detects SHORT via `target_price < entry_price`. Halted badge inline (real mode only).
-- `Watchlist.tsx` - Uniform symbol list (no visual distinction between default indices and custom items). Search via `<SymbolSearchInput>` (shared component). Custom items stored in backend Redis via `/api/v1/watchlist`. Supports stocks, futures, options with segment badges (FUT/OPT). Max-height 300px with scroll. Receives real-time price ticks via WebSocket automatically (no explicit subscription needed — backend broadcasts all prices).
-- `ScannerHeader.tsx` - Ultra-compact strategy pill bar. Monospace text-only buttons (no icons). Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end entries to ScanFeed.
-- `ScannerPanel.tsx` - Structured signal cards with **strategy-aware rendering**. **"+ Executed" toggle**: pill button in header bar (reads `scannerShowExecuted` from store, persisted); when active, dashboard fetches both PENDING and EXECUTED signals for today and ScannerPanel shows both — EXECUTED signals render with muted opacity, an `EXECUTED` badge instead of the EXEC button, and no dismiss button. **Symbol search**: compact text input in header bar filters signals by symbol substring match (client-side, local state). **Confidence filter**: compact `CONF` slider in header bar (reads `scannerMinConfidence` from store, persisted); filters signals client-side by `signal.confidence >= threshold`. Each card has three sections: (1) header — direction arrow, symbol label, **`P` badge** (amber `border border-accent/40 text-accent/70` pill rendered when `signal.is_permanent_watchlist=true`), timestamp, **WindowBadge** (`IN WINDOW` / `DEAD ZONE` / `OFF WINDOW` from `indicators.window_state`), confidence, strategy badge; (2) prices — entry, SL, target, R:R, plus strategy-specific context; (3) actions — EXEC button (opens `ExecuteSignalModal`), "+ Watch" watchlist button, **▼ Details** expander (shows raw reason string + `SignalHistoryPanel`), **AI** button (shows LLM overlay panel), dismiss. Details and AI panels are mutually exclusive toggles. The EXEC button no longer shows a lots badge — signals no longer carry `lots`/`quantity` fields (resolved at execution time via the preview endpoint). **Strategy-specific context rows**: Strategy 5 (`intraday_futures`) shows a single setup badge (when `enhanced_orb=true` AND `setup_type="orb"` → "Enhanced ORB" in green; otherwise setup_type formatted normally in amber), phase, RVOL (color-coded), VWAP, ORB range, PDH/PDL, gap%, risk_warnings; Strategy 2 shows VWAP distance, OI, index entry (unchanged). **AI panel** shows: `ai_summary` one-liner + `ai_adjustment` badge, `ai_rationale` paragraph, key supports/risks lists from `indicators.ai_key_supports`/`ai_key_risks`, and confidence factor bar chart from `indicators.confidence_factors` with strategy-specific label maps (`S5_CONFIDENCE_FACTOR_LABELS` for Strategy 5's 9 factors). AI button shows `✦ AI` (amber) when `ai_summary` is present, plain `AI` when not. If no AI data, panel shows "No AI analysis yet" placeholder. **isBullish** logic is direction-aware: BUY/BUY_FUT = bullish, SELL/SELL_FUT = bearish. **`signal.indicators` is cast as `(signal.indicators ?? {})` — the null guard is required because pre-Phase-2 signals or non-VWAP strategies may have a null indicators field, which would crash the card.**
+- `PnLCard.tsx` — Single-line strip: Day P&L with inline U/R breakdown, drawdown bar, trades count, NOTIONAL/RISK/MARGIN metrics. Filters by `positionsMinConfidence` from store. Shadow mode: computes from `shadowPositions` + `shadowClosedToday`.
+- `Watchlist.tsx` — Uniform symbol list (indices + custom items). Search via `<SymbolSearchInput>`. Custom items stored via `/api/v1/watchlist`. Max-height 300px with scroll.
+- `ScannerHeader.tsx` — Ultra-compact strategy pill bar. Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end to ScanFeed.
+- `ScannerPanel.tsx` — Structured signal cards with strategy-aware rendering. "+ Executed" toggle, symbol search, confidence filter. Three card sections: header (direction, symbol, `P` badge, timestamp, WindowBadge, confidence, strategy badge), prices (entry/SL/target/R:R + strategy context), actions (EXEC, Watch, Details expander, AI panel, dismiss). Details and AI panels mutually exclusive. AI button shows `✦ AI` when `ai_summary` present.
+- `ExecuteSignalModal.tsx` — Pre-trade confirm modal. Fetches `GET /signals/{id}/preview` for live entry price + computed lots. Shows lot stepper, quantity, Notional, Margin, `preview.warnings`. Submits `POST /signals/{id}/execute` with optional lots override.
+- `QuickStats.tsx` — Compact stats card: Trades Today (vs max), Open Positions count, Notional. Reads `risk` + `positions` from store. Shows HALTED banner when `risk.is_halted`.
+- `SymbolSelector.tsx` — Tab row for selecting the active index symbol. One button per SYMBOL (5 indices). Shows LTP + change % from store `prices`. Active button styled with amber accent.
+- `ScanFeed.tsx` — Compact scan log, max-height 160px. Filters `scanLogs` to today-only (IST timestamp comparison, not string prefix).
+- `AgentFeed.tsx` — Agent action log. All/Real/Shadow filter. Purple `SHADOW` pill for shadow entries. Trailing SL detection: `action_type === "SL_TRIGGERED"` + `details.reason === "TRAILING_SL"` → amber "TRAILING SL" text.
+
 **shared/**
-- `SymbolSearchInput.tsx` - Reusable debounced symbol search input with autocomplete dropdown. Props: `onSelect(result)`, `placeholder?`, `segmentFilter?` (e.g. `"EQ"` — filters suggestions to that segment). Exports `SymbolResult` interface. 300ms debounce, `onBlur` with 200ms timeout to allow click events before hiding. **Filtered-out feedback**: when `segmentFilter` is set and the API returns results but all are filtered out (e.g. user types a futures/options symbol into an EQ-only search), shows "Only equity stocks can be added here" in the dropdown (`filteredOut` state, reset to `false` when input is cleared). Used by `dashboard/Watchlist.tsx` (no filter) and `intraday-futures/PermanentWatchlist.tsx` (`segmentFilter="EQ"`).
+- `SymbolSearchInput.tsx` — Reusable debounced symbol search with autocomplete. Props: `onSelect(result)`, `placeholder?`, `segmentFilter?`. 300ms debounce. Shows "Only equity stocks can be added here" when `segmentFilter` filters out all results. Exports `SymbolResult` interface. Used by `dashboard/Watchlist.tsx` and `intraday-futures/PermanentWatchlist.tsx`.
 
 **signals/**
-- `SignalHistoryPanel.tsx` - Shared component rendering signal version history. Takes `signalId: string`, manages its own fetch + state (calls `api.getSignalHistory` once, cached for the component lifetime). Renders nothing if history is empty. Each version row: `v{n}` badge · captured time (IST HH:MM) · Entry price · SL · Tgt · confidence (color-coded) · AI adjustment · AI action badge (non-PROCEED only) · `blocked` italic if not executable. Second line: `ai_summary` or "no AI analysis at this version" in muted italic. Ordered version DESC (latest snapshot first). Used in both `signals/page.tsx` (`▼ more` panel) and `ScannerPanel.tsx` (`▼ Details` panel).
-
-- `ExecuteSignalModal.tsx` - Pre-trade confirm modal. Fetches `GET /signals/{id}/preview` for live entry price + computed lots. Shows lot stepper (editable), quantity, **Notional** (entry × qty), **Margin** (`preview.margin_required`). Displays `preview.warnings` array as amber alert boxes when present. Submits `POST /signals/{id}/execute` with optional lots override. YOLO path is unaffected (no modal).
-- `ScanFeed.tsx` - Compact scan log. Shows scan start/end messages with stats. Max-height 160px. **Today-only filter**: `scanLogs` are persisted to localStorage across sessions, so `ScanFeed` filters them client-side to only show entries at or after `startOfDayIST(new Date())` (timestamp comparison via ms, not string prefix, to avoid UTC/IST date boundary bugs).
-- `AgentFeed.tsx` - Agent action log as flat list (not nested). **All/Real/Shadow filter** in header — filters by `action_type === "SHADOW_EXECUTED"` or `details.is_shadow === true`. **Shadow badge**: purple `SHADOW` pill rendered before the action label for shadow entries. Each row: timestamp, optional shadow badge, action type, symbol, strategy chip badge, P&L. Max-height 300px. Null-guards `action_type` (renders "UNKNOWN" if missing) to prevent crash on malformed WS events. **Trailing SL detection**: when `action_type === "SL_TRIGGERED"` and `details.reason === "TRAILING_SL"`, displays "TRAILING SL" in amber (`text-warning`) instead of "SL TRIGGERED" in red — distinguishes a managed trailing exit from a raw loss.
+- `SignalHistoryPanel.tsx` — Signal version history. Takes `signalId: string`, manages its own fetch (lazy, once). Each version row: version badge, time (IST), Entry/SL/Tgt, confidence, AI adjustment, AI action badge, blocked italic. Used by `signals/page.tsx` and `ScannerPanel.tsx`.
 
 **research/**
-- `ResearchSearch.tsx` - Symbol autocomplete (reuses `searchSymbols` API, filters to EQ + INDEX), debounced 300ms, "Analyze" button. Dropdown shows equity and index matches.
-- `ResearchProgress.tsx` - Live agent status tracker: 6 agents shown as dots (pending/running/done/failed) with labels and durations. Updates in real-time from WebSocket `research:*` events.
-- `ResearchReport.tsx` - Full report display: header with recommendation badge + confidence meter, executive summary, ActionableLevels card, risks/catalysts, expandable section cards (Fundamental, Technical, OI, Institutional, News, Valuation). All LLM-generated text (executive summary, risks, catalysts, section summaries) rendered via `<Markdown>` component. News section shows articles with source URLs. Accepts optional `onClose` prop — when provided, renders an X button in the report header; Escape key support is wired in `research/page.tsx`.
-- `Markdown.tsx` - Thin `react-markdown` + `remark-gfm` wrapper with theme-matched component overrides (monospace, dark theme tokens, amber accents). Used for all LLM-generated text in `ResearchReport`.
-- `ReportHistory.tsx` - Past reports list with symbol, recommendation badge, confidence, and relative time.
-- `ActionableLevels.tsx` - Visual card showing entry zone, SL, T1/T2, R:R ratio, timeframe, long-term suitability.
-- `RecommendationBadge.tsx` - BUY/HOLD/SELL badge (color-coded) + confidence percentage bar.
+- `ResearchSearch.tsx` — Symbol autocomplete (EQ + INDEX), debounced 300ms, "Analyze" button.
+- `ResearchProgress.tsx` — Live agent status tracker: 6 agents as dots (pending/running/done/failed) with labels and durations. Updates via WebSocket `research:*` events.
+- `ResearchReport.tsx` — Full report display: recommendation badge, confidence meter, executive summary, ActionableLevels card, risks/catalysts, expandable section cards. LLM text via `<Markdown>`. Accepts optional `onClose` prop; Escape key wired in `research/page.tsx`.
+- `Markdown.tsx` — Thin `react-markdown` + `remark-gfm` wrapper with dark theme overrides and amber accents. Used for all LLM-generated text in `ResearchReport`.
+- `ReportHistory.tsx` — Past reports list: symbol, recommendation badge, confidence, relative time.
+- `ActionableLevels.tsx` — Visual card: entry zone, SL, T1/T2, R:R ratio, timeframe, long-term suitability.
+- `RecommendationBadge.tsx` — BUY/HOLD/SELL badge (color-coded) + confidence percentage bar.
 
 **trades/**
-- `PeriodFilter.tsx` - Period pill bar (Today / Week / 30D / 3M / Custom). **30D** = rolling last 30 days; **3M** = rolling last 3 months (both use `subDaysIST`/`subMonthsIST`, not calendar month boundaries). Initial `active` pill is derived from `value.label` via `labelToPreset()` — callers control the default by passing the right `Period`. Active pill: `bg-accent/20 text-accent border-accent/30`. Custom opens two native `<input type="date">` fields + Apply button. Emits `{ start, end, label }` upward.
-- `SummaryStrip.tsx` - Inline metrics strip (mirrors PnLCard style). Shows total P&L, # closed trades (+ open count badge), win rate, best day, worst day, avg P&L/trade, profit factor — all computed client-side from props. Accepts `showNetPnL?: boolean` — when true, uses `net_pnl` instead of `pnl` for all computations (falls back to gross for trades without charges data). Accepts `peakMargin?: number` — when provided and > 0, shows peak concurrent margin (amber accent color); value comes from the backend `POST /trades/margin-analysis` endpoint, auto-fetched by the trades page when trades change.
-- `PnLHeatmap.tsx` - **Continuous week-strip heatmap** (GitHub-style). One column per calendar week (Mon–Fri only — no weekends), 5 rows. Month labels appear above the first week of each month. All weeks across the entire period flow left-to-right in a single strip so cross-month days (e.g. Apr 30 / May 4) appear in adjacent columns rather than separate calendar blocks. Cell background intensity via `rgba` (profit green / loss red), alpha range 0.30–0.95. Day number and P&L text both `text-white` for contrast. Empty in-period days rendered as `bg-white/[0.06] border border-white/10` so the grid is clearly visible even with no trades. Clicking a trade cell fires `onSelectDay`; clicking again deselects. Today highlighted with amber ring.
-- `TradesTable.tsx` - Dense trades table with expandable Details rows. Each trade row is a `TradeRow` component with local `expanded` state. Accepts `trades: Trade[]`, `loading: boolean`, `showSource?: boolean`, `showSignalData?: boolean`, `simLots?: number | null`, `showNetPnL?: boolean`. When `showSource=true` (Shadow mode), renders a purple `SHADOW` / `YOLO` / `MANUAL` pill column. When `showSignalData=true` (sim filter active), renders two extra columns: **Conf** (signal confidence 0–100, color-coded: green ≥80, amber ≥70, muted ≥50, red <50) and **AI** (signal `ai_action` badge: green PROCEED, red SKIP, amber RECONSIDER). Renders a **`P` badge** in the symbol column when `trade.signal_is_permanent_watchlist=true`. When `simLots != null`, the P&L column header shows "P&L sim NL" in amber — the actual recalculation happens upstream in the page (`applySimLots`), the table just displays whatever `trade.pnl` it receives. **When `showNetPnL=true`**, P&L column shows `net_pnl` (falls back to `pnl` for trades without charges), header annotated with "net", and an `i` icon per row shows a CSS hover tooltip with the full charges breakdown (brokerage, STT, exchange, GST, SEBI, stamp duty, total). **Margin column**: rendered after Exit Reason and before Status — shows `trade.margin_required` formatted as INR (blank when null). **Details expand** (▼/▲ toggle per row): `TradeDetailsPanel` reads `trade.signal_snapshot` JSONB — shows AI action badge + adjustment, AI summary (✦ icon), AI rationale, signal reason, confidence factors bar chart (strategy-aware: `S5_CONFIDENCE_FACTOR_LABELS` for intraday_futures, `VWAP_CONFIDENCE_FACTOR_LABELS` for others), key supports/risks 2-column grid, and `SignalHistoryPanel` if `signal_id` exists. Graceful degradation: "No signal snapshot available" for old trades without snapshot. Helper `confidenceColor(conf)` is module-level.
+- `PeriodFilter.tsx` — Period pill bar (Today / Week / 30D / 3M / Custom). 30D = rolling last 30 days; 3M = rolling last 3 months via `subDaysIST`/`subMonthsIST`. Custom opens two date inputs + Apply. Emits `{ start, end, label }`.
+- `SummaryStrip.tsx` — Inline metrics strip: total P&L, closed trades, open count badge, win rate, best/worst day, avg P&L, profit factor. Accepts `showNetPnL?` (uses `net_pnl`, falls back to gross) and `peakMargin?` (amber accent when > 0).
+- `PnLHeatmap.tsx` — Continuous week-strip heatmap (GitHub-style). Mon–Fri only, single strip across period. Cell color: `rgba` green/red by alpha (0.30–0.95). Clicking a cell fires `onSelectDay`; clicking again deselects. Today has amber ring.
+- `TradesTable.tsx` — Dense table with expandable `TradeDetailsPanel` rows. Accepts `showSource?`, `showSignalData?`, `simLots?`, `showNetPnL?`. Net P&L column shows hover tooltip with full charges breakdown. Margin column after exit reason. Signal snapshot in details row: AI badge, AI summary/rationale, confidence factors bar (strategy-aware), supports/risks grid, `SignalHistoryPanel`.
 
 **options/**
-- `AgentLog.tsx` - Reverse-chronological feed of Strategy 2 (VWAP Pullback) gate diagnostics. Same architecture as `intraday-futures/AgentLog.tsx`: paginated (100 per page), IntersectionObserver infinite scroll, 10s auto-refresh in live mode, category filter pills. Categories: GATE (red — blocking gates), SIGNAL (green — successful signals), SKIP (grey — post-evaluate skips). Fetches via `api.getOptionsAgentLog()`. Uses `S5AgentLogEntry` type (generic shape).
+- `AgentLog.tsx` — Reverse-chronological Strategy 2 gate diagnostics. Paginated (100/page), IntersectionObserver infinite scroll, 10s auto-refresh in live mode. Category filter pills: GATE (red), SIGNAL (green), SKIP (grey).
 
 **intraday-futures/**
-- `DayStatusBar.tsx` - Phase badge, agent status (ACTIVE/PAUSED/HALTED), date picker for historical review, action buttons (Briefing, Screener, Pause/Resume — hidden in historical mode). Accepts `date`/`onDateChange` props from page. Polls phase + agent status every 5s (live mode only). Historical mode queries real phase from Redis (`strat5:phase:{date}`) instead of hardcoding "DONE". No trades/positions/P&L counters — those are global concerns visible on the main dashboard PnLCard and trades page.
-- `Watchlist.tsx` - Sortable, filterable table of Strategy 5 screener results. Accepts optional `onOpenChart?: (symbol: string) => void` — when provided, symbol names in the first column become clickable buttons (hover → amber, triggers ChartModal via page callback); CONF badge click is a separate element and unaffected. symbol, composite score, RS percentile, ADR%, **Gap%** (colored, with relative gap tooltip), bias badge (dot `•` indicator when gap-overridden by pre-open reassessment; hovering shows a custom CSS tooltip — `relative group` wrapper with `group-hover:opacity-100` popover — showing override source e.g. "gap override" and original bias e.g. "was NEUTRAL"; no dot = screener bias unchanged), LLM confidence badge, news sentiment score, **ORB** column (range width with tooltip for H/L values, populated after 9:30 AM from Redis), **live LTP** with change % + absolute change (color-coded via `pnlColor`, received via WebSocket automatically; `fetchWatchlist` also calls `fetchBatchPrices(NSE:{sym}-EQ)` on every 30s poll to seed the Zustand price store from Redis cache — gives change data outside market hours and on first load before first WS tick; falls back to static screener price for historical mode). Sortable by score or RS. **Filter select** (All / Screened / Pinned) — "Pinned" shows only `item.manual=true` rows (permanently-pinned stocks), "Screened" hides them. Filter applied before sort. **Manual item rendering**: rows with `item.manual=true` get `border-l-2 border-accent/60`; symbol cell shows a small `P` badge (`border border-accent/40 text-accent/70`); Score cell shows `—` when `manual && !composite_score`. Uses `S5WatchlistItem` type from `types.ts`. Accepts `date` prop. Polls every 30s in live mode. **News cell**: shows full sentiment label (`positive`/`negative`/`neutral`) + score in parentheses; hovering shows top-3 article headlines from `news.headlines` via an instant CSS `group-hover` tooltip panel (same pattern as Bias column — no browser `title` delay). **Conf badge**: clickable — toggles an expandable row below the stock showing `llm_reason` (the Stage 3 LLM's rationale for rating it HIGH/MEDIUM); active state shown with `ring-1 ring-current`. **InfoTip component** (inline, module-level): `?` icon on Score and Conf column headers with hover tooltip panels explaining factor weights — Score tooltip covers 8 Stage-1 quant factors with weights; Conf tooltip covers 9 signal-time `_compute_confidence()` factors with weights (updated to include OI direction 10%, vol reduced to 10%, rank reduced to 7%).
-- `PermanentWatchlist.tsx` - Compact card for managing the permanent (always-pinned) watchlist. Loads symbols from `GET /api/v1/intraday-futures/permanent-watchlist` on mount. Renders chips for each pinned symbol with a `×` remove button (optimistic removal). `SymbolSearchInput` (EQ-filtered) at bottom for adding F&O stocks. `POST` on add (optimistic + rollback on 422), `DELETE` on remove. Inline error display for 422 validation failures. Footer note: "Takes effect from next morning screener run".
-- `AgentLog.tsx` - Reverse-chronological feed of Strategy 5 agent activity. **Paginated**: loads 100 entries at a time via `GET /agent-log?offset=&limit=100`; `IntersectionObserver` on a sentinel div triggers `loadMore` when the user scrolls near the bottom. Header shows `loaded/total` count. 10s poll refreshes only the first page (picks up new entries without re-fetching the full history). Category badges (BRIEFING, SCREENER, ORB, SIGNAL, TRADE, EXIT, SKIP, PHASE, RISK, GLOBAL, SYSTEM) with color coding. **Category filter**: toggle pills in header (one per category found in current entries); clicking a pill filters; empty selection = show all; "clear" button resets; shows filtered/total count when active. Uses `S5AgentLogEntry` type. Accepts `date` prop. React keys use `timestamp-category-index` (not bare index) to avoid full DOM churn on poll.
-- `SetupPerformance.tsx` - Compact collapsible section showing per-setup win rate bars, W/L counts, and P&L. Overall summary row at bottom. Fetches via `getIntradayFuturesSetupPerformance()` on mount + date change. Uses `S5SetupPerformance` type.
-- `GlobalCues.tsx` - Collapsible section: morning briefing (approach badge, sector bias, summary, flags) + global market cues. Header has a styled `↻ refresh` button (disabled + "…" while loading); manual clicks set `isManualRefresh=true` which passes `force=true` to `getIntradayFuturesGlobalCues` — bypasses the strat5 Redis cache and re-reads live `indicator:global:*` keys. Markets section shows: **overnight bias badge** (BULLISH/BEARISH/NEUTRAL from `cues.overnight_bias`), **global score bar** (`BiasBar` component, [-1,+1] filled progress bar), Nifty Gap, Nifty (with absolute price), S&P 500 (with absolute price), Nasdaq (with absolute price), Dow Futures (with absolute price), Crude (with absolute price in USD), USD/INR (with absolute rate), DXY (with absolute price), **India VIX** (from `india_vix_live`, red >20 / amber >15), US VIX. `preopen_reassessed` shown as `pre-open ✓` badge. Uses `S5GlobalCues`/`S5MorningBriefing` types. Accepts `date` and `refreshKey` props.
-- `ConfigPanel.tsx` - Collapsible Strategy 5 parameter editor. Loads defaults via `getParameterDefaults("intraday_futures")`, merges with saved params from strategy config. Saves via `updateStrategy` API. Numeric inputs for all tunable params (trailing SL, confidence tiers, RVOL thresholds, position/trade limits).
+- `DayStatusBar.tsx` — Phase badge, agent status, date picker, action buttons (Briefing, Screener, Pause/Resume — hidden in historical mode). Polls every 5s (live mode only). Historical mode reads phase from Redis.
+- `Watchlist.tsx` — Sortable/filterable Strategy 5 screener table. Filter select: All/Screened/Pinned. Columns: symbol, score, RS percentile, ADR%, Gap%, bias (dot indicator for gap-override with CSS tooltip), LLM confidence badge, news sentiment, ORB range, live LTP. Symbol names clickable when `onOpenChart` prop provided. Polls every 30s in live mode. Conf badge expands `llm_reason` row. `InfoTip` component on Score + Conf column headers.
+- `PermanentWatchlist.tsx` — Compact card for managing always-pinned watchlist. Loads from `GET /api/v1/intraday-futures/permanent-watchlist`. `SymbolSearchInput` (EQ-filtered) for adding. Optimistic add/remove with 422 rollback.
+- `AgentLog.tsx` — Reverse-chronological Strategy 5 activity. Paginated (100/page), IntersectionObserver scroll, 10s poll for first page. Category badges with color coding. Category filter toggle pills. React keys use `timestamp-category-index`.
+- `SetupPerformance.tsx` — Collapsible per-setup win rate bars, W/L counts, P&L. Fetches via `getIntradayFuturesSetupPerformance()`.
+- `GlobalCues.tsx` — Collapsible morning briefing + global market cues. Manual `↻ refresh` button passes `force=true` to bypass Redis cache. Shows: overnight bias badge, global score bar (BiasBar), Nifty Gap, Nifty/S&P/Nasdaq/Dow Futures/Crude/USD-INR/DXY/India VIX/US VIX. `preopen_reassessed` shown as `pre-open ✓` badge.
+- `ConfigPanel.tsx` — Collapsible Strategy 5 parameter editor. Loads defaults via `getParameterDefaults("intraday_futures")`. Saves via `updateStrategy` API.
 
 **positions/**
-- `ActivePositions.tsx` - Dense table of open positions with unrealized P&L, SL distance warnings, expandable detail rows. Table columns: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy (hidden in compact mode), Close button. **Expanded detail row** shows Strategy, Expiry, Lots/Qty, Stop Loss, Target, **Margin** (`pos.margin_required` coerced via `Number()` — backend returns Decimal as string), Type. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks. **Watchlist button**: small `+` button next to symbol name on both open positions and closed trades. Open positions use `pos.fyers_option_symbol` directly; closed trades resolve via `api.searchSymbols()` (futures: search by symbol name, pick first FUT match; options: search by `{symbol} {strike}{type}`, pick matching contract). Status tracked per row via `watchlistStatuses` state map. Works in both Real and Shadow modes. **Confidence filter**: compact `CONF` slider in header bar (reads `positionsMinConfidence` from store, persisted); filters both open positions by `pos.signal_confidence` and closed-today trades by `trade.signal_confidence`. `PnLCard` applies the same filter so P&L strip stays in sync. **Real/Shadow toggle** in header: Real mode shows live positions from store; Shadow mode fetches `/positions?include_shadow=true` (filtered to `is_shadow=true`) + shadow closed trades today every 30s — purple border tint, no CLOSE button (Shadow positions auto-close via trade_monitor). **Live P/L**: computes direction-aware P/L reactively from `prices` store using `pos.fyers_option_symbol || pos.symbol` as price key (detects SHORT via `target_price < entry_price`; SL distance also direction-aware). **Direction badges**: futures positions (`!pos.option_type`) show LONG/SHORT pill (green/red); expanded detail row includes direction in Type field. **Strike price**: hidden (shows "—") for futures positions where `strike_price` is 0 — only meaningful for options. Subscribes position symbols on WebSocket for real-time ticks. **Closed Today contrast**: rows use `hover:bg-bg-tertiary/30` for hover state instead of `opacity-60` on the container — opacity was compounding with already-muted child colors (`text-text-muted/60`, `/50`) making text unreadable on dark backgrounds; symbol uses `text-text-secondary`, secondary info uses `text-text-muted` (no sub-opacity). **Trailing SL exit reason**: in the Closed Today section, `exit_reason === "TRAILING_SL"` renders in amber (`text-warning`) to distinguish managed trailing exits from raw SL losses.
+- `ActivePositions.tsx` — Dense table of open positions: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy, Close button. Expanded detail: Strategy, Expiry, Lots/Qty, Stop Loss, Target, Margin (`pos.margin_required` coerced via `Number()`). Watchlist button resolves symbol via `api.searchSymbols()`. Confidence filter from store. Real/Shadow toggle. Direction-aware P/L and SL distance. Trailing SL exit reason in amber. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks.
 
-### `src/hooks/` - Custom Hooks
-- `useWebSocket.ts` - WebSocket connection to backend (auto-detects host via `getWsUrl()` — dev: `ws://{host}:8080/ws`, prod: `ws://{host}/ws`). Auto-reconnect on close (3s delay). Guards all event handlers (`onopen`/`onclose`/`onerror`) with `ws === wsRef.current` staleness check to prevent React Strict Mode race conditions. **No symbol subscription filtering** — backend broadcasts all price ticks to clients with no subscriptions, so the frontend receives all prices for all subscribed symbols automatically. `ws.onopen` sets connected state only; no `subscribe:symbol` message is sent. Handles `signal:new`, `signal:updated` (dedup updates), `trade:open` (adds new position to store), and `research:*` events.
+---
 
 ### `src/lib/` - Utilities
-- `api.ts` - REST client: trades, signals, positions, agent, risk, market data, strategies, intraday-futures, options. **Error handling**: `request()` parses API error responses — string `detail` used as-is, array `detail` (Pydantic validation errors) joined by `"; "` extracting each `msg` field, other shapes JSON-stringified. `getTrades()` accepts `source?: string` — pass `"SHADOW"` to fetch shadow-only trades; also accepts simulation filter params: `min_confidence`, `max_confidence`, `ai_action`, `instrument_type`, `signal_type`, `min_lots`, `max_lots`, **`exclude_permanent?: boolean`** (all optional, passed directly as query params to `GET /trades`). `getTradeSummary(source?, exclude_permanent?)` — also supports `exclude_permanent` to omit permanent-watchlist trades from summary stats. By default both return only non-shadow trades (backend filter). `getPositions(includeShadow = false)` — pass `true` to include shadow positions. `getClosedTradesToday(source?)` — pass `"SHADOW"` to fetch Shadow closed trades. `getParameterDefaults(name)` — fetches raw default parameters for a strategy (used by StrategyParams component in settings). **`getSignalHistory(id)`** — `GET /signals/{id}/history` → `SignalHistory[]` ordered version DESC; called lazily by `SignalHistoryPanel` on mount. **Strategy 5 endpoints**: `getIntradayFuturesWatchlist`, `getIntradayFuturesAgentLog(date?, offset?, limit?)` (returns `{entries, total}` for pagination), `getIntradayFuturesGlobalCues(date?, force?)` (`force=true` bypasses Redis cache — used by the manual refresh button), `getIntradayFuturesBriefing`, `getIntradayFuturesDailyStats`, `getIntradayFuturesPhase` (accepts optional `date` param for historical phase lookup), `getIntradayFuturesAgentStatus`, `getIntradayFuturesSetupPerformance(date?, days?)` (per-setup win rate/P&L), `runIntradayFuturesScreener`, `runIntradayFuturesBriefing`, `setIntradayFuturesAgentAction` — all accept optional `date` param (defaults to today). **Permanent watchlist**: `getPermanentWatchlist()` → `{symbols}`, `addToPermanentWatchlist(symbol)` → `{symbols}`, `removeFromPermanentWatchlist(symbol)` → `{symbols}`. **Options (Strategy 2) endpoints**: `getOptionsWindowState()` (returns `{window_state, market_open}` for live badge), `getOptionsAgentLog(date?, offset?, limit?)` (returns `{entries, total}` for pagination, same shape as S5 agent log).
-- `types.ts` - TypeScript interfaces for all entities. `Trade` has `source: "MANUAL" | "YOLO" | "SHADOW"`, `charges_json: {...} | null` (brokerage/STT/exchange/GST/SEBI/stamp/total breakdown, populated at trade close), `net_pnl: number | null` (pnl minus charges), **`margin_required: number | null`** (margin at execution time), signal snapshot fields: `signal_confidence`, `signal_ai_action`, `signal_ai_summary`, `signal_instrument_type`, `signal_type` (all `| null`, snapshotted on Trade columns at execution time — immune to Case-2 dedup overwrites), **`signal_snapshot`** (`{confidence, reason, indicators, ai_summary, ai_rationale, ai_adjustment, ai_action, generated_at, sizing_meta, entry_price, stop_loss, target_price, index_entry_price, instrument_type, signal_type, lots, quantity} | null` — full signal state JSONB for Details view), **`is_permanent_watchlist: boolean`** (copied from signal at creation), **`signal_is_permanent_watchlist: boolean | null`** (from trade's `is_permanent_watchlist`). `Signal` has **`is_permanent_watchlist: boolean`** — `lots` and `quantity` fields have been removed (resolved at execution time via the preview endpoint, not stored on the signal). `SignalPreview` (returned by `GET /signals/{id}/preview`) has: `risk: number`, `notional: number`, `margin_required: number`, `warnings: string[]` — replaces the old `capital_at_risk: number` field. `Position` has `is_shadow: boolean`, `signal_confidence: number | null` (populated from `trade.signal_confidence` via backend JOIN on trade), **`margin_required: number | null`**. `RiskDashboard` has `notional: number`, `risk: number`, `margin_utilized: number` — replaces the old `capital_at_risk: number` field. **`SignalHistory`**: archived signal snapshot fields (`id`, `signal_id`, `version`, `entry_price`, `stop_loss`, `target_price`, `confidence`, `reason`, `indicators`, `executable`, `blocked_reason`, `lots`, `quantity`, `ai_summary`, `ai_rationale`, `ai_adjustment`, `ai_action`, `generated_at`, `captured_at`). `S5WatchlistItem` includes `orb_high?`, `orb_low?`, `orb_range?`, `manual?` (true for permanently-pinned stocks injected by the permanent watchlist feature) fields. `S5SetupStats` and `S5SetupPerformance` for per-setup performance tracking. `S5GlobalCues` includes `india_vix_live`, `nifty_gap_pct`, `global_score`, `overnight_bias` ("BULLISH"|"BEARISH"|"NEUTRAL"), `preopen_reassessed`; absolute prices `crude_price`, `usdinr_price`, `sp500_price`, `dow_futures_price`, `nifty_price`, `nasdaq_price`, `dxy_price` (all read from `indicator:global:*_price` Redis keys by `snapshot_global_cues()`).
-- `formatters.ts` - INR currency (Indian number system: lakhs/crores), percentages, IST datetime. All formatters coerce inputs via `Number()` to handle string Decimals from the backend. IST date helpers: `startOfDayIST`, `endOfDayIST`, `startOfMonthIST`, `endOfMonthIST`, `startOfWeekIST`, `subDaysIST`, `subMonthsIST`, `eachDayInRange`, `isoDateIST` (YYYY-MM-DD), `formatDateShort` ("24 Apr"), `monthLabel` ("April 2026"), `toISTDate` (Date → IST-adjusted Date).
-- `constants.ts` - `SYMBOLS` (5 indices), `STRATEGY_LABELS`, `STATUS_COLORS`, `getWsUrl()` (environment-aware: port 3000 → dev mode with `:8080`, otherwise production via nginx on same port), `Timeframe` type ("1m" | "5m" | "15m" | "1h" | "1D")
+
+#### lib/api.ts
+All API calls go through this module via a single `request()` helper (parses error responses — string/array/other `detail` shapes). Environment-aware base URL: port 3000 → `:8080`, otherwise same host.
+
+**Market**
+- `api.health()` — `GET /api/v1/health`. Used by: Header
+- `api.getPrice(symbol)` — `GET /api/v1/market/price/{symbol}`
+- `api.getAllPrices()` — `GET /api/v1/market/prices`. Used by: Header
+- `api.refreshQuotes()` — `POST /api/v1/market/feed/refresh`
+- `api.getOHLCV(symbol, {resolution?, days?})` — `GET /api/v1/market/ohlcv/{symbol}`. Used by: PriceChart
+- `api.getMarketStatus()` — `GET /api/v1/market/status`. Used by: Header
+- `api.searchSymbols(query)` — `GET /api/v1/market/symbols/search?q=`. Used by: SymbolSearchInput, ResearchSearch, ActivePositions
+- `api.fetchBatchPrices(symbols[])` — `POST /api/v1/market/prices/batch`. Used by: intraday-futures/Watchlist
+- `api.startDataFeed()` / `api.stopDataFeed()` — `POST /api/v1/market/feed/start|stop`
+- `api.getFyersStatus()` — `GET /api/v1/auth/fyers/status`. Used by: Header
+
+**Positions**
+- `api.getPositions(includeShadow?)` — `GET /api/v1/positions`. Used by: ActivePositions
+- `api.closePosition(id, reason?)` — `POST /api/v1/positions/{id}/close`. Used by: ActivePositions
+- `api.updateSL(id, stopLoss)` — `PATCH /api/v1/positions/{id}/sl`
+
+**Trades**
+- `api.getTrades(params?)` — `GET /api/v1/trades` with optional filters: `status`, `source`, `strategy`, `limit`, `entry_since/until`, `min/max_confidence`, `ai_action`, `instrument_type`, `signal_type`, `min/max_lots`, `exclude_permanent`. Used by: trades/page
+- `api.getClosedTradesToday(source?)` — `GET /api/v1/trades?status=CLOSED&closed_since={IST-midnight}`. Used by: ActivePositions, dashboard/page
+- `api.getTradeSummary(source?, exclude_permanent?)` — `GET /api/v1/trades/summary`. Used by: trades/page
+- `api.marginAnalysis(tradeIds[])` — `POST /api/v1/trades/margin-analysis` → `{peak_margin, peak_time, total_margin, trade_count}`. Used by: trades/page
+
+**Signals**
+- `api.getSignals(params?)` — `GET /api/v1/signals` with `status`, `generated_since/until`, `strategy`, `limit`. Used by: signals/page, dashboard/page
+- `api.getActiveSignals()` — `GET /api/v1/signals/active`
+- `api.previewSignal(id)` — `GET /api/v1/signals/{id}/preview` → `SignalPreview`. Used by: ExecuteSignalModal
+- `api.executeSignal(id, opts?)` — `POST /api/v1/signals/{id}/execute`. Used by: ExecuteSignalModal
+- `api.rejectSignal(id)` — `POST /api/v1/signals/{id}/reject`. Used by: ScannerPanel
+- `api.getSignalHistory(id)` — `GET /api/v1/signals/{id}/history` → `SignalHistory[]`. Used by: SignalHistoryPanel
+
+**Risk / Agent**
+- `api.getRiskDashboard()` — `GET /api/v1/risk/dashboard`. Used by: dashboard/page, agent/page, AgentPopup
+- `api.getAgentStatus()` — `GET /api/v1/agent/status`. Used by: agent/page, AgentPopup
+- `api.startAgent()` / `api.stopAgent()` — `POST /api/v1/agent/start|stop`. Used by: AgentPopup
+- `api.getAgentLogs(opts?)` — `GET /api/v1/agent/logs` with `limit`, `since`, `until`. Used by: agent/page
+- `api.confirmAction(logId, approved)` — `POST /api/v1/agent/confirm/{logId}`. Used by: agent/page
+- `api.toggleYolo(enabled)` — `PATCH /api/v1/agent/yolo`. Used by: AgentPopup
+
+**Watchlist**
+- `api.getWatchlist()` — `GET /api/v1/watchlist`. Used by: dashboard/Watchlist, ChartModal
+- `api.addToWatchlist(item)` — `POST /api/v1/watchlist`. Used by: dashboard/Watchlist
+- `api.removeFromWatchlist(symbol)` — `DELETE /api/v1/watchlist/{symbol}`. Used by: dashboard/Watchlist
+
+**Strategies**
+- `api.getStrategies()` — `GET /api/v1/strategies`. Used by: settings/page
+- `api.toggleStrategy(name)` — `PATCH /api/v1/strategies/{name}/toggle`. Used by: settings/page
+- `api.toggleAutoMode(name)` — `PATCH /api/v1/strategies/{name}/auto-mode`. Used by: settings/page
+- `api.updateStrategy(name, body)` — `PUT /api/v1/strategies/{name}`. Used by: settings/page, intraday-futures/ConfigPanel
+- `api.getParameterDefaults(name)` — `GET /api/v1/strategies/{name}/parameter-defaults`. Used by: intraday-futures/ConfigPanel, settings/StrategyParams
+- `api.evaluateStrategy(strategyName, symbol)` — `POST /api/v1/strategies/evaluate`. Used by: ScannerHeader
+- `api.evaluateStrategyBatch(strategyName)` — `POST /api/v1/strategies/evaluate/batch`. Used by: ScannerHeader
+
+**Settings**
+- `api.getTradingSettings()` — `GET /api/v1/settings/trading`. Used by: settings/page
+- `api.updateTradingSettings(patch)` — `PATCH /api/v1/settings/trading`. Used by: settings/page
+
+**Research**
+- `api.startResearch(symbol)` — `POST /api/v1/research/start`. Used by: research/page
+- `api.getResearchReports(params?)` — `GET /api/v1/research/reports`. Used by: research/page
+- `api.getResearchReport(id)` — `GET /api/v1/research/reports/{id}`. Used by: research/page
+- `api.deleteResearchReport(id)` — `DELETE /api/v1/research/reports/{id}`. Used by: research/page
+
+**Strategy 5 — Intraday Futures**
+- `api.getIntradayFuturesWatchlist(date?)` — returns `S5WatchlistItem[]`. Used by: intraday-futures/Watchlist
+- `api.getIntradayFuturesAgentLog(date?, offset?, limit?)` — returns `{entries, total}`. Used by: intraday-futures/AgentLog
+- `api.getIntradayFuturesGlobalCues(date?, force?)` — `force=true` bypasses Redis cache. Used by: GlobalCues
+- `api.getIntradayFuturesBriefing(date?)` — returns `S5MorningBriefing`. Used by: GlobalCues
+- `api.getIntradayFuturesDailyStats(date?)` — returns `S5DailyStats`. Used by: intraday-futures/page
+- `api.getIntradayFuturesPhase(date?)` — returns `{phase}`. Used by: DayStatusBar
+- `api.getIntradayFuturesAgentStatus()` — returns `{status}`. Used by: DayStatusBar
+- `api.getIntradayFuturesSetupPerformance(date?, days?)` — returns `S5SetupPerformance`. Used by: SetupPerformance
+- `api.runIntradayFuturesScreener()` — `POST /api/v1/intraday-futures/screener/run`. Used by: DayStatusBar
+- `api.runIntradayFuturesBriefing()` — `POST /api/v1/intraday-futures/briefing/run`. Used by: DayStatusBar
+- `api.setIntradayFuturesAgentAction(action)` — `POST /api/v1/intraday-futures/agent/{pause|resume}`. Used by: DayStatusBar
+- `api.getPermanentWatchlist()` — returns `{symbols}`. Used by: PermanentWatchlist
+- `api.addToPermanentWatchlist(symbol)` — `POST`, returns `{symbols}`. Used by: PermanentWatchlist
+- `api.removeFromPermanentWatchlist(symbol)` — `DELETE`, returns `{symbols}`. Used by: PermanentWatchlist
+
+**Options — Strategy 2**
+- `api.getOptionsWindowState()` — returns `{window_state, market_open}`. Used by: options/page
+- `api.getOptionsAgentLog(date?, offset?, limit?)` — returns `{entries, total}`. Used by: options/AgentLog
+
+**Tasks**
+- `api.getTasks()` — `GET /api/v1/tasks` → `{tasks: BackgroundTask[]}`. Used by: TasksPopup
+
+---
+
+#### lib/formatters.ts
+- `formatINR(value)` — INR with Indian number system (en-IN locale, 2 decimal places). Used by: most price displays
+- `formatINRCompact(value)` — Compact: `₹1.5L`, `₹2.3Cr`, `₹1.5K` thresholds. Used by: PnLCard, SummaryStrip
+- `formatPercent(value)` — `+2.50%` with sign. Used by: price change displays
+- `formatTime(timestamp)` — UTC string → IST HH:MM:SS. Used by: signal cards, trade rows
+- `formatDate(timestamp)` — UTC string → IST `24 May 2026`. Used by: trade rows
+- `pnlColor(value)` — `"text-profit"` | `"text-loss"` | `"text-text-secondary"`. Used by: all P&L displays
+- `toISTDate(d)` — `Date` → IST-adjusted `Date` object
+- `startOfDayIST(d)` / `endOfDayIST(d)` — IST day boundaries as UTC `Date`
+- `startOfMonthIST(d)` / `endOfMonthIST(d)` — IST month boundaries
+- `startOfWeekIST(d)` — IST Monday 00:00 of the week containing `d`
+- `subDaysIST(d, n)` / `subMonthsIST(d, n)` — subtract n days/months in IST
+- `eachDayInRange(start, end)` — array of `startOfDayIST` dates between start and end
+- `isoDateIST(d)` — `YYYY-MM-DD` string in IST. Used by: date pickers, API params
+- `formatDateShort(d)` — `"24 May"` in IST locale. Used by: PnLHeatmap
+- `monthLabel(d)` — `"May 2026"` in IST locale. Used by: PnLHeatmap
+
+---
+
+#### lib/constants.ts
+- `SYMBOLS` — `["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"]` as const. Used by: SymbolSelector, PriceChart, ChartModal
+- `STRATEGY_LABELS` — `Record<string, string>`: `orb` → "ORB", `vwap_pullback` → "VWAP Pullback", `gamma_scalping` → "Gamma Scalp", `can_slim` → "CAN SLIM", `intraday_futures` → "Intraday Futures". Used by: ScannerHeader, signal cards, trade rows
+- `STATUS_COLORS` — `Record<string, string>` Tailwind classes per signal/trade status (OPEN/CLOSED/PENDING/EXECUTED/REJECTED/EXPIRED). Used by: signal and trade status badges
+- `getWsUrl()` — environment-aware WS URL: port 3000 → `ws://{host}:8080/ws`, otherwise `ws://{host}/ws`. Used by: useWebSocket
+- `Timeframe` — type `"1m" | "5m" | "15m" | "1h" | "1D"`. Used by: PriceChart, store
+- `displaySymbol(symbol)` — strips exchange prefix (`"NSE:FOO"` → `"FOO"`). Used by: signal cards
+
+---
+
+#### lib/types.ts — Key Interfaces
+- `PriceData` — `{symbol, ltp, bid, ask, volume, change, change_pct, timestamp}`
+- `Candle` — `{timestamp, open, high, low, close, volume}`
+- `Position` — open position; key fields: `is_shadow`, `signal_confidence`, `margin_required`, `fyers_option_symbol`, `position_type`
+- `Trade` — closed/open trade; key fields: `source` (`MANUAL|YOLO|SHADOW`), `charges_json` (brokerage/STT/exchange/GST/SEBI/stamp/total), `net_pnl`, `margin_required`, `is_permanent_watchlist`, `signal_confidence/ai_action/ai_summary/instrument_type/signal_type` (snapshotted columns), `signal_snapshot` (full JSONB), `signal_is_permanent_watchlist`
+- `Signal` — trading opportunity; key fields: `signal_type` (`BUY_CE|BUY_PE|BUY_FUT|SELL_FUT`), `instrument_type` (`OPTION|FUTURE|EQUITY`), `confidence`, `is_permanent_watchlist`, `ai_summary/rationale/adjustment/action`; **no `lots` or `quantity` fields** (resolved at execution via preview endpoint)
+- `SignalHistory` — Case-2 snapshot; `version`, `entry_price/stop_loss/target_price`, `confidence`, `ai_*` fields, `captured_at`
+- `SignalPreview` — from `GET /signals/{id}/preview`: `{lots, quantity, lot_size, entry_price, stop_loss, target_price, risk, notional, margin_required, sizing_meta, warnings[]}`
+- `RiskDashboard` — `{capital, daily_pnl, closed_pnl, daily_drawdown_pct, max_daily_drawdown_pct, trades_today, max_trades_per_day, notional, risk, margin_utilized, is_halted, max_daily_profit, is_profit_capped, positions_open}`
+- `MarketStatus` — `{is_open, in_trading_window, in_dead_zone, minutes_to_close, india_vix, cpr_type, day_bias, fyers_connected}`
+- `AgentStatus` — `{running, yolo_mode, autonomy_level: "manual"|"semi"|"yolo", last_action_at, pending_confirmations, positions_monitored, uptime_seconds}`
+- `AgentLog` — agent action record with `action_type`, `details`, `requires_confirmation`, `confirmation_status`
+- `BackgroundTask` — `{name, type: "scheduler"|"startup"|"service", status, started_at, completed_at, error, metadata}`
+- `ResearchReport` — `{status: "PENDING"|"IN_PROGRESS"|"COMPLETED"|"PARTIAL"|"FAILED", recommendation: "BUY"|"HOLD"|"SELL"|"AVOID"|null, agent_runs: ResearchAgentRun[], ...}`
+- `S5WatchlistItem` — screener item; includes `composite_score`, `bias`, `bias_source`, `original_bias`, `gap_pct`, `orb_high/low/range`, `manual` (permanently-pinned flag), `news.headlines[]`
+- `S5AgentLogEntry` — `{timestamp: number, category: string, message: string, data?}`
+- `S5GlobalCues` — global market snapshot; includes `overnight_bias`, `global_score`, `india_vix_live`, `nifty_gap_pct`, absolute prices (`crude_price`, `sp500_price`, etc.)
+- `S5MorningBriefing` — `{approach?, summary?, sector_bias?, setup_priority?, flags?, max_lots_recommendation?}`
+- `S5SetupPerformance` — `{period, setups: Record<string, S5SetupStats>, overall}`
+
+---
+
+### `src/hooks/` - Custom Hooks
+
+#### hooks/useWebSocket.ts
+Single hook managing the WebSocket connection. Returns `wsRef`. Auto-reconnects on close (3s delay). Guards all event handlers with `ws === wsRef.current` staleness check to prevent React Strict Mode race conditions.
+
+**No symbol subscription filtering** — backend broadcasts all price ticks; frontend receives all prices automatically.
+
+**Events handled:**
+- `price:update` → `updatePrice(symbol, data)` (RAF-batched in store)
+- `trade:open` → `addPosition(data)` (skips if `data.is_shadow`)
+- `position:update` → `updatePosition(id, {current_price, unrealized_pnl})`
+- `position:closed` → `removePosition(id)`
+- `signal:new` → `addSignal(data)`
+- `signal:updated` → `addSignal(data)` (deduplicates by id)
+- `risk:update` → `setRisk(data)`
+- `agent:action` / `agent:confirmation_request` → `addAgentLog(data)`
+- `agent:status` → `setAgentStatus(data)`
+- `research:started` → `startResearchSession(reportId, symbol, agentsTotal)`
+- `research:agent_started` → `updateResearchAgent(reportId, agentName, {status: "running"})`
+- `research:agent_completed` → `updateResearchAgent(reportId, agentName, {status: "completed", summary, duration})`
+- `research:agent_failed` → `updateResearchAgent(reportId, agentName, {status: "failed", error})`
+- `research:completed` → `completeResearch(reportId, "completed")`
+- `research:failed` → `completeResearch(reportId, "failed")`
+- `market:bias_update` → `setIntradayBias(data)` (only for `symbol === "NIFTY"`)
+
+---
 
 ### `src/store/` - Zustand State
-- `index.ts` - Single store with slices: prices (per symbol), positions, signals, scan logs, risk metrics, agent status, market status, UI state. Position `addPosition()` skips shadow events (`is_shadow=true`). **`addAgentLog()`** prepends and caps at 200 entries. **`closedToday: Trade[]`** slice (real trades only). **`positionViewMode: "REAL" | "SHADOW"`** — drives ActivePositions + PnLCard toggle; **`shadowPositions: Position[]`** + **`shadowClosedToday: Trade[]`** — populated by ActivePositions when Shadow mode is active. **`activeTimeframe: Timeframe`** — persisted to localStorage. **`showNetPnL: boolean`** (persisted) — toggles Trades page between gross and net P&L display; when true, all P&L surfaces (SummaryStrip, PnLHeatmap, TradesTable) use `net_pnl` from `Trade.charges_json`; historical trades without charges gracefully fall back to gross. **Trades page filter state** (`tradesPeriodLabel`, `tradesPeriodStart`, `tradesPeriodEnd`, `tradesStrategy`, `tradesExcludePinned`, `tradesSimOpen`, `tradesSim`) — all added to `partialize` so they persist via Zustand `persist` middleware identically to `positionViewMode`; setters: `setTradesPeriod(label, start, end)`, `setTradesStrategy`, `setTradesExcludePinned`, `setTradesSimOpen`, `setTradesSim(partialUpdates)`, `resetTradesSim()`. **Scanner filters** (`scannerShowExecuted`) — persisted toggle; when true, dashboard page fetches EXECUTED signals in addition to PENDING, ScannerPanel includes both in its filter pipeline. **Confidence filter state** (`scannerMinConfidence`, `signalsMinConfidence`, `signalsPeriodLabel`, `signalsPeriodStart`, `signalsPeriodEnd`, `signalsStrategy`, `signalsHideInformational`, `positionsMinConfidence`) — all persisted via `partialize`; drives confidence sliders on Scanner, Signals page, and Positions/PnLCard.
+
+#### store/index.ts
+Single store created with `create()` + `persist()` middleware. Storage key: `"scan-logs-storage"` in `localStorage`.
+
+**Slices:**
+- `prices: Record<string, PriceData>` — `updatePrice()` uses RAF batching + LTP dedup (batch flushes once per `requestAnimationFrame`; unchanged LTPs skipped)
+- `positions / closedToday / shadowPositions / shadowClosedToday` — position state; `addPosition()` skips shadow events; `prependClosedTrade()` deduplicates by id
+- `positionViewMode: "REAL" | "SHADOW"` — drives ActivePositions + PnLCard toggle
+- `signals` — `addSignal()` deduplicates by id (used for both new signals and dedup updates)
+- `scanLogs: ScanLogEntry[]` — capped at 20 entries; `addScanLog()` prepends
+- `risk: RiskDashboard | null`
+- `marketStatus: MarketStatus | null`
+- `agentStatus / agentLogs` — `addAgentLog()` prepends, capped at 200 entries
+- `wsConnected: boolean`
+- `activeResearches / selectedResearchId / researchReports` — research session state
+- `watchlistItems / intradayBias`
+
+**Persisted keys** (via `partialize`):
+- `scanLogs`, `activeTimeframe`, `positionViewMode`, `showNetPnL`
+- `tradesShowOpen`, `tradesExcludePinned`, `tradesPeriodLabel`, `tradesPeriodStart`, `tradesPeriodEnd`, `tradesStrategy`, `tradesSimOpen`, `tradesSim`
+- `scannerShowExecuted`, `scannerMinConfidence`
+- `signalsMinConfidence`, `signalsPeriodLabel`, `signalsPeriodStart`, `signalsPeriodEnd`, `signalsStrategy`, `signalsHideInformational`
+- `positionsMinConfidence`
+
+**Key store actions:**
+- `setTradesPeriod(label, start, end)` — updates period label + ISO strings
+- `setTradesSim(partialUpdates)` / `resetTradesSim()` — sim filter state
+- `setTradesExcludePinned(v)` — "− Pinned" toggle on trades page (sends `exclude_permanent=true` to API)
+- `setScannerShowExecuted(v)` — when true, dashboard fetches EXECUTED signals alongside PENDING
+- `setPositionsMinConfidence(v)` — shared by ActivePositions slider and PnLCard
+
+---
 
 ## Theme — Institutional Terminal (Dark Only)
 
@@ -118,7 +316,7 @@ Font:        Geist Sans + Geist Mono
 - **Uppercase tracking** — section headers use `uppercase tracking-wider font-mono`
 - **Dividers over cards** — inline dividers (`w-px h-4 bg-border`) separate metrics
 - **Subtle depth** — noise texture overlay (`noise-bg`), glow utilities (`glow-profit`, `glow-loss`, `glow-accent`)
-- **Amber accent** — warm gold (#d4a843) for active states, badges, selections — replaces generic indigo
+- **Amber accent** — warm gold (#d4a843) for active states, badges, selections
 
 ### CSS Utilities (globals.css)
 - `.noise-bg` — subtle fractal noise texture overlay (opacity 0.015)
@@ -131,7 +329,7 @@ Font:        Geist Sans + Geist Mono
 - Main content: `fixed top-9 left-12 right-0 bottom-0 p-3 overflow-y-auto` (main is the scroll container)
 
 ## Zustand Performance Rules
-**Never use `useStore()` without a selector** — it re-renders the component on every single store mutation (price ticks, agent logs, signals, research events — all of it). Always scope subscriptions:
+**Never use `useStore()` without a selector** — it re-renders the component on every single store mutation. Always scope subscriptions:
 
 ```tsx
 // WRONG — re-renders on every WS event
@@ -148,9 +346,9 @@ const { positions, closedToday } = useStore(useShallow((s) => ({
 })));
 ```
 
-**`updatePrice` uses RAF batching + LTP dedup** — price ticks are accumulated in a module-level `_pendingPrices` map and flushed once per `requestAnimationFrame` in a single `set()` call. Inside the flush, each symbol's LTP is compared to the existing value; unchanged symbols are skipped. This collapses 50+ WS ticks per frame into at most 1 Zustand notification. Do not remove the batching or the LTP check.
+**`updatePrice` uses RAF batching + LTP dedup** — price ticks accumulated in `_pendingPrices`, flushed once per `requestAnimationFrame`. Unchanged LTPs skipped. Do not remove the batching or the LTP check.
 
-**`prices` is a shared map for ALL subscribed symbols** — backend broadcasts all prices to all clients (no per-client filtering since commit 2fdf2c4). Components that display prices for a subset of symbols (e.g., intraday watchlist) still receive the full map but only read the keys they need.
+**`prices` is a shared map for ALL subscribed symbols** — backend broadcasts all prices. Components read only the keys they need.
 
 ## Conventions
 - All pages are client components (`'use client'`)
@@ -158,12 +356,23 @@ const { positions, closedToday } = useStore(useShallow((s) => ({
 - WebSocket events go through `hooks/useWebSocket.ts`
 - Currency formatted as INR with Indian number system (e.g., Rs 1,50,000)
 - All 5 indices always referenced: NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY
-- Backend API base URL: environment-aware — dev (port 3000) uses `http://{host}:8080`, production (port 80 via nginx) uses `http://{host}`
-- WebSocket URL: environment-aware — dev uses `ws://{host}:8080/ws`, production uses `ws://{host}/ws` (nginx proxies to backend)
-- `next.config.ts` sets `output: "standalone"` (required for Docker production build) and `allowedDevOrigins: ["192.168.*.*", "100.*.*.*"]` — allows cross-machine dev access from local network and Tailscale IPs without HMR blocking
+- Backend API base URL: dev (port 3000) → `http://{host}:8080`; prod (port 80 via nginx) → `http://{host}`
+- WebSocket URL: dev → `ws://{host}:8080/ws`; prod → `ws://{host}/ws` (nginx proxies to backend)
+- `next.config.ts` sets `output: "standalone"` (Docker) and `allowedDevOrigins: ["192.168.*.*", "100.*.*.*"]`
 - Strategy badges: `text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent`
 - Section headers: `text-xs font-mono font-medium text-text-secondary uppercase tracking-wider`
 - Empty states: `text-xs font-mono text-text-muted` with lowercase text
+
+## Doc-Update Rules (Frontend)
+When adding or changing frontend code, update this file:
+- **New component**: add a 1-2 line entry in the appropriate domain section (`components/{domain}/`)
+- **New API function**: add a bullet under the appropriate `lib/api.ts` group with endpoint + return type + `Used by:`
+- **New type/interface**: add to `lib/types.ts` key interfaces section
+- **New store slice or persisted key**: update `store/index.ts` Slices and Persisted keys sections
+- **New WebSocket event**: add to hooks/useWebSocket.ts Events handled list
+- **Changed component props or behavior**: update the component's 1-2 line description
+- **New page**: add to the `src/app/` pages list (update the count in the heading)
+- Prefer editing existing entries over adding new ones — restructure if needed
 
 ## How-To Guides
 
@@ -172,6 +381,7 @@ const { positions, closedToday } = useStore(useShallow((s) => ({
 2. Add nav link in `src/components/layout/Sidebar.tsx`
 3. Create domain components in `src/components/{domain}/`
 4. Add store slice in `src/store/index.ts` if page needs its own state
+5. Update page count and entry in this file's `src/app/` section
 
 ### Add a New Component
 1. Place in `src/components/{domain}/` matching the page domain
@@ -179,13 +389,16 @@ const { positions, closedToday } = useStore(useShallow((s) => ({
 3. Follow terminal aesthetic: monospace text, tight padding, sharp corners, uppercase headers
 4. Get data from Zustand store or pass as props — don't fetch inside components
 5. Use `formatINR()`, `formatPercent()` from `lib/formatters.ts`
+6. Add entry to this file's domain section
 
 ### Add a New API Call
 1. Add function in `src/lib/api.ts`
 2. Add TypeScript types in `src/lib/types.ts`
 3. Call from component or store action — not directly from hooks
+4. Add entry to this file's `lib/api.ts` registry
 
 ### Add a New WebSocket Event
 1. Add event type in `src/hooks/useWebSocket.ts` handler
 2. Add store action in `src/store/index.ts` to process the event
 3. Backend must publish to Redis channel for the event to flow through
+4. Add event to this file's hooks/useWebSocket.ts Events list

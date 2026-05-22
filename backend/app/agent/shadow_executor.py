@@ -45,6 +45,13 @@ async def shadow_execute_signal(signal_id) -> None:
 
 
 async def _do_shadow_execute(signal_id) -> None:
+    """Core shadow execution logic — creates a SHADOW Trade + Position for the signal.
+
+    Gate order: PENDING status → no open shadow for signal → past close deadline →
+    F&O ban → resolution failure → confidence >= min_confidence_for_shadow →
+    permanent watchlist check. Always uses 1 lot, no capital gates.
+    SL/target recomputed from live LTP via recompute_sl_target().
+    """
     async with async_session_factory() as session:
         result = await session.execute(select(Signal).where(Signal.id == signal_id))
         signal = result.scalar_one_or_none()

@@ -68,6 +68,7 @@ async def expire_intraday_signals() -> None:
 
 
 async def start_signal_expiry_scheduler() -> None:
+    """Start the signal expiry scheduler (3:30 PM IST daily)."""
     scheduler.add_job(
         expire_intraday_signals,
         CronTrigger(hour=15, minute=30, timezone=IST),
@@ -79,6 +80,7 @@ async def start_signal_expiry_scheduler() -> None:
 
 
 async def stop_signal_expiry_scheduler() -> None:
+    """Shut down the signal expiry scheduler gracefully."""
     if scheduler.running:
         scheduler.shutdown(wait=False)
         logger.info("Signal expiry scheduler stopped")

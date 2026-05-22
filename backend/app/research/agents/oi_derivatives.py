@@ -24,6 +24,7 @@ class OIDerivativesAgent(BaseResearchAgent):
     description = "Analyzing open interest and derivatives data"
 
     async def research(self, ctx: ResearchContext, llm: LLMClient) -> AgentResult:
+        """Fetch Fyers option chain OI for F&O-eligible stocks and analyze PCR/max pain via LLM."""
         # Skip for non-F&O stocks
         if not ctx.is_fo_eligible:
             return AgentResult(

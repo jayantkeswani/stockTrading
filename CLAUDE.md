@@ -1,149 +1,159 @@
-# StockTrading - Indian Options Trading System
+# StockTrading - Indian Options & Futures Trading System
 
 ## Subagent Model Policy
+
 Always spawn subagents with `model: "sonnet"` to reduce costs. Only use `model: "opus"` for subagents that require deep reasoning (complex architecture decisions, subtle multi-file bug diagnosis).
 
 ## Project Overview
-Automated options trading system for Indian stock market (NSE/BSE) focused on **buying** index options (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY). Uses Strategy 2 (VWAP Pullback + Previous Day Context + OI Confirmation) as the primary active strategy.
+
+General-purpose strategy scanner, executor, and backtester for the Indian stock market (NSE/BSE). Currently focused on buying index options (NIFTY, BANKNIFTY, FINNIFTY, SENSEX, MIDCPNIFTY) and stock futures. Uses Strategy 2 (VWAP Pullback) as the primary active strategy. Architecture is strategy-agnostic — each strategy is a plug-in to shared scanning, execution, and backtesting infrastructure. Paper trading by default.
+
+## Coding Guidelines
+
+### Documentation Updates (MANDATORY)
+
+This is an AI-first project. Documentation ships WITH every code change — not as an afterthought. A new AI session should understand the entire project from CLAUDE.md files alone.
+
+**On EVERY code change:**
+
+1. Update the relevant CLAUDE.md (root, backend/, frontend/) if the change adds/removes/renames files, changes conventions, or adds new patterns
+2. Update ARCHITECTURE.md if the change affects data flow, system design, or ports
+3. Update docs/strategies/*.md if strategy logic changes
+4. Run `/test-runner` to validate tests pass
+5. Run `/review-code` to check quality and consistency
+6. Run `/update-docs` as a final verification that docs match code
+
+**Function registry format** — every public function in backend/frontend CLAUDE.md uses this format:
+`- \`functionName(params) — one-liner. Used by: caller1.py, caller2.py`
+
+**When updating docs:**
+
+- Edit/restructure in place — never append to the bottom
+- Check for stale references (counts, file names, function names) across all CLAUDE.md + strategy docs
+- Every new file needs a section in the appropriate CLAUDE.md
+- Every new/changed function needs its registry entry updated
+- Every new/changed API endpoint needs the endpoint table updated
+- When a function's callers change, update its `Used by:` list
+- Prefer editing existing sections over adding new ones — restructure if needed
+
+### Code Style
+
+- Every public function should have a docstring (one-liner minimum). Add param/return/edge-case detail for complex functions. CLAUDE.md registries are the index — docstrings in code are the source of truth.
+
+### Testing Rules
+
+- Modify existing tests when the tested behavior has changed — don't always add new ones
+- Mock external dependencies when needed for isolation
+- **NEVER change production code solely to make a test pass** — if the test fails, either the test is wrong (fix the test) or there's a real bug (fix the bug)
+- Run research integration tests only when changing research module files
+
+### Operational Rules
+
+- **Market hours (9:15-15:30 IST)**: Do NOT restart the backend, push to master, create releases, or restart production containers
+- **Production DB is read-only** — cannot insert or modify data. Use local DB for verification
+- **Port 8080 is Docker-internal** — from VM host, use `http://localhost/` (nginx on port 80 proxies to backend)
+- **Production VM logs are UTC** — add 5:30 for IST. All `docker logs st-backend` timestamps are UTC
+- **Local testing is always safe** — local DB (port 5433) and Redis (port 6380) are separate from production, even during market hours
+- **Ground changes in code** — when changing core modules (`services/`, `agent/`, `data_feed/`, `strategies/`), read the actual source first. Don't rely on docs or memory alone
+- **Fix root causes** — don't add fallbacks or workarounds to mask bugs
+- **Verify fixes end-to-end** — create test data in the local DB, run the changed code path against it, and confirm data flows through without errors. Use the browser to verify UI changes. Safe during market hours (local infra is isolated)
+- **Always check current time** (`date`) before making time-sensitive decisions (market hours, deployments)
 
 ## Architecture
+
 - **Monorepo**: `backend/` (Python/FastAPI) + `frontend/` (Next.js/React/TypeScript)
 - **Database**: PostgreSQL on port 5433 + Redis on port 6380 (non-default to avoid local conflicts)
 - **Data Feed**: Fyers API (free) for market data; Zerodha/Kite for trade execution (future)
 - **LLM**: Gemini via `google-genai` SDK — Vertex AI in production (ADC via GCE SA), AI Studio locally (API key)
 - **AI Agent**: Python asyncio background task with 3 autonomy levels (MANUAL / SEMI / YOLO)
 - **Notifications**: Telegram Bot API for alerts and trade confirmations
-- **Paper trading** by default — no real money until explicitly switched
+
+See `ARCHITECTURE.md` for full system design and data flow diagrams.
 
 ## Key Conventions
+
 - Backend: Python 3.11, virtualenv at `backend/.venv`, FastAPI, SQLAlchemy 2.0 (async), Pydantic v2, Alembic
 - Frontend: Next.js 15 (App Router), TypeScript strict, Tailwind CSS v4 (dark theme only), Zustand, TradingView lightweight-charts
-- All times in IST (Asia/Kolkata), stored as TIMESTAMPTZ in DB
-- Market hours: 9:15 AM - 3:30 PM IST
-- Market Pre-Open: 9:00 AM - 9:07 AM IST
+- All timestamps stored as TIMESTAMPTZ (UTC internally). Display/query in IST: `AT TIME ZONE 'Asia/Kolkata'`. Production VM logs are UTC (IST = UTC + 5:30). Note: `WHERE timestamp >= '2026-05-01'` matches UTC midnight (= 05:30 AM IST), not IST midnight.
+- Market hours: 9:15 AM - 3:30 PM IST. Pre-Open: 9:00 AM - 9:07 AM IST
 - Backend runs on port **8080**, frontend on port **3000**
 - Single user, no auth in V1
 
 ## Directory Map
+
 ```
 stockTrading/
-├── CLAUDE.md              # THIS FILE - project overview + AI instructions
+├── CLAUDE.md              # THIS FILE
 ├── ARCHITECTURE.md        # System design, data flow diagrams
 ├── README.md              # Setup and run instructions
 ├── Makefile               # Dev commands (make dev, make test, make migrate)
 ├── docker-compose.yml     # PostgreSQL (5433) + Redis (6380) — LOCAL dev only
 ├── docker-compose.prod.yml # PRODUCTION: all 5 services (backend, frontend, postgres, redis, nginx)
-├── .dockerignore          # Excludes .git, .venv, node_modules, tests, docs from Docker build context
 ├── .env.example           # Environment template
-├── .envrc                 # direnv: GCP project isolation (stock-trading config)
-├── .github/workflows/     # CI/CD: ci.yml (build on master push), deploy.yml (tag-based releases to GCP VM)
-├── .vscode/               # VS Code launch configs, tasks, settings
-├── .claude/skills/        # Claude Code skill definitions (test-runner, review-code, build-strategy, etc.)
-├── infrastructure/        # GCP deployment (Terraform, Docker, scripts)
-│   ├── terraform/         # main.tf, vm.tf, network.tf, apis.tf, gemini.tf, variables.tf, outputs.tf
-│   ├── bootstrap/         # bootstrap.sh (one-time: TF state bucket + API enable)
-│   ├── docker/            # Dockerfile.backend, Dockerfile.frontend, nginx.conf
-│   └── scripts/           # vm-startup.sh (first-boot: Docker install, deploy user, IST)
-├── docs/
-│   ├── strategies/        # One MD per strategy with full trading rules. Includes arjun-liquide-study.md — a full reverse-engineering study (signal parser, independent backtest of 630 trades, feature-importance analysis, implied strategy + edge filters). Not yet a registered strategy; precursor to strategy_5_breakout_momentum.
-│   ├── backtest/          # Backtest harness docs (harness.md, option-data.md)
-│   └── ai/                # AI agent docs (signal-confidence-agent.md)
-├── scripts/               # dev.sh, stop.sh, reset.sh, backfill_for_backtest.py, backtest.py, replay_strategy5.py, backtest_strategy5.py (S5 signal exit simulator: queries live signals, walks 1m candles with trailing SL, reports P&L; reads trailing SL params from DB via `get_strategy_params` to match live agent; `--sl-mode close` (default) uses candle close for trailing SL trigger matching live tick-poll behavior, `--sl-mode wick` uses candle high/low (legacy); supports confidence threshold, date range, setup/symbol filters, lots override, sweep mode), backfill_daily_candles.py (one-time seed of market_data_daily from Fyers), audit_screener_data.py (read-only freshness check for Strategy 5 morning screener data), audit_vwap_data.py (read-only freshness check for Strategy 2 VWAP Pullback data: 10 checks — config, prev-day 1m candles, today 1m candles, CE/PE OI snapshots, index futures candles, India VIX cache, global cues, price cache, symbol master, pending signals)
-│   └── telegram/          # MTProto client (Telethon) + signal parser + Fyers probe + independent verifier + setup analyzer. list_dialogs.py (discover chat IDs), fetch_history.py (pull signal-channel history to JSON), parse_signals.py (classifies messages into ENTRY / EXIT_FULL (Book Profit) / EXIT_FORCED (cost-to-cost or "at current price" — deliberately separate from EXIT_FULL so channel-claimed wins aren't inflated) / EXIT_PARTIAL / WATCHLIST / HOLD_OVERNIGHT / REPORT / UPDATE / CANCEL / OTHER; stdlib-only), probe_fyers_history.py (one-shot diagnostic: Fyers free plan serves 1m history only while contract is actively listed; expired contracts return s="error"), verify_signals.py (hybrid backtest: accurate mode for currently-live contracts via real option 1m bars, delta-approx for expired contracts via underlying spot 1m × moneyness-derived delta; channel's stated T1-then-C2C rule; NSE F&O lot sizing from the master CSV; outputs per-trade + aggregate hit rate / expectancy / profit factor in JSON + stdout), analyze_setups.py (reverse-engineers the implied strategy: fetches underlying 1m bars up to each entry minute, reuses backend.app.indicators (VWAP, CPR, previous_day, candle_patterns) to compute features at entry time, aggregates CE vs PE distributional stats — time-of-day buckets, VWAP/PDH/PDL/CPR position, candle patterns, volume ratio, moneyness — and prints an evidence-backed hypothesis; also dumps feature CSV + JSON), analyze_edge.py (feature-importance pass: joins setups_*.json with verification_*.json on msg_id, bucketizes each feature (bool/categorical/numeric-quartile), ranks by win-rate lift with min-bucket-size guard, then stress-tests top-3 filter combinations per direction — finds "filters that beat Arjun at his own strategy"; multiple win definitions via --win-def). Fetched JSON, symbol master cache, candle cache all in scripts/telegram/data/ (gitignored). Session files + data/ gitignored. Uses TELEGRAM_API_ID/API_HASH/PHONE/SESSION_NAME from .env
+├── .envrc                 # direnv: GCP project isolation
+├── .github/workflows/     # CI/CD: ci.yml (build on master push), deploy.yml (tag-based release)
+├── .claude/skills/        # Claude Code skill definitions
+├── infrastructure/        # GCP deployment: terraform/, bootstrap/, docker/, scripts/
+├── docs/                  # See "Documentation Reference" section below
+├── scripts/               # Dev + analysis scripts (see below)
 ├── backend/               # Python FastAPI backend (see backend/CLAUDE.md)
-│   ├── app/
-│   │   ├── api/v1/        # REST endpoints (14 routers, incl. watchlist, strategies, tasks, research, options)
-│   │   ├── websocket/     # WebSocket manager (single /ws endpoint)
-│   │   ├── models/        # SQLAlchemy ORM models (16 tables incl. market_data_daily, global_market_snapshots, trading_config; signals has ai_* columns + market snapshot fields (nifty_spot, nifty_day_change_pct, trigger_candle, minutes_since_open) + is_permanent_watchlist flag; trades has is_permanent_watchlist + signal_snapshot (JSONB) + 5 signal_* columns snapshotted at execution + margin_required; positions has margin_required; trading_config has max_daily_profit (INR amount, 0=disabled) + shadow_skip_permanent_watchlist + yolo_skip_permanent_watchlist toggles; signal_history archives Case-2 dedup snapshots)
-│   │   ├── schemas/       # Pydantic request/response schemas
-│   │   ├── services/      # Business logic (strategy_runner, option_resolver, futures_resolver, candle_backfill, strategy_params, morning_screener, agent_log, lot_sizing, margin_calculator, execution_utils)
-│   │   ├── strategies/    # Strategy engine (base + 4 strategies incl. CAN SLIM, registry)
-│   │   ├── indicators/    # Technical indicators (VWAP, CPR, OI, candle patterns, RS, volume, market levels, global_market, intraday_bias, confidence, ATR, gap_analysis, stock_trend)
-│   │   ├── data_feed/     # Fyers API (auth, REST via API_URL/DATA_URL, WebSocket, feed manager, symbol master)
-│   │   ├── research/      # AI research agent system (orchestrator, 6 sub-agents, LLM client, data gatherer)
-│   │   ├── agent/         # AI trading agent (monitor, execute, notify, shadow_executor, telegram_bot, telegram_commands)
-│   │   ├── backtest/      # Backtest module (context_builder, harness, exit_simulator, option_data_fetcher, strike_selector, report)
-│   │   ├── core/          # Config, database, Redis, constants (FYERS_SYMBOL_MAP, NSE_HOLIDAYS, MARGIN_TIER_MAP), enums, utils, task_registry
-│   │   └── tasks/         # Scheduled tasks (Fyers auto-login, symbol master refresh, global_market every 15m, Strategy 5 morning workflow, NSE bhav copy daily, F&O ban list 7:00 AM)
-│   ├── tests/             # pytest test suite (999 tests, incl. signal_history archiving)
-│   └── alembic/           # Database migrations
 └── frontend/              # Next.js React frontend (see frontend/CLAUDE.md)
-    └── src/
-        ├── app/           # 9 pages (dashboard, trades, signals, research, settings, agent, chart, intraday-futures, options)
-        ├── components/    # React components by domain (38 components incl. 8 intraday-futures/* (+ PermanentWatchlist), options/AgentLog, shared/SymbolSearchInput, research/ResearchSearch, ResearchProgress, ResearchReport)
-        ├── hooks/         # useWebSocket (auto-reconnect, event subscriptions, research events)
-        ├── lib/           # API client, types, formatters, constants
-        └── store/         # Zustand store (prices, positions, signals, scanLogs, risk, agent, research)
 ```
 
+### scripts/
+
+- `dev.sh`, `stop.sh`, `reset.sh` — local dev lifecycle
+- `backfill_for_backtest.py` — seed backtest data
+- `backtest.py` — run backtests
+- `replay_strategy5.py` — offline S5 signal generation from historical candles
+- `backtest_strategy5.py` — S5 signal exit simulator (trailing SL, P&L, sweep mode). Reads trailing SL params from DB via `get_strategy_params`
+- `backfill_daily_candles.py` — one-time seed of `market_data_daily` from Fyers
+- `audit_screener_data.py` — read-only freshness check for S5 morning screener data
+- `audit_vwap_data.py` — read-only freshness check for S2 VWAP Pullback data (10 checks)
+- `telegram/` — MTProto client (Telethon) + signal parser + verifier + setup analyzer. Scripts: `list_dialogs.py`, `fetch_history.py`, `parse_signals.py`, `probe_fyers_history.py`, `verify_signals.py`, `analyze_setups.py`, `analyze_edge.py`. Session files + data/ gitignored. Uses TELEGRAM_API_ID/API_HASH/PHONE/SESSION_NAME from .env
+
+## Strategies
+
+
+| #   | Name                         | Status  | Instrument    | File                             | Spec                                             |
+| --- | ---------------------------- | ------- | ------------- | -------------------------------- | ------------------------------------------------ |
+| 1   | ORB (Opening Range Breakout) | STUB    | Index Options | `strategy_1_orb.py`              | `docs/strategies/strategy-1-orb.md`              |
+| 2   | VWAP Pullback + PDH/PDL + OI | PRIMARY | Index Options | `strategy_2_vwap_pullback.py`    | `docs/strategies/strategy-2-vwap-pullback.md`    |
+| 3   | Expiry Day Gamma Scalping    | STUB    | Index Options | `strategy_3_gamma_scalping.py`   | `docs/strategies/strategy-3-gamma-scalping.md`   |
+| 4   | CAN SLIM Growth Breakout     | ACTIVE  | Stock Futures | `strategy_4_canslim.py`          | `docs/strategies/strategy-4-canslim.md`          |
+| 5   | Intraday Stock Futures       | IN DEV  | Stock Futures | `strategy_5_intraday_futures.py` | `docs/strategies/strategy-5-intraday-futures.md` |
+
+
+All strategy files in `backend/app/strategies/`. See `docs/strategies/` for full trading rules per strategy.
+
+### Strategy Execution Modes
+
+- **Auto mode**: Evaluates on every 1m candle close. Controlled by `auto_mode` in `strategy_configs` table.
+- **Manual mode**: User triggers via Scanner header bar → `POST /api/v1/strategies/evaluate/batch`.
+- Configuration (active/auto_mode/symbols) managed via Settings page → Strategies section.
+
+## Agent Autonomy Levels
+
+- **MANUAL**: Alerts via Telegram, user executes manually. No capital gates.
+- **SEMI**: Auto-closes on SL hit, requests confirmation for profit booking.
+- **YOLO**: Fully autonomous — auto-executes, auto-books profits, auto-closes on SL. Enforces drawdown, max-trades, and daily profit cap gates.
+
+See `backend/CLAUDE.md` for execution architecture details (shadow/YOLO isolation, lot sizing, SL/target recomputation, margin tracking, risk gates, signal dedup).
+
 ## Trading Parameters
-- Capital: 10 Lakhs INR (Rs 10,00,000)
-- Max daily drawdown: 5% (Rs 50,000)
-- Risk per trade: 1.5-2% (Rs 15,000-20,000)
-- Max trades/day: 2-3
-- Lot sizes: NIFTY=75, BANKNIFTY=30, FINNIFTY=25, SENSEX=10, MIDCPNIFTY=50
+
+- Capital: Set in DB
+- Max daily drawdown: Set in DB
+- Risk per trade: Set in DB
+- Max trades/day: Set in DB
 - Strike selection: ATM or 1-strike ITM (Delta 0.45-0.60), resolved by `option_resolver.py`
 - Strike gaps: NIFTY=50, BANKNIFTY=100, FINNIFTY=50, SENSEX=100, MIDCPNIFTY=25
 - Preferred premium range: Rs 150-400
 - SL/target computed on option premium (not index price), 30-35% SL, 1:1.5 R:R
 - Expiry: NIFTY weekly Tuesday, SENSEX weekly Thursday, others monthly only (post-SEBI Nov 2024)
 
-## Strategies
-1. **ORB (Opening Range Breakout)** - STUB - `backend/app/strategies/strategy_1_orb.py`
-2. **VWAP Pullback + PDH/PDL + OI** - PRIMARY/ACTIVE - `backend/app/strategies/strategy_2_vwap_pullback.py`
-3. **Expiry Day Gamma Scalping** - STUB - `backend/app/strategies/strategy_3_gamma_scalping.py`
-4. **CAN SLIM Growth Breakout** - ACTIVE - `backend/app/strategies/strategy_4_canslim.py` — Stock futures, positional (multi-day), fundamental screening + chart pattern breakout
-5. **Intraday Stock Futures** - IN DEVELOPMENT - `backend/app/strategies/strategy_5_intraday_futures.py` — AI-agent-driven intraday stock futures, ORB breakout, dynamic screener, phase state machine. `_compute_confidence()` stores 9-key `confidence_factors` dict in signal indicators JSONB. Full spec: `docs/strategies/strategy-5-intraday-futures.md`, phase 1 reference: `docs/strategies/strategy-5-phase1-reference.md`
-
-### Strategy Execution Modes
-- **Auto mode**: Strategy evaluates automatically on every 1m candle close for its configured symbols. Controlled by `auto_mode` flag in `strategy_configs` table.
-- **Manual mode**: User triggers evaluation via the Scanner header bar on the dashboard. Calls `POST /api/v1/strategies/evaluate/batch` which runs the strategy across its configured symbols on demand.
-- Strategy configuration (active/auto_mode/symbols) is managed via Settings page → Strategies section.
-
-## Agent Autonomy Levels
-- **MANUAL**: Alerts only via Telegram, user executes manually. No capital gates — lot sizing computed at execution time with a warning shown if limits would be exceeded.
-- **SEMI**: Auto-closes on SL hit, requests confirmation for profit booking
-- **YOLO**: Fully autonomous — auto-executes signals, auto-books profits, auto-closes on SL. Enforces drawdown, max-trades, and daily profit cap gates before executing.
-
-### Shadow + YOLO Isolation
-Three independent consumers of every signal, fully isolated:
-1. **Shadow executor** — creates SHADOW trade/position based on global `min_confidence_for_shadow` (in `trading_config`). Always uses 1 lot, no capital gates. Invisible to signal lifecycle, dedup, and YOLO position checks. One open shadow per signal — closed shadows don't block (allows fresh shadow on Case-2 re-fire when confidence re-crosses threshold on a new day).
-2. **YOLO executor** — creates YOLO trade/position based on global `min_confidence_for_execution` (in `trading_config`). Only checks non-shadow positions for dedup. Enforces drawdown, max-trades, and daily profit cap gates; lot sizing computed at execution time via `compute_lots_for_yolo`.
-3. **Manual execution** — signal stays PENDING and available for user to click EXEC regardless of shadow/YOLO state. Lot sizing computed at execution time via `compute_lots_for_manual`; no blocking gates, warnings shown instead.
-
-All three confidence thresholds (`min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`) are global in `trading_config` — they apply uniformly to all strategies. Cross-field validation enforces `persist < shadow <= execution`.
-
-Signal dedup "acted on" = manual execution (`executed_trade_id` set) OR YOLO trade exists. Shadow trades never trigger Case 3 (new signal creation). **Same-day scoping**: intraday strategies (VWAP Pullback, Intraday Futures, ORB, Gamma Scalping) only dedup against same-day PENDING signals (`generated_at >= today 00:00`); positional strategies (CAN SLIM) dedup across days as before. **EOD signal expiry**: at 3:30 PM IST on trading days, all remaining PENDING intraday signals are bulk-expired (`signal_expiry_task`) so they don't leak into the next day.
-
-### Lot Sizing at Execution
-Signals are bare trading opportunities — they carry no `lots`, `quantity`, or `sizing_meta`. All lot sizing happens at execution time via `backend/app/services/lot_sizing.py`:
-- `compute_lots_for_shadow` — always returns 1 lot
-- `compute_lots_for_yolo` — full risk-based sizing (capital, risk %, VIX multiplier, strategy-specific logic)
-- `compute_lots_for_manual` — delegates to YOLO sizing logic; no blocking gates
-
-### SL/Target Recomputation at Execution
-Signals store SL and target computed at the moment the signal fires. Because all three execution paths fill at the **live LTP** (not the stale signal premium), SL and target are recomputed relative to the actual fill price via `backend/app/services/execution_utils.py:recompute_sl_target()`:
-- **Options**: preserves the original SL% and target% — `new_sl = live_entry × (1 - sl_pct)`, `new_target = live_entry × (1 + target_pct)`
-- **Futures**: SL stays at the structural price level (ORB low/high, VWAP band, PDH/PDL); target is recomputed using the original R:R multiplier from `live_entry`
-- Applies to all three paths: YOLO (`auto_executor.py`), Shadow (`shadow_executor.py`), Manual (`signals.py`)
-- Also applies to the **preview endpoint** (`GET /signals/{id}/preview`) so the confirm modal shows the correct risk before execution
-- Fallback: returns original values on degenerate input (zero entry, entry == SL, live price already past structural SL)
-
-### Margin Tracking
-`margin_required` is stored on Trade and Position at execution time via `backend/app/services/margin_calculator.py`:
-- Options: margin = full premium paid (entry_price × quantity)
-- Futures: margin = per-symbol tiered heuristic using `MARGIN_TIER_MAP` in `backend/app/core/constants.py`
-- Dashboard shows three risk metrics: NOTIONAL (entry×qty), RISK (|entry−SL|×qty), MARGIN (sum margin_required)
-- `POST /api/v1/trades/margin-analysis` — peak concurrent margin calculation across a set of trade IDs
-
-### Risk Gate Responsibilities
-- `_check_regulatory_limits` (strategy_runner.py) — F&O ban list only; called for all execution paths
-- Drawdown / max-trades / **daily profit cap** gates — YOLO executor only (`_final_risk_check` in `auto_executor.py`)
-- **Daily profit cap** (`max_daily_profit` in `trading_config`, INR amount, 0 = disabled): when realized + unrealized PnL (non-shadow) >= `max_daily_profit`, trade monitor closes all open non-shadow positions at market price (`ExitReason.PROFIT_CAP`) and blocks further YOLO executions. Drawdown gate uses realized PnL only; profit cap uses realized + unrealized.
-- Shadow executor — zero capital gates (always 1 lot, no risk checks)
-- Manual executor — no blocking gates; warnings computed but not enforced
-
 ## Commands
+
 ```bash
 # One-command start (infrastructure + backend + frontend)
 make dev
@@ -161,182 +171,96 @@ cd backend && python3.11 -m venv .venv && source .venv/bin/activate && pip insta
 cd frontend && npm install
 cp .env.example .env          # Then fill in Fyers API keys
 
-# Strategy 5 replay (offline signal generation test from historical candles)
+# Strategy 5 replay (offline signal generation test)
 cd backend && source .venv/bin/activate
-python scripts/replay_strategy5.py --date 2026-04-28              # all watchlist symbols
-python scripts/replay_strategy5.py --date 2026-04-28 --symbols VEDL,SUNPHARMA  # subset
+python scripts/replay_strategy5.py --date 2026-04-28
+python scripts/replay_strategy5.py --date 2026-04-28 --symbols VEDL,SUNPHARMA
 
-# One-time morning screener data freshness audit (read-only, no side effects)
-python scripts/audit_screener_data.py
+# Data freshness audits (read-only, no side effects)
+python scripts/audit_screener_data.py     # S5 morning screener
+python scripts/audit_vwap_data.py         # S2 VWAP Pullback
 
-# One-time Strategy 2 (VWAP Pullback) data freshness audit (read-only, no side effects)
-python scripts/audit_vwap_data.py
-
-# One-time backfill of market_data_daily from Fyers (run once to seed historical daily candles)
-# After this, nse_bhav_copy_task keeps the table current daily at 7:30 AM
+# Backfill market_data_daily (run once; nse_bhav_copy_task keeps it current after)
 python scripts/backfill_daily_candles.py              # last 60 days, all F&O stocks
 python scripts/backfill_daily_candles.py --days 90    # longer lookback
-python scripts/backfill_daily_candles.py --symbols TCS,RELIANCE  # subset
+python scripts/backfill_daily_candles.py --symbols TCS,RELIANCE
 
-# Strategy 5 signal backtest (replay exits against historical 1m candles)
+# Strategy 5 signal backtest
 python scripts/backtest_strategy5.py --confidence 60 --start 2026-05-05
-python scripts/backtest_strategy5.py --confidence 70 --start 2026-05-01 --end 2026-05-05
-python scripts/backtest_strategy5.py --confidence 60 --start 2026-05-05 --setup ORB
-python scripts/backtest_strategy5.py --confidence 60 --start 2026-05-05 --symbols VEDL,TCS
-python scripts/backtest_strategy5.py --confidence 70 --start 2026-05-05 --sl-mode wick  # legacy wick-based trailing SL
-python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05  # threshold sweep
-python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05 --lots 1  # normalize to 1 lot
+python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05
+python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05 --lots 1
 ```
 
 ## Deployment (GCP)
 
-Single VM deployment on Google Cloud Platform (asia-south1, Mumbai). Terraform manages all infrastructure. Full details in `docs/deployment-architecture.md`.
+Single VM on Google Cloud Platform (asia-south1, Mumbai). Full architecture and infrastructure details in `docs/deployment-architecture.md`.
 
-### GCP Setup
-- **Live URL**: http://8.231.84.44 (HTTP only, no HTTPS — single user, paper trading)
-- **Project**: `stock-trading-prod` under org `kakwani-khayti-org`
-- **Account**: `kakwani.khayti@gmail.com` (separate from penguin-bean project)
+- **Live URL**: [http://8.231.84.44](http://8.231.84.44) (HTTP only — single user, paper trading)
+- **Project**: `stock-trading-prod` / `kakwani-khayti-org` / `kakwani.khayti@gmail.com`
+- **SSH**: `ssh -i ~/.ssh/st-deploy deploy@8.231.84.44` (key from Terraform state)
 - **gcloud config**: `stock-trading` (isolated via `direnv` + `.envrc`)
-- **ADC credentials**: `~/.gcp/stock-trading-adc.json`
-- **SSH key**: `~/.ssh/st-deploy` (extracted from Terraform state; `ssh -i ~/.ssh/st-deploy deploy@8.231.84.44`)
-- **Free trial**: ₹28,365 credits, expires Aug 17 2026
+- **Free trial**: Rs 28,365 credits, expires Aug 17 2026
 
-### Infrastructure Commands
-```bash
-# One-time bootstrap (enables APIs, creates TF state bucket)
-./infrastructure/bootstrap/bootstrap.sh
-
-# Terraform
-make infra-plan                # Preview changes
-make infra-up                  # Create/update infrastructure
-make infra-down                # DESTROY everything (one command)
-
-# After terraform apply, retrieve sensitive outputs:
-cd infrastructure/terraform
-terraform output -raw vm_external_ip      # → add as GCP_VM_IP in GitHub Secrets
-terraform output -raw deploy_private_key  # → add as SSH_PRIVATE_KEY in GitHub Secrets
-terraform output -raw gemini_api_key      # → add as GOOGLE_API_KEY in GitHub Secrets
-
-# Release (tag-based deploy)
-make release v=1.0.0           # Create + push tag → triggers deploy
-make deploy-version v=1.0.0    # Rollback: deploy a specific version via workflow_dispatch
-make show-version              # Show what version is deployed in production
-
-# Production management
-make ssh                       # SSH into VM
-make prod-up                   # Start containers on VM
-make prod-down                 # Stop containers on VM
-make prod-logs                 # Tail logs on VM
-
-# Production debugging (container names use st-* prefix, no app.log file — logs go to stdout)
-ssh -i ~/.ssh/st-deploy deploy@8.231.84.44 "docker logs --tail 200 st-backend"     # Recent backend logs
-ssh -i ~/.ssh/st-deploy deploy@8.231.84.44 "docker logs st-backend 2>&1 | grep -i ERROR | tail -50"  # Errors
-ssh -i ~/.ssh/st-deploy deploy@8.231.84.44 "docker ps --format 'table {{.Names}}\t{{.Status}}'"       # Container health
-
-# Database migration (local → production)
-make db-export                 # Dump local DB to dump.sql
-make db-import                 # Upload and import dump.sql to VM
-```
-
-### CI/CD (Tag-Based Releases)
-
-> **SAFE TO PUSH TO MASTER.** Pushing to `master` only builds Docker images (CI validation) — it does NOT deploy. To deploy: cut a semver tag.
-
-**Build** (master push): GitHub Actions builds backend + frontend Docker images → pushes to ghcr.io with `:<sha>` and `:latest` tags. No deploy. Images cached via GHA cache (`type=gha`).
-
-**Deploy** (tag push): `make release v=1.0.0` creates a `v1.0.0` tag → GitHub Actions retags the existing `:<sha>` image as `:v1.0.0` (no rebuild, ~5s) → SSHes to VM → pulls versioned images → runs migrations → deploys. Health check verifies version in `/api/v1/health` response.
+### Key Commands
 
 ```bash
-# Create and push a release (triggers retag + deploy via GitHub Actions)
-make release v=1.0.0
-
-# Emergency rollback to a previous version
-make deploy-version v=0.9.5
-
-# Check what version is deployed right now
-make show-version
-# or: curl http://8.231.84.44/api/v1/health
-
-# Manual deploy via GitHub Actions UI (escape hatch)
-# GitHub → Actions → Deploy → Run workflow → (optional version)
+make release v=1.0.0         # Tag + deploy via GitHub Actions
+make deploy-version v=0.9.5  # Rollback to specific version
+make show-version            # Check deployed version (or: curl http://8.231.84.44/api/v1/health)
+make ssh                     # SSH into VM
+make prod-logs               # Tail production logs
+make infra-plan              # Terraform preview
+make infra-up                # Create/update infrastructure
 ```
 
-Workflows: `.github/workflows/ci.yml` (build on master push, ~2-4 min), `.github/workflows/deploy.yml` (tag-based deploy, ~1 min retag + deploy). 500 min/month free for private repos.
+### CI/CD
 
-### Versioning Strategy
-Semver (`vMAJOR.MINOR.PATCH`). Before releasing, run `git log v{last}..HEAD --oneline` to review changes since the last tag:
-- **Patch** (+0.0.1): bug fixes, doc updates, config changes
-- **Minor** (+0.1.0): new features, endpoints, UI additions, strategy changes
-- **Major** (+1.0.0): always confirm with user — never auto-decide
+> **SAFE TO PUSH TO MASTER.** Master push only builds Docker images (CI validation) — does NOT deploy. Deploy: cut a semver tag.
 
-### Secrets (GitHub Repo Secrets)
-All secrets stored in GitHub (Settings → Secrets), written to `.env` on VM during each deploy. Never in GCP Secret Manager or the codebase.
+- **Build** (master push): GitHub Actions builds images → pushes to ghcr.io with `:<sha>` + `:latest` tags (~2-4 min)
+- **Deploy** (tag push): retags existing image as `:v1.0.0` (no rebuild, ~5s) → SSHes to VM → pulls + migrates + deploys
 
-### Production Container Health
-- **Backend**: `curl -sf http://localhost:8080/api/v1/tasks` healthcheck with 60s start_period, 10s interval. `ulimits: nofile: 65536` (default 1024 caused FD exhaustion during WS reconnect tick bursts).
-- **PostgreSQL**: `pg_isready` healthcheck
-- **Redis**: `redis-cli ping` healthcheck
-- **Nginx**: DNS re-resolution via `resolver 127.0.0.11 valid=5s` + variable-based `proxy_pass` — picks up new container IPs after deploys without manual `nginx -s reload`
+### Versioning
 
-### Directory Map (Infrastructure)
-```
-infrastructure/
-├── terraform/          # All .tf files (VM, firewall, IP, APIs, Gemini key)
-├── bootstrap/          # bootstrap.sh (one-time: state bucket + API enable)
-├── docker/             # Dockerfile.backend, Dockerfile.frontend, nginx.conf
-└── scripts/            # vm-startup.sh (first-boot: Docker, deploy user, IST)
-.envrc                  # direnv: GCP config isolation (committed, no secrets)
-.github/workflows/      # ci.yml (build on master push), deploy.yml (tag-based deploy)
-docker-compose.prod.yml # Production: all 5 services in containers
-.dockerignore           # Excludes .git, .venv, node_modules, tests, docs from Docker build context
-```
+Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before releasing:
 
-## Known Cleanup Tasks
-
-Deferred work that is safe to do but not urgent. Each entry has a **why it's deferred** and **what to run**.
-
-### 1. Purge stale daily-bar rows from `market_data_1m`
-- **What**: ~9,600 rows stored at midnight UTC (hour=0, minute=0) — the old daily candle hack that predates `market_data_daily`. Nothing reads them anymore.
-- **Why deferred**: Soak period — let `market_data_daily` run for a week to confirm it's being populated correctly before destroying the only fallback evidence.
-- **When ready** (after ~2026-05-08): run directly against the DB:
-  ```sql
-  DELETE FROM market_data_1m
-  WHERE EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC') = 0
-    AND EXTRACT(MINUTE FROM timestamp AT TIME ZONE 'UTC') = 0;
-  ```
-
----
+- **Patch**: bug fixes, docs, config
+- **Minor**: new features, endpoints, UI, strategy changes
+- **Major**: always confirm with user — never auto-decide
 
 ## Test Coverage
-Tests live in `backend/tests/`. 986 tests, all passing. Currently covered:
-- `test_core/` - IST timezone utils, market hour checks
-- `test_indicators/` - VWAP, CPR, previous day, OI, VIX, candle patterns, relative strength (raw score + percentile ranking), volume analysis, market levels (swing detection, index SL/target selection), ADR (computation, threshold), RVOL (profile building, computation, serialization), ATR (computation, Wilder's smoothing), gap analysis (detection, continuation, edge cases), stock trend (6 factors individually, composite direction/strength classification, graceful degradation with <10 candles, V-reversal, flat market)
-- `test_strategies/` - VWAP Pullback signal generation, entry/exit, confidence scoring, instrument_type (uses `strategy_params` in MarketContext); CAN SLIM scoring, base pattern detection, strategy evaluate/exit/sizing; Intraday Futures phase machine, ORB breakout detection (5-min candle close confirmation, ORB range min/max validation), 4 sub-setups (ORB/VWAP Bounce/PDH-PDL/Gap Continuation), caution zone confirmation, multi-factor confidence (9 factors incl. stock trend alignment + direction-aware Nifty bias + 4-way OI classification), full position sizing (RVOL/confidence/screener/VIX/briefing/trend), filters (ADR/RVOL/VWAP/price/volume/Nifty bias/stock trend direction), stock trend filter (STRONG opposing blocks, MODERATE allows with risk_warning, NEUTRAL passes), `get_symbols()` dynamic Redis
-- `test_services/` - **Execution utils (13 tests: `recompute_sl_target` — OPTION higher/lower/same entry, no target → None, R:R ratio preserved; FUTURE long SL unchanged + target recomputed, short SL unchanged + target recomputed, no target; edge cases: entry==SL returns originals, live price past structural SL returns originals, zero entry returns originals)**. Brokerage calculator (13 tests: options buy/sell roundtrip, losing trade, zero exit, futures long/short, STT/stamp side-awareness, Decimal precision, component sum, to_dict serialization, frozen dataclass, edge cases), **Margin calculator (15 tests: option margin = full premium, option ignores symbol tier, option zero price, futures known symbols — RELIANCE/HDFCBANK/TCS/VEDL/IDEA tier rates, futures index symbols — NIFTY/BANKNIFTY at 100% tier, futures unknown symbol defaults to 20%, zero quantity for all instrument types)**, Option resolver (strike/expiry/SL/target, uses `strategy_params` in MarketContext), futures resolver (expiry calculation), strategy runner (auto filter, manual eval, strategy filter, signal dedup — Case-2 archives to `signal_history` before update + `session.add` assertion, Case-2 also fires shadow_execute regression test, `_is_dedup_skip` AI-gate pre-check, **same-day dedup scoping** (4 tests: intraday ignores yesterday signal, intraday matches today signal, positional dedup matches across days, `_is_dedup_skip` intraday scoped to today), `_check_regulatory_limits` + `get_strategy_params` patches), FeedManager decoupling (incl. index futures volume symbol forwarding), **RVOL fixes (9 tests: first-tick volume seeding — zero delta on restart/new subscription, normal delta on subsequent ticks, fresh morning start, day boundary reset, WS reconnect baseline preservation, multi-symbol independence; per-symbol RVOL profile — cross-symbol isolation, single Redis load with caching, missing profile cached as None)**, OI snapshot parsing, candle backfill symbol resolution, morning screener (quant scoring, news integration, LLM enrichment, briefing schema validation, Stage 3 confidence schema validation, briefing LLM call params + fallbacks, OI scoring, delivery % scoring, **Stage 2 news display-name lookup (3 tests: company name from symbol master, fallback to ticker when master key missing, fallback to ticker when Redis raises), Stage 2 retry logic (3 tests: timeout on attempt-1 retries and succeeds on attempt-2, timeout on both attempts → "unknown" fallback with error key, non-timeout exception does not retry → called once → "unknown" fallback)**), briefing per-setup win rates (4 tests: Trade→Signal join for setup_type extraction, ORB fallback, empty trades, win rate accuracy), global cues mid-day shift (7 tests: crude/VIX shift detection, threshold filtering, debounce, simultaneous shifts, missing morning/current cues), pre-open reassessment (22 tests: gap-adjusted bias override/nudge/no-change, gap alignment bonus computation/cap/neutral/misaligned, integration: watchlist bias override, VIX update in global cues, score bonus, re-sort, skip on missing watchlist, pdc=None skips without crash — covers permanent-watchlist stocks injected with pdc=None), **lot sizing (14 tests: shadow always-1-lot + return type, YOLO VWAP path calls `calculate_lots` with correct capital/risk/entry/sl/lot/vix_multiplier/max_lots + sizing_meta keys, YOLO S5 path calls `strategy._compute_lots` with full params dict including all 9 indicator keys + indicators kwarg, YOLO S5 fallback to `calculate_lots` when `_compute_lots` absent, manual delegates to YOLO with forwarded args, manual passes None VIX unchanged, VIX multiplier correctly forwarded for low/no/high VIX levels)**. **`test_services/conftest.py`** — `autouse` fixture that clears all StrategyRunner per-candle in-memory caches (`_s5_shift_last_checked`, `_s5_session_cache`, `_s5_oi_cache`, `_s5_counts_cache`, `_s5_rvol_profiles`, `_oi_analysis_cache`, `_daily_candles_cache`, `_canslim_symbol_cache`) before each test to prevent singleton state leaking between tests.
-- `test_tasks/` - NSE bhav copy (20 tests: CSV parsing with new NSE format, URL construction, Redis storage, retry logic, date handling, gap-fill); stock futures OI (8 tests: FUT row persistence, OI change calculation, scheduling, symbol resolution); S5 intraday watchlist OI (5 tests: market-closed skip, no-token skip, no-watchlist skip, happy-path persist with FUT/strike_price=0, all-resolutions-fail skip); **Signal expiry (5 tests: non-trading-day skip, expires pending intraday signals, no signals to expire, DB exception graceful handling, intraday strategies tuple contents excludes CAN SLIM)**
-- `test_research/` - LLM client (JSON extraction, truncated JSON repair, markdown code block parsing, factory credentials incl. pro/flash model selection), LLM client retry (retry-once on empty response, retry on non-JSON text, no retry on first success, both-attempts-fail returns empty, retry warning logged, JSON array triggers retry), response_schema pass-through (schema forwarded to generate, None by default), Gemini config (schema in GenerateContentConfig, no schema when None), parse failure logging (raw text logged, empty text logged), **LLM integration tests** (6 tests, real Gemini API via AI Studio — auto-skipped without `GOOGLE_API_KEY`): simple JSON generation, nested JSON, response_schema enum constraint, briefing schema shape, Pro model connectivity, Stage 3-like array schema
-- `test_api/` - Strategy endpoints (evaluate, batch evaluate, auto-mode toggle); **Margin analysis** (`test_margin_analysis.py`, 11 tests: no-overlap peak = max individual, clearly sequential non-overlap, overlapping peak = sum, peak_time at second-trade entry, three-way partial overlap, empty/nonexistent trade_ids → zeros, all-None margin → zeros, zero margin → zeros, mixed margin/no-margin, open trade with no exit_time)
-- `test_agent/` - Telegram commands (33 tests: /shadow empty+open+closed+no-pre-tags+emoji, /yolo empty+with-trades, /status market-open+closed+feed-stale, /market all-data+missing-keys, /signals empty+grouped+strategy-labels, /help all-commands, dispatch table+unknown-command, helpers pnl_emoji/pct_str/strategy_short/instrument_label/to_ist/direction, direction-in-cards futures-long+short+option-hides); Shadow executor (12 tests: PENDING→trade/position creation, no dedup, non-pending skip, missing signal, price fallback, confidence gate skip low, confidence gate fire at exact threshold, open shadow blocks new shadow, closed shadow allows new shadow on Case-2 re-fire, permanent watchlist skip when flag enabled, permanent watchlist fires when flag disabled); YOLO auto executor (4 tests: permanent watchlist skip when flag enabled, permanent watchlist fires when flag disabled, confidence gate skip, confidence gate fire); Trade monitor (20 tests: SL hit, target hit YOLO/SEMI/dedup, time exit intraday/positional, trailing SL positional + intraday breakeven/progressive/HWM/SL-never-moves-down, expiry roll, shadow positions, no price, no exit); **Notification redesign** (10 tests: confidence floor — above/below/exact threshold + None confidence backward compat, manual execution notification — futures + options format, EOD shadow trade exclusion, morning pre-market message — key sections + LLM failure graceful fallback, morning pre-open message — watchlist + gap commentary)
 
-## AI Documentation Protocol (MANDATORY)
-This is an AI-first project. Documentation ships WITH every code change — not as an afterthought.
+Tests in `backend/tests/` (~1000 tests). Run: `make test`. See `backend/CLAUDE.md` for per-module coverage details.
 
-Every major directory has a CLAUDE.md with its purpose, files, conventions, and how-to guides. A new AI session should be able to understand the entire project from these files alone.
+## Documentation Reference
 
-**On EVERY code change, you MUST:**
-1. Update the relevant CLAUDE.md (root, backend/, frontend/) if the change adds/removes/renames files, changes conventions, or adds new patterns
-2. Update ARCHITECTURE.md if the change affects data flow, system design, or ports
-3. Update docs/strategies/*.md if strategy logic changes
-4. Update project memories if project-level decisions change (ports, versions, indices, conventions)
-5. Run `/test-runner` to validate tests pass
-6. Run `/review-code` to check quality and consistency
-7. Run `/update-docs` as a final verification that docs match code
+### docs/strategies/
 
-**Documentation is not optional.** If you add a new file and don't update CLAUDE.md, the next session won't know it exists.
+- `strategy-1-orb.md` through `strategy-5-intraday-futures.md` — full trading rules per strategy
+- `strategy-5-phase1-reference.md`, `strategy-5-phase2-reference.md` — S5 phase implementation references
+- `arjun-liquide-study.md` — reverse-engineering of "Arjun - Options by Liquide" Telegram channel (630 trades parsed, independently backtested, feature-importance analysis, implied strategy extraction)
+- `intraday-hunter-study.md` — reverse-engineering of @IntradayHunter (30 videos analyzed, gap-down CE setup, position sizing confirmed)
+
+### docs/ai/
+
+- `shadow-agent.md` — shadow executor design, isolation guarantees
+- `signal-confidence-agent.md` — LLM confidence overlay design
+
+### docs/backtest/
+
+- `harness.md` — backtest framework usage and modes
+- `option-data.md` — option data sourcing for backtests
+
+### docs/
+
+- `deployment-architecture.md` — full deployment architecture, infrastructure, secrets management, container health
+- `cross-machine-setup.md` — multi-machine dev setup (Tailscale, etc.)
+- `BUGS-2026-04-29.md` — historical bug tracker
 
 ## How-To Guides
 
 ### Add a New Strategy
+
 1. Create `backend/app/strategies/strategy_N_name.py` extending `BaseStrategy`
 2. Implement `evaluate()`, `should_exit()`, `get_position_size()`
 3. Add strategy name to `StrategyName` enum in `backend/app/core/enums.py`
@@ -346,6 +270,7 @@ Every major directory has a CLAUDE.md with its purpose, files, conventions, and 
 7. Add label in `frontend/src/lib/constants.ts` → `STRATEGY_LABELS`
 
 ### Add a New API Endpoint
+
 1. Create or edit router file in `backend/app/api/v1/`
 2. Add Pydantic schemas in `backend/app/schemas/`
 3. Include router in `backend/app/api/router.py`
@@ -353,12 +278,14 @@ Every major directory has a CLAUDE.md with its purpose, files, conventions, and 
 5. Add TypeScript types in `frontend/src/lib/types.ts`
 
 ### Add a New Frontend Page
+
 1. Create `frontend/src/app/{page-name}/page.tsx` with `'use client'` directive
 2. Add nav link in `frontend/src/components/layout/Sidebar.tsx`
 3. Create domain components in `frontend/src/components/{domain}/`
 4. Add store slice if needed in `frontend/src/store/index.ts`
 
 ### Add a New Technical Indicator
+
 1. Create pure function file in `backend/app/indicators/`
 2. Add to `MarketContext` in `backend/app/strategies/base.py` if strategies need it
 3. Wire into `strategy_runner.py` to populate context
@@ -370,25 +297,24 @@ Unit tests verify code correctness, but many bugs (volume spikes, VWAP disappear
 
 **Prerequisites**: PostgreSQL + Redis running (`docker compose up -d`), Fyers token in Redis (auto-login at 7:45 AM or manual via browser).
 
-#### During Market Hours (9:15–15:30 IST)
+#### During Market Hours (9:15-15:30 IST)
 
 ```bash
 # 1. Start the backend (or it may already be running)
-make backend                    # or: cd backend && source .venv/bin/activate && uvicorn app.main:app --port 8080
+make backend
 
 # 2. Establish baselines — snapshot current state BEFORE the change
 docker exec -i st-postgres psql -U trader -d stocktrading -c "
-  SELECT symbol, ROUND(AVG(volume)) as avg_vol, MAX(volume) as max_vol, SUM(volume) as total_vol
+  SELECT symbol, ROUND(AVG(volume)) as avg_vol, MAX(volume) as max_vol
   FROM market_data_1m
   WHERE timestamp >= (NOW() AT TIME ZONE 'Asia/Kolkata')::date::timestamptz AT TIME ZONE 'Asia/Kolkata'
     AND symbol IN ('VEDL','SAIL','NIFTY','BANKNIFTY')
   GROUP BY symbol ORDER BY symbol;"
 
-# 3. Test restart scenarios — kill and restart the backend
-kill -9 $(lsof -ti :8080)      # force kill
-# restart with new code
-cd backend && source .venv/bin/activate && uvicorn app.main:app --port 8080 &
-sleep 90                        # wait for at least one candle close (~60s)
+# 3. Test restart scenarios
+kill -9 $(lsof -ti :8080)
+make backend &
+sleep 90  # wait for candle close
 
 # 4. Compare post-restart candles against baseline
 docker exec -i st-postgres psql -U trader -d stocktrading -c "
@@ -398,72 +324,47 @@ docker exec -i st-postgres psql -U trader -d stocktrading -c "
     AND symbol IN ('VEDL','SAIL','NIFTY','BANKNIFTY')
   ORDER BY timestamp DESC, symbol;"
 
-# 5. Test WS reconnect (manual Connect button scenario)
+# 5. Test WS reconnect
 curl -s http://localhost:8080/api/v1/market/feed/stop -X POST
 sleep 2
 curl -s http://localhost:8080/api/v1/market/feed/start -X POST
-sleep 90                        # wait for candle close
+sleep 90
 
-# 6. Check strategy diagnostics (VWAP, gates, signals)
+# 6. Check strategy diagnostics
 curl -s "http://localhost:8080/api/v1/options/agent-log?date=$(date +%F)&limit=5" | python3 -m json.tool
 curl -s "http://localhost:8080/api/v1/intraday-futures/agent-log?date=$(date +%F)&limit=5" | python3 -m json.tool
-
-# 7. Inspect Redis state (prices, RVOL profiles, watchlist)
-cd backend && source .venv/bin/activate && python3 -c "
-import asyncio, redis.asyncio as aioredis, json
-async def check():
-    r = aioredis.from_url('redis://localhost:6380', decode_responses=True)
-    for sym in ['NIFTY','VEDL','TCS']:
-        p = await r.get(f'price:{sym}')
-        print(f'{sym}: LTP={json.loads(p)[\"ltp\"] if p else \"MISSING\"}')
-        rv = await r.get(f'strat5:rvol_baseline:{sym}')
-        print(f'  RVOL profile: {\"exists\" if rv else \"MISSING\"}')
-    await r.aclose()
-asyncio.run(check())"
 ```
 
-**What to look for:**
-- Candle volumes after restart should be in normal range (not millions)
-- VWAP values should appear in agent logs after reconnect (not "missing VWAP")
-- Redis prices should update within seconds of WS connect
-- No `ERROR` lines in backend stdout/logs
+**What to look for:** Normal candle volumes (not millions), VWAP in agent logs after reconnect, Redis prices updating within seconds, no `ERROR` lines in stdout.
 
 #### Outside Market Hours
 
-Live ticks won't flow, but you can still verify:
 ```bash
-# Unit tests — always the first check
-make test
-
-# Start backend — startup tasks run (symbol master, backfill, schedulers)
-# but no live candles; strategies won't evaluate
-make backend
+make test                      # Unit tests first
+make backend                   # Startup tasks run but no live candles
 
 # REST endpoints that work without live data
 curl -s http://localhost:8080/api/v1/health | python3 -m json.tool
-curl -s http://localhost:8080/api/v1/tasks | python3 -m json.tool       # background task status
-curl -s http://localhost:8080/api/v1/strategies | python3 -m json.tool  # strategy configs
-
-# DB queries — inspect historical candles, signals, trades
-docker exec -i st-postgres psql -U trader -d stocktrading -c "
-  SELECT symbol, COUNT(*), MIN(timestamp AT TIME ZONE 'Asia/Kolkata'), MAX(timestamp AT TIME ZONE 'Asia/Kolkata')
-  FROM market_data_1m WHERE timestamp > NOW() - INTERVAL '1 day' GROUP BY symbol ORDER BY symbol;"
-
-# Research agent — tests LLM connectivity (Gemini/Vertex AI)
-curl -s http://localhost:8080/api/v1/research/start -X POST \
-  -H 'Content-Type: application/json' -d '{"symbol":"TCS"}'
-
-# Feed refresh via REST (fetches quotes without WS)
-curl -s http://localhost:8080/api/v1/market/feed/refresh -X POST
+curl -s http://localhost:8080/api/v1/tasks | python3 -m json.tool
+curl -s http://localhost:8080/api/v1/strategies | python3 -m json.tool
 ```
 
-**Key rule:** Never test against production. Local has its own PostgreSQL (port 5433), Redis (port 6380), and Fyers token. The `TELEGRAM_ENABLED=false` setting in local `.env` prevents accidental Telegram messages.
+**Key rule:** Never test against production. Local has its own PostgreSQL (port 5433), Redis (port 6380), and Fyers token. `TELEGRAM_ENABLED=false` in local `.env` prevents accidental Telegram messages.
+
+## Known Cleanup Tasks
+
+- **Purge stale daily-bar rows from `market_data_1m`**: ~9,600 rows at midnight UTC — old daily candle hack predating `market_data_daily`. Soak period ended 2026-05-08; ready to run: `DELETE FROM market_data_1m WHERE EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC') = 0 AND EXTRACT(MINUTE FROM timestamp AT TIME ZONE 'UTC') = 0;`
 
 ## graphify
+
 This project has a graphify knowledge graph at graphify-out/.
 
 Rules:
+
 - Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
 - If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
+- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep
 - After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
+
+---
+

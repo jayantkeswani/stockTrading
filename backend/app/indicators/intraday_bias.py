@@ -65,7 +65,7 @@ _GAP_DECAY = 0.6          # 0.15 * (1 - 0.6*1.0) = 0.06 at close
 
 
 def _session_progress(as_of: datetime | None) -> float:
-    """0.0 at market open, 1.0 at 15:15. Clamped to [0, 1]."""
+    """Return how far through the trading session we are, from 0.0 (9:15 AM) to 1.0 (3:15 PM)."""
     if as_of is None:
         return 0.0
     ist = _get_ist()

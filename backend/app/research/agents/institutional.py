@@ -29,6 +29,7 @@ class InstitutionalAgent(BaseResearchAgent):
     description = "Analyzing FII/DII/MF shareholding trends"
 
     async def research(self, ctx: ResearchContext, llm: LLMClient) -> AgentResult:
+        """Fetch FII/DII/MF shareholding from NSE, compute QoQ changes, and summarize via LLM."""
         data_sources = []
         findings: dict = {}
 

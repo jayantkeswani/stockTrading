@@ -207,4 +207,5 @@ class FyersClient:
             return {}
 
     async def close(self):
+        """Close the underlying httpx async client."""
         await self._client.aclose()
