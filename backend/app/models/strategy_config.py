@@ -21,3 +21,5 @@ class StrategyConfig(Base, TimestampMixin):
     symbol_map: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict
     )  # Maps short_name → fyers_symbol, e.g. {"TCS": "NSE:TCS-EQ"}
+    shadow_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    yolo_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

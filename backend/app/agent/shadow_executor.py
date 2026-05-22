@@ -21,6 +21,7 @@ from app.core.utils import is_past_close_deadline, now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
 from app.models.signal import Signal
+from app.models.strategy_config import StrategyConfig
 from app.models.trade import Trade, build_signal_snapshot
 from app.services.execution_utils import recompute_sl_target
 from app.services.live_price import get_live_price
@@ -48,8 +49,9 @@ async def _do_shadow_execute(signal_id) -> None:
     """Core shadow execution logic — creates a SHADOW Trade + Position for the signal.
 
     Gate order: PENDING status → no open shadow for signal → past close deadline →
-    F&O ban → resolution failure → confidence >= min_confidence_for_shadow →
-    permanent watchlist check. Always uses 1 lot, no capital gates.
+    F&O ban → resolution failure → per-strategy shadow_enabled →
+    confidence >= min_confidence_for_shadow → permanent watchlist check.
+    Always uses 1 lot, no capital gates.
     SL/target recomputed from live LTP via recompute_sl_target().
     """
     async with async_session_factory() as session:
@@ -96,6 +98,18 @@ async def _do_shadow_execute(signal_id) -> None:
             return
 
         cfg = await get_trading_config()
+
+        # Per-strategy shadow gate
+        sc_result = await session.execute(
+            select(StrategyConfig).where(StrategyConfig.strategy_name == signal.strategy_name)
+        )
+        strategy_cfg = sc_result.scalar_one_or_none()
+        if strategy_cfg is not None and not strategy_cfg.shadow_enabled:
+            logger.info(
+                "Shadow skip: strategy %s has shadow_enabled=False for signal %s",
+                signal.strategy_name, signal_id,
+            )
+            return
 
         if signal.is_permanent_watchlist and cfg.shadow_skip_permanent_watchlist:
             logger.info(

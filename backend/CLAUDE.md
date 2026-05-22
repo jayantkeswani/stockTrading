@@ -27,8 +27,8 @@ Credentials: user=`trader`, password=`trader_dev_123`, db=`stocktrading`, port=5
 
 ### Shadow + YOLO Isolation
 Three independent consumers of every signal, fully isolated:
-1. **Shadow executor** (`shadow_executor.py`) — creates SHADOW trade/position based on global `min_confidence_for_shadow`. Always 1 lot, no capital gates. One open shadow per signal; closed shadows don't block (allows fresh shadow on Case-2 re-fire).
-2. **YOLO executor** (`auto_executor.py`) — creates YOLO trade/position based on global `min_confidence_for_execution`. Enforces drawdown, max-trades, and daily profit cap gates; lot sizing via `compute_lots_for_yolo`.
+1. **Shadow executor** (`shadow_executor.py`) — creates SHADOW trade/position based on global `min_confidence_for_shadow` and per-strategy `shadow_enabled` flag. Always 1 lot, no capital gates. One open shadow per signal; closed shadows don't block (allows fresh shadow on Case-2 re-fire).
+2. **YOLO executor** (`auto_executor.py`) — creates YOLO trade/position based on global `min_confidence_for_execution` and per-strategy `yolo_enabled` flag. Enforces drawdown, max-trades, and daily profit cap gates; lot sizing via `compute_lots_for_yolo`.
 3. **Manual execution** (`signals.py`) — signal stays PENDING, user clicks EXEC. Lot sizing via `compute_lots_for_manual`; no blocking gates, warnings shown instead.
 
 All three confidence thresholds (`min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`) are global in `trading_config`. Cross-field validation enforces `persist < shadow <= execution`.
@@ -174,7 +174,7 @@ All models extend `BaseModel` (UUID PK, `created_at`/`updated_at` TIMESTAMPTZ).
 | `MarketData1m` | `market_data_1m` | 1-minute OHLCV for intraday candles (9:15–15:30 IST) |
 | `MarketDataDaily` | `market_data_daily` | One OHLCV + `delivery_pct` per symbol per trading date. Unique on `(symbol, date)`. Populated by `nse_bhav_copy_task`. Used by morning screener for all 8 quant scoring factors. |
 | `OISnapshot` | `oi_snapshots` | `option_type` (`"CE"`, `"PE"`, or `"FUT"` for stock futures with `strike_price=0`) |
-| `StrategyConfig` | `strategy_configs` | `is_active`, `auto_mode`, `parameters` (JSONB), `symbols` (JSONB list), `symbol_map` (JSONB: short_name → fyers_symbol, stored at insertion time) |
+| `StrategyConfig` | `strategy_configs` | `is_active`, `auto_mode`, `shadow_enabled`, `yolo_enabled`, `parameters` (JSONB), `symbols` (JSONB list), `symbol_map` (JSONB: short_name → fyers_symbol, stored at insertion time) |
 | `TradingConfig` | `trading_config` | Singleton row: `capital`, `max_daily_drawdown_pct`, `max_daily_profit` (INR, 0=disabled), `max_risk_per_trade_pct`, `max_trades_per_day`, `autonomy_level`, `min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`, `shadow_skip_permanent_watchlist`, `yolo_skip_permanent_watchlist` |
 | `StockFundamental` | `stock_fundamentals` | CAN SLIM scores + raw fundamentals per stock |
 | `FundamentalHistory` | `fundamental_history` | Quarterly snapshots for trend analysis |
@@ -669,12 +669,12 @@ Internal flow per position check:
 **`agent:action` broadcast shape**: must match `AgentLogResponse` (id, action_type, trade_id, details, requires_confirmation, confirmation_status, confirmed_at, created_at) — frontend `AgentFeed` reads `log.id` for React keys and `log.details.{symbol,pnl,strategy_name}` for display. Do NOT change to a flat dict.
 
 #### `auto_executor.py`
-- `auto_execute_signal(signal_id) -> dict | None` — YOLO gate order: (1) PENDING + executable; (2) confidence gate (`min_confidence_for_execution`); (3) open position dedup (non-shadow only); (4) `_final_risk_check` (drawdown, max-trades, daily profit cap); (5) permanent watchlist gate (`yolo_skip_permanent_watchlist`). Sets `Trade.source = "YOLO"`. Used by: agent_runner.on_new_signal()
+- `auto_execute_signal(signal_id) -> dict | None` — YOLO gate order: (1) PENDING + executable; (2) confidence gate (`min_confidence_for_execution`); (3) per-strategy `yolo_enabled` gate (from `strategy_configs`); (4) open position dedup (non-shadow only); (5) `_final_risk_check` (drawdown, max-trades, daily profit cap); (6) permanent watchlist gate (`yolo_skip_permanent_watchlist`). Sets `Trade.source = "YOLO"`. Used by: agent_runner.on_new_signal()
 
 Lot sizing via `compute_lots_for_yolo()`. SL/target recomputed from live LTP via `recompute_sl_target()`. Sets `margin_required` on Trade + Position. Broadcasts `trade:open` (includes `margin_required`) + `agent:auto_executed`.
 
 #### `shadow_executor.py`
-- `shadow_execute_signal(signal_id) -> None` — fire-and-forget; gate order: (1) PENDING; (2) open shadow dedup (CLOSED shadows don't block — allows fresh shadow on Case-2 re-fire); (3) past close deadline; (4) F&O ban; (5) resolution failure; (6) confidence gate (`min_confidence_for_shadow`); (7) permanent watchlist gate (`shadow_skip_permanent_watchlist`). Creates `Trade(source="SHADOW")` + `Position(is_shadow=True)`. Used by: strategy_runner._handle_signal(), strategy_runner._dedup_signal() (Case-2)
+- `shadow_execute_signal(signal_id) -> None` — fire-and-forget; gate order: (1) PENDING; (2) open shadow dedup (CLOSED shadows don't block — allows fresh shadow on Case-2 re-fire); (3) past close deadline; (4) F&O ban; (5) resolution failure; (6) per-strategy `shadow_enabled` gate (from `strategy_configs`); (7) confidence gate (`min_confidence_for_shadow`); (8) permanent watchlist gate (`shadow_skip_permanent_watchlist`). Creates `Trade(source="SHADOW")` + `Position(is_shadow=True)`. Used by: strategy_runner._handle_signal(), strategy_runner._dedup_signal() (Case-2)
 
 Always 1 lot. No capital gates (even VIX extreme, drawdown, max-trades, outside window — these blocked signals are shadow-executed to measure what would have happened). SL/target recomputed from live LTP. See `docs/ai/shadow-agent.md` for isolation guarantees.
 

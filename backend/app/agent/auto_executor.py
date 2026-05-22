@@ -32,6 +32,7 @@ from app.core.utils import now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
 from app.models.signal import Signal
+from app.models.strategy_config import StrategyConfig
 from app.models.trade import Trade, build_signal_snapshot
 from app.websocket.manager import ws_manager
 
@@ -40,6 +41,11 @@ logger = logging.getLogger(__name__)
 
 async def auto_execute_signal(signal_id) -> dict | None:
     """Attempt to auto-execute a signal in YOLO mode.
+
+    Gate order: PENDING + executable → confidence >= min_confidence_for_execution →
+    per-strategy yolo_enabled → permanent watchlist check → open position dedup →
+    _final_risk_check (drawdown, max-trades, daily profit cap).
+    Lot sizing via compute_lots_for_yolo(). SL/target recomputed from live LTP.
 
     Args:
         signal_id: UUID of the signal to execute.
@@ -80,6 +86,18 @@ async def auto_execute_signal(signal_id) -> dict | None:
                     float(signal.confidence), min_exec_conf, signal.symbol,
                 )
                 return None
+
+        # Per-strategy YOLO gate
+        sc_result = await session.execute(
+            select(StrategyConfig).where(StrategyConfig.strategy_name == signal.strategy_name)
+        )
+        strategy_cfg = sc_result.scalar_one_or_none()
+        if strategy_cfg is not None and not strategy_cfg.yolo_enabled:
+            logger.info(
+                "YOLO skip: strategy %s has yolo_enabled=False for signal %s",
+                signal.strategy_name, signal_id,
+            )
+            return None
 
         if signal.is_permanent_watchlist and cfg.yolo_skip_permanent_watchlist:
             logger.info(

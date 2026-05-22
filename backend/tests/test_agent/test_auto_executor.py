@@ -154,7 +154,10 @@ def _mock_session(mock_session_factory, signal, added_objects=None):
     signal_result.scalar_one_or_none.return_value = signal
     no_result = MagicMock()
     no_result.scalar_one_or_none.return_value = None
-    session.execute = AsyncMock(side_effect=[signal_result, no_result])
+    # Order: (1) signal lookup, (2) StrategyConfig lookup, (3) position dedup
+    strategy_cfg_result = MagicMock()
+    strategy_cfg_result.scalar_one_or_none.return_value = None
+    session.execute = AsyncMock(side_effect=[signal_result, strategy_cfg_result, no_result])
     session.add = lambda obj: added_objects.append(obj)
     session.flush = AsyncMock()
     session.commit = AsyncMock()

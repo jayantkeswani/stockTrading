@@ -61,6 +61,10 @@ async def update_strategy(name: str, body: dict, db: AsyncSession = Depends(get_
         config.is_active = body["is_active"]
     if "auto_mode" in body:
         config.auto_mode = body["auto_mode"]
+    if "shadow_enabled" in body:
+        config.shadow_enabled = body["shadow_enabled"]
+    if "yolo_enabled" in body:
+        config.yolo_enabled = body["yolo_enabled"]
 
     # Auto-resolve any symbols missing from symbol_map using the symbol master
     if config.symbols:

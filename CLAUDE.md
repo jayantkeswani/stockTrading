@@ -118,10 +118,10 @@ stockTrading/
 | #   | Name                         | Status  | Instrument    | File                             | Spec                                             |
 | --- | ---------------------------- | ------- | ------------- | -------------------------------- | ------------------------------------------------ |
 | 1   | ORB (Opening Range Breakout) | STUB    | Index Options | `strategy_1_orb.py`              | `docs/strategies/strategy-1-orb.md`              |
-| 2   | VWAP Pullback + PDH/PDL + OI | PRIMARY | Index Options | `strategy_2_vwap_pullback.py`    | `docs/strategies/strategy-2-vwap-pullback.md`    |
+| 2   | VWAP Pullback + PDH/PDL + OI | ACTIVE | Index Options | `strategy_2_vwap_pullback.py`    | `docs/strategies/strategy-2-vwap-pullback.md`    |
 | 3   | Expiry Day Gamma Scalping    | STUB    | Index Options | `strategy_3_gamma_scalping.py`   | `docs/strategies/strategy-3-gamma-scalping.md`   |
 | 4   | CAN SLIM Growth Breakout     | ACTIVE  | Stock Futures | `strategy_4_canslim.py`          | `docs/strategies/strategy-4-canslim.md`          |
-| 5   | Intraday Stock Futures       | IN DEV  | Stock Futures | `strategy_5_intraday_futures.py` | `docs/strategies/strategy-5-intraday-futures.md` |
+| 5   | Intraday Stock Futures       | ACTIVE  | Stock Futures | `strategy_5_intraday_futures.py` | `docs/strategies/strategy-5-intraday-futures.md` |
 
 
 All strategy files in `backend/app/strategies/`. See `docs/strategies/` for full trading rules per strategy.

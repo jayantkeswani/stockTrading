@@ -14,6 +14,8 @@ interface StrategyConfig {
   symbols: string[];
   symbol_map?: Record<string, string>;
   timeframes: string[];
+  shadow_enabled: boolean;
+  yolo_enabled: boolean;
 }
 
 interface SymbolSuggestion {
@@ -151,6 +153,32 @@ export default function SettingsPage() {
       setStrategies((prev) =>
         prev.map((s) =>
           s.strategy_name === name ? { ...s, auto_mode: result.auto_mode } : s
+        )
+      );
+    } catch {
+      // Error
+    }
+  };
+
+  const handleToggleShadowEnabled = async (name: string, current: boolean) => {
+    try {
+      await api.updateStrategy(name, { shadow_enabled: !current });
+      setStrategies((prev) =>
+        prev.map((s) =>
+          s.strategy_name === name ? { ...s, shadow_enabled: !current } : s
+        )
+      );
+    } catch {
+      // Error
+    }
+  };
+
+  const handleToggleYoloEnabled = async (name: string, current: boolean) => {
+    try {
+      await api.updateStrategy(name, { yolo_enabled: !current });
+      setStrategies((prev) =>
+        prev.map((s) =>
+          s.strategy_name === name ? { ...s, yolo_enabled: !current } : s
         )
       );
     } catch {
@@ -390,6 +418,22 @@ export default function SettingsPage() {
                       )}
                     </button>
                     <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] font-mono text-text-muted">Shadow</span>
+                        <ToggleSwitch
+                          checked={s.shadow_enabled ?? true}
+                          onChange={() => handleToggleShadowEnabled(s.strategy_name, s.shadow_enabled ?? true)}
+                          color="accent"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] font-mono text-text-muted">YOLO</span>
+                        <ToggleSwitch
+                          checked={s.yolo_enabled ?? true}
+                          onChange={() => handleToggleYoloEnabled(s.strategy_name, s.yolo_enabled ?? true)}
+                          color="warning"
+                        />
+                      </div>
                       <div className="flex items-center gap-1">
                         <span className="text-[10px] font-mono text-text-muted">Auto</span>
                         <ToggleSwitch
