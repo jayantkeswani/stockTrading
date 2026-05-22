@@ -7,7 +7,6 @@ chat_id other than settings.telegram_chat_id (single-user safety gate).
 Commands supported:
   /status  — system snapshot (market, agent, feed, trades)
   /market  — market overview (indices, VIX, global cues)
-  /pnl     — real trade P&L (MANUAL + YOLO)
   /shadow  — shadow trade P&L
   /yolo    — YOLO trade P&L
   /signals — today's actionable signals
@@ -59,7 +58,6 @@ async def _register_commands() -> None:
                 json={"commands": [
                     {"command": "status",  "description": "System snapshot"},
                     {"command": "market",  "description": "Market overview"},
-                    {"command": "pnl",     "description": "Real trade P&L"},
                     {"command": "shadow",  "description": "Shadow trade P&L"},
                     {"command": "yolo",    "description": "YOLO trade P&L"},
                     {"command": "signals", "description": "Today's signals"},

@@ -18,6 +18,7 @@ def _make_position(**overrides):
     p.strike_price = Decimal(overrides.get("strike_price", "0"))
     p.option_type = overrides.get("option_type", "FU")
     p.entry_price = Decimal(overrides.get("entry_price", "385.00"))
+    p.target_price = Decimal(overrides.get("target_price", "400.00"))
     p.current_price = Decimal(overrides.get("current_price", "392.00"))
     p.unrealized_pnl = Decimal(overrides.get("unrealized_pnl", "1750.00"))
     p.opened_at = overrides.get("opened_at", datetime(2026, 5, 22, 9, 45, tzinfo=IST))
@@ -32,6 +33,7 @@ def _make_trade(**overrides):
     t.strike_price = Decimal(overrides.get("strike_price", "23000"))
     t.option_type = overrides.get("option_type", "CE")
     t.entry_price = Decimal(overrides.get("entry_price", "280.00"))
+    t.target_price = Decimal(overrides.get("target_price", "400.00"))
     t.exit_price = Decimal(overrides.get("exit_price", "350.00"))
     t.pnl = Decimal(overrides.get("pnl", "5250.00"))
     t.pnl_percent = Decimal(overrides.get("pnl_percent", "25.0"))
@@ -203,40 +205,6 @@ class TestHandleYolo:
 
         assert mock_send.call_count == 3
         assert "YOLO PnL" in mock_send.call_args_list[0][0][0]
-
-
-# ── /pnl tests ─────────────────────────────────────────────────────────────────
-
-class TestHandlePnl:
-
-    @pytest.mark.asyncio
-    @patch(SEND, new_callable=AsyncMock)
-    @patch(SESSION)
-    async def test_pnl_empty(self, mock_factory, mock_send):
-        _mock_session_two_queries(mock_factory, [], [])
-
-        from app.agent.telegram_commands import handle_pnl
-        await handle_pnl("123")
-
-        assert mock_send.call_count == 1
-        assert "PnL" in mock_send.call_args_list[0][0][0]
-
-    @pytest.mark.asyncio
-    @patch(SEND, new_callable=AsyncMock)
-    @patch(SESSION)
-    async def test_pnl_includes_manual_and_yolo(self, mock_factory, mock_send):
-        manual_trade = _make_trade(source="MANUAL", pnl="3000.00")
-        yolo_trade = _make_trade(source="YOLO", pnl="2000.00", symbol="RELIANCE",
-                                 option_type=None, strike_price="0")
-        _mock_session_two_queries(mock_factory, [], [manual_trade, yolo_trade])
-
-        from app.agent.telegram_commands import handle_pnl
-        await handle_pnl("123")
-
-        assert mock_send.call_count == 2
-        closed_msg = mock_send.call_args_list[1][0][0]
-        assert "NIFTY" in closed_msg
-        assert "RELIANCE" in closed_msg
 
 
 # ── /status tests ──────────────────────────────────────────────────────────────
@@ -526,7 +494,7 @@ class TestHandleHelp:
         await handle_help("123")
 
         msg = mock_send.call_args_list[0][0][0]
-        for cmd in ["/status", "/market", "/pnl", "/shadow", "/yolo", "/signals", "/help"]:
+        for cmd in ["/status", "/market", "/shadow", "/yolo", "/signals", "/help"]:
             assert cmd in msg
 
 
@@ -536,7 +504,7 @@ class TestDispatch:
 
     def test_all_commands_registered(self):
         from app.agent.telegram_commands import _HANDLERS
-        expected = {"status", "market", "pnl", "shadow", "yolo", "signals", "help"}
+        expected = {"status", "market", "shadow", "yolo", "signals", "help"}
         assert set(_HANDLERS.keys()) == expected
 
     @pytest.mark.asyncio
@@ -590,3 +558,75 @@ class TestHelpers:
         from app.agent.telegram_commands import _instrument_label
         assert _instrument_label("VEDL", 0, "FU") == "VEDL"
         assert _instrument_label("TCS", 0, None) == "TCS"
+
+    def test_to_ist_converts_utc(self):
+        from app.agent.telegram_commands import _to_ist
+        from zoneinfo import ZoneInfo
+        utc_dt = datetime(2026, 5, 22, 4, 15, tzinfo=ZoneInfo("UTC"))
+        assert _to_ist(utc_dt) == "09:45"
+
+    def test_to_ist_none(self):
+        from app.agent.telegram_commands import _to_ist
+        assert _to_ist(None) == "—"
+
+    def test_to_ist_already_ist(self):
+        from app.agent.telegram_commands import _to_ist
+        ist_dt = datetime(2026, 5, 22, 10, 30, tzinfo=IST)
+        assert _to_ist(ist_dt) == "10:30"
+
+    def test_direction_long(self):
+        from app.agent.telegram_commands import _direction
+        assert _direction(Decimal("385"), Decimal("400")) == "LONG"
+
+    def test_direction_short(self):
+        from app.agent.telegram_commands import _direction
+        assert _direction(Decimal("385"), Decimal("370")) == "SHORT"
+
+    def test_direction_none(self):
+        from app.agent.telegram_commands import _direction
+        assert _direction(None, Decimal("400")) == ""
+        assert _direction(Decimal("385"), None) == ""
+
+
+class TestDirectionInCards:
+
+    @pytest.mark.asyncio
+    @patch(SEND, new_callable=AsyncMock)
+    @patch(SESSION)
+    async def test_futures_position_shows_long(self, mock_factory, mock_send):
+        pos = _make_position(option_type="FU", target_price="400.00")
+        _mock_session_two_queries(mock_factory, [pos], [])
+
+        from app.agent.telegram_commands import handle_shadow
+        await handle_shadow("123")
+
+        open_msg = mock_send.call_args_list[1][0][0]
+        assert "LONG" in open_msg
+
+    @pytest.mark.asyncio
+    @patch(SEND, new_callable=AsyncMock)
+    @patch(SESSION)
+    async def test_futures_position_shows_short(self, mock_factory, mock_send):
+        pos = _make_position(option_type="FU", target_price="370.00")
+        _mock_session_two_queries(mock_factory, [pos], [])
+
+        from app.agent.telegram_commands import handle_shadow
+        await handle_shadow("123")
+
+        open_msg = mock_send.call_args_list[1][0][0]
+        assert "SHORT" in open_msg
+
+    @pytest.mark.asyncio
+    @patch(SEND, new_callable=AsyncMock)
+    @patch(SESSION)
+    async def test_option_hides_direction(self, mock_factory, mock_send):
+        pos = _make_position(option_type="CE", symbol="NIFTY", strike_price="23000",
+                             target_price="400.00")
+        _mock_session_two_queries(mock_factory, [pos], [])
+
+        from app.agent.telegram_commands import handle_shadow
+        await handle_shadow("123")
+
+        open_msg = mock_send.call_args_list[1][0][0]
+        assert "LONG" not in open_msg
+        assert "SHORT" not in open_msg

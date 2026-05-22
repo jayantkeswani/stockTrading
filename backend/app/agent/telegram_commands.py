@@ -6,7 +6,6 @@ No ORM imports at module level — lazy imports keep startup clean.
 Commands:
   /status  — system snapshot (market, agent, feed, trades)
   /market  — market overview (indices, VIX, global cues)
-  /pnl     — real trade P&L (MANUAL + YOLO)
   /shadow  — shadow trade P&L
   /yolo    — YOLO trade P&L
   /signals — today's actionable signals
@@ -16,6 +15,8 @@ Commands:
 import logging
 from datetime import timedelta
 from decimal import Decimal
+
+from app.core.constants import IST
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,18 @@ def _chg_emoji(pct) -> str:
     return "🟢" if float(pct or 0) >= 0 else "🔴"
 
 
+def _to_ist(dt) -> str:
+    if dt is None:
+        return "—"
+    return dt.astimezone(IST).strftime("%H:%M")
+
+
+def _direction(entry_price, target_price) -> str:
+    if entry_price is None or target_price is None:
+        return ""
+    return "SHORT" if float(target_price) < float(entry_price) else "LONG"
+
+
 # ── Shared trade report formatter ──────────────────────────────────────────────
 
 async def _send_trade_report(
@@ -126,12 +139,14 @@ async def _send_trade_report(
         items = []
         for p in open_positions:
             label = _instrument_label(p.symbol, p.strike_price, p.option_type)
+            d = _direction(p.entry_price, p.target_price)
+            dir_suffix = f" · {d}" if d and p.option_type not in ("CE", "PE") else ""
             emoji = _pnl_emoji(p.unrealized_pnl)
             pnl = _pnl_str(p.unrealized_pnl)
-            t = p.opened_at.strftime("%H:%M")
+            t = _to_ist(p.opened_at)
             entry = f"₹{float(p.entry_price):,.0f}"
             curr = f"₹{float(p.current_price):,.0f}" if p.current_price else "—"
-            items.append(f"{emoji} {label} · {pnl}\n   {entry} → {curr} · {t}")
+            items.append(f"{emoji} {label}{dir_suffix} · {pnl}\n   {entry} → {curr} · {t}")
         msg = f"🔵 <b>OPEN ({open_count})</b>\n\n" + "\n\n".join(items)
         await send_telegram(msg)
 
@@ -139,13 +154,15 @@ async def _send_trade_report(
         items = []
         for t in closed_trades:
             label = _instrument_label(t.symbol, t.strike_price, t.option_type)
+            d = _direction(t.entry_price, t.target_price)
+            dir_suffix = f" · {d}" if d and t.option_type not in ("CE", "PE") else ""
             emoji = _pnl_emoji(t.pnl)
             pnl = _pnl_str(t.pnl)
             reason = _exit_label(t.exit_reason)
             entry = f"₹{float(t.entry_price):,.0f}"
             exit_ = f"₹{float(t.exit_price):,.0f}" if t.exit_price else "—"
             pct = _pct_str(t.pnl_percent)
-            items.append(f"{emoji} {label} · {pnl} · {reason}\n   {entry} → {exit_} · {pct}")
+            items.append(f"{emoji} {label}{dir_suffix} · {pnl} · {reason}\n   {entry} → {exit_} · {pct}")
         msg = f"✅ <b>CLOSED ({closed_count})</b>\n\n" + "\n\n".join(items)
         await send_telegram(msg)
 
@@ -221,41 +238,6 @@ async def handle_yolo(chat_id: str) -> None:
         closed_trades = closed_result.scalars().all()
 
     await _send_trade_report("YOLO PnL", open_positions, closed_trades)
-
-
-async def handle_pnl(chat_id: str) -> None:
-    """Today's real (non-shadow) P&L report."""
-    from app.core.database import async_session_factory
-    from app.models.position import Position
-    from app.models.trade import Trade
-    from sqlalchemy import select, and_
-
-    today_start, today_end = _ist_today_range()
-
-    async with async_session_factory() as session:
-        open_result = await session.execute(
-            select(Position)
-            .where(and_(
-                Position.is_shadow == False,  # noqa: E712
-                Position.opened_at >= today_start,
-            ))
-            .order_by(Position.opened_at)
-        )
-        open_positions = open_result.scalars().all()
-
-        closed_result = await session.execute(
-            select(Trade)
-            .where(and_(
-                Trade.source != "SHADOW",
-                Trade.status == "CLOSED",
-                Trade.exit_time >= today_start,
-                Trade.exit_time < today_end,
-            ))
-            .order_by(Trade.exit_time)
-        )
-        closed_trades = closed_result.scalars().all()
-
-    await _send_trade_report("PnL", open_positions, closed_trades)
 
 
 async def handle_status(chat_id: str) -> None:
@@ -521,7 +503,7 @@ async def handle_signals(chat_id: str) -> None:
     def _sig_line(s):
         conf = int(float(s.confidence)) if s.confidence else 0
         strat = _strategy_short(s.strategy_name)
-        t = s.generated_at.strftime("%H:%M")
+        t = _to_ist(s.generated_at)
         sig_type = (s.signal_type or "").replace("_", " ")
         return f"{s.symbol} · {sig_type} · {conf}% · {strat} · {t}"
 
@@ -555,7 +537,6 @@ async def handle_help(chat_id: str) -> None:
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "/status — System snapshot\n"
         "/market — Market overview\n"
-        "/pnl — Real trade PnL\n"
         "/shadow — Shadow trade PnL\n"
         "/yolo — YOLO trade PnL\n"
         "/signals — Today's signals\n"
@@ -569,7 +550,6 @@ async def handle_help(chat_id: str) -> None:
 _HANDLERS = {
     "status":  handle_status,
     "market":  handle_market,
-    "pnl":     handle_pnl,
     "shadow":  handle_shadow,
     "yolo":    handle_yolo,
     "signals": handle_signals,
