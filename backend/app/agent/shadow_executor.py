@@ -261,6 +261,7 @@ async def _do_shadow_execute(signal_id) -> None:
             "source": TradeSource.SHADOW.value,
             "position_type": position_type,
             "opened_at": now.isoformat(),
+            "margin_required": margin,
         },
     )
 

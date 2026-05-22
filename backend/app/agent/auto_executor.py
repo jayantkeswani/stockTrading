@@ -279,6 +279,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             "is_paper": cfg.paper_trading,
             "position_type": position_type,
             "opened_at": now.isoformat(),
+            "margin_required": margin,
         },
     )
 
