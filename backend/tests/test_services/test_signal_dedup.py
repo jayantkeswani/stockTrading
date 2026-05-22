@@ -188,6 +188,121 @@ class TestDedupSignal:
         assert result is None  # No match → create new
 
 
+class TestSameDayDedupScoping:
+    """Intraday strategies only dedup against same-day signals."""
+
+    def _no_trade_result(self):
+        r = MagicMock()
+        r.scalar_one_or_none.return_value = None
+        return r
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.now_ist")
+    @patch("app.services.strategy_runner.async_session_factory")
+    async def test_intraday_dedup_ignores_yesterday_signal(self, mock_sf, mock_now):
+        """An intraday strategy should NOT dedup against a PENDING signal from yesterday."""
+        from app.services.strategy_runner import strategy_runner
+
+        mock_now.return_value = datetime(2026, 5, 22, 10, 0)
+
+        mock_session = AsyncMock()
+        # Query with today_start filter finds no match (yesterday's signal excluded)
+        no_match = MagicMock()
+        no_match.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(return_value=no_match)
+        mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        signal = _make_signal(strategy_name=StrategyName.VWAP_PULLBACK)
+        now = datetime(2026, 5, 22, 10, 0)
+
+        result = await strategy_runner._dedup_signal(signal, now, True, None)
+        assert result is None  # No match → create new signal
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.now_ist")
+    @patch("app.services.strategy_runner.async_session_factory")
+    async def test_intraday_dedup_matches_today_signal(self, mock_sf, mock_now):
+        """An intraday strategy SHOULD dedup against a same-day PENDING signal."""
+        from app.services.strategy_runner import strategy_runner
+
+        mock_now.return_value = datetime(2026, 5, 22, 10, 0)
+
+        existing = _make_db_signal(
+            executed_trade_id=None,
+            generated_at=datetime(2026, 5, 22, 9, 30),
+        )
+        mock_session = AsyncMock()
+        signal_result = MagicMock()
+        signal_result.scalar_one_or_none.return_value = existing
+        mock_session.execute = AsyncMock(side_effect=[
+            signal_result, self._no_trade_result(),
+        ])
+        mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        signal = _make_signal(strategy_name=StrategyName.VWAP_PULLBACK)
+        now = datetime(2026, 5, 22, 10, 0)
+
+        result = await strategy_runner._dedup_signal(signal, now, True, None)
+        assert result == "skip"  # Identical → noise suppression
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.async_session_factory")
+    async def test_positional_dedup_matches_across_days(self, mock_sf):
+        """A positional strategy (CAN SLIM) SHOULD dedup against prior-day signals."""
+        from app.services.strategy_runner import strategy_runner
+
+        existing = _make_db_signal(
+            executed_trade_id=None,
+            strategy_name="can_slim",
+            signal_type="BUY_FUT",
+            generated_at=datetime(2026, 5, 19, 11, 0),
+        )
+        mock_session = AsyncMock()
+        signal_result = MagicMock()
+        signal_result.scalar_one_or_none.return_value = existing
+        mock_session.execute = AsyncMock(side_effect=[
+            signal_result, self._no_trade_result(),
+        ])
+        mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        signal = _make_signal(
+            strategy_name=StrategyName.CAN_SLIM,
+            signal_type=SignalType.BUY_FUT,
+            instrument_type=InstrumentType.FUTURE,
+        )
+        now = datetime(2026, 5, 22, 10, 0)
+
+        result = await strategy_runner._dedup_signal(signal, now, True, None)
+        assert result == "skip"  # Cross-day dedup still works for positional
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.now_ist")
+    @patch("app.services.strategy_runner.async_session_factory")
+    async def test_is_dedup_skip_intraday_scoped_to_today(self, mock_sf, mock_now):
+        """_is_dedup_skip should also scope intraday strategies to today only."""
+        from app.services.strategy_runner import strategy_runner
+
+        mock_now.return_value = datetime(2026, 5, 22, 10, 0)
+
+        mock_session = AsyncMock()
+        # Query with today filter finds nothing (yesterday's signal is excluded)
+        no_match = MagicMock()
+        no_match.scalar_one_or_none.return_value = None
+        mock_session.execute = AsyncMock(return_value=no_match)
+        mock_sf.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_sf.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        signal = _make_signal(strategy_name=StrategyName.INTRADAY_FUTURES,
+                              signal_type=SignalType.BUY_FUT,
+                              instrument_type=InstrumentType.FUTURE)
+
+        result = await strategy_runner._is_dedup_skip(signal)
+        assert result is False  # No same-day match → not a skip
+
+
 class TestHandleSignalDedup:
     """Integration test: _handle_signal should use dedup before persisting."""
 

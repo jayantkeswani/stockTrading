@@ -1818,6 +1818,13 @@ class StrategyRunner:
     _DEDUP_ENTRY_CHANGE_PCT = 0.3   # 0.3% move in entry price
     _DEDUP_CONF_CHANGE = 5.0        # 5-point confidence shift
 
+    _INTRADAY_STRATEGIES = frozenset({
+        StrategyName.VWAP_PULLBACK.value,
+        StrategyName.INTRADAY_FUTURES.value,
+        StrategyName.ORB.value,
+        StrategyName.GAMMA_SCALPING.value,
+    })
+
     async def _is_dedup_skip(self, signal: StrategySignal) -> bool:
         """Read-only pre-check: return True when an existing PENDING signal exists
         and nothing meaningful has changed (entry Δ < 0.3% AND confidence Δ < 5 pts).
@@ -1830,15 +1837,18 @@ class StrategyRunner:
 
         try:
             async with async_session_factory() as session:
+                filters = [
+                    Signal.strategy_name == signal.strategy_name.value,
+                    Signal.symbol == signal.symbol,
+                    Signal.signal_type == signal.signal_type.value,
+                    Signal.status == SignalStatus.PENDING.value,
+                ]
+                if signal.strategy_name.value in self._INTRADAY_STRATEGIES:
+                    today_start = now_ist().replace(hour=0, minute=0, second=0, microsecond=0)
+                    filters.append(Signal.generated_at >= today_start)
+
                 result = await session.execute(
-                    select(Signal).where(
-                        and_(
-                            Signal.strategy_name == signal.strategy_name.value,
-                            Signal.symbol == signal.symbol,
-                            Signal.signal_type == signal.signal_type.value,
-                            Signal.status == SignalStatus.PENDING.value,
-                        )
-                    )
+                    select(Signal).where(and_(*filters))
                     .order_by(Signal.generated_at.desc())
                     .limit(1)
                 )
@@ -1909,15 +1919,18 @@ class StrategyRunner:
 
         try:
             async with async_session_factory() as session:
+                filters = [
+                    Signal.strategy_name == signal.strategy_name.value,
+                    Signal.symbol == signal.symbol,
+                    Signal.signal_type == signal.signal_type.value,
+                    Signal.status == SignalStatus.PENDING.value,
+                ]
+                if signal.strategy_name.value in self._INTRADAY_STRATEGIES:
+                    today_start = now_ist().replace(hour=0, minute=0, second=0, microsecond=0)
+                    filters.append(Signal.generated_at >= today_start)
+
                 result = await session.execute(
-                    select(Signal).where(
-                        and_(
-                            Signal.strategy_name == signal.strategy_name.value,
-                            Signal.symbol == signal.symbol,
-                            Signal.signal_type == signal.signal_type.value,
-                            Signal.status == SignalStatus.PENDING.value,
-                        )
-                    )
+                    select(Signal).where(and_(*filters))
                     .order_by(Signal.generated_at.desc())
                     .limit(1)
                 )
