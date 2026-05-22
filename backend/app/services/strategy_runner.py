@@ -1421,11 +1421,12 @@ class StrategyRunner:
                 window_state = get_custom_window_state(as_of=as_of, windows=windows, dead_zone=dead_zone)
 
                 signal = strategy.evaluate(ctx)
-                await self._flush_strategy_logs(strategy)
                 if signal is not None:
                     signal.indicators["window_state"] = window_state
                     if strategy.name == StrategyName.INTRADAY_FUTURES:
                         signal.indicators["is_permanent_watchlist"] = params.get("_is_permanent_watchlist", False)
+                await self._flush_strategy_logs(strategy)
+                if signal is not None:
                     await self._enrich_signal_snapshot(signal)
 
                     logger.info(
@@ -2022,6 +2023,7 @@ class StrategyRunner:
                 existing.confidence = new_conf
                 existing.reason = signal.reason
                 existing.indicators = signal.indicators
+                existing.is_permanent_watchlist = signal.indicators.get("is_permanent_watchlist", False)
                 existing.executable = executable
                 existing.blocked_reason = blocked_reason
                 existing.generated_at = now
