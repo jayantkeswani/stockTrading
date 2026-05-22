@@ -37,6 +37,20 @@ async def _run_briefing() -> None:
         logger.info("Morning briefing completed for %s", today)
     except Exception:
         logger.exception("Morning briefing failed")
+        return
+
+    # Send pre-market Telegram report
+    try:
+        from app.services.morning_screener import get_global_cues, get_morning_briefing
+        from app.agent.notification import notify_morning_premarket
+
+        briefing = await get_morning_briefing(str(today))
+        global_cues = await get_global_cues(str(today))
+        if briefing and global_cues:
+            await notify_morning_premarket(briefing, global_cues)
+            logger.info("Pre-market Telegram report sent for %s", today)
+    except Exception:
+        logger.exception("Pre-market Telegram notification failed")
 
 
 async def _run_screener() -> None:
@@ -67,6 +81,20 @@ async def _run_preopen_reassessment() -> None:
         logger.info("Pre-open reassessment completed for %s", today)
     except Exception:
         logger.exception("Pre-open reassessment failed")
+        return
+
+    # Send pre-open Telegram update
+    try:
+        from app.services.morning_screener import get_global_cues, get_watchlist
+        from app.agent.notification import notify_morning_preopen
+
+        watchlist = await get_watchlist(str(today))
+        global_cues = await get_global_cues(str(today))
+        if watchlist and global_cues:
+            await notify_morning_preopen(watchlist, global_cues)
+            logger.info("Pre-open Telegram update sent for %s", today)
+    except Exception:
+        logger.exception("Pre-open Telegram notification failed")
 
 
 async def _log_orb_levels() -> None:

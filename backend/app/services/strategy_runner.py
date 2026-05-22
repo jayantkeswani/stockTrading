@@ -1756,6 +1756,14 @@ class StrategyRunner:
                 asyncio.create_task(shadow_execute_signal(dedup_result.id))
             except Exception:
                 logger.exception("Shadow execute failed for signal %s", dedup_result.id)
+            # Notify agent runner (Telegram + YOLO auto-execution on threshold cross).
+            # Safe: on_new_signal gates on confidence >= threshold, auto_executor
+            # independently checks PENDING + executable + confidence + position dedup.
+            try:
+                from app.agent.agent_runner import agent_runner
+                await agent_runner.on_new_signal(dedup_result.id)
+            except Exception:
+                logger.exception("Error notifying agent runner of updated signal %s", dedup_result.id)
             return
 
         # No existing PENDING signal or prior was EXECUTED — create new

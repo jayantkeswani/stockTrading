@@ -66,14 +66,14 @@ class AgentRunner:
         })
 
     async def on_new_signal(self, signal_id) -> None:
-        """Called when a new signal is generated.
+        """Called when a new signal is generated or updated (Case-2 dedup).
 
-        Always sends a Telegram notification. In YOLO mode also auto-executes
-        (only executable signals).
+        Sends a Telegram notification only when confidence >= YOLO execution
+        threshold. In YOLO mode also auto-executes (only executable signals).
         """
         cfg = await get_trading_config()
 
-        # Always notify regardless of mode or executable status
+        # Notify only when confidence meets the YOLO execution threshold
         try:
             from app.core.database import async_session_factory
             from app.models.signal import Signal
@@ -82,19 +82,28 @@ class AgentRunner:
                 result = await session.execute(select(Signal).where(Signal.id == signal_id))
                 sig = result.scalar_one_or_none()
             if sig:
-                await notify_signal_generated(
-                    symbol=sig.symbol,
-                    signal_type=sig.signal_type,
-                    strategy_name=sig.strategy_name,
-                    entry=float(sig.entry_price),
-                    stop_loss=float(sig.stop_loss),
-                    target=float(sig.target_price) if sig.target_price else 0,
-                    strike=float(sig.strike_price) if sig.strike_price else None,
-                    expiry=str(sig.expiry_date) if sig.expiry_date else None,
-                    confidence=float(sig.confidence) if sig.confidence else None,
-                    instrument_type=sig.instrument_type or "OPTION",
-                    blocked_reason=sig.blocked_reason,
-                )
+                should_notify = True
+                if sig.confidence is not None:
+                    if float(sig.confidence) < cfg.min_confidence_for_execution:
+                        should_notify = False
+                        logger.debug(
+                            "Skipping Telegram for %s: confidence %.0f < threshold %.0f",
+                            sig.symbol, float(sig.confidence), cfg.min_confidence_for_execution,
+                        )
+                if should_notify:
+                    await notify_signal_generated(
+                        symbol=sig.symbol,
+                        signal_type=sig.signal_type,
+                        strategy_name=sig.strategy_name,
+                        entry=float(sig.entry_price),
+                        stop_loss=float(sig.stop_loss),
+                        target=float(sig.target_price) if sig.target_price else 0,
+                        strike=float(sig.strike_price) if sig.strike_price else None,
+                        expiry=str(sig.expiry_date) if sig.expiry_date else None,
+                        confidence=float(sig.confidence) if sig.confidence is not None else None,
+                        instrument_type=sig.instrument_type or "OPTION",
+                        blocked_reason=sig.blocked_reason,
+                    )
         except Exception:
             logger.exception("Error sending signal notification for %s", signal_id)
 

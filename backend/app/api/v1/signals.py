@@ -321,6 +321,24 @@ async def execute_signal(
         lots,
     )
 
+    try:
+        from app.agent.notification import notify_manual_executed
+        await notify_manual_executed(
+            symbol=signal.symbol,
+            signal_type=signal.signal_type,
+            strategy_name=signal.strategy_name,
+            entry=entry_price,
+            stop_loss=float(signal.stop_loss),
+            target=float(signal.target_price) if signal.target_price else 0,
+            strike=float(signal.strike_price) if signal.strike_price else None,
+            expiry=str(signal.expiry_date) if signal.expiry_date else None,
+            lots=lots,
+            quantity=quantity,
+            instrument_type=signal.instrument_type or "OPTION",
+        )
+    except Exception:
+        logger.warning("Failed to send manual execution Telegram notification for %s", signal.symbol)
+
     return {
         "status": "executed",
         "signal_id": str(signal_id),
