@@ -208,6 +208,8 @@ export const api = {
     risk_params: Record<string, unknown>;
     symbols: string[];
     timeframes: string[];
+    shadow_enabled: boolean;
+    yolo_enabled: boolean;
   }>>(`/api/v1/strategies`),
   toggleStrategy: (name: string) =>
     request<{ strategy: string; is_active: boolean }>(`/api/v1/strategies/${name}/toggle`, { method: "PATCH" }),
