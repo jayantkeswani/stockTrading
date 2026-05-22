@@ -264,7 +264,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Before releasing, run `git log v{last}..HEAD --on
 All secrets stored in GitHub (Settings → Secrets), written to `.env` on VM during each deploy. Never in GCP Secret Manager or the codebase.
 
 ### Production Container Health
-- **Backend**: `curl -sf http://localhost:8080/api/v1/tasks` healthcheck with 60s start_period, 10s interval
+- **Backend**: `curl -sf http://localhost:8080/api/v1/tasks` healthcheck with 60s start_period, 10s interval. `ulimits: nofile: 65536` (default 1024 caused FD exhaustion during WS reconnect tick bursts).
 - **PostgreSQL**: `pg_isready` healthcheck
 - **Redis**: `redis-cli ping` healthcheck
 - **Nginx**: DNS re-resolution via `resolver 127.0.0.11 valid=5s` + variable-based `proxy_pass` — picks up new container IPs after deploys without manual `nginx -s reload`

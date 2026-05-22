@@ -30,6 +30,10 @@ services:
   backend:
     image: ${BACKEND_IMAGE:-ghcr.io/jayantkeswani/stocktrading/backend:latest}
     container_name: st-backend
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://trader:${DB_PASSWORD:-trader_dev_123}@postgres:5432/stocktrading

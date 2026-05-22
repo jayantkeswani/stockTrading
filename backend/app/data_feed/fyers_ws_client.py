@@ -39,6 +39,8 @@ _WATCHDOG_THRESHOLD_SEC = 90
 
 
 class FyersWSClient:
+    _tick_semaphore: asyncio.Semaphore | None = None
+
     def __init__(self):
         self._ws = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -332,9 +334,13 @@ class FyersWSClient:
         self, symbol: str, tick_data: dict, fyers_alias: str | None = None,
     ):
         """Async handler that feeds the tick into FeedManager."""
+        if FyersWSClient._tick_semaphore is None:
+            FyersWSClient._tick_semaphore = asyncio.Semaphore(20)
+
         from app.data_feed.feed_manager import feed_manager
 
-        await feed_manager.process_tick(symbol, tick_data, fyers_alias=fyers_alias)
+        async with self._tick_semaphore:
+            await feed_manager.process_tick(symbol, tick_data, fyers_alias=fyers_alias)
 
     def _on_connect(self):
         """Called when Fyers WebSocket connects.
@@ -460,6 +466,10 @@ class FyersWSClient:
         dynamic = await self._collect_dynamic_symbols()
         symbols = list(dict.fromkeys(symbols + dynamic))
         strategy_runner._futures_init_done = False
+        # Null out _reconnect_task BEFORE stop() — this method IS running
+        # inside _reconnect_task, so stop()'s cancel() would kill us mid-flight
+        # and start() would never execute.
+        self._reconnect_task = None
         await self.stop()
         await self.start(extra_symbols=symbols)
 
@@ -557,6 +567,10 @@ class FyersWSClient:
         symbols = list(self._symbols)
         dynamic = await self._collect_dynamic_symbols()
         symbols = list(dict.fromkeys(symbols + dynamic))
+        # Null out _reconnect_task BEFORE stop() — this method IS running
+        # inside _reconnect_task, so stop()'s cancel() would kill us mid-flight
+        # and start() would never execute.
+        self._reconnect_task = None
         await self.stop()
         await self.start(extra_symbols=symbols)
 

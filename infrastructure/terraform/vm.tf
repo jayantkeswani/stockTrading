@@ -60,6 +60,10 @@ resource "google_compute_instance" "app" {
 
   allow_stopping_for_update = true
 
+  lifecycle {
+    ignore_changes = [metadata_startup_script]
+  }
+
   depends_on = [
     google_project_service.compute,
   ]
