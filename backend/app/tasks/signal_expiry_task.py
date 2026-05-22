@@ -42,8 +42,6 @@ async def expire_intraday_signals() -> None:
     from app.core.database import async_session_factory
     from app.models.signal import Signal
 
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
     try:
         async with async_session_factory() as session:
             result = await session.execute(
@@ -52,7 +50,6 @@ async def expire_intraday_signals() -> None:
                     and_(
                         Signal.status == SignalStatus.PENDING.value,
                         Signal.strategy_name.in_(_INTRADAY_STRATEGIES),
-                        Signal.generated_at >= today_start,
                     )
                 )
                 .values(status=SignalStatus.EXPIRED.value)

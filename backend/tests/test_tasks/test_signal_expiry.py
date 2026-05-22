@@ -1,8 +1,7 @@
 """Tests for EOD signal expiry task."""
 
 import pytest
-from datetime import date, datetime
-from decimal import Decimal
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.enums import SignalStatus, StrategyName
