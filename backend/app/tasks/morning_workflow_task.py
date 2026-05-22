@@ -20,7 +20,7 @@ from app.core.utils import is_trading_day, now_ist
 
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone=IST)
 
 
 async def _run_briefing() -> None:
