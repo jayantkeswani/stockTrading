@@ -56,6 +56,22 @@ class MarginAnalysisResponse(BaseModel):
     trade_count: int
 
 
+class HoldAnalysisRequest(BaseModel):
+    trade_ids: list[uuid.UUID]
+    scenario: str  # "best" or "worst"
+
+
+class PerTradeHoldResult(BaseModel):
+    trade_id: uuid.UUID
+    max_high: Decimal | None = None
+    min_low: Decimal | None = None
+    data_found: bool = False
+
+
+class HoldAnalysisResponse(BaseModel):
+    results: list[PerTradeHoldResult]
+
+
 class TradeSummaryResponse(BaseModel):
     total_trades: int
     winning_trades: int

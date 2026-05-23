@@ -81,7 +81,7 @@ async def _start_data_feed_if_authenticated():
         watchlist_symbols = await _get_watchlist_symbols()
         strategy_symbols = await _get_all_backfill_symbols()
         s5_symbols = await _get_strat5_watchlist_symbols()
-        position_symbols = await _get_open_position_symbols()
+        position_symbols = await _get_position_symbols()
 
         # Extra symbols for WS subscription: dashboard watchlist + strategy configs
         # + S5 screener watchlist + open position contracts
@@ -143,20 +143,35 @@ async def _get_strat5_watchlist_symbols() -> dict[str, str]:
         return {}
 
 
-async def _get_open_position_symbols() -> list[str]:
-    """Load Fyers symbols for all open positions so trade_monitor gets live ticks."""
+async def _get_position_symbols() -> list[str]:
+    """Load Fyers symbols for open positions + today's closed trades.
+
+    Open positions need live ticks for trade_monitor. Today's closed trade
+    symbols need continued data collection so hold analysis can query
+    post-exit 1m candles through 15:30 IST.
+    """
     from sqlalchemy import select
+    from sqlalchemy.sql import union_all
     from app.core.database import async_session_factory
+    from app.core.enums import TradeStatus
+    from app.core.utils import now_ist
     from app.models.position import Position
+    from app.models.trade import Trade
 
     try:
+        today_start = now_ist().replace(hour=0, minute=0, second=0, microsecond=0)
+        open_q = select(Position.fyers_option_symbol).where(
+            Position.fyers_option_symbol.isnot(None),
+        )
+        closed_q = select(Trade.fyers_option_symbol).where(
+            Trade.fyers_option_symbol.isnot(None),
+            Trade.status == TradeStatus.CLOSED.value,
+            Trade.exit_time >= today_start,
+        )
+        combined = union_all(open_q, closed_q)
         async with async_session_factory() as session:
-            result = await session.execute(
-                select(Position.fyers_option_symbol).where(
-                    Position.fyers_option_symbol.isnot(None),
-                )
-            )
-            return [row[0] for row in result.all() if row[0]]
+            result = await session.execute(combined)
+            return list({row[0] for row in result.all() if row[0]})
     except Exception:
         return []
 

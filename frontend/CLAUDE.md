@@ -7,6 +7,7 @@
 - Zustand for state management
 - TradingView lightweight-charts for price charts
 - WebSocket for real-time updates from backend on port 8080
+- **Vitest** — unit test runner (`npm test` / `npm run test:watch`). Config: `vitest.config.ts` (node environment, `@/*` alias wired). Tests live in `src/__tests__/`.
 
 ## Module Map
 
@@ -15,7 +16,7 @@ All pages use `'use client'` directive.
 
 - `layout.tsx` — Root layout with AppShell wrapper
 - `page.tsx` — Dashboard: sticky PnLStrip at top, 8-col left (ScannerHeader, ScannerPanel, ActivePositions, FuturesWatchlist) + 4-col right (Watchlist, ScanFeed, AgentFeed). ChartModal overlay.
-- `trades/page.tsx` — Kite-style P&L dashboard. Filter state (period, strategy, Shadow/Real, sim panel) lives in Zustand store, persisted via `persist` middleware. SummaryStrip, PnLHeatmap, TradesTable, Margin Analysis section. Real/Shadow toggle, Net P&L toggle, "+ Open" toggle, "− Pinned" toggle. Simulation filter panel: min confidence, AI action, simulate lots, instrument type, signal type — all applied client-side via `applySimLots()`.
+- `trades/page.tsx` — Kite-style P&L dashboard. Filter state (period, strategy, Shadow/Real, sim panel) lives in Zustand store, persisted via `persist` middleware. SummaryStrip, PnLHeatmap, TradesTable, Margin Analysis section. Real/Shadow toggle, Net P&L toggle, "+ Open" toggle, "− Pinned" toggle. Simulation filter panel: min confidence, AI action, simulate lots, instrument type, signal type — all applied client-side via `applySimLots()`. **Hold Analysis panel**: "Hold ▲/▾" toggle (amber when open). Panel has Scenario pills (Best Case / Worst Case). On open/scenario change, fetches `POST /trades/hold-analysis` for all closed trade IDs; backend returns `max_high`/`min_low` per trade from `market_data_1m` (same-day 15:30 IST cutoff). `applyHoldAnalysis()` replaces `pnl`/`pnl_percent`; sets `net_pnl=null`. Pipeline: `trades → filteredTrades → simTrades → holdTrades → {SummaryStrip, dailyPnL→PnLHeatmap, displayedTrades→TradesTable}`. Hold sits after Sim so lot-scaling applies first.
 - `signals/page.tsx` — Signal history feed. PeriodFilter + strategy pills + min-confidence slider + symbol/reason search bar. All filters persisted. `ConfidenceFactorsBar` uses strategy-aware label maps. `SignalCard` includes `SignalHistoryPanel`.
 - `settings/page.tsx` — Strategy config (is_active, auto_mode, shadow_enabled, yolo_enabled, symbols with autocomplete + group presets), risk params, StrategyParams collapsible numeric inputs, "Skip Pinned Signals" row with Shadow/YOLO toggles. Save validation includes confidence tier ordering check.
 - `research/page.tsx` — AI Research: symbol search, real-time agent progress, full report with expandable cards, past reports history.
@@ -111,6 +112,7 @@ All API calls go through this module via a single `request()` helper (parses err
 - `api.getTrades(params?)` — `GET /api/v1/trades` with optional filters: `status`, `source`, `strategy`, `limit`, `entry_since/until`, `min/max_confidence`, `ai_action`, `instrument_type`, `signal_type`, `min/max_lots`, `exclude_permanent`. Used by: trades/page
 - `api.getClosedTradesToday(source?)` — `GET /api/v1/trades?status=CLOSED&closed_since={IST-midnight}`. Used by: ActivePositions, dashboard/page
 - `api.getTradeSummary(source?, exclude_permanent?)` — `GET /api/v1/trades/summary`. Used by: trades/page
+- `api.holdAnalysis(tradeIds, scenario)` — `POST /api/v1/trades/hold-analysis` → `HoldAnalysisResponse`. Used by: trades/page
 - `api.marginAnalysis(tradeIds[])` — `POST /api/v1/trades/margin-analysis` → `{peak_margin, peak_time, total_margin, trade_count}`. Used by: trades/page
 
 **Signals**
@@ -226,6 +228,8 @@ All API calls go through this module via a single `request()` helper (parses err
 - `S5GlobalCues` — global market snapshot; includes `overnight_bias`, `global_score`, `india_vix_live`, `nifty_gap_pct`, absolute prices (`crude_price`, `sp500_price`, etc.)
 - `S5MorningBriefing` — `{approach?, summary?, sector_bias?, setup_priority?, flags?, max_lots_recommendation?}`
 - `S5SetupPerformance` — `{period, setups: Record<string, S5SetupStats>, overall}`
+- `PerTradeHoldResult` — `{trade_id, max_high, min_low, data_found}`
+- `HoldAnalysisResponse` — `{results: PerTradeHoldResult[]}`
 
 ---
 
@@ -276,7 +280,7 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 
 **Persisted keys** (via `partialize`):
 - `scanLogs`, `activeTimeframe`, `positionViewMode`, `showNetPnL`
-- `tradesShowOpen`, `tradesExcludePinned`, `tradesPeriodLabel`, `tradesPeriodStart`, `tradesPeriodEnd`, `tradesStrategy`, `tradesSimOpen`, `tradesSim`
+- `tradesShowOpen`, `tradesExcludePinned`, `tradesPeriodLabel`, `tradesPeriodStart`, `tradesPeriodEnd`, `tradesStrategy`, `tradesSimOpen`, `tradesSim`, `tradesHoldOpen`, `tradesHold: { scenario }`
 - `scannerShowExecuted`, `scannerMinConfidence`
 - `signalsMinConfidence`, `signalsPeriodLabel`, `signalsPeriodStart`, `signalsPeriodEnd`, `signalsStrategy`, `signalsHideInformational`
 - `positionsMinConfidence`
@@ -284,9 +288,18 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 **Key store actions:**
 - `setTradesPeriod(label, start, end)` — updates period label + ISO strings
 - `setTradesSim(partialUpdates)` / `resetTradesSim()` — sim filter state
+- `setTradesHoldOpen(open)` / `setTradesHold(updates)` / `resetTradesHold()` — hold analysis panel state
 - `setTradesExcludePinned(v)` — "− Pinned" toggle on trades page (sends `exclude_permanent=true` to API)
 - `setScannerShowExecuted(v)` — when true, dashboard fetches EXECUTED signals alongside PENDING
 - `setPositionsMinConfidence(v)` — shared by ActivePositions slider and PnLCard
+
+---
+
+### `src/__tests__/` - Unit Tests (Vitest)
+
+Pure-logic unit tests for module-level functions that are not exported. Pattern: copy the function verbatim into the test file with a `// Copied from …` comment so the test is self-contained and refactoring doesn't silently break it.
+
+- `applyHoldAnalysis.test.ts` — 8 tests for `applyHoldAnalysis()` from `trades/page.tsx`. Covers: best/worst BUY pnl, SELL-side sign flip, missing map entry, OPEN trade guard, null hypoExit guard, `net_pnl=null` invariant, `pnl_percent` formula.
 
 ---
 
@@ -401,3 +414,10 @@ When adding or changing frontend code, update this file:
 2. Add store action in `src/store/index.ts` to process the event
 3. Backend must publish to Redis channel for the event to flow through
 4. Add event to this file's hooks/useWebSocket.ts Events list
+
+### Add a New Unit Test
+1. Create `src/__tests__/{subject}.test.ts`
+2. If the function under test is not exported, copy it verbatim into the test file with a `// Copied from <path>` comment
+3. Use a `makeTrade()` / `makeX()` helper for default fixture objects — avoids repeating required fields
+4. Run `npm test` to confirm all tests pass
+5. Add an entry to `src/__tests__/` section in this file

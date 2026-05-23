@@ -37,19 +37,35 @@ _RETRY_INTERVAL_MINUTES = 2
 async def _start_data_feed_after_login() -> None:
     """Start the WS feed after a successful login if not already connected.
 
-    Collects the full set of symbols that should be subscribed:
-    - Previously-subscribed symbols (e.g. index futures for VWAP volume)
-    - S5 watchlist + dashboard watchlist from Redis (may have been provisioned
-      while WS was down, e.g. screener ran at 8:30 but WS dropped at 7:47)
+    Does a fresh symbol assembly identical to app startup: strategy config
+    symbols, dashboard watchlist, S5 watchlist, open + today's closed
+    positions. Does NOT rely on _symbols carryover from a previous session.
     """
     try:
         from app.data_feed.fyers_ws_client import fyers_ws_client
 
         if not fyers_ws_client.is_connected:
-            existing = list(fyers_ws_client._symbols)
-            dynamic = await fyers_ws_client._collect_dynamic_symbols()
-            all_extra = list(dict.fromkeys(existing + dynamic))
-            await fyers_ws_client.start(extra_symbols=all_extra if all_extra else None)
+            from app.main import (
+                _get_watchlist_symbols,
+                _get_strat5_watchlist_symbols,
+                _get_position_symbols,
+            )
+            from app.services.candle_backfill import _get_all_backfill_symbols
+
+            watchlist_symbols = await _get_watchlist_symbols()
+            strategy_symbols = await _get_all_backfill_symbols()
+            s5_symbols = await _get_strat5_watchlist_symbols()
+            position_symbols = await _get_position_symbols()
+
+            extra_ws_symbols = list(set(
+                watchlist_symbols + list(strategy_symbols.values())
+                + list(s5_symbols.values()) + position_symbols
+            ))
+
+            fyers_ws_client.register_symbol_map(strategy_symbols)
+            fyers_ws_client.register_symbol_map(s5_symbols)
+
+            await fyers_ws_client.start(extra_symbols=extra_ws_symbols if extra_ws_symbols else None)
             logger.info("Data feed started after successful auto-login")
     except Exception as e:
         logger.error("Failed to start data feed after login: %s", e)

@@ -78,6 +78,7 @@ Subscribed symbols (all get live WebSocket ticks):
   - FYERS_SYMBOL_MAP (5 indices + India VIX) — always subscribed
   - Strategy-configured symbols — subscribed on startup with symbol_map for reverse lookup
   - Watchlist items from Redis — subscribed on startup and on add
+  - Open positions + today's closed trades (Fyers option symbols) — for hold analysis
 
 Frontend also polls GET /api/v1/market/prices every 10s as fallback.
 
@@ -87,6 +88,55 @@ Chart data: GET /api/v1/market/ohlcv/{symbol}?resolution=5&days=15
   → Falls back to PostgreSQL (MarketData1m) if Fyers unavailable
   → Resolutions: "1" (1m), "5" (5m), "15" (15m), "60" (1h), "D" (daily)
 ```
+
+### 1b. WebSocket Subscription Lifecycle
+
+Four processes add symbols to the Fyers WebSocket throughout the day. The `_symbols` list on `FyersWSClient` grows monotonically — symbols are never unsubscribed (post-exit candle data needed for hold analysis).
+
+```
+1. STARTUP (main.py → _start_data_feed_if_authenticated)
+   Assembles the full initial symbol set from 4 sources:
+     a. Strategy configs → _get_all_backfill_symbols()
+        (strategy-configured symbols + S5 permanent watchlist + near-month index futures)
+     b. Dashboard watchlist → _get_watchlist_symbols()
+        (Redis hash "watchlist:items" keys)
+     c. S5 screener watchlist → _get_strat5_watchlist_symbols()
+        (Redis "strat5:watchlist:{today}" — populated by previous day's screener or today's 8:30 AM run)
+     d. Open positions + today's closed trades → _get_position_symbols()
+        (SQL union_all of Position.fyers_option_symbol + today's closed Trade.fyers_option_symbol)
+   → Registers symbol maps for (a) and (c) so ticks resolve to short names
+   → Calls fyers_ws_client.start(extra_symbols=union of all)
+   Also runs candle backfill (previous day + today) before starting WS.
+
+2. WS RECONNECT (fyers_ws_client._managed_reconnect)
+   Triggered by: _on_close during market hours, watchdog stale-tick detection
+   → 5s backoff
+   → _collect_dynamic_symbols() reads 3 Redis keys:
+       - strat5:watchlist:{today} (screener output)
+       - strat5:watchlist:permanent
+       - watchlist:items (dashboard watchlist)
+   → Merges with existing self._symbols (preserves everything from startup + mid-session subscribes)
+   → stop() + start() (full WS reconnection with merged symbol set)
+   Note: position symbols from startup are retained in _symbols; not re-queried from DB.
+
+3. REAUTH (fyers_login_task._start_data_feed_after_login, 7:45 AM IST daily)
+   Runs after TOTP auto-login obtains a fresh token.
+   → Fresh symbol assembly — same 4-source logic as startup (a-d above)
+   → Does NOT rely on _symbols carryover from previous session
+   → Only runs if fyers_ws_client.is_connected is False
+     (skips if existing WS is still connected — e.g., token refreshed without disconnect)
+
+4. SCREENER PROVISIONING (morning_screener._provision_watchlist_symbols, ~8:30 AM IST)
+   Runs at the end of run_morning_screener() after the 3-stage pipeline:
+   → REST quote fetch for all screened symbols (primes Redis price cache)
+   → Backfills previous day + today's 1m candles per symbol
+   → fyers_ws_client.subscribe_symbols(fyers_symbols, symbol_map=fyers_map)
+     (extends _symbols + _reverse_map; deduplicates against already-subscribed)
+   If WS is down at call time: logs warning, falls through —
+     _collect_dynamic_symbols() on next reconnect picks up the watchlist from Redis.
+```
+
+Key invariant: `_symbols` only grows. Closed positions keep receiving ticks for the rest of the day. Today's closed trades are included at startup/reauth so hold analysis has candle data even after a mid-day restart.
 
 ### 2. Strategy Signal Flow
 

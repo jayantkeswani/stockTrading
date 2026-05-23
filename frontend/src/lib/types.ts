@@ -409,6 +409,17 @@ export interface S5SetupStats {
   trades: number;
 }
 
+export interface PerTradeHoldResult {
+  trade_id: string;
+  max_high: number | null;
+  min_low: number | null;
+  data_found: boolean;
+}
+
+export interface HoldAnalysisResponse {
+  results: PerTradeHoldResult[];
+}
+
 export interface S5SetupPerformance {
   period: { start: string; end: string; days: number };
   setups: Record<string, S5SetupStats>;

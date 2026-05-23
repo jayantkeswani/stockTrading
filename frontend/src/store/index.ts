@@ -134,6 +134,15 @@ interface AppState {
   setTradesSim: (updates: Partial<AppState["tradesSim"]>) => void;
   resetTradesSim: () => void;
 
+  // Hold Analysis panel
+  tradesHoldOpen: boolean;
+  tradesHold: {
+    scenario: "best" | "worst";
+  };
+  setTradesHoldOpen: (open: boolean) => void;
+  setTradesHold: (updates: Partial<AppState["tradesHold"]>) => void;
+  resetTradesHold: () => void;
+
   // Scanner filters (persisted)
   scannerShowExecuted: boolean;
   setScannerShowExecuted: (v: boolean) => void;
@@ -366,6 +375,12 @@ export const useStore = create<AppState>()(
       setTradesSim: (updates) => set((state) => ({ tradesSim: { ...state.tradesSim, ...updates } })),
       resetTradesSim: () => set({ tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null } }),
 
+      tradesHoldOpen: false,
+      tradesHold: { scenario: "best" },
+      setTradesHoldOpen: (open) => set({ tradesHoldOpen: open }),
+      setTradesHold: (updates) => set((state) => ({ tradesHold: { ...state.tradesHold, ...updates } })),
+      resetTradesHold: () => set({ tradesHold: { scenario: "best" } }),
+
       // Scanner filters
       scannerShowExecuted: false,
       setScannerShowExecuted: (v) => set({ scannerShowExecuted: v }),
@@ -409,6 +424,8 @@ export const useStore = create<AppState>()(
         tradesStrategy: state.tradesStrategy,
         tradesSimOpen: state.tradesSimOpen,
         tradesSim: state.tradesSim,
+        tradesHoldOpen: state.tradesHoldOpen,
+        tradesHold: state.tradesHold,
         scannerShowExecuted: state.scannerShowExecuted,
         scannerMinConfidence: state.scannerMinConfidence,
         signalsMinConfidence: state.signalsMinConfidence,

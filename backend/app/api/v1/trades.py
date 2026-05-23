@@ -1,15 +1,28 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, time as dt_time
 from decimal import Decimal
 
+import pytz
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.enums import TradeSource, TradeStatus
+from app.core.enums import StrategyName, TradeSource, TradeStatus
+from app.models.market_data import MarketData1m
 from app.models.trade import Trade
-from app.schemas.trade import MarginAnalysisRequest, MarginAnalysisResponse, TradeResponse, TradeSummaryResponse
+from app.schemas.trade import (
+    HoldAnalysisRequest,
+    HoldAnalysisResponse,
+    MarginAnalysisRequest,
+    MarginAnalysisResponse,
+    PerTradeHoldResult,
+    TradeResponse,
+    TradeSummaryResponse,
+)
+
+_IST = pytz.timezone("Asia/Kolkata")
+_MARKET_CLOSE = dt_time(15, 30)
 
 router = APIRouter()
 
@@ -172,6 +185,62 @@ async def margin_analysis(
         total_margin=total_margin,
         trade_count=len(trades),
     )
+
+
+@router.post("/hold-analysis", response_model=HoldAnalysisResponse)
+async def hold_analysis(
+    body: HoldAnalysisRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """For each closed trade, query max HIGH / min LOW from 1m candles between exit and 15:30 IST."""
+    if body.scenario not in ("best", "worst"):
+        raise HTTPException(status_code=400, detail="scenario must be 'best' or 'worst'")
+
+    result = await db.execute(
+        select(Trade).where(Trade.id.in_(body.trade_ids))
+    )
+    trades = result.scalars().all()
+
+    results: list[PerTradeHoldResult] = []
+    for trade in trades:
+        if trade.status != TradeStatus.CLOSED.value or trade.exit_time is None:
+            results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))
+            continue
+
+        is_s5 = trade.strategy_name == StrategyName.INTRADAY_FUTURES.value
+        if is_s5:
+            md_symbol = trade.symbol
+        else:
+            md_symbol = trade.fyers_option_symbol
+            if not md_symbol:
+                results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))
+                continue
+
+        exit_ist = trade.exit_time.astimezone(_IST)
+        cutoff = _IST.localize(datetime.combine(exit_ist.date(), _MARKET_CLOSE))
+
+        if cutoff <= trade.exit_time:
+            results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))
+            continue
+
+        agg = await db.execute(
+            select(func.max(MarketData1m.high), func.min(MarketData1m.low))
+            .where(MarketData1m.symbol == md_symbol)
+            .where(MarketData1m.timestamp > trade.exit_time)
+            .where(MarketData1m.timestamp <= cutoff)
+        )
+        row = agg.one_or_none()
+        max_high = row[0] if row else None
+        min_low = row[1] if row else None
+
+        results.append(PerTradeHoldResult(
+            trade_id=trade.id,
+            max_high=max_high,
+            min_low=min_low,
+            data_found=max_high is not None and min_low is not None,
+        ))
+
+    return HoldAnalysisResponse(results=results)
 
 
 @router.get("/{trade_id}", response_model=TradeResponse)

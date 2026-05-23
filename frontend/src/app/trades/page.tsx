@@ -25,6 +25,8 @@ function toggleItem(arr: string[], item: string): string[] {
   return arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item];
 }
 
+type HoldResultMap = Map<string, { max_high: number | null; min_low: number | null }>;
+
 function applySimLots(trade: Trade, simLots: number | null): Trade {
   if (simLots == null || trade.pnl == null || trade.lots == null || trade.lots === 0) return trade;
   const ratio = simLots / trade.lots;
@@ -55,6 +57,34 @@ function effectivePnl(trade: Trade, showNet: boolean): number | null {
   return Number(trade.pnl);
 }
 
+function applyHoldAnalysis(
+  trade: Trade,
+  holdMap: HoldResultMap,
+  scenario: "best" | "worst"
+): Trade {
+  if (trade.status !== "CLOSED" || trade.exit_price == null) return trade;
+  const result = holdMap.get(trade.id);
+  if (!result) return trade;
+
+  const hypoExit = scenario === "best" ? result.max_high : result.min_low;
+  if (hypoExit == null) return trade;
+
+  const entry = Number(trade.entry_price);
+  const qty = Number(trade.quantity);
+  if (entry === 0 || qty === 0) return trade;
+
+  const diff = trade.side === "SELL" ? (entry - hypoExit) : (hypoExit - entry);
+  const hypoPnl = diff * qty;
+  const hypoPnlPct = (diff / entry) * 100;
+
+  return {
+    ...trade,
+    pnl: hypoPnl,
+    pnl_percent: hypoPnlPct,
+    net_pnl: null,
+  };
+}
+
 function isSimActive(sim: { min_confidence: number; ai_action: string; instrument_type: string; signal_types: string[]; sim_lots: number | null }): boolean {
   return sim.min_confidence > 0 || sim.ai_action !== "" || sim.instrument_type !== "" || sim.signal_types.length > 0 || sim.sim_lots !== null;
 }
@@ -81,6 +111,8 @@ export default function TradesPage() {
     tradesStrategy, setTradesStrategy,
     tradesSimOpen, setTradesSimOpen,
     tradesSim, setTradesSim, resetTradesSim,
+    tradesHoldOpen, setTradesHoldOpen,
+    tradesHold, setTradesHold, resetTradesHold,
     showNetPnL, setShowNetPnL,
     tradesShowOpen, setTradesShowOpen,
     tradesExcludePinned, setTradesExcludePinned,
@@ -91,11 +123,17 @@ export default function TradesPage() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [marginResult, setMarginResult] = useState<{ peak_margin: number; peak_time: string | null; total_margin: number; trade_count: number } | null>(null);
   const [marginLoading, setMarginLoading] = useState(false);
+  const [holdMap, setHoldMap] = useState<HoldResultMap>(new Map());
+  const [holdLoading, setHoldLoading] = useState(false);
 
   const mode = positionViewMode === "SHADOW" ? "SHADOW" : "REAL";
   const sim = tradesSim;
   const simOpen = tradesSimOpen;
   const simActive = simOpen && isSimActive(sim);
+
+  const hold = tradesHold;
+  const holdOpen = tradesHoldOpen;
+  const holdActive = holdOpen;
 
   // Derive Period object from store
   const period = useMemo((): Period => {
@@ -139,6 +177,40 @@ export default function TradesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period.start, period.end, mode, tradesStrategy, tradesShowOpen, tradesExcludePinned, simOpen, sim.min_confidence, sim.ai_action, sim.instrument_type]);
 
+  useEffect(() => {
+    if (!holdOpen) {
+      setHoldMap(new Map());
+      return;
+    }
+    const closedIds = trades.filter((t) => t.status === "CLOSED").map((t) => t.id);
+    if (closedIds.length === 0) {
+      setHoldMap(new Map());
+      return;
+    }
+    let cancelled = false;
+    setHoldLoading(true);
+    api
+      .holdAnalysis(closedIds, hold.scenario)
+      .then((res) => {
+        if (cancelled) return;
+        const m: HoldResultMap = new Map();
+        for (const r of res.results) {
+          m.set(r.trade_id, { max_high: r.max_high, min_low: r.min_low });
+        }
+        setHoldMap(m);
+      })
+      .catch(() => {
+        if (!cancelled) setHoldMap(new Map());
+      })
+      .finally(() => {
+        if (!cancelled) setHoldLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdOpen, hold.scenario, trades]);
+
   const filteredTrades = useMemo(() => {
     if (!simOpen || sim.signal_types.length === 0) return trades;
     return trades.filter((t) => t.signal_type != null && sim.signal_types.includes(t.signal_type));
@@ -149,31 +221,36 @@ export default function TradesPage() {
     return filteredTrades.map((t) => applySimLots(t, sim.sim_lots));
   }, [filteredTrades, simOpen, sim.sim_lots]);
 
+  const holdTrades = useMemo(() => {
+    if (!holdOpen || holdMap.size === 0) return simTrades;
+    return simTrades.map((t) => applyHoldAnalysis(t, holdMap, hold.scenario));
+  }, [simTrades, holdOpen, holdMap, hold.scenario]);
+
   const dailyPnL = useMemo(() => {
     const map = new Map<string, number>();
-    for (const t of simTrades) {
+    for (const t of holdTrades) {
       const pnl = effectivePnl(t, showNetPnL);
       if (t.status !== "CLOSED" || pnl == null) continue;
       const key = isoDateIST(new Date(t.entry_time));
       map.set(key, (map.get(key) ?? 0) + pnl);
     }
     return map;
-  }, [simTrades, showNetPnL]);
+  }, [holdTrades, showNetPnL]);
 
   const displayedTrades = useMemo(() => {
-    if (!selectedDay) return simTrades;
-    return simTrades.filter((t) => isoDateIST(new Date(t.entry_time)) === selectedDay);
-  }, [simTrades, selectedDay]);
+    if (!selectedDay) return holdTrades;
+    return holdTrades.filter((t) => isoDateIST(new Date(t.entry_time)) === selectedDay);
+  }, [holdTrades, selectedDay]);
 
   const [peakMargin, setPeakMargin] = useState<number | undefined>();
 
   useEffect(() => {
-    const ids = simTrades.filter((t) => t.margin_required != null).map((t) => t.id);
+    const ids = holdTrades.filter((t) => t.margin_required != null).map((t) => t.id);
     if (ids.length === 0) { setPeakMargin(undefined); return; }
     let cancelled = false;
     api.marginAnalysis(ids).then((r) => { if (!cancelled) setPeakMargin(r.peak_margin); }).catch(() => { if (!cancelled) setPeakMargin(undefined); });
     return () => { cancelled = true; };
-  }, [simTrades]);
+  }, [holdTrades]);
 
   const handleMarginAnalysis = useCallback(async () => {
     const ids = displayedTrades.map((t) => t.id);
@@ -279,6 +356,19 @@ export default function TradesPage() {
             }`}
           >
             Sim {simOpen ? "▲" : "▾"}
+          </button>
+          {/* Hold Analysis toggle */}
+          <button
+            onClick={() => setTradesHoldOpen(!holdOpen)}
+            className={`px-2 py-1 rounded border text-[10px] font-mono transition-colors ${
+              holdActive
+                ? "border-accent/50 bg-accent/10 text-accent"
+                : holdOpen
+                ? "border-border/60 text-text-secondary"
+                : "border-border text-text-muted hover:text-text-secondary"
+            }`}
+          >
+            Hold {holdOpen ? "▲" : "▾"}
           </button>
         </div>
         <span className="text-[9px] font-mono text-text-muted/40 tracking-wider">{periodLabel}</span>
@@ -412,6 +502,60 @@ export default function TradesPage() {
         </div>
       )}
 
+      {/* Hold Analysis panel */}
+      {holdOpen && (
+        <div className="rounded border border-accent/20 bg-bg-secondary p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="text-[11px] font-mono font-semibold uppercase tracking-widest text-text-secondary">
+                Hold Analysis
+              </span>
+              {holdLoading && (
+                <span className="text-[8px] font-mono px-1.5 py-0.5 rounded border border-accent/60 text-accent tracking-widest uppercase animate-pulse">
+                  Loading
+                </span>
+              )}
+              {!holdLoading && holdMap.size > 0 && (
+                <span className="text-[8px] font-mono px-1.5 py-0.5 rounded border border-accent/60 text-accent tracking-widest uppercase">
+                  Active
+                </span>
+              )}
+            </div>
+            <button
+              onClick={resetTradesHold}
+              className="text-[10px] font-mono px-3 py-1.5 rounded border border-border text-text-muted hover:border-accent/40 hover:text-accent transition-colors"
+            >
+              Reset
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">
+              Scenario
+            </span>
+            <div className="flex gap-1">
+              <FilterPill
+                label="Best Case"
+                active={hold.scenario === "best"}
+                onClick={() => setTradesHold({ scenario: "best" })}
+              />
+              <FilterPill
+                label="Worst Case"
+                active={hold.scenario === "worst"}
+                onClick={() => setTradesHold({ scenario: "worst" })}
+              />
+            </div>
+          </div>
+
+          <p className="text-[9px] font-mono text-text-muted/40">
+            P&L recomputed using{" "}
+            {hold.scenario === "best" ? "max HIGH" : "min LOW"} from 1m candles
+            between actual exit and 15:30 IST same day. Charges unchanged; net P&L
+            falls back to gross.
+          </p>
+        </div>
+      )}
+
       {mode === "SHADOW" && (
         <div className="px-3 py-1.5 rounded border border-purple-500/20 bg-purple-500/5">
           <p className="text-[10px] font-mono text-purple-400/70">
@@ -420,7 +564,7 @@ export default function TradesPage() {
         </div>
       )}
 
-      <SummaryStrip trades={simTrades} dailyPnL={dailyPnL} showNetPnL={showNetPnL} peakMargin={peakMargin} />
+      <SummaryStrip trades={holdTrades} dailyPnL={dailyPnL} showNetPnL={showNetPnL} peakMargin={peakMargin} />
 
       <PnLHeatmap
         period={period}
@@ -468,7 +612,11 @@ export default function TradesPage() {
         )}
       </div>
 
-      <div className="rounded border border-border bg-bg-secondary overflow-hidden">
+      <div
+        className={`rounded border border-border bg-bg-secondary overflow-hidden transition-opacity ${
+          holdLoading ? "opacity-60 pointer-events-none" : ""
+        }`}
+      >
         {selectedDay && (
           <div className="px-3 py-1 border-b border-border/30 flex items-center gap-2 bg-bg-tertiary/30">
             <span className="text-[8px] font-mono uppercase tracking-wider text-text-muted/50">Day</span>
