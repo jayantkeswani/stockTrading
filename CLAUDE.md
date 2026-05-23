@@ -1,5 +1,9 @@
 # StockTrading - Indian Options & Futures Trading System
 
+## Git Worktree Policy
+
+When this repo has multiple Claude Code sessions working in parallel, each session MUST operate in its own git worktree to avoid conflicts. Before making any code changes, create a worktree from the current branch and work inside it. Merge results back when done. This does NOT apply to subagents spawned within a single session — those operate normally.
+
 ## Subagent Model Policy
 
 Always spawn subagents with `model: "sonnet"` to reduce costs. Only use `model: "opus"` for subagents that require deep reasoning (complex architecture decisions, subtle multi-file bug diagnosis).
