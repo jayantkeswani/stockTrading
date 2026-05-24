@@ -61,6 +61,9 @@ scripts/telegram/data/
 # Intraday Hunter — generated transcripts, extractions, candle cache
 scripts/intraday_hunter/data/
 
+# Claude Code — local settings are machine-specific
+.claude/settings.local.json
+
 # Terraform
 infrastructure/terraform/.terraform/
 infrastructure/terraform/.terraform.lock.hcl
