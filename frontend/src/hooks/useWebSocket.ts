@@ -7,6 +7,7 @@ import { useStore } from "@/store";
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const {
     setWsConnected,
     updatePrice,
@@ -41,6 +42,12 @@ export function useWebSocket() {
     ws.onopen = () => {
       if (ws !== wsRef.current) return;
       setWsConnected(true);
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ event: "ping", data: {} }));
+        }
+      }, 25000);
     };
 
     ws.onmessage = (event) => {
@@ -54,6 +61,7 @@ export function useWebSocket() {
 
     ws.onclose = () => {
       if (ws !== wsRef.current) return;
+      clearInterval(heartbeatRef.current);
       setWsConnected(false);
       reconnectTimerRef.current = setTimeout(connect, 3000);
     };
@@ -169,6 +177,7 @@ export function useWebSocket() {
     connect();
     return () => {
       clearTimeout(reconnectTimerRef.current);
+      clearInterval(heartbeatRef.current);
       wsRef.current?.close();
     };
   }, [connect]);

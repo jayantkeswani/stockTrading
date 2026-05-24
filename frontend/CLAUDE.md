@@ -236,7 +236,7 @@ All API calls go through this module via a single `request()` helper (parses err
 ### `src/hooks/` - Custom Hooks
 
 #### hooks/useWebSocket.ts
-Single hook managing the WebSocket connection. Returns `wsRef`. Auto-reconnects on close (3s delay). Guards all event handlers with `ws === wsRef.current` staleness check to prevent React Strict Mode race conditions.
+Single hook managing the WebSocket connection. Returns `wsRef`. Auto-reconnects on close (3s delay). Guards all event handlers with `ws === wsRef.current` staleness check to prevent React Strict Mode race conditions. Sends application-level heartbeat ping every 25s to keep the connection alive (backend `manager.py` responds with pong).
 
 **No symbol subscription filtering** — backend broadcasts all price ticks; frontend receives all prices automatically.
 
