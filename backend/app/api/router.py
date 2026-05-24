@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.api.v1 import agent, auth, intraday_futures, market_data, options, positions, research, risk, settings, signals, strategies, tasks, trades, watchlist
@@ -38,7 +40,11 @@ async def websocket_endpoint(websocket: WebSocket):
     await ws_manager.connect(websocket)
     try:
         while True:
-            data = await websocket.receive_json()
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
             await ws_manager.handle_message(websocket, data)
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)

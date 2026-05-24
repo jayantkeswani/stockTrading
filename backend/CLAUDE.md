@@ -272,7 +272,7 @@ Key additions (other schemas are standard CRUD):
 
 #### `manager.py` — WebSocketManager
 
-Single `/ws` endpoint. Events published via `broadcast_event(event, data)`:
+Single `/ws` endpoint (handler in `app/api/router.py`). Uses `receive_text()` + `json.loads()` instead of `receive_json()` to gracefully skip non-JSON frames (websockets v16 protocol pings). Events published via `broadcast_event(event, data)`:
 
 
 | Event            | Published by                           | Payload                                                                                                              |
