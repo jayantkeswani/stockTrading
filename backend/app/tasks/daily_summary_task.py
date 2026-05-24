@@ -13,7 +13,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.core.constants import IST
-from app.core.utils import now_ist
+from app.core.utils import is_trading_day, now_ist
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=IST)
@@ -49,6 +49,10 @@ async def send_daily_summary() -> None:
     from sqlalchemy import and_, select
 
     today = now_ist().date()
+    if not is_trading_day(today):
+        logger.debug("Not a trading day — skipping daily summary")
+        return
+
     today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
 
     try:
