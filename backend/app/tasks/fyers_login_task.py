@@ -32,6 +32,7 @@ scheduler = AsyncIOScheduler(timezone=IST)
 
 _MAX_LOGIN_RETRIES = 10
 _RETRY_INTERVAL_MINUTES = 2
+_TERMINAL_ERROR_PATTERNS = ("block", "invalid pin", "consent required")
 
 
 async def _start_data_feed_after_login() -> None:
@@ -106,7 +107,13 @@ async def _retry_auto_login(attempt: int) -> None:
     except Exception as e:
         logger.error("Fyers auto-login retry %d failed: %s", attempt, e)
 
-        if attempt >= _MAX_LOGIN_RETRIES:
+        err_lower = str(e).lower()
+        if any(p in err_lower for p in _TERMINAL_ERROR_PATTERNS):
+            logger.error("Fyers login terminal error — stopping retries: %s", e)
+            await send_telegram(
+                f"🚫 <b>Fyers login failed — not retrying</b>\n{e}"
+            )
+        elif attempt >= _MAX_LOGIN_RETRIES:
             logger.error("Fyers auto-login: exhausted %d retries — giving up", _MAX_LOGIN_RETRIES)
             await send_telegram(
                 "❌ <b>Fyers login failed after all retries</b>\n"
@@ -165,6 +172,11 @@ async def start_fyers_login_scheduler() -> None:
     - Runs auto-login immediately on startup
     - Schedules daily auto-login at 7:45 AM IST (before morning workflow)
     """
+    from app.config import settings as _settings
+    if _settings.market_mode == "simulated":
+        logger.info("Simulated mode — skipping Fyers auto-login scheduler")
+        return
+
     if not has_auto_login_credentials():
         logger.warning(
             "Fyers auto-login credentials not fully configured. "
@@ -204,6 +216,13 @@ async def start_fyers_login_scheduler() -> None:
             return
         except Exception as e:
             logger.error("Fyers startup login attempt %d/%d failed: %s", attempt, _MAX_LOGIN_RETRIES, e)
+            err_lower = str(e).lower()
+            if any(p in err_lower for p in _TERMINAL_ERROR_PATTERNS):
+                logger.error("Fyers login terminal error — stopping retries: %s", e)
+                await send_telegram(
+                    f"🚫 <b>Fyers login failed — not retrying</b>\n{e}"
+                )
+                return
             if attempt < _MAX_LOGIN_RETRIES:
                 logger.info("Retrying in %d minutes...", _RETRY_INTERVAL_MINUTES)
                 await asyncio.sleep(_RETRY_INTERVAL_MINUTES * 60)

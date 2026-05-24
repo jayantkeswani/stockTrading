@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # NOTE: fire_confidence_threshold removed — now per-strategy as min_confidence_to_persist
     # in strategy_configs.parameters JSONB (see services/strategy_params.py)
 
+    # Market Mode
+    market_mode: str = "live"  # "live" | "simulated"
+    simulator_url: str = "http://localhost:8787"
+
     # App
     backend_host: str = "0.0.0.0"
     backend_port: int = 8080

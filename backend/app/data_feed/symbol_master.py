@@ -34,12 +34,21 @@ from app.core.constants import IST
 
 logger = logging.getLogger(__name__)
 
-SYMBOL_MASTER_SOURCES = [
-    ("NSE", "CM", "https://public.fyers.in/sym_details/NSE_CM.csv"),
-    ("NSE", "FO", "https://public.fyers.in/sym_details/NSE_FO.csv"),
-    ("BSE", "CM", "https://public.fyers.in/sym_details/BSE_CM.csv"),
-    ("BSE", "FO", "https://public.fyers.in/sym_details/BSE_FO.csv"),
-]
+def _build_symbol_master_sources() -> list[tuple[str, str, str]]:
+    from app.config import settings
+    if settings.market_mode == "simulated":
+        base = f"{settings.simulator_url}/sym_details"
+    else:
+        base = "https://public.fyers.in/sym_details"
+    return [
+        ("NSE", "CM", f"{base}/NSE_CM.csv"),
+        ("NSE", "FO", f"{base}/NSE_FO.csv"),
+        ("BSE", "CM", f"{base}/BSE_CM.csv"),
+        ("BSE", "FO", f"{base}/BSE_FO.csv"),
+    ]
+
+
+SYMBOL_MASTER_SOURCES = _build_symbol_master_sources()
 
 REDIS_KEY = "symbols:master"
 REDIS_TS_KEY = "symbols:master:updated_at"

@@ -53,7 +53,7 @@ from app.websocket.manager import ws_manager
 
 
 async def _start_data_feed_if_authenticated():
-    """Start the Fyers live data feed if we have a valid token.
+    """Start the data feed if we have a valid token (live) or unconditionally (simulated).
 
     Also backfills previous trading day's candles so strategies have
     previous-day context (PDH/PDL/PDC) available from the first candle.
@@ -63,9 +63,16 @@ async def _start_data_feed_if_authenticated():
         backfill_previous_day, backfill_today, _get_all_backfill_symbols,
     )
 
-    r = get_redis()
-    token = await r.get("fyers:access_token")
-    if token:
+    is_simulated = settings.market_mode == "simulated"
+
+    if not is_simulated:
+        r = get_redis()
+        token = await r.get("fyers:access_token")
+        if not token:
+            print("No Fyers token in Redis. Data feed will not start until auth completes.")
+            return
+
+    if not is_simulated:
         print("Fyers token found in Redis, backfilling candles...")
         try:
             await backfill_previous_day()
@@ -77,35 +84,33 @@ async def _start_data_feed_if_authenticated():
         except Exception as e:
             print(f"Today's backfill failed: {e}")
 
-        # Collect all extra symbols to subscribe and fetch prices for
-        watchlist_symbols = await _get_watchlist_symbols()
-        strategy_symbols = await _get_all_backfill_symbols()
-        s5_symbols = await _get_strat5_watchlist_symbols()
-        position_symbols = await _get_position_symbols()
+    # Collect all extra symbols to subscribe and fetch prices for
+    watchlist_symbols = await _get_watchlist_symbols()
+    strategy_symbols = await _get_all_backfill_symbols()
+    s5_symbols = await _get_strat5_watchlist_symbols()
+    position_symbols = await _get_position_symbols()
 
-        # Extra symbols for WS subscription: dashboard watchlist + strategy configs
-        # + S5 screener watchlist + open position contracts
-        extra_ws_symbols = list(set(
-            watchlist_symbols + list(strategy_symbols.values())
-            + list(s5_symbols.values()) + position_symbols
-        ))
+    # Extra symbols for WS subscription: dashboard watchlist + strategy configs
+    # + S5 screener watchlist + open position contracts
+    extra_ws_symbols = list(set(
+        watchlist_symbols + list(strategy_symbols.values())
+        + list(s5_symbols.values()) + position_symbols
+    ))
 
-        # Register symbol mappings so ticks are converted to short names
-        fyers_ws_client.register_symbol_map(strategy_symbols)
-        fyers_ws_client.register_symbol_map(s5_symbols)
+    # Register symbol mappings so ticks are converted to short names
+    fyers_ws_client.register_symbol_map(strategy_symbols)
+    fyers_ws_client.register_symbol_map(s5_symbols)
 
-        print("Starting live data feed...")
-        await fyers_ws_client.start(extra_symbols=extra_ws_symbols)
+    mode_label = "simulated" if is_simulated else "live"
+    print(f"Starting {mode_label} data feed...")
+    await fyers_ws_client.start(extra_symbols=extra_ws_symbols)
 
-        # Fetch REST quotes for strategy symbols so Redis has prices on startup
-        # (fyers_ws_client.start already fetches FYERS_SYMBOL_MAP via fetch_quotes_rest)
-        print("Fetching prices for strategy-configured symbols...")
-        try:
-            await fyers_ws_client.fetch_quotes_rest(extra_symbols=strategy_symbols)
-        except Exception as e:
-            print(f"Strategy symbol price fetch failed: {e}")
-    else:
-        print("No Fyers token in Redis. Data feed will not start until auth completes.")
+    # Fetch REST quotes for strategy symbols so Redis has prices on startup
+    print("Fetching prices for strategy-configured symbols...")
+    try:
+        await fyers_ws_client.fetch_quotes_rest(extra_symbols=strategy_symbols)
+    except Exception as e:
+        print(f"Strategy symbol price fetch failed: {e}")
 
 
 async def _get_watchlist_symbols() -> list[str]:
@@ -232,7 +237,7 @@ async def lifespan(app: FastAPI):
 
     # --- Schedulers (periodic jobs) ---
     await start_fyers_login_scheduler()
-    task_registry.register("fyers_login_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 08:55 IST"})
+    task_registry.register("fyers_login_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 07:45 IST"})
 
     await start_symbol_master_scheduler()
     task_registry.register("symbol_master_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 08:00 IST"})

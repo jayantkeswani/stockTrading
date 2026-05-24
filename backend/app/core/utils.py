@@ -24,11 +24,17 @@ def now_ist() -> datetime:
 
 def is_trading_day(d: date) -> bool:
     """Return True if d is an NSE trading day (weekday and not a listed holiday)."""
+    from app.config import settings
+    if settings.market_mode == "simulated":
+        return True
     return d.weekday() < 5 and d not in NSE_HOLIDAYS
 
 
 def is_market_open(as_of: datetime | None = None) -> bool:
     """Check if the market is currently open."""
+    from app.config import settings
+    if settings.market_mode == "simulated":
+        return True
     current = as_of or now_ist()
     if not is_trading_day(current.date()):
         return False
@@ -66,6 +72,9 @@ def is_past_close_deadline(as_of: datetime | None = None) -> bool:
 
     Pass as_of for backtest replay; omit to use the current IST time.
     """
+    from app.config import settings
+    if settings.market_mode == "simulated":
+        return False
     t = (as_of or now_ist()).time()
     return t >= POSITION_CLOSE_DEADLINE
 

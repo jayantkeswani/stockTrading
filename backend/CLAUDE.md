@@ -9,7 +9,7 @@
 - Pydantic v2 for schemas/settings
 - Redis on port 6380 (via redis-py async)
 - httpx for async HTTP
-- fyers-apiv3 SDK for market data (REST + WebSocket)
+- fyers-apiv3 SDK for market data (REST + WebSocket); `websockets` library for simulated mode WS client
 - APScheduler for periodic tasks
 - python-telegram-bot for notifications
 
@@ -95,10 +95,11 @@ All three paths fill at the live LTP (not the stale signal premium). SL/target a
 Pydantic Settings loading from `.env`. Key groups:
 
 - **DB/Redis**: `DATABASE_URL`, `DATABASE_URL_SYNC`, `REDIS_URL`
-- **Fyers**: `FYERS_CLIENT_ID`, `FYERS_SECRET_KEY`, `FYERS_REDIRECT_URI`, `FYERS_TOTP_KEY`
+- **Fyers**: `FYERS_APP_ID`, `FYERS_SECRET_KEY`, `FYERS_REDIRECT_URI`, `FYERS_USERNAME`, `FYERS_PIN`, `FYERS_TOTP_SECRET`
 - **Trading**: `CAPITAL`, `MAX_DAILY_DRAWDOWN_PCT`, `MAX_RISK_PER_TRADE_PCT`, `MAX_TRADES_PER_DAY`
 - **AI**: `GOOGLE_API_KEY` (AI Studio), `GCP_PROJECT_ID` (Vertex AI, takes precedence), `VERTEX_AI_LOCATION` (default "global"), `RESEARCH_LLM_MODEL` (flash), `RESEARCH_LLM_MODEL_PRO` (pro — for briefing, Stage 3, synthesis), `AI_CONFIDENCE_ENABLED`, `AI_CONFIDENCE_TIMEOUT_SECONDS` (25)
 - **Telegram**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ENABLED` (set False to disable all Telegram I/O — single kill switch for local dev alongside production)
+- **Market Simulator**: `MARKET_MODE` (`"live"` default, `"simulated"` for offline testing), `SIMULATOR_URL` (`http://localhost:8787`)
 - **Version**: `APP_VERSION` (semver tag set by deploy pipeline), `DEPLOYED_AT`
 - `model_config = extra="ignore"` — unrecognized `.env` vars (Telegram MTProto keys, etc.) don't crash startup
 
@@ -108,20 +109,16 @@ Pydantic Settings loading from `.env`. Key groups:
 
 **Startup (lifespan)**:
 
-1. Force-download fresh symbol master via `symbol_master.refresh()` (inline/blocking — ensures rolled contracts resolve on the very first candle)
-2. `ensure_seeded()` — insert singleton `trading_config` row if absent
-3. Start config listener pubsub (`start_config_listener()`)
-4. Start Fyers login scheduler (`start_fyers_login_scheduler()`)
-5. Start bhav copy scheduler (`start_nse_bhav_copy_scheduler()`)
-6. Start global market scheduler (`start_global_market_scheduler()`)
-7. Start F&O ban list scheduler (`start_fo_ban_list_scheduler()`)
-8. Start fundamental data background task (5s delay, non-blocking)
-9. Start morning workflow scheduler (`start_morning_workflow_scheduler()`)
-10. Start OI snapshot scheduler (`start_oi_snapshot_scheduler()`)
-11. Start signal expiry scheduler (`start_signal_expiry_scheduler()`)
-12. Auto-start data feed if Fyers token in Redis (subscribes indices + strategy symbols + watchlist + S5 watchlist + open positions + today's closed trades)
-13. Auto-start `agent_runner` (trade monitor at 2s interval — autonomy from DB config)
-14. Start Telegram bot polling (`start_telegram_bot()`)
+1. `ensure_seeded()` — insert singleton `trading_config` row if absent
+2. Start config listener pubsub (`start_config_listener()`)
+3. Start all schedulers: Fyers login, symbol master, OI snapshot, fundamental data, daily summary, global market, morning workflow, bhav copy, F&O ban list, signal expiry
+4. Force-download fresh symbol master via `symbol_master.refresh()` (inline/blocking — ensures rolled contracts resolve on the very first candle)
+5. Start fundamental data background task (5s delay, non-blocking)
+6. Start global market background task (non-blocking)
+7. Auto-start data feed if Fyers token in Redis — or unconditionally in simulated mode (subscribes indices + strategy symbols + watchlist + S5 watchlist + open positions + today's closed trades). In simulated mode: skips token check and candle backfill
+8. Start deep backfill background task (10s delay, non-blocking)
+9. Auto-start `agent_runner` (trade monitor at 2s interval — autonomy from DB config)
+10. Start Telegram bot polling (`start_telegram_bot()`)
 
 **Key private helpers** (used by both startup and reauth):
 
@@ -178,12 +175,12 @@ Key enums: `OptionType`, `OrderSide`, `TradeStatus`, `ExitReason` (incl. `TRAILI
 All window/deadline helpers accept optional `as_of: datetime | None` (defaults to `now_ist()` — backtest passes historical timestamps):
 
 - `now_ist() -> datetime` — current time in IST. Used by: everywhere
-- `is_trading_day(d: date) -> bool` — weekday + NSE_HOLIDAYS check. Used by: candle_backfill, signal_expiry_task
-- `is_market_open(as_of=None) -> bool` — 9:15–15:30 IST check. Used by: feed_manager, trade_monitor, tasks
+- `is_trading_day(d: date) -> bool` — weekday + NSE_HOLIDAYS check; always True in simulated mode. Used by: candle_backfill, signal_expiry_task
+- `is_market_open(as_of=None) -> bool` — 9:15–15:30 IST check; always True in simulated mode. Used by: feed_manager, trade_monitor, tasks
 - `is_in_trading_window(as_of=None) -> bool` — within standard trade window (9:15-15:00). Used by: strategy_runner
 - `get_window_state(as_of=None) -> str` — returns `"IN_WINDOW"` / `"DEAD_ZONE"` / `"OUT_OF_WINDOW"`. Used by: strategy_runner (default), confidence.py
 - `is_in_dead_zone(as_of=None) -> bool` — 11:30-12:30 check. Used by: strategy_runner
-- `is_past_close_deadline(as_of=None) -> bool` — after 3:15 PM. Used by: shadow_executor, trade_monitor
+- `is_past_close_deadline(as_of=None) -> bool` — after 3:15 PM; always False in simulated mode. Used by: shadow_executor, trade_monitor
 - `time_to_market_close_minutes(as_of=None) -> int` — minutes until 3:30 PM. Used by: confidence.py (time_of_day factor)
 - `is_in_custom_trading_window(as_of, windows) -> bool` — per-strategy window check. Used by: strategy_runner
 - `get_custom_window_state(as_of, windows, dead_zone) -> str` — per-strategy window state. Used by: strategy_runner, options API
@@ -369,7 +366,7 @@ Default dicts: `VWAP_DEFAULTS`, `CANSLIM_DEFAULTS`, `INTRADAY_FUTURES_DEFAULTS`.
 - `backfill_today() -> None` — today's elapsed candles (skips weekends + NSE holidays; per-symbol freshness check: skips if latest candle < 2 min ago). Used by: main.py startup
 - `backfill_deep_history(days=120) -> None` — 120-day deep backfill for CAN SLIM symbols with < 50 days. Used by: main.py startup
 
-All three backfill from Fyers historical API + persist via `ON CONFLICT DO NOTHING`. Rate-limited: 0.3s between symbols, 1.0s every 5th.
+All three backfill from Fyers historical API + persist via `ON CONFLICT DO NOTHING`. Rate-limited: 0.3s between symbols, 1.0s every 5th. In simulated mode: uses `_fetch_history_simulated()` (httpx GET to simulator's `/data/history`) instead of Fyers SDK; token set to None.
 
 #### `morning_screener.py`
 
@@ -639,9 +636,11 @@ Class: `FyersClient(access_token=None)`
 - `get_option_chain(symbol, expiry_date=None) -> dict` — option chain (Fyers v3 endpoint). Used by: oi_snapshot_task
 - `get_market_depth(symbol) -> dict` — Level 2 order book
 
-All public methods route through `_request_with_auth()`: (1) reads freshest token from Redis per call, (2) detects HTTP 401 or Fyers JSON auth errors (-16, -17, -300), (3) calls `trigger_reauth()` once + retries, (4) retries transient 5xx via `async_retry` (3×).
+All public methods route through `_request_with_auth()`: (1) reads freshest token from Redis per call, (2) detects HTTP 401 or Fyers JSON auth errors (-16, -17, -300), (3) calls `trigger_reauth()` once + retries, (4) retries transient 5xx via `async_retry` (3×). In simulated mode (`MARKET_MODE=simulated`): routes REST calls to `SIMULATOR_URL` with no auth headers or reauth logic.
 
 #### `fyers_ws_client.py` — WebSocket Client
+
+Module-level singleton `fyers_ws_client` is either `FyersWSClient` (live) or `SimulatedWSClient` (simulated) — selected at import time via `_create_ws_client()` based on `MARKET_MODE`. All 13+ import sites get the right client with zero changes.
 
 Class: `FyersWSClient`
 
@@ -666,11 +665,15 @@ Class: `FyersWSClient`
 
 **Auth error -300**: only treat as auth failure when `invalid_symbols` is absent (Fyers uses -300 for both "invalid token" AND "invalid symbol" — treating the latter as auth caused reauth storms).
 
+#### `simulated_ws_client.py` — Simulated WebSocket Client
+
+Drop-in replacement for `FyersWSClient` when `MARKET_MODE=simulated`. Same public interface (`is_connected`, `start`, `stop`, `register_symbol_map`, `is_symbol_subscribed`, `subscribe_symbols`, `fetch_quotes_rest`). Connects to Market Simulator at `ws://{SIMULATOR_URL}/ws/ticks` via `websockets` library. Sends JSON subscribe messages. Feeds ticks into `feed_manager.process_tick()` with same `tick_data` dict format. Has auto-reconnect on disconnect. `fetch_quotes_rest` hits simulator's `/data/quotes` endpoint. Singleton: `simulated_ws_client = SimulatedWSClient()`.
+
 #### `symbol_master.py`
 
 Class: `SymbolMaster`
 
-- `load()` — downloads NSE_CM/FO + BSE_CM/FO CSVs, parses ~127K symbols, stores as JSON in Redis (`symbols:master`, 24h TTL)
+- `load()` — downloads NSE_CM/FO + BSE_CM/FO CSVs, parses ~127K symbols, stores as JSON in Redis (`symbols:master`, 24h TTL). CSV source URL swaps to `SIMULATOR_URL/sym_details/` in simulated mode
 - `refresh()` — re-downloads (called inline at startup, daily at 8:00 AM)
 - `search(query, min_score=20) -> list[dict]` — in-memory search: exact/prefix/substring on short name + display name + Fyers symbol. Used by: market_data API (`GET /symbols/search`)
 - `is_loaded -> bool`, `count -> int`
@@ -681,7 +684,7 @@ Class: `FeedManager`
 
 - `start(symbols) -> None` — initializes in-progress candle state. Used by: fyers_ws_client.start()
 - `stop() -> None`. Used by: fyers_ws_client.stop()
-- `process_tick(symbol, price, volume, fyers_alias=None) -> None` — aggregates tick into in-progress candle; on minute boundary emits + persists + triggers strategy eval. `fyers_alias` causes dual-name publish (short name + Fyers alias). Used by: fyers_ws_client._on_message()
+- `process_tick(symbol, tick_data, fyers_alias=None) -> None` — aggregates tick into in-progress candle; on minute boundary emits + persists + triggers strategy eval. `tick_data` is a dict with keys: `ltp`, `bid`, `ask`, `volume`, `change`, `change_pct`, `high`, `low`, `open`, `prev_close`. `fyers_alias` causes dual-name publish (short name + Fyers alias). Used by: fyers_ws_client._on_message(), simulated_ws_client._receive_loop()
 - `clear_in_progress_candles() -> None` — resets in-progress candle state on WS disconnect (preserves `_last_vol_today` baselines — Fyers cumulative volume continues from where it left off). Used by: fyers_ws_client._on_close()
 
 **Volume delta tracking**: Fyers sends `vol_traded_today` (cumulative). `_aggregate_candle` computes `max(0, current − last)` delta per tick. First-tick seeding produces zero delta on restart (prevents entire morning's volume dumping into one candle — the RVOL spike bug).
@@ -836,7 +839,7 @@ Phone-friendly card format (no monospace blocks). Futures show LONG/SHORT via `_
 
 | Task                       | Schedule                                                                                                   | What it does                                                                                                                                                                                                                                                                                                                                                                                                      |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fyers_login_task.py`      | 7:45 AM IST daily                                                                                          | TOTP auto-login; on startup: blocks until token obtained (up to 10 retries × 2 min) or raises RuntimeError. Daily: non-blocking, retries up to 10× via DateTrigger on failure. Reauth: `_start_data_feed_after_login()` does fresh symbol assembly (same 4-source logic as startup — strategy configs, watchlist, S5 watchlist, positions), not `_symbols` carryover.                                             |
+| `fyers_login_task.py`      | 7:45 AM IST daily                                                                                          | TOTP auto-login; skipped entirely in simulated mode. On startup: blocks until token obtained (up to 10 retries × 2 min) or raises RuntimeError. Daily: non-blocking, retries up to 10× via DateTrigger on failure. **Terminal error detection**: if error contains "block", "invalid pin", or "consent required", stops all retries immediately and sends Telegram alert (prevents burning through Fyers' 5-attempt PIN limit). Reauth: `_start_data_feed_after_login()` does fresh symbol assembly (same 4-source logic as startup — strategy configs, watchlist, S5 watchlist, positions), not `_symbols` carryover.         |
 | `symbol_master_task.py`    | 8:00 AM IST daily                                                                                          | Refreshes symbol master CSVs                                                                                                                                                                                                                                                                                                                                                                                      |
 | `oi_snapshot_task.py`      | Every 3 min market hours (CE/PE); 3:25 PM daily (stock futures); Every 10 min 9:20-15:30 (S5 watchlist OI) | Fyers option chain OI → `oi_snapshots` table. `fetch_stock_futures_oi()` fetches ~180 F&O stocks' FUT OI at EOD. `fetch_s5_watchlist_oi()` fetches targeted 10-15 S5 watchlist symbols' live OI every 10 min. **Fyers field**: use `"oi"` not `"open_interest"` in the `v` dict. Rate-limited: semaphore(2) + 0.3s delay. Gap-fill on startup via `_fill_stock_futures_oi_gaps()` from NSE FO bhav copy archives. |
 | `nse_bhav_copy_task.py`    | 7:30 AM IST daily                                                                                          | Downloads NSE CM bhav copy CSV → (1) Redis `nse:bhav_copy:{date}` (90-day TTL, slim payload for delivery % scoring), (2) `market_data_daily` table (full OHLCV upsert). Gap-fills last 7 trading days on startup. Cookie session required (preflight GET to nseindia.com).                                                                                                                                        |

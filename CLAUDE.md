@@ -67,7 +67,8 @@ This is an AI-first project. Documentation ships WITH every code change — not 
 
 - **Monorepo**: `backend/` (Python/FastAPI) + `frontend/` (Next.js/React/TypeScript)
 - **Database**: PostgreSQL on port 5433 + Redis on port 6380 (non-default to avoid local conflicts)
-- **Data Feed**: Fyers API (free) for market data; Zerodha/Kite for trade execution (future)
+- **Data Feed**: Fyers API (free) for market data; Zerodha/Kite for trade execution (future). `MARKET_MODE=simulated` swaps to Market Simulator (port 8787) for offline testing
+- **Market Simulator**: Standalone service at `../marketSimulator/` — replays synthetic ticks, REST quotes, historical candles, option chains, and symbol master CSVs. Enables full-stack testing outside market hours
 - **LLM**: Gemini via `google-genai` SDK — Vertex AI in production (ADC via GCE SA), AI Studio locally (API key)
 - **AI Agent**: Python asyncio background task with 3 autonomy levels (MANUAL / SEMI / YOLO)
 - **Notifications**: Telegram Bot API for alerts and trade confirmations
@@ -353,6 +354,43 @@ curl -s http://localhost:8080/api/v1/health | python3 -m json.tool
 curl -s http://localhost:8080/api/v1/tasks | python3 -m json.tool
 curl -s http://localhost:8080/api/v1/strategies | python3 -m json.tool
 ```
+
+#### Simulated Mode (Full-Stack Testing Anytime)
+
+Use the Market Simulator for end-to-end testing outside market hours — live ticks, candle aggregation, strategy evaluation, signal generation all work.
+
+```bash
+# 1. Start the Market Simulator (separate repo)
+cd ../marketSimulator && make run     # Runs on port 8787
+
+# 2. Set MARKET_MODE=simulated in .env (already defaults to live)
+# MARKET_MODE=simulated
+
+# 3. Start the backend — connects to simulator instead of Fyers
+make backend
+
+# 4. Start a simulator session (volume auto-inferred from symbol type)
+curl -s -X POST http://localhost:8787/sim/session -H "Content-Type: application/json" -d '{
+  "speed": 10.0,
+  "symbols": {
+    "NSE:NIFTY50-INDEX": {"base_price": 24800, "prev_close": 24750, "volatility": 0.001},
+    "NSE:NIFTYBANK-INDEX": {"base_price": 55000, "prev_close": 54900, "volatility": 0.0012},
+    "NSE:INDIAVIX-INDEX": {"base_price": 15.5, "prev_close": 15.3, "volatility": 0.002},
+    "NSE:NIFTY26MAYFUT": {"base_price": 24850, "prev_close": 24800, "volatility": 0.001},
+    "NSE:BANKNIFTY26MAYFUT": {"base_price": 55100, "prev_close": 55000, "volatility": 0.0012}
+  }
+}'
+
+# 5. Verify: prices flowing, candles forming, strategies evaluating
+curl -s http://localhost:8080/api/v1/health | python3 -m json.tool
+curl -s http://localhost:8080/api/v1/market/prices | python3 -m json.tool
+```
+
+**Futures contract symbols** change monthly — update `NIFTY26MAYFUT` etc. to the current near-month contract. Check `NSE_FO.csv` symbol master or the backend startup logs for resolved futures symbols.
+
+**What changes in simulated mode:** WS connects to simulator (not Fyers), REST data calls route to simulator, `is_market_open()` always returns True, `is_trading_day()` always returns True, Fyers TOTP login is skipped entirely, symbol master CSVs fetched from simulator.
+
+**What stays the same:** PostgreSQL, Redis, strategy evaluation, signal pipeline, agent runner, trade monitor — all real code paths exercised.
 
 **Key rule:** Never test against production. Local has its own PostgreSQL (port 5433), Redis (port 6380), and Fyers token. `TELEGRAM_ENABLED=false` in local `.env` prevents accidental Telegram messages.
 

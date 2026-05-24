@@ -215,16 +215,45 @@ def _fetch_history_via_sdk(token: str, fyers_symbol: str, day: date) -> list[dic
     ]
 
 
+def _fetch_history_simulated(fyers_symbol: str, from_date: date, to_date: date) -> list[dict]:
+    """Fetch candles from the Market Simulator REST endpoint (synchronous)."""
+    import httpx as _httpx
+
+    resp = _httpx.get(
+        f"{settings.simulator_url}/data/history",
+        params={
+            "symbol": fyers_symbol,
+            "resolution": "1",
+            "date_format": "1",
+            "range_from": str(from_date),
+            "range_to": str(to_date),
+            "cont_flag": "1",
+        },
+        timeout=30.0,
+    )
+    data = resp.json()
+    if data.get("s") != "ok":
+        return []
+    return [
+        {"timestamp": c[0], "open": c[1], "high": c[2], "low": c[3], "close": c[4], "volume": c[5]}
+        for c in data.get("candles", [])
+    ]
+
+
 async def _backfill_symbol(token: str, symbol: str, fyers_symbol: str, day: date) -> int:
     """Fetch 1m candles for a single symbol/day and insert into DB.
 
     Returns the number of candles inserted.
     """
 
-    # SDK is synchronous — run in thread pool to avoid blocking the event loop
-    candles = await asyncio.to_thread(
-        _fetch_history_via_sdk, token, fyers_symbol, day,
-    )
+    if settings.market_mode == "simulated":
+        candles = await asyncio.to_thread(
+            _fetch_history_simulated, fyers_symbol, day, day,
+        )
+    else:
+        candles = await asyncio.to_thread(
+            _fetch_history_via_sdk, token, fyers_symbol, day,
+        )
 
     if not candles:
         logger.warning("No historical candles returned for %s on %s", symbol, day)
@@ -273,11 +302,14 @@ async def backfill_previous_day():
     Skips symbols that already have data for that day.
     Called on app startup from main.py lifespan.
     """
-    r = get_redis()
-    token = await r.get(FYERS_TOKEN_KEY)
-    if not token:
-        logger.warning("No Fyers token — cannot backfill candles")
-        return
+    if settings.market_mode == "simulated":
+        token = None
+    else:
+        r = get_redis()
+        token = await r.get(FYERS_TOKEN_KEY)
+        if not token:
+            logger.warning("No Fyers token — cannot backfill candles")
+            return
 
     today = datetime.now(IST).date()
     prev_day = _previous_trading_day(today)
@@ -334,11 +366,14 @@ async def backfill_today():
         logger.info("Market hasn't opened yet — skipping today's backfill")
         return
 
-    r = get_redis()
-    token = await r.get(FYERS_TOKEN_KEY)
-    if not token:
-        logger.warning("No Fyers token — cannot backfill today's candles")
-        return
+    if settings.market_mode == "simulated":
+        token = None
+    else:
+        r = get_redis()
+        token = await r.get(FYERS_TOKEN_KEY)
+        if not token:
+            logger.warning("No Fyers token — cannot backfill today's candles")
+            return
 
     symbols = await _get_all_backfill_symbols()
     logger.info(
@@ -382,11 +417,14 @@ async def backfill_deep_history(days: int = 120) -> None:
     """
     from app.models.strategy_config import StrategyConfig
 
-    r = get_redis()
-    token = await r.get(FYERS_TOKEN_KEY)
-    if not token:
-        logger.warning("No Fyers token — cannot run deep backfill")
-        return
+    if settings.market_mode == "simulated":
+        token = None
+    else:
+        r = get_redis()
+        token = await r.get(FYERS_TOKEN_KEY)
+        if not token:
+            logger.warning("No Fyers token — cannot run deep backfill")
+            return
 
     # Find CAN SLIM symbols that need history
     async with async_session_factory() as session:
@@ -437,9 +475,14 @@ async def backfill_deep_history(days: int = 120) -> None:
         while chunk_start < today:
             chunk_end = min(chunk_start + timedelta(days=6), today - timedelta(days=1))
             try:
-                candles = await asyncio.to_thread(
-                    _fetch_history_range_via_sdk, token, fyers_sym, chunk_start, chunk_end,
-                )
+                if settings.market_mode == "simulated":
+                    candles = await asyncio.to_thread(
+                        _fetch_history_simulated, fyers_sym, chunk_start, chunk_end,
+                    )
+                else:
+                    candles = await asyncio.to_thread(
+                        _fetch_history_range_via_sdk, token, fyers_sym, chunk_start, chunk_end,
+                    )
                 if candles:
                     count = await _persist_candles(sym, candles)
                     total_candles += count

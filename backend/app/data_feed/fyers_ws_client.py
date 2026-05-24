@@ -727,5 +727,13 @@ class FyersWSClient:
         return None
 
 
-# Singleton
-fyers_ws_client = FyersWSClient()
+# Singleton — in simulated mode, use SimulatedWSClient instead
+def _create_ws_client():
+    from app.config import settings
+    if settings.market_mode == "simulated":
+        from app.data_feed.simulated_ws_client import SimulatedWSClient
+        return SimulatedWSClient()
+    return FyersWSClient()
+
+
+fyers_ws_client = _create_ws_client()

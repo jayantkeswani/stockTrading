@@ -38,10 +38,19 @@ class FyersClient:
     def __init__(self, access_token: str | None = None):
         self.access_token = access_token
         self.app_id = settings.fyers_app_id
+        self._simulated = settings.market_mode == "simulated"
         self._client = httpx.AsyncClient(timeout=30.0)
 
     @property
+    def _data_url(self) -> str:
+        if self._simulated:
+            return f"{settings.simulator_url}/data"
+        return DATA_URL
+
+    @property
     def _headers(self) -> dict:
+        if self._simulated:
+            return {}
         return {"Authorization": f"{self.app_id}:{self.access_token}"}
 
     async def _request_with_auth(self, method: str, url: str, **kwargs) -> httpx.Response:
@@ -50,7 +59,13 @@ class FyersClient:
         On HTTP 401 or Fyers JSON auth error codes: triggers one reauth then retries.
         On 5xx / network errors: retries up to 3 times with exponential backoff.
         4xx other than 401 are raised immediately without retry.
+        In simulated mode: direct request, no auth, no reauth.
         """
+        if self._simulated:
+            resp = await getattr(self._client, method)(url, **kwargs)
+            resp.raise_for_status()
+            return resp
+
         from app.core.redis import get_redis
         from app.data_feed.fyers_auto_login import trigger_reauth
 
@@ -119,7 +134,7 @@ class FyersClient:
         try:
             response = await self._request_with_auth(
                 "get",
-                f"{DATA_URL}/quotes",
+                f"{self._data_url}/quotes",
                 params={"symbols": ",".join(symbols)},
             )
             return response.json()
@@ -146,7 +161,7 @@ class FyersClient:
             }
             response = await self._request_with_auth(
                 "get",
-                f"{DATA_URL}/history",
+                f"{self._data_url}/history",
                 params=params,
             )
             data = response.json()
@@ -185,7 +200,7 @@ class FyersClient:
                 params["timestamp"] = expiry_date
             response = await self._request_with_auth(
                 "get",
-                f"{DATA_URL}/options-chain-v3",
+                f"{self._data_url}/options-chain-v3",
                 params=params,
             )
             return response.json()
@@ -198,7 +213,7 @@ class FyersClient:
         try:
             response = await self._request_with_auth(
                 "get",
-                f"{DATA_URL}/depth",
+                f"{self._data_url}/depth",
                 params={"symbol": symbol, "ohlcv_flag": "1"},
             )
             return response.json()
