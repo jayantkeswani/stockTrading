@@ -40,6 +40,7 @@ This is an AI-first project. Documentation ships WITH every code change — not 
 - Every new/changed function needs its registry entry updated
 - Every new/changed API endpoint needs the endpoint table updated
 - When a function's callers change, update its `Used by:` list
+- When you read `backend/CLAUDE.md` or `frontend/CLAUDE.md` and notice function entries missing `Used by:`, backfill them by grepping for callers — even if those functions aren't part of your current task
 - Prefer editing existing sections over adding new ones — restructure if needed
 
 ### Code Style
@@ -304,7 +305,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 Unit tests verify code correctness, but many bugs (volume spikes, VWAP disappearing, WS reconnect issues) only surface with real Fyers data. Always verify data-path changes against the live local stack before deploying.
 
-**Prerequisites**: PostgreSQL + Redis running (`docker compose up -d`), Fyers token in Redis (auto-login at 7:45 AM or manual via browser).
+**Prerequisites**: PostgreSQL + Redis running (`docker compose up -d`), Fyers token in Redis (auto-login runs daily at 7:45 AM via `fyers_login_task.py`; to trigger manually, call `auto_login_and_store()` from `fyers_auto_login.py`).
 
 #### During Market Hours (9:15-15:30 IST)
 
