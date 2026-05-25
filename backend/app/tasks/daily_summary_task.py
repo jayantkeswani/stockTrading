@@ -74,10 +74,14 @@ async def send_daily_summary() -> None:
         # Nifty/BN closing prices
         nifty_data = await redis.get("price:NIFTY")
         bn_data = await redis.get("price:BANKNIFTY")
-        nifty_ltp = json.loads(nifty_data).get("ltp", 0) if nifty_data else 0
-        nifty_prev = json.loads(nifty_data).get("prev_close_price", 0) if nifty_data else 0
-        bn_ltp = json.loads(bn_data).get("ltp", 0) if bn_data else 0
-        bn_prev = json.loads(bn_data).get("prev_close_price", 0) if bn_data else 0
+        nifty_parsed = json.loads(nifty_data) if nifty_data else {}
+        nifty_ltp = nifty_parsed.get("ltp", 0)
+        nifty_change = nifty_parsed.get("change", 0)
+        nifty_pct = nifty_parsed.get("change_pct", 0)
+        bn_parsed = json.loads(bn_data) if bn_data else {}
+        bn_ltp = bn_parsed.get("ltp", 0)
+        bn_change = bn_parsed.get("change", 0)
+        bn_pct = bn_parsed.get("change_pct", 0)
 
         # Global cues and briefing from Redis
         from app.services.morning_screener import get_global_cues, get_morning_briefing, get_watchlist
@@ -88,10 +92,8 @@ async def send_daily_summary() -> None:
             # No trades — send minimal message with market close
             lines = [f"📊 <b>Post-Market Report – {today.strftime('%d %b %Y')}</b>", ""]
             if nifty_ltp:
-                nifty_change = nifty_ltp - nifty_prev if nifty_prev else 0
-                nifty_pct = (nifty_change / nifty_prev * 100) if nifty_prev else 0
                 n_arrow = "▲" if nifty_change >= 0 else "▼"
-                lines.append(f"Nifty: {nifty_ltp:,.0f} {n_arrow} {nifty_change:+,.0f} ({nifty_pct:+.2f}%)")
+                lines.append(f"Nifty: {nifty_ltp:,.0f} {n_arrow} {nifty_change:+,.0f} pts ({nifty_pct:+.2f}%)")
             lines.append("")
             lines.append("📊 No trades today.")
             from app.agent.notification import send_telegram, _paper
@@ -142,9 +144,9 @@ async def send_daily_summary() -> None:
                 "stats": {"total": total, "wins": wins, "losses": losses, "net_pnl": net_pnl},
                 "sector_pnl": {k: round(v, 0) for k, v in sorted(sector_pnl.items(), key=lambda x: x[1], reverse=True)},
                 "nifty_close": nifty_ltp,
-                "nifty_change_pct": ((nifty_ltp - nifty_prev) / nifty_prev * 100) if nifty_prev else 0,
+                "nifty_change_pct": nifty_pct,
                 "bn_close": bn_ltp,
-                "bn_change_pct": ((bn_ltp - bn_prev) / bn_prev * 100) if bn_prev else 0,
+                "bn_change_pct": bn_pct,
                 "morning_approach": briefing.get("approach"),
                 "morning_summary": briefing.get("summary"),
                 "vix": global_cues.get("india_vix_live"),
@@ -162,8 +164,8 @@ async def send_daily_summary() -> None:
         # Format message
         msg = _format_eod_message(
             today=today,
-            nifty_ltp=nifty_ltp, nifty_prev=nifty_prev,
-            bn_ltp=bn_ltp, bn_prev=bn_prev,
+            nifty_ltp=nifty_ltp, nifty_change=nifty_change, nifty_pct=nifty_pct,
+            bn_ltp=bn_ltp, bn_change=bn_change, bn_pct=bn_pct,
             total=total, wins=wins, losses=losses, net_pnl=net_pnl,
             best_symbol=best.symbol, best_pnl=_trade_pnl(best),
             worst_symbol=worst.symbol, worst_pnl=_trade_pnl(worst),
@@ -182,8 +184,8 @@ async def send_daily_summary() -> None:
 def _format_eod_message(
     *,
     today,
-    nifty_ltp: float, nifty_prev: float,
-    bn_ltp: float, bn_prev: float,
+    nifty_ltp: float, nifty_change: float, nifty_pct: float,
+    bn_ltp: float, bn_change: float, bn_pct: float,
     total: int, wins: int, losses: int, net_pnl: float,
     best_symbol: str, best_pnl: float,
     worst_symbol: str, worst_pnl: float,
@@ -203,14 +205,10 @@ def _format_eod_message(
 
     # Market close
     if nifty_ltp:
-        nifty_change = nifty_ltp - nifty_prev if nifty_prev else 0
-        nifty_pct = (nifty_change / nifty_prev * 100) if nifty_prev else 0
         n_arrow = "▲" if nifty_change >= 0 else "▼"
         lines.append(f"{pnl_emoji} <b>Market Close</b>")
         lines.append(f"Nifty 50: {nifty_ltp:,.0f} {n_arrow} {nifty_change:+,.0f} pts ({nifty_pct:+.2f}%)")
     if bn_ltp:
-        bn_change = bn_ltp - bn_prev if bn_prev else 0
-        bn_pct = (bn_change / bn_prev * 100) if bn_prev else 0
         bn_arrow = "▲" if bn_change >= 0 else "▼"
         lines.append(f"Bank Nifty: {bn_ltp:,.0f} {bn_arrow} {bn_change:+,.0f} pts ({bn_pct:+.2f}%)")
     lines.append("")

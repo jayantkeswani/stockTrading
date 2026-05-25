@@ -550,10 +550,26 @@ async def notify_morning_premarket(
 
     today = now_ist().date()
 
-    # Gather Nifty/BN previous close from global cues
+    # Gather Nifty previous close from global cues
     nifty_price = global_cues.get("nifty_price", 0)
     nifty_pct = global_cues.get("nifty_pct", 0)
     nifty_change = nifty_price * (nifty_pct / 100) if nifty_price and nifty_pct else 0
+
+    # BankNifty previous close from Redis price cache (24h TTL survives overnight)
+    bn_price = 0
+    bn_pct = 0.0
+    bn_change = 0.0
+    try:
+        from app.core.redis import get_redis
+        r = get_redis()
+        bn_raw = await r.get("price:BANKNIFTY")
+        if bn_raw:
+            bn_data = json.loads(bn_raw)
+            bn_price = bn_data.get("ltp", 0)
+            bn_change = bn_data.get("change", 0)
+            bn_pct = bn_data.get("change_pct", 0)
+    except Exception:
+        pass
 
     # LLM draft for market overview and outlook
     llm_result = {}
@@ -616,9 +632,13 @@ async def notify_morning_premarket(
         "",
     ]
 
-    if nifty_price:
+    if nifty_price or bn_price:
         lines.append(f"📉 <b>Previous Close</b>")
-        lines.append(f"Nifty 50: {nifty_price:,.0f} {nifty_arrow} {nifty_change:+,.0f} pts ({nifty_pct:+.2f}%)")
+        if nifty_price:
+            lines.append(f"Nifty 50: {nifty_price:,.0f} {nifty_arrow} {nifty_change:+,.0f} pts ({nifty_pct:+.2f}%)")
+        if bn_price:
+            bn_arrow = "▲" if bn_change >= 0 else "▼"
+            lines.append(f"Bank Nifty: {bn_price:,.0f} {bn_arrow} {bn_change:+,.0f} pts ({bn_pct:+.2f}%)")
         lines.append("")
 
     lines.append("━━━━━━━━━━━━━━━━")
