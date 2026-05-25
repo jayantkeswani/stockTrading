@@ -529,7 +529,18 @@ _MORNING_SYSTEM_PROMPT = (
     "Draft a concise pre-market telegram message. Keep the overview to 2-3 sentences "
     "covering key global cues (US markets, crude oil, VIX). The outlook should be 2-3 "
     "sentences with actionable insights for today's session. Return at most 3 sectors "
-    "per direction. Be specific with numbers."
+    "per direction.\n\n"
+    "The input uses internal codes — always translate in your prose:\n"
+    "- overnight_bias: BULLISH/BEARISH/NEUTRAL — describe the sentiment, "
+    "don't write the label\n"
+    "- global_score: -1.0 to +1.0 composite — describe the sentiment, "
+    "don't cite the raw number\n"
+    "- approach: aggressive/normal/conservative — today's risk posture\n"
+    "- setup_priority: ORB = opening range breakout, VWAP_BOUNCE = VWAP pullback "
+    "reversal, PDH_PDL = previous day high/low breakout, "
+    "GAP_CONTINUATION = gap follow-through\n\n"
+    "Be specific with numbers. Write like a trader briefing a colleague, "
+    "not a data readout."
 )
 
 

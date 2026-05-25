@@ -33,7 +33,15 @@ _EOD_SYSTEM_PROMPT = (
     "1. market_wrap: 2-3 sentences about the market day (Nifty/BankNifty movement, "
     "key themes, sector rotation). Reference specific numbers.\n"
     "2. trading_assessment: 2-3 sentences about our trading performance "
-    "(what worked, what didn't, how the morning plan played out vs actual results).\n"
+    "(what worked, what didn't, how the morning plan played out vs actual results).\n\n"
+    "The trade data uses internal codes — always translate in your prose:\n"
+    "- exit_reason: AGENT_SL = stop-loss hit, TRAILING_SL = trailing stop hit, "
+    "TARGET_HIT = profit target reached, TIME_EXIT = closed at end of day, "
+    "PROFIT_CAP = daily profit limit reached, MANUAL = manually closed, "
+    "STALE_DATA = closed due to missing price data\n"
+    "- source: YOLO = auto-executed by the system, MANUAL = manually placed\n"
+    "- side: BUY = went long, SELL = went short\n\n"
+    "Write like a trader reviewing the day with a colleague. "
     "Be factual and specific. No fluff."
 )
 

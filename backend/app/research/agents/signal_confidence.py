@@ -60,11 +60,23 @@ Opportunity in chaos: High VIX + narrow CPR + aligned bias can work (high gamma)
 PCR < 0.5 = bearish (call writers dominating, supports PE). PCR > 1.5 = bullish (put writers dominating, supports CE).
 max_ce_oi_strike = resistance ceiling. max_pe_oi_strike = support floor. Trade should have room to move toward target within these walls.
 
+## Writing style
+Write summary and rationale as a senior trader explaining to a colleague — natural, concise, opinionated.
+- NEVER use internal factor names (bias_alignment, reversal_quality, vwap_slope_alignment, oi_support, cpr_narrow_trending, vix_regime, time_of_day, volume_quality, rr_ratio_quality) or raw 0.0-1.0 scores in summary or rationale. Describe what they MEAN for the trade.
+- Good: "the bounce candle was clean and decisive" — Bad: "reversal_quality of 0.82"
+- Good: "volume dried up on the pullback — healthy retracement" — Bad: "volume_quality of 0.75"
+- You MAY cite exact price levels (VWAP, PDH, PDL, entry, SL, target), R:R ratios, PCR values, VIX readings, and percentage distances — these are meaningful to a trader.
+- Translate code terms in your prose:
+  BUY_CE/BUY_PE → "buying calls"/"buying puts"
+  NARROW/WIDE CPR → "narrow pivot range" / "wide pivot range"
+  IN_WINDOW → "within the active trading window", DEAD_ZONE → "in the midday lull"
+- key_supports and key_risks arrays: these are for internal logs — use precise field names and values here.
+
 ## Rules
 - Evaluate the signal on the data PROVIDED. Do not complain about missing fields — if a field is null, skip it.
-- Every number you cite MUST appear EXACTLY in the input JSON. Do not round or approximate. If VWAP is 24358.42, write 24358.42, not 24358 or 24360.
+- Price levels, R:R ratios, PCR, and VIX values you cite MUST appear EXACTLY in the input JSON. Do not round or approximate prices.
 - If a field is null, do not reference it.
-- Be concise. Only cite factors that materially affect your adjustment direction. Do not pad with generic observations.
+- Be concise. Only discuss factors that materially affect your adjustment direction. Do not pad with generic observations.
 - Adjustment scale: -10 to +10 for most signals. Exceeding ±20 requires citing two independent reasons.
 - Output ONLY strict JSON matching the schema below.
 
@@ -78,8 +90,8 @@ When prior_signals_today is non-empty:
 Schema:
 {
   "confidence_adjustment": <integer -30 to +30>,
-  "summary": "<one sentence, ≤ 200 chars, cite 2+ specific values from input>",
-  "rationale": "<3-5 sentences. Each must cite a specific value. Last sentence = biggest risk.>",
+  "summary": "<one sentence, ≤ 200 chars, lead with direction + symbol, natural trader language, cite exact price levels>",
+  "rationale": "<3-5 sentences, natural trader language describing what factors mean for the trade, last sentence = biggest risk>",
   "key_supports": ["<factor + EXACT value from input>", ...],
   "key_risks": ["<factor + EXACT value from input>", ...],
   "recommended_action": "<PROCEED | PROCEED_WITH_CAUTION | RECONSIDER>",
@@ -158,11 +170,25 @@ short_buildup: OI↑ + price↓ — fresh shorts entering, bearish. Supports SHO
 short_covering: OI↓ + price↑ — shorts exiting, mildly bullish but NOT fresh conviction. Mild support for LONG.
 long_unwinding: OI↓ + price↓ — longs exiting, mildly bearish but NOT fresh conviction. Mild support for SHORT.
 
+## Writing style
+Write summary and rationale as a senior trader explaining to a colleague — natural, concise, opinionated.
+- NEVER use internal factor names (rvol_factor, setup_factor, bias_factor, phase_factor, vol_factor, gap_factor, trend_factor, oi_factor, rank_factor) or raw 0.0-1.0 scores in summary or rationale. Describe what they MEAN for the trade.
+- For rvol: describe it relative to normal (e.g. "3x normal volume", "barely a third of usual"). rvol 1.0 = the stock's 20-day average at this time of day.
+- For stock_trend_score: describe the trend direction and conviction, don't cite the number (e.g. "stock is in a solid multi-day uptrend" not "stock_trend_score of 0.55").
+- You MAY cite exact price levels (VWAP, PDH, PDL, ORB high/low, entry, SL, target), R:R ratios, gap percentages, VIX readings, and rvol values — these are meaningful to a trader.
+- Translate code terms in your prose:
+  BUY_FUT/SELL_FUT → "going long"/"going short"
+  ORB → "opening range breakout", VWAP_BOUNCE → "VWAP bounce", PDH_PDL → "previous day high/low breakout", GAP_CONTINUATION → "gap continuation"
+  MORNING_ACTIVE → "first two hours", CAUTION_ZONE → "midday lull", AFTERNOON → "afternoon session"
+  long_buildup → "fresh longs building", short_buildup → "fresh shorts building", short_covering → "shorts covering", long_unwinding → "longs unwinding"
+  enhanced_orb → "enhanced breakout" (cleared both ORB range and yesterday's high/low)
+- key_supports and key_risks arrays: these are for internal logs — use precise field names and values here.
+
 ## Rules
 - Evaluate the signal on the data PROVIDED. Do not complain about missing fields — if a field is null, skip it. Judge the setup on its merits with available data.
-- Read setup_type from strategy.setup_type in the input and use it correctly in your summary. Do NOT confuse setup types.
-- Every number you cite MUST appear EXACTLY in the input JSON. Do not round or approximate. If rvol is 4.14, write 4.14, not 4.1 or ~4.
-- Be concise. Only cite factors that materially affect your adjustment direction. Do not pad with generic observations.
+- Read setup_type from strategy.setup_type in the input and use it correctly in your summary.
+- Price levels, rvol, R:R ratios, gap %, and VIX values you cite MUST appear EXACTLY in the input JSON. Do not round or approximate prices.
+- Be concise. Only discuss factors that materially affect your adjustment direction. Do not pad with generic observations.
 - Adjustment scale: -10 to +10 for most signals. Exceeding ±20 requires citing two independent reasons.
 - VIX > 18: lot cap applies (already handled). VIX > 22: treat as major risk.
 - R:R >= 1.5 is validated before the signal fires. Do not flag R:R unless it is unusually close to 1.5.
@@ -178,8 +204,8 @@ When prior_signals_today is non-empty:
 Schema:
 {
   "confidence_adjustment": <integer -30 to +30>,
-  "summary": "<one sentence, ≤ 200 chars, cite 2+ specific values from input>",
-  "rationale": "<3-5 sentences. Each must cite a specific value. Last sentence = biggest risk.>",
+  "summary": "<one sentence, ≤ 200 chars, lead with direction + symbol + setup, natural trader language, cite exact price levels>",
+  "rationale": "<3-5 sentences, natural trader language describing what factors mean for the trade, last sentence = biggest risk>",
   "key_supports": ["<factor + EXACT value from input>", ...],
   "key_risks": ["<factor + EXACT value from input>", ...],
   "recommended_action": "<PROCEED | PROCEED_WITH_CAUTION | RECONSIDER>",
@@ -396,8 +422,8 @@ Produce a JSON object with EXACTLY these fields:
 
 {{
   "confidence_adjustment": <integer -30 to +30>,
-  "summary": "<one sentence ≤ 200 chars, lead with direction + symbol, cite 2+ EXACT values from input>",
-  "rationale": "<3-5 sentences, each citing a specific value, last sentence = biggest risk>",
+  "summary": "<one sentence ≤ 200 chars, lead with direction + symbol, natural trader language, cite exact price levels>",
+  "rationale": "<3-5 sentences, natural trader language describing what factors mean for the trade, last sentence = biggest risk>",
   "key_supports": ["<factor + EXACT value>", "<factor + EXACT value>"],
   "key_risks": ["<factor + EXACT value>", "<factor + EXACT value>"],
   "recommended_action": "<PROCEED | PROCEED_WITH_CAUTION | RECONSIDER>",
@@ -408,18 +434,18 @@ Produce a JSON object with EXACTLY these fields:
 
 Example 1 — Strong confluence (+8):
   Input: vwap=24358.42, distance_pct=-0.12, bias=BULLISH score=0.45, pcr=0.42, max_ce_oi_strike=24500, cpr type=NARROW, slope=0.08, reversal_quality=0.82, india_vix=13.5, rr_ratio=1.72
-  Analysis: CE pullback to VWAP with NARROW CPR + positive VWAP slope + clean reversal + bullish bias = textbook VWAP pullback. PCR 0.42 confirms bearish put writing (supports CE). R:R 1.72 is above standard. All major factors aligned.
-  Output: {{"confidence_adjustment": 8, "summary": "CE NIFTY pullback to VWAP 24358.42 (dist -0.12%); NARROW CPR + PCR 0.42 + R:R 1.72 — strong alignment.", ...}}
+  Analysis: Textbook pullback — price dipped to VWAP and bounced with a clean, decisive candle. Narrow pivot range on a day with bullish momentum. Put writers dominating at PCR 0.42 with a ceiling at 24500. R:R 1.72 is above standard. Everything lines up.
+  Output: {{"confidence_adjustment": 8, "summary": "Calls on NIFTY — clean bounce off VWAP 24358.42 on a trending day with put writers in control (PCR 0.42) and R:R 1.72.", ...}}
 
 Example 2 — Counter-bias concern (-7):
   Input: vwap=51200.5, distance_pct=0.08, bias=BEARISH score=-0.38 strength=MODERATE, pcr=1.12, reversal_quality=0.45, rr_ratio=1.35
-  Analysis: PE signal but bias is MODERATE BEARISH and reversal_quality only 0.45 — the pullback candle is unconvincing. R:R 1.35 is below standard 1.5. PCR 1.12 is neutral (not extreme). The weak reversal + low R:R together warrant caution.
-  Output: {{"confidence_adjustment": -7, "summary": "PE BANKNIFTY near VWAP 51200.5 but weak reversal (0.45) and R:R 1.35 below standard.", "recommended_action": "PROCEED_WITH_CAUTION", ...}}
+  Analysis: Puts near VWAP but the bounce candle is unconvincing — more of a stall than a reversal. R:R 1.35 is below the 1.5 standard and the day has moderate bearish momentum working against you. PCR 1.12 is neutral, no edge from options positioning. Weak candle + tight R:R together warrant caution.
+  Output: {{"confidence_adjustment": -7, "summary": "Puts on BANKNIFTY near VWAP 51200.5 but the bounce candle lacks conviction and R:R 1.35 is below standard.", "recommended_action": "PROCEED_WITH_CAUTION", ...}}
 
 Example 3 — Value accuracy rule:
   Input has: vwap=24358.42, pdh=24400.5
-  WRONG: "pullback to VWAP 24350 near PDH 24395" — 24350 and 24395 are fabricated.
-  RIGHT: "pullback to VWAP 24358.42 near PDH 24400.5" — exact values from input.
+  WRONG: "pullback to VWAP 24350 near yesterday's high of 24395" — 24350 and 24395 are fabricated.
+  RIGHT: "pullback to VWAP 24358.42 near yesterday's high of 24400.5" — exact price levels from input.
 
 === DECISION GUIDE ===
 - confidence_adjustment: -10 to +10 for most signals. Beyond ±20 requires two independent reasons.
@@ -437,8 +463,8 @@ Produce a JSON object with EXACTLY these fields:
 
 {{
   "confidence_adjustment": <integer -30 to +30>,
-  "summary": "<one sentence ≤ 200 chars, lead with direction + symbol + setup type, cite 2+ EXACT values from input>",
-  "rationale": "<3-5 sentences, each citing a specific value, last sentence = biggest risk>",
+  "summary": "<one sentence ≤ 200 chars, lead with direction + symbol + setup, natural trader language, cite exact price levels>",
+  "rationale": "<3-5 sentences, natural trader language describing what factors mean for the trade, last sentence = biggest risk>",
   "key_supports": ["<factor + EXACT value>", "<factor + EXACT value>"],
   "key_risks": ["<factor + EXACT value>", "<factor + EXACT value>"],
   "recommended_action": "<PROCEED | PROCEED_WITH_CAUTION | RECONSIDER>",
@@ -449,23 +475,23 @@ Produce a JSON object with EXACTLY these fields:
 
 Example 1 — Textbook ORB (+12):
   Input: setup_type=ORB, rvol=3.2, enhanced_orb=true, phase=MORNING_ACTIVE, fut_oi_direction=long_buildup, fut_oi_change_pct=4.5, stock_trend_score=0.55, orb_high=318.5, pdh=316.2, vwap=315.42
-  Analysis: Enhanced ORB (above both orb_high and PDH) in MORNING_ACTIVE with rvol 3.2 (excellent volume), long_buildup at 4.5% OI change, and aligned stock trend at 0.55. Three independent factors confirm: volume + OI + trend. This is a high-conviction setup.
-  Output: {{"confidence_adjustment": 12, "summary": "LONG VEDL enhanced ORB above 318.5 (>PDH 316.2); rvol 3.2 + long_buildup 4.5% OI — textbook setup.", "recommended_action": "PROCEED", ...}}
+  Analysis: Enhanced breakout — cleared both the opening range at 318.5 and yesterday's high at 316.2 in the first two hours. Volume is triple the usual and fresh longs are piling in with 4.5% OI increase. Multi-day trend backs the move. Three independent confirmations: volume, OI, and trend.
+  Output: {{"confidence_adjustment": 12, "summary": "LONG VEDL — strong breakout above opening range 318.5 and yesterday's high 316.2 with 3x normal volume and fresh longs building.", "recommended_action": "PROCEED", ...}}
 
-Example 2 — Missing RVOL offset by strong volume (-3):
+Example 2 — Missing volume baseline offset by strong breakout (-3):
   Input: setup_type=PDH_PDL, rvol_factor=0.0, vol_factor=0.78, phase=AFTERNOON, fut_oi_direction=short_buildup, stock_trend_score=-0.42, pdl=285.3, vwap=288.6
-  Analysis: rvol_factor=0.0 means no RVOL baseline exists — but vol_factor 0.78 shows breakout candle volume is strong vs recent average. AFTERNOON phase is late but PDH_PDL is structural and short_buildup confirms bearish OI. stock_trend_score -0.42 aligns with SHORT direction. The missing RVOL baseline is a minor data gap, not a red flag. Slight negative for late phase only.
-  Output: {{"confidence_adjustment": -3, "summary": "SHORT below PDL 285.3 with short_buildup OI and vol_factor 0.78; AFTERNOON phase is only concern.", "recommended_action": "PROCEED_WITH_CAUTION", ...}}
+  Analysis: No historical volume profile for this stock, but the breakout candle itself is punchy compared to recent bars. Broke below yesterday's low at 285.3 in the afternoon — late, but this is a structural level break. Fresh shorts are being built and the multi-day trend is bearish, both supporting the move. Only concern is the timing.
+  Output: {{"confidence_adjustment": -3, "summary": "SHORT below yesterday's low at 285.3 — solid breakout volume with fresh shorts building, but afternoon timing is a drag.", "recommended_action": "PROCEED_WITH_CAUTION", ...}}
 
 Example 3 — Multiple red flags (-18):
   Input: setup_type=ORB, rvol=0.8, rvol_factor=0.0, vol_factor=0.15, phase=CAUTION_ZONE, stock_trend_score=0.65, stock_trend_strength=STRONG, direction=SELL_FUT, bias=BULLISH score=0.4
-  Analysis: SHORT against STRONG BULLISH stock trend (score 0.65) is a deal-breaker on its own. Adding: rvol 0.8 below threshold (rvol_factor=0.0), vol_factor 0.15 (very weak volume), CAUTION_ZONE phase, and BULLISH Nifty bias opposing SHORT. Four independent negative factors.
-  Output: {{"confidence_adjustment": -18, "summary": "SHORT fights STRONG BULLISH trend (0.65) with rvol 0.8 and vol_factor 0.15 in CAUTION_ZONE — multiple red flags.", "recommended_action": "RECONSIDER", "suggested_lot_adjustment": "SKIP", ...}}
+  Analysis: Going short against a stock in a strong multi-day uptrend is a deal-breaker on its own. On top of that: volume is below average at 0.8x normal, the breakout candle has almost no participation, it's the midday choppy period, and Nifty is leaning bullish. Four independent reasons to walk away.
+  Output: {{"confidence_adjustment": -18, "summary": "SHORT fights a strong bullish trend with below-average volume and almost no breakout participation in the midday lull — walk away.", "recommended_action": "RECONSIDER", "suggested_lot_adjustment": "SKIP", ...}}
 
 Example 4 — Value accuracy rule:
   Input has: vwap=315.42, pdh=320.8, setup_type=ORB
-  WRONG: "LONG breaking above VWAP 315 near PDH 321" — 315 and 321 are fabricated, and you must read setup_type from the data.
-  RIGHT: "LONG ORB breaking above VWAP 315.42 near PDH 320.8" — exact values and correct setup_type.
+  WRONG: "LONG — opening range breakout above VWAP 315 near yesterday's high 321" — 315 and 321 are fabricated.
+  RIGHT: "LONG — opening range breakout above VWAP 315.42 near yesterday's high 320.8" — exact price levels from input.
 
 === DECISION GUIDE ===
 - confidence_adjustment: -10 to +10 for most signals. Beyond ±20 requires two independent reasons.
