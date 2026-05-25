@@ -407,8 +407,11 @@ Key private methods (documented because they're central to flow):
 - `_calculate_vwap_from_buffer(symbol)` — always uses futures candle volumes for index symbols (Fyers index volume is unreliable)
 - `_is_permanent_watchlist` extraction: extracted from watchlist `manual` field and injected into `signal.indicators` immediately after `strategy.evaluate()` returns and BEFORE any `await` (prevents async race condition with shared params dict)
 
+**Per-symbol concurrency guard**: `_evaluating_symbols: set[str]` — busy flag checked at the top of `_evaluate_strategies`. If the symbol is already being evaluated by a prior candle's asyncio task, the new evaluation is skipped (not queued). Prevents concurrent candle tasks from racing on signal persist / YOLO execution. Different symbols are never blocked. Cleared in `finally` block to survive exceptions.
+
 **Per-candle in-memory caches** (all reset on process restart):
 
+- `_evaluating_symbols` — per-symbol busy flag for concurrency guard (see above)
 - `_daily_candles_cache` — daily bars from `market_data_daily`, TTL = trading day
 - `_s5_session_cache` — briefing + screener enrichment per symbol, TTL = trading day
 - `_s5_oi_cache` — FUT OI direction per symbol, TTL = 600s

@@ -90,6 +90,10 @@ If resolution fails, `executable=False` and `blocked_reason="Futures contract un
 
 After resolution, three sequential steps before the signal reaches executors:
 
+### 3.0 Per-symbol concurrency guard
+
+`_evaluate_strategies` uses a per-symbol busy flag (`_evaluating_symbols` set). If the symbol is already being evaluated by a prior candle's asyncio task, the new evaluation is skipped entirely. This prevents concurrent candle evaluations for the same symbol from racing on signal persist / YOLO execution (e.g., Task A's YOLO reading stale signal data while Task B's Case-2 dedup overwrites it). Different symbols are never blocked.
+
 ### 3.1 Dedup skip check (`_is_dedup_skip`)
 
 Quick DB check: if an identical PENDING signal already exists (same strategy, symbol, direction, entry, SL, target), skip the AI overlay and DB write entirely. Saves Gemini API calls on noise.

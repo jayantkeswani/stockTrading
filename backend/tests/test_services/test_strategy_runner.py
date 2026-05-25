@@ -356,3 +356,93 @@ class TestEvaluateStrategiesFilter:
         )
 
         mock_get_active.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for per-symbol busy flag (concurrency guard)
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluationBusyFlag:
+    """Tests that concurrent candle evaluations for the same symbol are skipped."""
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.get_active_strategies")
+    async def test_skips_when_symbol_busy(self, mock_get_active):
+        """Second evaluation for the same symbol should be skipped while the first is running."""
+        from app.services.strategy_runner import strategy_runner
+
+        ctx = MagicMock(spec=MarketContext)
+
+        # Simulate the symbol already being evaluated
+        strategy_runner._evaluating_symbols.add("CANBK")
+        try:
+            await strategy_runner._evaluate_strategies(
+                "CANBK", ctx, True, None,
+                strategy_filter=[StrategyName.INTRADAY_FUTURES],
+            )
+            # Inner logic should never run
+            mock_get_active.assert_not_called()
+        finally:
+            strategy_runner._evaluating_symbols.discard("CANBK")
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.get_active_strategies")
+    async def test_different_symbol_not_blocked(self, mock_get_active):
+        """Evaluations for different symbols should not block each other."""
+        from app.services.strategy_runner import strategy_runner
+
+        mock_strategy = MagicMock()
+        mock_strategy.evaluate.return_value = None
+        mock_strategy.name = "vwap_pullback"
+        mock_get_active.return_value = [mock_strategy]
+
+        ctx = MagicMock(spec=MarketContext)
+
+        # CANBK is busy, but VEDL should proceed normally
+        strategy_runner._evaluating_symbols.add("CANBK")
+        try:
+            await strategy_runner._evaluate_strategies(
+                "VEDL", ctx, True, None,
+                strategy_filter=[StrategyName.VWAP_PULLBACK],
+            )
+            mock_get_active.assert_called_once()
+        finally:
+            strategy_runner._evaluating_symbols.discard("CANBK")
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.get_active_strategies")
+    async def test_busy_flag_cleared_on_exception(self, mock_get_active):
+        """Busy flag must be cleared even if evaluation raises."""
+        from app.services.strategy_runner import strategy_runner
+
+        mock_get_active.side_effect = RuntimeError("boom")
+        ctx = MagicMock(spec=MarketContext)
+
+        with pytest.raises(RuntimeError):
+            await strategy_runner._evaluate_strategies(
+                "SAIL", ctx, True, None,
+                strategy_filter=[StrategyName.VWAP_PULLBACK],
+            )
+
+        assert "SAIL" not in strategy_runner._evaluating_symbols
+
+    @pytest.mark.asyncio
+    @patch("app.services.strategy_runner.get_active_strategies")
+    async def test_busy_flag_cleared_after_success(self, mock_get_active):
+        """Busy flag must be cleared after normal completion."""
+        from app.services.strategy_runner import strategy_runner
+
+        mock_strategy = MagicMock()
+        mock_strategy.evaluate.return_value = None
+        mock_strategy.name = "vwap_pullback"
+        mock_get_active.return_value = [mock_strategy]
+
+        ctx = MagicMock(spec=MarketContext)
+
+        await strategy_runner._evaluate_strategies(
+            "PNB", ctx, True, None,
+            strategy_filter=[StrategyName.VWAP_PULLBACK],
+        )
+
+        assert "PNB" not in strategy_runner._evaluating_symbols

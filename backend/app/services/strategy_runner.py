@@ -118,6 +118,10 @@ class StrategyRunner:
         # calls so other indices and stocks inherit the benchmark market direction.
         self._last_nifty_bias_score: float | None = None
 
+        # Per-symbol busy flag: prevents concurrent candle evaluations for the
+        # same symbol from racing on signal persist / YOLO execution.
+        self._evaluating_symbols: set[str] = set()
+
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -1395,6 +1399,28 @@ class StrategyRunner:
                    in a window from being misclassified as "outside" because
                    evaluation runs a few hundred ms after the minute boundary.
         """
+        # Skip if another candle evaluation is already in-flight for this symbol.
+        # Prevents concurrent tasks from racing on signal persist / YOLO execution.
+        if symbol in self._evaluating_symbols:
+            logger.debug("Skipping evaluation for %s — previous candle still processing", symbol)
+            return
+        self._evaluating_symbols.add(symbol)
+        try:
+            await self._evaluate_strategies_inner(
+                symbol, ctx, executable, blocked_reason, strategy_filter, as_of,
+            )
+        finally:
+            self._evaluating_symbols.discard(symbol)
+
+    async def _evaluate_strategies_inner(
+        self,
+        symbol: str,
+        ctx: MarketContext,
+        executable: bool,
+        blocked_reason: str | None,
+        strategy_filter: list[StrategyName] | None = None,
+        as_of: datetime | None = None,
+    ) -> None:
         if strategy_filter is not None:
             names = strategy_filter
         else:
