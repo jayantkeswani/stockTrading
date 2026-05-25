@@ -187,6 +187,20 @@ function TradeDetailsPanel({ trade }: { trade: Trade }) {
   );
 }
 
+function formatLatency(entryTime: string, generatedAt?: string): string | null {
+  if (!generatedAt) return null;
+  const diffMs = new Date(entryTime).getTime() - new Date(generatedAt).getTime();
+  if (diffMs < 0 || isNaN(diffMs)) return null;
+  const secs = Math.round(diffMs / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  const remSecs = secs % 60;
+  if (mins < 60) return remSecs > 0 ? `${mins}m ${remSecs}s` : `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return remMins > 0 ? `${hrs}h ${remMins}m` : `${hrs}h`;
+}
+
 function TradeRow({
   trade,
   showSource,
@@ -202,14 +216,24 @@ function TradeRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetails = trade.signal_snapshot || trade.signal_id;
+  const latency = formatLatency(trade.entry_time, trade.signal_snapshot?.generated_at);
 
   return (
     <>
       <tr className="border-t border-border/30 hover:bg-bg-tertiary/30 hover:relative hover:z-10">
-        <td className="px-3 py-1.5 text-text-muted text-xs font-mono">
+        <td className="px-3 py-1.5 text-text-muted text-xs font-mono whitespace-nowrap">
           {formatDate(trade.entry_time)}
           <br />
           {formatTime(trade.entry_time)}
+          {trade.exit_time && (
+            <span className="text-text-muted/60"> → {formatTime(trade.exit_time)}</span>
+          )}
+          {latency && (
+            <>
+              <br />
+              <span className="text-[9px] text-accent/70">fill {latency}</span>
+            </>
+          )}
         </td>
         <td className="px-3 py-1.5 font-mono">
           <span className="font-medium">{trade.symbol}</span>
@@ -227,11 +251,20 @@ function TradeRow({
           )}
         </td>
         <td className="px-3 py-1.5 text-xs font-mono text-text-secondary">{trade.side}</td>
+        <td className="px-3 py-1.5 text-xs font-mono text-text-secondary">
+          {trade.lots}L
+          <span className="text-text-muted/60 ml-0.5">({trade.quantity})</span>
+        </td>
         <td className="px-3 py-1.5 text-right font-mono">{formatINR(trade.entry_price)}</td>
         <td className="px-3 py-1.5 text-right font-mono">
           {trade.exit_price ? formatINR(trade.exit_price) : "—"}
         </td>
-        <td className={`px-3 py-1.5 text-right font-mono font-medium ${pnlColor(
+        <td className="px-3 py-1.5 text-right font-mono text-xs text-text-muted whitespace-nowrap">
+          <span className="text-loss/70">{formatINR(trade.stop_loss)}</span>
+          <br />
+          <span className="text-profit/70">{trade.target_price != null ? formatINR(trade.target_price) : "—"}</span>
+        </td>
+        <td className={`px-3 py-1.5 text-right font-mono font-medium whitespace-nowrap ${pnlColor(
           showNetPnL && trade.net_pnl != null ? trade.net_pnl : (trade.pnl ?? 0)
         )}`}>
           {trade.pnl != null ? (
@@ -285,7 +318,7 @@ function TradeRow({
         <td className="px-3 py-1.5 text-xs font-mono text-text-muted">
           {trade.exit_reason || "—"}
         </td>
-        <td className="px-3 py-1.5 text-right text-xs font-mono text-text-secondary">
+        <td className="px-3 py-1.5 text-right text-xs font-mono text-text-secondary whitespace-nowrap">
           {trade.margin_required != null ? formatINR(trade.margin_required) : "—"}
         </td>
         <td className="px-3 py-1.5">
@@ -343,8 +376,8 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
     );
   }
 
-  // base columns: Date, Symbol, Type, Entry, Exit, P&L, Strategy, Exit Reason, Margin, Status, Details toggle
-  let colCount = 11;
+  // base columns: Date, Symbol, Type, Lots, Entry, SL/Tgt, Exit, P&L, Strategy, Exit Reason, Margin, Status, Details toggle
+  let colCount = 13;
   if (showSignalData) colCount += 2;
   if (showSource) colCount += 1;
 
@@ -356,8 +389,10 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
             <th className="text-left px-3 py-1.5">Date / Time</th>
             <th className="text-left px-3 py-1.5">Symbol</th>
             <th className="text-left px-3 py-1.5">Type</th>
+            <th className="text-left px-3 py-1.5">Lots</th>
             <th className="text-right px-3 py-1.5">Entry</th>
             <th className="text-right px-3 py-1.5">Exit</th>
+            <th className="text-right px-3 py-1.5">SL / Tgt</th>
             <th className="text-right px-3 py-1.5">
               P&amp;L
               {showNetPnL && <span className="normal-case font-normal text-accent/60 ml-1">net</span>}

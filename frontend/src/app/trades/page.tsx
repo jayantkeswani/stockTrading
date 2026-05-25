@@ -43,8 +43,11 @@ function applySimLots(trade: Trade, simLots: number | null): Trade {
         total: trade.charges_json.total * ratio,
       }
     : null;
+  const lotSize = trade.quantity / trade.lots;
   return {
     ...trade,
+    lots: simLots,
+    quantity: simLots * lotSize,
     pnl: scaledPnl,
     net_pnl: trade.net_pnl != null ? scaledPnl - (scaledCharges?.total ?? 0) : null,
     charges_json: scaledCharges,
