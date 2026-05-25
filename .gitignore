@@ -50,8 +50,6 @@ docker-compose.override.yml
 # Backtest result files (local only)
 backtest_results/
 
-# Graphify — generated artifact, kept current locally by the git hook
-graphify-out/
 
 # Telegram MTProto client (session files hold your user auth — never commit)
 scripts/telegram/*.session

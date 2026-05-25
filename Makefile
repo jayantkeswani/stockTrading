@@ -37,10 +37,6 @@ test:                ## Run backend tests
 clean:               ## Stop containers and remove volumes
 	docker compose down -v
 
-hooks:               ## Activate graphify git hooks (run once after fresh clone)
-	git config core.hooksPath .githooks
-	@echo "Git hooks activated from .githooks/"
-
 # ── GCP / Terraform ──────────────────────────────────────
 infra-up:            ## Terraform apply (create/update GCP infrastructure)
 	cd infrastructure/terraform && terraform apply

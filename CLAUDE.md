@@ -402,16 +402,4 @@ curl -s http://localhost:8080/api/v1/market/prices | python3 -m json.tool
 
 - **Purge stale daily-bar rows from `market_data_1m`**: ~9,600 rows at midnight UTC — old daily candle hack predating `market_data_daily`. Soak period ended 2026-05-08; ready to run: `DELETE FROM market_data_1m WHERE EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC') = 0 AND EXTRACT(MINUTE FROM timestamp AT TIME ZONE 'UTC') = 0;`
 
-## graphify
-
-This project has a graphify knowledge graph at graphify-out/.
-
-Rules:
-
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep
-- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
-
----
 
