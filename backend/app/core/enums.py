@@ -30,6 +30,7 @@ class ExitReason(StrEnum):
     TRAILING_SL = "TRAILING_SL"
     EXPIRY_ROLL = "EXPIRY_ROLL"
     MARKET_EXIT = "MARKET_EXIT"
+    STALE_DATA = "STALE_DATA"
 
 
 class SignalStatus(StrEnum):

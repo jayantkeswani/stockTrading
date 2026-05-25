@@ -259,6 +259,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 ### docs/
 
+- `signal-to-trade-flow.md` — end-to-end pipeline: signal generation → instrument resolution → AI overlay → YOLO/shadow/manual execution → trade monitoring. Covers the `executable` flag, confidence ladder, price sourcing, grace period, and exit conditions
 - `deployment-architecture.md` — full deployment architecture, infrastructure, secrets management, container health
 - `cross-machine-setup.md` — multi-machine dev setup (Tailscale, etc.)
 - `BUGS-2026-04-29.md` — historical bug tracker

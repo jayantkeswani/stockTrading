@@ -262,14 +262,6 @@ async def _do_shadow_execute(signal_id) -> None:
         "created_at": now.isoformat(),
     })
 
-    # Subscribe trading symbol for live price tracking (idempotent)
-    if trading_symbol:
-        try:
-            from app.data_feed.fyers_ws_client import fyers_ws_client
-            await fyers_ws_client.subscribe_symbols([trading_symbol])
-        except Exception:
-            logger.warning("Could not subscribe to %s on websocket", trading_symbol)
-
     await ws_manager.broadcast(
         "trade:open",
         {

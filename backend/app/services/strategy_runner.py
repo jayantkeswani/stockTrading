@@ -1544,6 +1544,14 @@ class StrategyRunner:
             signal.symbol, signal.fyers_option_symbol,
             resolution.strike_price, resolution.expiry_date, resolution.option_premium,
         )
+
+        # Subscribe early so ticks are flowing before shadow/YOLO create the trade
+        try:
+            from app.data_feed.fyers_ws_client import fyers_ws_client
+            await fyers_ws_client.subscribe_symbols([resolution.fyers_option_symbol])
+        except Exception:
+            logger.warning("Could not subscribe to %s on websocket", resolution.fyers_option_symbol)
+
         return signal, executable, blocked_reason
 
     async def _resolve_futures(
@@ -1615,6 +1623,14 @@ class StrategyRunner:
             signal.symbol, resolution.fyers_symbol,
             resolution.expiry_date, resolution.ltp, resolution.lot_size,
         )
+
+        # Subscribe early so ticks are flowing before shadow/YOLO create the trade
+        try:
+            from app.data_feed.fyers_ws_client import fyers_ws_client
+            await fyers_ws_client.subscribe_symbols([resolution.fyers_symbol])
+        except Exception:
+            logger.warning("Could not subscribe to %s on websocket", resolution.fyers_symbol)
+
         return signal, executable, blocked_reason
 
     async def _get_active_strategy_names(self) -> list[StrategyName]:

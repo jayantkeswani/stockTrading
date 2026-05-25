@@ -39,6 +39,8 @@ Three independent consumers of every signal, fully isolated:
 
 All three confidence thresholds (`min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`) are global in `trading_config`. Cross-field validation enforces `persist < shadow <= execution`.
 
+**WS subscription**: happens at resolve time (`_resolve_option` / `_resolve_futures` in strategy_runner), not at trade creation. This ensures ticks are flowing before shadow/YOLO open the position.
+
 ### Signal Dedup
 
 "Acted on" = `executed_trade_id` set OR any Trade with `signal_id = existing.id` (catches shadow). Shadow trades never trigger Case 3. **Same-day scoping**: intraday strategies only dedup against `generated_at >= today 00:00`. **EOD signal expiry**: at 3:30 PM IST, `signal_expiry_task` bulk-expires all remaining PENDING intraday signals.
@@ -160,7 +162,7 @@ Key constants (not functions):
 
 #### `enums.py`
 
-Key enums: `OptionType`, `OrderSide`, `TradeStatus`, `ExitReason` (incl. `TRAILING_SL`, `PROFIT_CAP`), `SignalStatus`, `SignalType`, `StrategyName` (incl. `CAN_SLIM`, `INTRADAY_FUTURES`), `IndexSymbol`, `InstrumentType`, `PositionType`, `AgentAutonomyLevel`, `AgentActionType` (incl. `SHADOW_EXECUTED`, `PROFIT_CAP_CLOSE`), `TradeSource` (`MANUAL`/`YOLO`/`SHADOW`)
+Key enums: `OptionType`, `OrderSide`, `TradeStatus`, `ExitReason` (incl. `TRAILING_SL`, `PROFIT_CAP`, `STALE_DATA`), `SignalStatus`, `SignalType`, `StrategyName` (incl. `CAN_SLIM`, `INTRADAY_FUTURES`), `IndexSymbol`, `InstrumentType`, `PositionType`, `AgentAutonomyLevel`, `AgentActionType` (incl. `SHADOW_EXECUTED`, `PROFIT_CAP_CLOSE`), `TradeSource` (`MANUAL`/`YOLO`/`SHADOW`)
 
 #### `task_registry.py`
 
@@ -650,7 +652,7 @@ Class: `FyersWSClient`
 - `stop()` — disconnects, cancels reconnect task, nulls `_ws` BEFORE close to break reconnect cascade loop
 - `register_symbol_map(symbol_map: dict[str, str])` — extends `_reverse_map` for new symbols. Used by: strategy_runner (when new S5 symbols added)
 - `is_symbol_subscribed(fyers_symbol) -> bool`
-- `subscribe_symbols(symbols, symbol_map=None)` — deduplicates; extends reverse map. Used by: market_data API, main.py startup
+- `subscribe_symbols(symbols, symbol_map=None)` — deduplicates; extends reverse map. Used by: strategy_runner (_resolve_option, _resolve_futures), market_data API, main.py startup
 
 **Reconnect architecture**:
 
@@ -781,6 +783,8 @@ Internal flow per position check:
 **Direction detection**: uses `target_price < entry_price` (target below entry = SHORT). **SHORT position support**: direction-aware SL hit, target hit, unrealized PnL, HWM (lowest price for shorts), trailing SL direction.
 
 **Trailing SL**: POSITIONAL always trails; INTRADAY trails when `trailing_sl_enabled=True`. Breakeven at `trailing_sl_breakeven_pct` (S5: 0.5%); progressive trail when `trailing_sl_trail_pct` is set. SL only moves favorably. `ExitReason.TRAILING_SL` vs `ExitReason.AGENT_SL` distinguished by comparing `trade.stop_loss` (original) vs `pos.stop_loss` (live, trailed).
+
+**Stale data grace period**: positions < 5 minutes old skip the stale-data closure check (both shadow and non-shadow). After grace period, shadow positions with no price are closed with `ExitReason.STALE_DATA` and PnL zeroed. Non-shadow positions continue to return None (no action).
 
 `**agent:action` broadcast shape**: must match `AgentLogResponse` (id, action_type, trade_id, details, requires_confirmation, confirmation_status, confirmed_at, created_at) — frontend `AgentFeed` reads `log.id` for React keys and `log.details.{symbol,pnl,strategy_name}` for display. Do NOT change to a flat dict.
 

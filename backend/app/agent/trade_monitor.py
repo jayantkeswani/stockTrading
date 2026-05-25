@@ -154,12 +154,16 @@ async def _check_position(
         if pos.fyers_option_symbol:
             price_data = await _fetch_option_price_rest(pos.fyers_option_symbol)
         if not price_data:
+            if _is_within_grace_period(pos):
+                return None
             if pos.is_shadow:
                 return await _close_stale_shadow(db, pos)
             return None
 
     current_price = Decimal(str(price_data.get("ltp", 0)))
     if current_price <= 0:
+        if _is_within_grace_period(pos):
+            return None
         if pos.is_shadow:
             return await _close_stale_shadow(db, pos)
         return None
@@ -647,17 +651,28 @@ async def _roll_futures_position(
     }
 
 
+_STALE_GRACE_PERIOD = timedelta(minutes=5)
+
+
+def _is_within_grace_period(pos: Position) -> bool:
+    """Skip stale-data closure if position was created less than 5 minutes ago."""
+    if pos.created_at is None:
+        return False
+    age = now_ist() - pos.created_at
+    return age < _STALE_GRACE_PERIOD
+
+
 async def _close_stale_shadow(db: AsyncSession, pos: Position) -> dict:
     """Close a shadow position whose contract price is no longer available.
 
     Uses entry_price as exit so PnL = 0 — better than leaving it OPEN forever.
     """
     logger.info(
-        "Closing stale shadow position %s (no price available), PnL zeroed",
+        "Closing stale shadow position %s (no price available after grace period), PnL zeroed",
         pos.symbol,
     )
     return await _close_position(
-        db, pos, pos.entry_price, ExitReason.TIME_EXIT,
+        db, pos, pos.entry_price, ExitReason.STALE_DATA,
         AgentActionType.TIME_EXIT, requires_confirmation=False,
     )
 

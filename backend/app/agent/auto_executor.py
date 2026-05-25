@@ -276,16 +276,6 @@ async def auto_execute_signal(signal_id) -> dict | None:
 
         await session.commit()
 
-    # Subscribe to trading symbol on websocket feed for live price tracking
-    trading_symbol = signal.fyers_futures_symbol or signal.fyers_option_symbol
-    if trading_symbol:
-        try:
-            from app.data_feed.fyers_ws_client import fyers_ws_client
-
-            await fyers_ws_client.subscribe_symbols([trading_symbol])
-        except Exception:
-            logger.warning("Could not subscribe to %s on websocket", trading_symbol)
-
     # Broadcast trade:open so the position appears in the frontend immediately
     await ws_manager.broadcast(
         "trade:open",

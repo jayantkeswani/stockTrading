@@ -1,7 +1,7 @@
 """Tests for trade_monitor.py — position monitoring, SL/target/time exit, trailing SL, expiry roll."""
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -56,6 +56,7 @@ def _make_position(
     pos.option_type = "CE"
     pos.instrument_type = "OPTION"
     pos.high_since_entry = None
+    pos.created_at = datetime.now(timezone.utc) - timedelta(minutes=10)
     return pos
 
 
