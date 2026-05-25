@@ -82,7 +82,7 @@ All pages use `'use client'` directive.
 - `GlobalCues.tsx` — Collapsible morning briefing + global market cues. Manual `↻ refresh` button passes `force=true` to bypass Redis cache. Shows: overnight bias badge, global score bar (BiasBar), Nifty Gap, Nifty/S&P/Nasdaq/Dow Futures/Crude/USD-INR/DXY/India VIX/US VIX. `preopen_reassessed` shown as `pre-open ✓` badge.
 
 **positions/**
-- `ActivePositions.tsx` — Dense table of open positions: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy, Close button. Expanded detail: Strategy, Expiry, Lots/Qty, Stop Loss, Target, Margin (`pos.margin_required` coerced via `Number()`). Watchlist button resolves symbol via `api.searchSymbols()`. Confidence filter from store. Real/Shadow toggle. Direction-aware P/L and SL distance. Trailing SL exit reason in amber. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks.
+- `ActivePositions.tsx` — Dense table of open positions: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy, Close button. `P` badge on permanent watchlist positions (open) and closed-today trades. Expanded detail: Strategy, Expiry, Lots/Qty, Stop Loss, Target, Margin (`pos.margin_required` coerced via `Number()`). Watchlist button resolves symbol via `api.searchSymbols()`. Confidence filter from store. Real/Shadow toggle. Direction-aware P/L and SL distance. Trailing SL exit reason in amber. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks.
 
 ---
 
@@ -212,7 +212,7 @@ All API calls go through this module via a single `request()` helper (parses err
 #### lib/types.ts — Key Interfaces
 - `PriceData` — `{symbol, ltp, bid, ask, volume, change, change_pct, timestamp}`
 - `Candle` — `{timestamp, open, high, low, close, volume}`
-- `Position` — open position; key fields: `is_shadow`, `signal_confidence`, `margin_required`, `fyers_option_symbol`, `position_type`
+- `Position` — open position; key fields: `is_shadow`, `signal_confidence`, `margin_required`, `fyers_option_symbol`, `position_type`, `is_permanent_watchlist`
 - `Trade` — closed/open trade; key fields: `source` (`MANUAL|YOLO|SHADOW`), `charges_json` (brokerage/STT/exchange/GST/SEBI/stamp/total), `net_pnl`, `margin_required`, `is_permanent_watchlist`, `signal_confidence/ai_action/ai_summary/instrument_type/signal_type` (snapshotted columns), `signal_snapshot` (full JSONB), `signal_is_permanent_watchlist`
 - `Signal` — trading opportunity; key fields: `signal_type` (`BUY_CE|BUY_PE|BUY_FUT|SELL_FUT`), `instrument_type` (`OPTION|FUTURE|EQUITY`), `confidence`, `is_permanent_watchlist`, `ai_summary/rationale/adjustment/action`; **no `lots` or `quantity` fields** (resolved at execution via preview endpoint)
 - `SignalHistory` — Case-2 snapshot; `version`, `entry_price/stop_loss/target_price`, `confidence`, `ai_*` fields, `captured_at`

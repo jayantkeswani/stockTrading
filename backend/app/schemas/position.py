@@ -27,6 +27,7 @@ class PositionResponse(BaseModel):
     opened_at: datetime
     signal_confidence: Decimal | None = None
     margin_required: Decimal | None = None
+    is_permanent_watchlist: bool = False
 
     model_config = {"from_attributes": True}
 

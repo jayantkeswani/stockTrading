@@ -266,6 +266,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 - `execution-concurrency.md` — concurrency model of the tick-to-trade pipeline: what's sequential vs fire-and-forget, why each await exists, per-symbol concurrency guard, trade monitor polling design
 - `intraday-bias.md` — intraday bias composite design: 8-factor model, ADR-based normalizers, time decay, and how S2/S5 consume the bias (hard gates, confidence factors, lot sizing)
 - `deployment-architecture.md` — full deployment architecture, infrastructure, secrets management, container health
+- `permanent-watchlist.md` — permanent watchlist design: three stock categories (permanent-only, overlap, screener-only), "P" badge display rules, execution gates, screener bypass rules, data flow
 - `BUGS-2026-04-29.md` — historical bug tracker
 
 ## How-To Guides

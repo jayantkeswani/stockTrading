@@ -282,6 +282,9 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                   {/* Row 1: symbol + side + lots + strategy */}
                   <div className="flex items-center gap-2">
                     <span className="font-mono font-medium text-xs text-text-secondary">{t.symbol}</span>
+                    {(t.is_permanent_watchlist || t.signal_is_permanent_watchlist) && (
+                      <span className="text-[9px] font-mono px-1 py-px rounded border border-accent/40 text-accent/70">P</span>
+                    )}
                     {!isFutures && (
                       <span className={`text-[10px] font-mono ${t.option_type === "CE" ? "text-profit" : "text-loss"}`}>
                         {t.option_type}
@@ -398,6 +401,9 @@ function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, han
                   )}
                   {compact && !isFutures && (
                     <span className="text-[10px] text-text-muted font-mono">{pos.strike_price}</span>
+                  )}
+                  {pos.is_permanent_watchlist && (
+                    <span className="text-[9px] font-mono px-1 py-px rounded border border-accent/40 text-accent/70">P</span>
                   )}
                   {(() => {
                     const ws = watchlistStatuses[pos.id] || "idle";

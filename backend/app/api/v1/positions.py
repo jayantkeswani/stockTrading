@@ -21,6 +21,7 @@ def _to_response(pos: Position, trade: Trade | None) -> PositionResponse:
     resp = PositionResponse.model_validate(pos)
     if trade:
         resp.signal_confidence = trade.signal_confidence
+        resp.is_permanent_watchlist = trade.is_permanent_watchlist or False
     return resp
 
 

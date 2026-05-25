@@ -234,7 +234,7 @@ Key additions (other schemas are standard CRUD):
 - `trade.py`: `MarginAnalysisRequest(trade_ids: list[UUID])`, `MarginAnalysisResponse(peak_margin, peak_time, total_margin, trade_count)`, `HoldAnalysisRequest`, `PerTradeHoldResult`, `HoldAnalysisResponse`, `TradeResponse` includes `margin_required`, `signal_*` snapshot columns
 - `signal.py`: `SignalPreviewResponse(risk, notional, margin_required, sizing_meta, warnings, entry_price, stop_loss, target_price, lots)`
 - `risk.py`: `RiskDashboardResponse(notional, risk, margin_utilized, max_daily_profit, is_profit_capped, closed_pnl, total_pnl, drawdown_pct)`
-- `position.py`: `PositionResponse` includes `margin_required`, `signal_confidence`, `unrealized_pnl`, `current_price`
+- `position.py`: `PositionResponse` includes `margin_required`, `signal_confidence`, `unrealized_pnl`, `current_price`, `is_permanent_watchlist`
 
 ---
 

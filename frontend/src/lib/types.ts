@@ -40,6 +40,7 @@ export interface Position {
   opened_at: string;
   signal_confidence: number | null;
   margin_required: number | null;
+  is_permanent_watchlist: boolean;
 }
 
 export interface Trade {
