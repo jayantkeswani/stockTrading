@@ -2,7 +2,7 @@
 
 ## Git Worktree Policy
 
-When this repo has multiple Claude Code sessions working in parallel (Check with user if multiple agents are working in parallel), each session MUST operate in its own git worktree to avoid conflicts. Before making any code changes, create a worktree from the current branch and work inside it. Merge results back when done. This does NOT apply to subagents spawned within a single session — those operate normally.
+**Before making any code changes, ask the user whether other Claude Code sessions are active on this repo.** If yes, create a worktree from the current branch and work inside it. Merge results back when done. This does NOT apply to subagents spawned within a single session.
 
 ## Subagent Model Policy
 
@@ -261,7 +261,6 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 - `signal-to-trade-flow.md` — end-to-end pipeline: signal generation → instrument resolution → AI overlay → YOLO/shadow/manual execution → trade monitoring. Covers the `executable` flag, confidence ladder, price sourcing, grace period, and exit conditions
 - `deployment-architecture.md` — full deployment architecture, infrastructure, secrets management, container health
-- `cross-machine-setup.md` — multi-machine dev setup (Tailscale, etc.)
 - `BUGS-2026-04-29.md` — historical bug tracker
 
 ## How-To Guides

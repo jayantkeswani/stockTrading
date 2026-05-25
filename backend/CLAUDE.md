@@ -130,7 +130,7 @@ Pydantic Settings loading from `.env`. Key groups:
 
 **File logging**: `RotatingFileHandler` on root logger → `backend/logs/app.log` (10 MB × 5 rotations). All `logging.getLogger(__name__)` calls propagate automatically.
 
-**CORS**: Enabled for all origins (single-user, multi-machine via Tailscale).
+**CORS**: Enabled for all origins (single-user system).
 
 ---
 
