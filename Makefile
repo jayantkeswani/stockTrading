@@ -17,7 +17,7 @@ infra:               ## Start PostgreSQL + Redis only
 	docker compose up -d --wait
 
 backend:             ## Start backend only (assumes infra is up)
-	cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+	cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --host :: --port 8080
 
 frontend:            ## Start frontend only
 	cd frontend && npm run dev

@@ -15,7 +15,7 @@ Data flow:
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -28,11 +28,30 @@ logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 
 RATE_LIMIT_DELAY_SECONDS = 5  # Delay between stock fetches (Yahoo Finance rate limiting)
+STALENESS_THRESHOLD_HOURS = 6
+
+
+async def _get_fresh_symbols(symbols: list[str]) -> set[str]:
+    """Return symbols whose last_refreshed_at is within STALENESS_THRESHOLD_HOURS."""
+    from app.core.database import async_session_factory
+    from app.models.fundamental_data import StockFundamental
+    from sqlalchemy import select
+
+    cutoff = datetime.now(IST) - timedelta(hours=STALENESS_THRESHOLD_HOURS)
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(StockFundamental.symbol).where(
+                StockFundamental.symbol.in_(symbols),
+                StockFundamental.last_refreshed_at >= cutoff,
+            )
+        )
+        return set(result.scalars().all())
 
 
 async def fetch_fundamentals() -> int:
     """Fetch fundamental data for all CAN SLIM-configured symbols.
 
+    Skips symbols refreshed within the last 6 hours.
     Reads symbols from strategy_configs WHERE strategy_name='can_slim'.
     After per-symbol fetches, enriches with:
     - Percentile-ranked RS ratings (across the full universe)
@@ -45,7 +64,17 @@ async def fetch_fundamentals() -> int:
         logger.debug("No CAN SLIM symbols configured — skipping fundamental fetch")
         return 0
 
-    logger.info("Fetching fundamentals for %d CAN SLIM symbols", len(symbols))
+    fresh = await _get_fresh_symbols(symbols)
+    stale_symbols = [s for s in symbols if s not in fresh]
+
+    if not stale_symbols:
+        logger.info("All %d CAN SLIM symbols are fresh (< %dh old) — skipping fetch", len(symbols), STALENESS_THRESHOLD_HOURS)
+        return 0
+
+    if fresh:
+        logger.info("Skipping %d fresh symbols, fetching %d stale", len(fresh), len(stale_symbols))
+
+    logger.info("Fetching fundamentals for %d CAN SLIM symbols", len(stale_symbols))
 
     # Fetch F&O lot sizes once (used for all symbols)
     from app.data_sources import nse_client
@@ -56,7 +85,7 @@ async def fetch_fundamentals() -> int:
     updated = 0
     raw_rs_scores: dict[str, float] = {}
 
-    for symbol in symbols:
+    for symbol in stale_symbols:
         try:
             raw_rs = await _fetch_and_store_symbol(symbol, lot_sizes)
             if raw_rs is not None:
@@ -66,14 +95,14 @@ async def fetch_fundamentals() -> int:
             logger.exception("Failed to fetch fundamentals for %s", symbol)
 
         # Rate limit between stocks
-        if symbol != symbols[-1]:
+        if symbol != stale_symbols[-1]:
             await asyncio.sleep(RATE_LIMIT_DELAY_SECONDS)
 
     # Percentile-rank RS ratings across all stocks and update DB
     if raw_rs_scores:
         await _update_rs_percentile_ranks(raw_rs_scores)
 
-    logger.info("Fundamental data refresh complete: %d/%d symbols updated", updated, len(symbols))
+    logger.info("Fundamental data refresh complete: %d/%d symbols updated", updated, len(stale_symbols))
     return updated
 
 
