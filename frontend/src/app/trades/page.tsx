@@ -48,6 +48,7 @@ function applySimLots(trade: Trade, simLots: number | null): Trade {
     pnl: scaledPnl,
     net_pnl: trade.net_pnl != null ? scaledPnl - (scaledCharges?.total ?? 0) : null,
     charges_json: scaledCharges,
+    margin_required: trade.margin_required != null ? Number(trade.margin_required) * ratio : null,
   };
 }
 
@@ -83,6 +84,36 @@ function applyHoldAnalysis(
     pnl_percent: hypoPnlPct,
     net_pnl: null,
   };
+}
+
+function computeMarginTimeline(trades: Trade[]): { peak_margin: number; peak_time: string | null; total_margin: number; trade_count: number } | null {
+  const withMargin = trades.filter((t) => t.margin_required != null && Number(t.margin_required) > 0);
+  if (withMargin.length === 0) return null;
+  const events: { ts: number; delta: number }[] = [];
+  for (const t of withMargin) {
+    const m = Number(t.margin_required);
+    events.push({ ts: new Date(t.entry_time).getTime(), delta: m });
+    if (t.exit_time) events.push({ ts: new Date(t.exit_time).getTime(), delta: -m });
+  }
+  events.sort((a, b) => a.ts - b.ts);
+  let running = 0;
+  let peak = 0;
+  let peakTs: number | null = null;
+  for (const e of events) {
+    running += e.delta;
+    if (running > peak) { peak = running; peakTs = e.ts; }
+  }
+  return {
+    peak_margin: peak,
+    peak_time: peakTs != null ? new Date(peakTs).toISOString() : null,
+    total_margin: withMargin.reduce((s, t) => s + Number(t.margin_required), 0),
+    trade_count: withMargin.length,
+  };
+}
+
+function computePeakMargin(trades: Trade[]): number | undefined {
+  const result = computeMarginTimeline(trades);
+  return result && result.peak_margin > 0 ? result.peak_margin : undefined;
 }
 
 function isSimActive(sim: { min_confidence: number; ai_action: string; instrument_type: string; signal_types: string[]; sim_lots: number | null }): boolean {
@@ -122,7 +153,6 @@ export default function TradesPage() {
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [marginResult, setMarginResult] = useState<{ peak_margin: number; peak_time: string | null; total_margin: number; trade_count: number } | null>(null);
-  const [marginLoading, setMarginLoading] = useState(false);
   const [holdMap, setHoldMap] = useState<HoldResultMap>(new Map());
   const [holdLoading, setHoldLoading] = useState(false);
 
@@ -242,28 +272,13 @@ export default function TradesPage() {
     return holdTrades.filter((t) => isoDateIST(new Date(t.entry_time)) === selectedDay);
   }, [holdTrades, selectedDay]);
 
-  const [peakMargin, setPeakMargin] = useState<number | undefined>();
-
-  useEffect(() => {
-    const ids = holdTrades.filter((t) => t.margin_required != null).map((t) => t.id);
-    if (ids.length === 0) { setPeakMargin(undefined); return; }
-    let cancelled = false;
-    api.marginAnalysis(ids).then((r) => { if (!cancelled) setPeakMargin(r.peak_margin); }).catch(() => { if (!cancelled) setPeakMargin(undefined); });
-    return () => { cancelled = true; };
+  const peakMargin = useMemo(() => {
+    return computePeakMargin(holdTrades);
   }, [holdTrades]);
 
-  const handleMarginAnalysis = useCallback(async () => {
-    const ids = displayedTrades.map((t) => t.id);
-    if (ids.length === 0) return;
-    setMarginLoading(true);
-    try {
-      const result = await api.marginAnalysis(ids);
-      setMarginResult(result);
-    } catch {
-      setMarginResult(null);
-    } finally {
-      setMarginLoading(false);
-    }
+  const handleMarginAnalysis = useCallback(() => {
+    if (displayedTrades.length === 0) return;
+    setMarginResult(computeMarginTimeline(displayedTrades));
   }, [displayedTrades]);
 
   const periodLabel = `${period.start.toLocaleDateString("en-IN", {
@@ -578,10 +593,10 @@ export default function TradesPage() {
         <span className="text-[9px] font-mono uppercase tracking-wider text-text-muted">Margin Analysis</span>
         <button
           onClick={handleMarginAnalysis}
-          disabled={marginLoading || displayedTrades.length === 0}
+          disabled={displayedTrades.length === 0}
           className="px-2 py-1 rounded border text-[10px] font-mono transition-colors border-border text-text-muted hover:border-accent/40 hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {marginLoading ? "Analyzing..." : "Analyze Margin"}
+          Analyze Margin
         </button>
         {marginResult && (
           <>
