@@ -1784,7 +1784,7 @@ class StrategyRunner:
             return
 
         # Check for existing PENDING signal for same strategy + symbol + direction
-        dedup_result = await self._dedup_signal(signal, now, executable, blocked_reason)
+        dedup_result = await self._dedup_signal(signal, now, executable, blocked_reason, ai_fields=ai_fields)
         if dedup_result == "skip":
             logger.debug(
                 "Duplicate signal skipped: %s %s %s (identical PENDING exists)",
@@ -1950,6 +1950,7 @@ class StrategyRunner:
         now: datetime,
         executable: bool,
         blocked_reason: str | None,
+        ai_fields: dict | None = None,
     ) -> str | Signal | None:
         """Check for duplicate PENDING signals and handle accordingly.
 
@@ -2088,6 +2089,12 @@ class StrategyRunner:
                     existing.expiry_date = signal.expiry_date
                 if signal.strike_price is not None:
                     existing.strike_price = Decimal(str(signal.strike_price))
+
+                ai = ai_fields or {}
+                existing.ai_summary = ai.get("ai_summary")
+                existing.ai_rationale = ai.get("ai_rationale")
+                existing.ai_adjustment = Decimal(str(ai["ai_adjustment"])) if ai.get("ai_adjustment") is not None else None
+                existing.ai_action = ai.get("ai_action")
 
                 await session.commit()
                 await session.refresh(existing)

@@ -399,7 +399,7 @@ Key private methods (documented because they're central to flow):
 - `_query_previous_day(session, symbol, today)` — queries last trading day's 1m candles; `yesterday_cutoff` is midnight IST (`time.min`), not MARKET_OPEN, so pre-open candles (08:42–09:07) don't bleed into today's query
 - `_enrich_signal_snapshot(signal, ...)` — injects `nifty_spot`, `nifty_day_change_pct`, `trigger_candle`, `minutes_since_open` into every signal's indicators JSONB
 - `_enrich_strategy5_params(symbol, params, india_vix=None)` — loads RVOL profiles, cross-position counts, Nifty bias, ORB levels, briefing, global cues shift, per-stock gap/trend data, FUT OI direction into strategy params; throttled to once per 5 min per symbol for global cues check
-- `_dedup_signal(existing, new)` — Case-1 (noise: skip), Case-2 (meaningful: archive to `signal_history` → update → re-fire shadow), Case-3 (acted on: return None → create new signal)
+- `_dedup_signal(existing, new, ai_fields)` — Case-1 (noise: skip), Case-2 (meaningful: archive to `signal_history` → update all fields including `ai_*` → re-fire shadow), Case-3 (acted on: return None → create new signal)
 - `_persist_signal(signal)` — writes signal to DB; copies `_is_permanent_watchlist` from indicators to `Signal.is_permanent_watchlist`; gates on `min_confidence_to_persist`
 - `_check_regulatory_limits(symbol)` — F&O ban list check (reads `nse:fo_ban_list:{today}`)
 - `_is_dedup_skip(existing, new)` — AI gate pre-check; if identical signal exists, skips Gemini call + DB write
