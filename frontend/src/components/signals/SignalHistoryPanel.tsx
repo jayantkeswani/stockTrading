@@ -70,7 +70,7 @@ export function SignalHistoryPanel({ signalId }: { signalId: string }) {
 
                 {/* time */}
                 <span className="text-text-muted shrink-0">
-                  {formatHistoryTime(h.captured_at)}
+                  {formatHistoryTime(h.generated_at)}
                 </span>
 
                 {/* entry */}

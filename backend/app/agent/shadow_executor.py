@@ -48,7 +48,7 @@ async def shadow_execute_signal(signal_id) -> None:
 async def _do_shadow_execute(signal_id) -> None:
     """Core shadow execution logic — creates a SHADOW Trade + Position for the signal.
 
-    Gate order: PENDING status → no open shadow for signal → past close deadline →
+    Gate order: PENDING/EXECUTED status → no open shadow for signal → past close deadline →
     F&O ban → resolution failure → per-strategy shadow_enabled →
     confidence >= min_confidence_for_shadow → permanent watchlist check.
     Always uses 1 lot, no capital gates.
@@ -61,7 +61,7 @@ async def _do_shadow_execute(signal_id) -> None:
             logger.warning("Shadow execute: signal %s not found", signal_id)
             return
 
-        if signal.status != SignalStatus.PENDING.value:
+        if signal.status not in (SignalStatus.PENDING.value, SignalStatus.EXECUTED.value):
             logger.debug("Shadow execute: signal %s is %s, skipping", signal_id, signal.status)
             return
 

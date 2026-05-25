@@ -792,7 +792,7 @@ Lot sizing via `compute_lots_for_yolo()`. SL/target recomputed from live LTP via
 
 #### `shadow_executor.py`
 
-- `shadow_execute_signal(signal_id) -> None` — fire-and-forget; gate order: (1) PENDING; (2) open shadow dedup (CLOSED shadows don't block — allows fresh shadow on Case-2 re-fire); (3) past close deadline; (4) F&O ban; (5) resolution failure; (6) per-strategy `shadow_enabled` gate (from `strategy_configs`); (7) confidence gate (`min_confidence_for_shadow`); (8) permanent watchlist gate (`shadow_skip_permanent_watchlist`). Creates `Trade(source="SHADOW")` + `Position(is_shadow=True)`. Used by: strategy_runner._handle_signal(), strategy_runner._dedup_signal() (Case-2)
+- `shadow_execute_signal(signal_id) -> None` — fire-and-forget; gate order: (1) PENDING or EXECUTED (allows shadow mirroring of YOLO-executed signals); (2) open shadow dedup (CLOSED shadows don't block — allows fresh shadow on Case-2 re-fire); (3) past close deadline; (4) F&O ban; (5) resolution failure; (6) per-strategy `shadow_enabled` gate (from `strategy_configs`); (7) confidence gate (`min_confidence_for_shadow`); (8) permanent watchlist gate (`shadow_skip_permanent_watchlist`). Creates `Trade(source="SHADOW")` + `Position(is_shadow=True)`. Used by: strategy_runner._handle_signal(), strategy_runner._dedup_signal() (Case-2)
 
 Always 1 lot. No capital gates (even VIX extreme, drawdown, max-trades, outside window — these blocked signals are shadow-executed to measure what would have happened). SL/target recomputed from live LTP. See `docs/ai/shadow-agent.md` for isolation guarantees.
 

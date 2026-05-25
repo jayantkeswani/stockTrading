@@ -81,9 +81,9 @@ class TestShadowExecuteSignal:
     @pytest.mark.asyncio
     @patch("app.agent.shadow_executor.async_session_factory")
     async def test_shadow_skips_non_pending_signal(self, mock_session_factory):
-        """Does not create trade if signal is already EXECUTED."""
+        """Does not create trade if signal is EXPIRED (PENDING and EXECUTED are allowed)."""
         signal_id = uuid.uuid4()
-        signal = _make_signal(signal_id, status=SignalStatus.EXECUTED)
+        signal = _make_signal(signal_id, status=SignalStatus.EXPIRED)
 
         session, added_objects = _mock_session(mock_session_factory, signal)
 
