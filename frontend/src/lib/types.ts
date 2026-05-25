@@ -38,6 +38,7 @@ export interface Position {
   is_shadow: boolean;
   position_type: string;
   opened_at: string;
+  signal_generated_at: string | null;
   signal_confidence: number | null;
   margin_required: number | null;
   is_permanent_watchlist: boolean;

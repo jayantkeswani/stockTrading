@@ -577,6 +577,7 @@ async def _roll_futures_position(
         is_paper=pos.is_paper,
         is_shadow=pos.is_shadow,
         opened_at=now,
+        signal_generated_at=pos.signal_generated_at,
         margin_required=margin,
     )
     db.add(new_position)

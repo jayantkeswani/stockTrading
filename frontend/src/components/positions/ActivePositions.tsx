@@ -30,6 +30,20 @@ function formatISTTime(isoString: string | null): string {
   return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
+function formatLatency(fillTime: string, generatedAt: string | null): string | null {
+  if (!generatedAt) return null;
+  const diffMs = new Date(fillTime).getTime() - new Date(generatedAt).getTime();
+  if (diffMs < 0 || isNaN(diffMs)) return null;
+  const secs = Math.round(diffMs / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  const remSecs = secs % 60;
+  if (mins < 60) return remSecs > 0 ? `${mins}m ${remSecs}s` : `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return remMins > 0 ? `${hrs}h ${remMins}m` : `${hrs}h`;
+}
+
 export function ActivePositions({ compact }: ActivePositionsProps) {
   // prices separated so price ticks only re-render this component, not
   // unrelated store slices (agent logs, research, signals, etc.).
@@ -343,6 +357,10 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                       {durationMin != null && (
                         <span className="ml-1.5 text-text-muted/60">{durationMin}m</span>
                       )}
+                      {(() => {
+                        const lat = formatLatency(t.entry_time, t.signal_snapshot?.generated_at ?? null);
+                        return lat ? <span className="ml-1.5 text-accent/70">fill {lat}</span> : null;
+                      })()}
                     </span>
                     <span className={`text-[9px] font-mono ${t.exit_reason === "TRAILING_SL" ? "text-warning" : "text-text-muted"}`}>
                       {t.exit_reason?.replace(/_/g, " ") ?? "—"}
@@ -466,6 +484,16 @@ function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, han
                     <div>
                       <span className="text-text-muted">Strategy</span>
                       <div className="text-text-primary mt-0.5">{STRATEGY_LABELS[pos.strategy_name] || pos.strategy_name}</div>
+                    </div>
+                    <div>
+                      <span className="text-text-muted">Opened</span>
+                      <div className="text-text-primary mt-0.5">
+                        {formatISTTime(pos.opened_at)}
+                        {(() => {
+                          const lat = formatLatency(pos.opened_at, pos.signal_generated_at);
+                          return lat ? <span className="ml-1 text-[9px] text-accent/70">fill {lat}</span> : null;
+                        })()}
+                      </div>
                     </div>
                     <div>
                       <span className="text-text-muted">Expiry</span>

@@ -242,6 +242,7 @@ async def _do_shadow_execute(signal_id) -> None:
             is_paper=True,
             is_shadow=True,
             opened_at=now,
+            signal_generated_at=signal.generated_at,
             margin_required=margin,
         )
         session.add(position)

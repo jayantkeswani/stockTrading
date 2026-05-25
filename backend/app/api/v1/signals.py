@@ -285,6 +285,7 @@ async def execute_signal(
         position_type=position_type,
         is_paper=cfg.paper_trading,
         opened_at=now,
+        signal_generated_at=signal.generated_at,
         margin_required=margin,
     )
     db.add(position)

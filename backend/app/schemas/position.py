@@ -25,6 +25,7 @@ class PositionResponse(BaseModel):
     is_shadow: bool = False
     position_type: str = "INTRADAY"
     opened_at: datetime
+    signal_generated_at: datetime | None = None
     signal_confidence: Decimal | None = None
     margin_required: Decimal | None = None
     is_permanent_watchlist: bool = False
