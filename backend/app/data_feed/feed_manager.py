@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.core.constants import IST
+from app.core.constants import IST, MARKET_OPEN
 from app.core.database import async_session_factory
 from app.core.redis import cache_price, publish_event
 from app.core.utils import is_market_open
@@ -176,11 +176,16 @@ class FeedManager:
             "timestamp": candle["timestamp"],
         }
 
-        # Persist to MarketData1m (fire-and-forget, don't block tick processing)
-        asyncio.create_task(
-            self._persist_candle(symbol, candle),
-            name=f"persist_candle:{symbol}",
-        )
+        # Skip DB persist for pre-market candles (before 09:15 IST).
+        # These are from the pre-open auction and pollute _query_previous_day.
+        ts = candle["timestamp"]
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts)
+        if ts.time() >= MARKET_OPEN:
+            asyncio.create_task(
+                self._persist_candle(symbol, candle),
+                name=f"persist_candle:{symbol}",
+            )
 
         await publish_event(f"candle:{symbol}", json.dumps(event_data))
         await ws_manager.broadcast("price:candle", event_data)

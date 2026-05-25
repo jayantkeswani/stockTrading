@@ -13,7 +13,7 @@ Flow:
 """
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from sqlalchemy import and_, func, select
@@ -365,9 +365,15 @@ class StrategyRunner:
             from app.indicators.atr import compute_atr
             atr_5m = compute_atr(candles_5m, period=14)
 
-        # Today's opening price from earliest candle in buffer
+        # Today's opening price from first market-hours candle (>= 09:15)
         buffer = self._candle_buffers.get(symbol, [])
-        today_open = buffer[0]["o"] if buffer else None
+        today_open = None
+        for c in buffer:
+            ts = c.get("timestamp", "")
+            ct = (datetime.fromisoformat(ts) if isinstance(ts, str) else ts).time()
+            if ct >= MARKET_OPEN:
+                today_open = c["o"]
+                break
 
         # Ensure the index futures buffer is seeded from DB when it is empty.
         # _init_index_futures subscribes the futures contract on the live WS feed,
@@ -989,8 +995,10 @@ class StrategyRunner:
         self, session: AsyncSession, symbol: str, today: date
     ) -> PreviousDayLevels | None:
         """Query last trading day's 1m candles and derive OHLC."""
-        # Find the most recent trading day before today
-        yesterday_cutoff = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
+        # Find the most recent candle strictly before today (midnight IST).
+        # Using MARKET_OPEN (09:15) was wrong — pre-open candles (08:42-09:07)
+        # have timestamps before 09:15 and trick this query into returning today.
+        yesterday_cutoff = datetime.combine(today, time.min, tzinfo=IST)
 
         result = await session.execute(
             select(
