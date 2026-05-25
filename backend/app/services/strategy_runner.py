@@ -1801,12 +1801,13 @@ class StrategyRunner:
                 asyncio.create_task(shadow_execute_signal(dedup_result.id))
             except Exception:
                 logger.exception("Shadow execute failed for signal %s", dedup_result.id)
-            # Notify agent runner (Telegram + YOLO auto-execution on threshold cross).
+            # Notify agent runner (Telegram + YOLO auto-execution on threshold cross) — fire-and-forget.
             # Safe: on_new_signal gates on confidence >= threshold, auto_executor
             # independently checks PENDING + executable + confidence + position dedup.
             try:
+                import asyncio
                 from app.agent.agent_runner import agent_runner
-                await agent_runner.on_new_signal(dedup_result.id)
+                asyncio.create_task(agent_runner.on_new_signal(dedup_result.id))
             except Exception:
                 logger.exception("Error notifying agent runner of updated signal %s", dedup_result.id)
             return
@@ -1824,10 +1825,11 @@ class StrategyRunner:
         await self._broadcast_signal(signal, signal_record.id, now, executable, blocked_reason,
                                          ai_fields=ai_fields)
 
-        # Notify agent runner (Telegram + potential YOLO auto-execution)
+        # Notify agent runner (Telegram + potential YOLO auto-execution) — fire-and-forget
         try:
+            import asyncio
             from app.agent.agent_runner import agent_runner
-            await agent_runner.on_new_signal(signal_record.id)
+            asyncio.create_task(agent_runner.on_new_signal(signal_record.id))
         except Exception:
             logger.exception("Error notifying agent runner of new signal")
 

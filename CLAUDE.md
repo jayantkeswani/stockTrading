@@ -263,6 +263,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 ### docs/
 
 - `signal-to-trade-flow.md` — end-to-end pipeline: signal generation → instrument resolution → AI overlay → YOLO/shadow/manual execution → trade monitoring. Covers the `executable` flag, confidence ladder, price sourcing, grace period, and exit conditions
+- `execution-concurrency.md` — concurrency model of the tick-to-trade pipeline: what's sequential vs fire-and-forget, why each await exists, per-symbol concurrency guard, trade monitor polling design
 - `intraday-bias.md` — intraday bias composite design: 8-factor model, ADR-based normalizers, time decay, and how S2/S5 consume the bias (hard gates, confidence factors, lot sizing)
 - `deployment-architecture.md` — full deployment architecture, infrastructure, secrets management, container health
 - `BUGS-2026-04-29.md` — historical bug tracker

@@ -20,7 +20,7 @@ from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
-MONITOR_INTERVAL_SECONDS = 2
+MONITOR_INTERVAL_SECONDS = 0.5
 
 
 class AgentRunner:
@@ -70,7 +70,14 @@ class AgentRunner:
 
         Sends a Telegram notification only when confidence >= YOLO execution
         threshold. In YOLO mode also auto-executes (only executable signals).
+        Fire-and-forget via create_task — top-level try/except prevents silent loss.
         """
+        try:
+            await self._handle_new_signal(signal_id)
+        except Exception:
+            logger.exception("on_new_signal failed for %s", signal_id)
+
+    async def _handle_new_signal(self, signal_id) -> None:
         cfg = await get_trading_config()
 
         # Notify only when confidence meets the YOLO execution threshold

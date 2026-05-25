@@ -119,7 +119,7 @@ Pydantic Settings loading from `.env`. Key groups:
 6. Start global market background task (non-blocking)
 7. Auto-start data feed if Fyers token in Redis — or unconditionally in simulated mode (subscribes indices + strategy symbols + watchlist + S5 watchlist + open positions + today's closed trades). In simulated mode: skips token check and candle backfill
 8. Start deep backfill background task (10s delay, non-blocking)
-9. Auto-start `agent_runner` (trade monitor at 2s interval — autonomy from DB config)
+9. Auto-start `agent_runner` (trade monitor at 500ms interval — autonomy from DB config)
 10. Start Telegram bot polling (`start_telegram_bot()`)
 
 **Key private helpers** (used by both startup and reauth):
@@ -767,13 +767,14 @@ All extend `BaseResearchAgent` (`agents/base.py`), return `AgentResult(findings:
 
 - `is_running: bool` — property. Used by: agent API status
 - `started_at: datetime | None` — property
-- `start()` — starts 2s trade monitor loop. Used by: main.py, agent API
+- `start()` — starts 500ms trade monitor loop. Used by: main.py, agent API
 - `stop()`. Used by: agent API
-- `on_new_signal(signal_id)` — gates Telegram notification on confidence floor (`signal.confidence >= min_confidence_for_execution`; None confidence still notifies); auto-executes if YOLO + running + executable. Used by: strategy_runner._handle_signal()
+- `on_new_signal(signal_id)` — fire-and-forget (called via `create_task`); gates Telegram notification on confidence floor (`signal.confidence >= min_confidence_for_execution`; None confidence still notifies); auto-executes if YOLO + running + executable. Top-level try/except prevents silent exception loss. Used by: strategy_runner._handle_signal()
+- `_handle_new_signal(signal_id)` — internal impl of on_new_signal; Telegram + YOLO auto-execution logic. Used by: on_new_signal()
 
 #### `trade_monitor.py`
 
-- `monitor_positions(db, yolo_mode=False) -> list[dict]` — called every 2s by agent_runner; checks profit cap first, then monitors each open position. Used by: agent_runner
+- `monitor_positions(db, yolo_mode=False) -> list[dict]` — called every 500ms by agent_runner; checks profit cap first, then monitors each open position. Used by: agent_runner
 
 Internal flow per position check:
 

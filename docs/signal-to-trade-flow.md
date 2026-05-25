@@ -185,7 +185,7 @@ User clicks EXEC in the UI → `POST /api/v1/signals/{id}/execute`.
 
 ## Phase 5: Trade Monitoring (`trade_monitor.py`)
 
-The `agent_runner` calls `monitor_positions()` every 2 seconds. Iterates ALL open positions (shadow + real).
+The `agent_runner` calls `monitor_positions()` every 500ms. Iterates ALL open positions (shadow + real).
 
 ### 5.1 Price sourcing
 

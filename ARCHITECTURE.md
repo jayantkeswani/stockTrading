@@ -264,7 +264,7 @@ Signal ──> Execution Path:
 
        ──> Trade Created (OPEN) ──> Position Created
                                     ├── margin_required set on both Trade + Position
-                                    ├── Agent monitors (2s loop)
+                                    ├── Agent monitors (500ms loop)
                                     ├── SL hit → auto-close (all modes)
                                     ├── Target hit:
                                     │   ├── YOLO → auto-book profit
@@ -284,7 +284,7 @@ Risk gate split:
 
 ### 4. Agent Decision Flow
 ```
-Every 2 seconds (agent_runner main loop):
+Every 500ms (agent_runner main loop):
   For each open position:
     1. Get current price from Redis (option premium via fyers_option_symbol, index fallback)
     2. Detect direction: target < entry = SHORT, else LONG
