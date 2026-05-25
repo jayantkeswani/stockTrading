@@ -736,6 +736,7 @@ function SymbolSelector({
 
 const PARAM_LABELS: Record<string, string> = {
   vwap_proximity_pct: "VWAP Proximity %",
+  vwap_min_distance_pct: "VWAP Min Distance %",
   sl_pct_aligned: "SL % (Bias Aligned)",
   sl_pct_unaligned: "SL % (Bias Unaligned)",
   default_target_multiplier: "Target Multiplier",

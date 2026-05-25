@@ -445,7 +445,7 @@ Auto-discovers and instantiates active strategies from DB config. Returns `dict[
 
 #### `strategy_2_vwap_pullback.py` — VWAP Pullback + PDH/PDL + OI (PRIMARY)
 
-- `evaluate(ctx) -> StrategySignal | None` — checks VWAP proximity, bias alignment, reversal pattern, volume filter, OI support, confidence threshold
+- `evaluate(ctx) -> StrategySignal | None` — checks VWAP proximity, minimum distance from VWAP (dead zone filter), bias alignment, reversal pattern, volume filter, OI support, confidence threshold
 - `should_exit(position, current_price, params) -> bool` — SL/target based on option premium
 - `drain_pending_logs() -> list[tuple[str, str]]` — GATE/SIGNAL logs flushed to `strat2:agent_log:{date}`
 

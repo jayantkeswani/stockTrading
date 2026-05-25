@@ -108,6 +108,7 @@ VIX_EXTREME = 22.0  # Sit out
 
 # VWAP pullback proximity (%)
 VWAP_PROXIMITY_PCT = 0.15
+VWAP_MIN_DISTANCE_PCT = 0.05
 
 # Candle timeframes (in minutes)
 TIMEFRAME_1M = 1

@@ -12,10 +12,11 @@
 Buys index options at VWAP pullback points using five layers of confirmation:
 
 1. **Composite intraday bias** — live score from today's tape + global overnight cues (not just yesterday)
-2. **VWAP proximity** — price must pull back to within 0.15% of VWAP
-3. **Candle pattern** — bullish/bearish reversal at the pullback
-4. **Volume quality** — pullback on below-average volume
-5. **Confidence gate** — weighted 10-factor composite must clear 55/100 before the signal fires
+2. **VWAP proximity** — price must pull back to within `vwap_proximity_pct` (default 0.15%) of VWAP
+3. **VWAP minimum distance** — price must be at least `vwap_min_distance_pct` (default 0.05%) away from VWAP to avoid noise-driven direction flips on sideways days
+4. **Candle pattern** — bullish/bearish reversal at the pullback
+5. **Volume quality** — pullback on below-average volume
+6. **Confidence gate** — weighted 10-factor composite must clear 55/100 before the signal fires
 
 A Gemini LLM overlay then reviews the full indicator snapshot and adjusts confidence ±15 with a human-readable rationale.
 
@@ -247,8 +248,11 @@ The strategy runner blocks execution when:
 
 ## Implementation Notes
 
-### VWAP proximity threshold
-`VWAP_PROXIMITY_PCT = 0.15` is a hardcoded constant in `backend/app/core/constants.py`. The `strategy_configs.parameters["vwap_proximity_pct"]` DB field exists for documentation but is **not read by the strategy at runtime** — the code imports directly from `constants.py`. To change the threshold, edit the constant and restart the backend.
+### VWAP proximity and minimum distance
+Both thresholds are configurable via Settings UI → Strategy Parameters (stored in `strategy_configs.parameters` JSONB). Constants in `constants.py` are defaults only — DB values take precedence at runtime via `strategy_params.get()`.
+
+- `vwap_proximity_pct` (default 0.15%) — maximum distance from VWAP for a pullback to qualify
+- `vwap_min_distance_pct` (default 0.05%) — minimum distance from VWAP to commit to a direction. Price within this dead zone is considered "at VWAP" and the signal is skipped. Prevents noise-driven opposite CE/PE signals on sideways days. See `docs/strategies/vwap-opposite-signal-fix.md` for background.
 
 ### Parameter experiments — disable auto_mode first
 Before changing any threshold (proximity, confidence, etc.) for testing:

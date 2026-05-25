@@ -16,7 +16,7 @@ See docs/strategies/strategy-2-vwap-pullback.md for full specification.
 
 import logging
 
-from app.core.constants import VWAP_PROXIMITY_PCT
+from app.core.constants import VWAP_MIN_DISTANCE_PCT, VWAP_PROXIMITY_PCT
 from app.core.enums import DayBias, InstrumentType, SignalType, StrategyName
 from app.indicators.candle_patterns import (
     average_volume,
@@ -80,6 +80,11 @@ class VWAPPullbackStrategy(BaseStrategy):
 
         if not is_pullback_to_vwap(price, vwap, proximity_pct):
             self._log("GATE", f"{ctx.symbol}: price {price:.2f} not near VWAP {vwap:.2f} (dist={distance:.3f}%, threshold=±{proximity_pct:.2f}%)")
+            return None
+
+        min_distance_pct = p.get("vwap_min_distance_pct", VWAP_MIN_DISTANCE_PCT)
+        if abs(distance) < min_distance_pct:
+            self._log("GATE", f"{ctx.symbol}: price {price:.2f} too close to VWAP {vwap:.2f} (dist={distance:.3f}%, min=±{min_distance_pct:.2f}%)")
             return None
 
         # Determine candidate direction from pullback sign (structural rule, not bias)

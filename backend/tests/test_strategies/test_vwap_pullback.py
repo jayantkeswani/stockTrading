@@ -106,7 +106,7 @@ def _make_intraday_bias(bias: DayBias, strength: str = "MODERATE"):
 
 
 def _make_context(
-    price: float = 100.05,
+    price: float = 100.10,
     vwap_val: float = 100.0,
     bias: DayBias = DayBias.BULLISH,
     cpr_type: CPRType = CPRType.WIDE,
@@ -191,6 +191,35 @@ class TestEvaluateVwapProximity:
         ctx = _make_context(price=102.0, vwap_val=100.0)
         assert self.strategy.evaluate(ctx) is None
 
+    def test_returns_none_when_too_close_to_vwap(self):
+        """Price within min distance dead zone (< 0.05%) => ambiguous, skip."""
+        ctx = _make_context(price=100.02, vwap_val=100.0)
+        assert self.strategy.evaluate(ctx) is None
+
+    def test_returns_none_when_too_close_below_vwap(self):
+        """Price just below VWAP within dead zone => skip."""
+        ctx = _make_context(price=99.98, vwap_val=100.0, bias=DayBias.BEARISH,
+                            candles=_bearish_engulfing_candles(99.98))
+        assert self.strategy.evaluate(ctx) is None
+
+    def test_min_distance_configurable_via_params(self):
+        """Custom min distance overrides default."""
+        price = 100.02  # 0.02% above VWAP — below default 0.05% but above custom 0.01%
+        ctx = _make_context(price=price, vwap_val=100.0,
+                            candles=_bullish_engulfing_candles(price))
+        ctx = MarketContext(
+            symbol=ctx.symbol, current_price=ctx.current_price,
+            candles_5m=ctx.candles_5m, vwap=ctx.vwap,
+            previous_day=ctx.previous_day, cpr=ctx.cpr,
+            oi_analysis=ctx.oi_analysis, india_vix=ctx.india_vix,
+            current_time_ist=ctx.current_time_ist,
+            intraday_bias=ctx.intraday_bias,
+            strategy_params={"vwap_min_distance_pct": 0.01},
+        )
+        signal = self.strategy.evaluate(ctx)
+        assert signal is not None
+        assert signal.signal_type == SignalType.BUY_CE
+
 
 # ---------------------------------------------------------------------------
 # evaluate — CALL signal generation
@@ -203,7 +232,7 @@ class TestEvaluateCallSignal:
 
     def test_call_signal_with_bullish_bias(self):
         """Bullish bias + price above VWAP + bullish reversal => BUY_CE."""
-        price = 100.05
+        price = 100.10
         ctx = _make_context(
             price=price,
             vwap_val=100.0,
@@ -217,7 +246,7 @@ class TestEvaluateCallSignal:
 
     def test_call_signal_with_neutral_bias_and_price_above_vwap(self):
         """Neutral bias + distance > 0 => still tries CALL path."""
-        price = 100.05
+        price = 100.10
         ctx = _make_context(
             price=price,
             vwap_val=100.0,
@@ -240,7 +269,7 @@ class TestEvaluatePutSignal:
 
     def test_put_signal_with_bearish_bias(self):
         """Bearish bias + price below VWAP + bearish reversal => BUY_PE."""
-        price = 99.95
+        price = 99.90
         ctx = _make_context(
             price=price,
             vwap_val=100.0,
@@ -252,7 +281,7 @@ class TestEvaluatePutSignal:
         assert signal.signal_type == SignalType.BUY_PE
 
     def test_put_signal_with_neutral_bias_and_price_below_vwap(self):
-        price = 99.95
+        price = 99.90
         # NEUTRAL bias with narrow CPR to push confidence above threshold
         ctx = _make_context(
             price=price,
@@ -278,7 +307,7 @@ class TestConfidenceScoring:
         self.strategy = VWAPPullbackStrategy()
 
     def test_aligned_bias_gives_higher_confidence_than_neutral(self):
-        price = 100.05
+        price = 100.10
         aligned = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
                                  candles=_bullish_engulfing_candles(price))
         neutral = _make_context(price=price, vwap_val=100.0, bias=DayBias.NEUTRAL,
@@ -290,7 +319,7 @@ class TestConfidenceScoring:
             assert s_aligned.confidence >= s_neutral.confidence
 
     def test_narrow_cpr_gives_higher_confidence_than_wide(self):
-        price = 100.05
+        price = 100.10
         narrow = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
                                 cpr_type=CPRType.NARROW, candles=_bullish_engulfing_candles(price))
         wide = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
@@ -302,7 +331,7 @@ class TestConfidenceScoring:
             assert s_narrow.confidence >= s_wide.confidence
 
     def test_low_vix_gives_higher_confidence_than_high_vix(self):
-        price = 100.05
+        price = 100.10
         low = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
                              india_vix=12.0, candles=_bullish_engulfing_candles(price))
         high = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
@@ -315,7 +344,7 @@ class TestConfidenceScoring:
 
     def test_oi_not_confirmed_reduces_confidence(self):
         """OI support is a weighted factor — confirmed gives higher confidence than not."""
-        price = 100.05
+        price = 100.10
         oi_good = _make_oi(max_pe_strike=95.0, max_ce_strike=105.0)
         oi_bad = _make_oi(max_pe_strike=200.0, max_ce_strike=300.0)
         ctx_good = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
@@ -328,7 +357,7 @@ class TestConfidenceScoring:
             assert s_good.confidence >= s_bad.confidence
 
     def test_confidence_in_range(self):
-        price = 100.05
+        price = 100.10
         ctx = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
                              cpr_type=CPRType.NARROW, india_vix=12.0,
                              candles=_bullish_engulfing_candles(price))
@@ -338,7 +367,7 @@ class TestConfidenceScoring:
 
     def test_confidence_factors_in_indicators(self):
         """New: confidence_factors dict is persisted in signal.indicators."""
-        price = 100.05
+        price = 100.10
         ctx = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
                              candles=_bullish_engulfing_candles(price))
         signal = self.strategy.evaluate(ctx)
@@ -348,7 +377,7 @@ class TestConfidenceScoring:
 
     def test_intraday_bias_in_indicators(self):
         """New: intraday_bias components are persisted in signal.indicators."""
-        price = 100.05
+        price = 100.10
         ctx = _make_context(price=price, vwap_val=100.0, bias=DayBias.BULLISH,
                              candles=_bullish_engulfing_candles(price))
         signal = self.strategy.evaluate(ctx)
@@ -357,7 +386,7 @@ class TestConfidenceScoring:
 
     def test_bearish_bias_ce_signal_for_put(self):
         """Bearish intraday bias should allow PE signal to fire (MODERATE strength)."""
-        price = 99.95
+        price = 99.90
         ctx = _make_context(
             price=price, vwap_val=100.0, bias=DayBias.BEARISH,
             candles=_bearish_engulfing_candles(price),
@@ -554,7 +583,7 @@ class TestNoSignalOnMissingReversal:
 
     def test_no_call_without_bullish_reversal(self):
         """Bullish bias, near VWAP, but no bullish reversal pattern."""
-        price = 100.05
+        price = 100.10
         # Non-reversal candles: all mildly bullish, no engulfing/pin_bar/doji pattern
         candles = [
             Candle(open=price - 0.5, high=price + 0.5, low=price - 0.6, close=price + 0.3, volume=100),
@@ -567,7 +596,7 @@ class TestNoSignalOnMissingReversal:
         assert self.strategy.evaluate(ctx) is None
 
     def test_no_put_without_bearish_reversal(self):
-        price = 99.95
+        price = 99.90
         candles = [
             Candle(open=price + 0.5, high=price + 0.6, low=price - 0.5, close=price - 0.3, volume=100),
             Candle(open=price + 0.5, high=price + 0.6, low=price - 0.5, close=price - 0.3, volume=100),
@@ -590,7 +619,7 @@ class TestHighVolumeBlocksSignal:
 
     def test_high_volume_blocks_call(self):
         """Current volume > 1.2 * average => no signal."""
-        price = 100.05
+        price = 100.10
         candles = _bullish_engulfing_candles(price)
         # Set last candle's volume to be very high
         candles[-1] = Candle(
