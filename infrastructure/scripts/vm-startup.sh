@@ -63,9 +63,9 @@ chown deploy:deploy /opt/stock-trading
 echo "Setting timezone to IST..."
 timedatectl set-timezone Asia/Kolkata
 
-echo "Setting up 1GB swap file..."
+echo "Setting up 2GB swap file..."
 if [ ! -f /swapfile ]; then
-  fallocate -l 1G /swapfile
+  fallocate -l 2G /swapfile
   chmod 600 /swapfile
   mkswap /swapfile
   swapon /swapfile

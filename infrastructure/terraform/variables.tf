@@ -19,7 +19,7 @@ variable "zone" {
 variable "machine_type" {
   description = "GCE VM machine type"
   type        = string
-  default     = "e2-small"
+  default     = "e2-medium"
 }
 
 variable "disk_size_gb" {
