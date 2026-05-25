@@ -158,41 +158,74 @@ class TestTimeDecay:
         assert r_after.score != r_no_decay.score or True  # just ensure no crash
 
 
-class TestIntradayDrift:
-    """Factor 7 — intraday price drift from today's open."""
+class TestMoveFromPDC:
+    """Factor 7 — total move from previous day close."""
 
-    def test_drift_down_reduces_bullish_score(self):
-        # Flat candles, everything else neutral, but price below today's open
-        candles = _candles(10, "flat", 100.0)  # first candle open = 100.0
+    def test_price_below_pdc_reduces_score(self):
+        prev = make_prev_day(DayBias.NEUTRAL)
+        prev.pdc = 100.0
+        prev.pdl = 99.0
+        prev.pdh = 101.0
+        prev.day_range = 2.0
+        candles = _candles(10, "flat", 100.0)
         vwap = make_vwap(100.0)
-        r_below = compute_intraday_bias(None, candles, vwap, 99.5)   # -0.5% drift
-        r_flat  = compute_intraday_bias(None, candles, vwap, 100.0)  # 0% drift
+        r_below = compute_intraday_bias(prev, candles, vwap, 99.0)
+        r_flat  = compute_intraday_bias(prev, candles, vwap, 100.0)
         assert r_below.score < r_flat.score
 
-    def test_drift_up_boosts_bullish_score(self):
+    def test_price_above_pdc_boosts_score(self):
+        prev = make_prev_day(DayBias.NEUTRAL)
+        prev.pdc = 100.0
+        prev.pdl = 99.0
+        prev.pdh = 101.0
+        prev.day_range = 2.0
         candles = _candles(10, "flat", 100.0)
         vwap = make_vwap(100.0)
-        r_above = compute_intraday_bias(None, candles, vwap, 100.5)  # +0.5% drift
-        r_flat  = compute_intraday_bias(None, candles, vwap, 100.0)
+        r_above = compute_intraday_bias(prev, candles, vwap, 101.0)
+        r_flat  = compute_intraday_bias(prev, candles, vwap, 100.0)
         assert r_above.score > r_flat.score
 
-    def test_drift_clamped_at_one(self):
-        # -2% drift should clamp to signal = -1.0, not go below
+    def test_move_signal_clamped(self):
+        prev = make_prev_day(DayBias.NEUTRAL)
+        prev.pdc = 100.0
+        prev.pdl = 99.0
+        prev.pdh = 101.0
+        prev.day_range = 2.0
         candles = _candles(10, "flat", 100.0)
         vwap = make_vwap(100.0)
-        result = compute_intraday_bias(None, candles, vwap, 98.0)
-        assert result.components.get("intraday_drift_signal") == -1.0
+        result = compute_intraday_bias(prev, candles, vwap, 95.0)
+        assert result.components.get("move_from_pdc_signal") == -1.0
 
-    def test_drift_component_populated(self):
+    def test_move_component_populated(self):
+        prev = make_prev_day(DayBias.NEUTRAL)
+        prev.pdc = 100.0
+        prev.pdl = 99.0
+        prev.pdh = 101.0
+        prev.day_range = 2.0
         candles = _candles(10, "flat", 100.0)
         vwap = make_vwap(100.0)
-        result = compute_intraday_bias(None, candles, vwap, 99.8)
-        assert "intraday_drift_pct" in result.components
-        assert result.components["intraday_drift_pct"] is not None
+        result = compute_intraday_bias(prev, candles, vwap, 100.5)
+        assert "move_from_pdc_pct" in result.components
+        assert result.components["move_from_pdc_pct"] is not None
 
-    def test_no_candles_drift_component_none(self):
+    def test_no_prev_day_component_none(self):
         result = compute_intraday_bias(None, [], None, 100.0)
-        assert result.components.get("intraday_drift_pct") is None
+        assert result.components.get("move_from_pdc_pct") is None
+
+    def test_gap_up_day_reads_bullish(self):
+        """The scenario that prompted this change: +1% gap-up should not read NEUTRAL."""
+        prev = make_prev_day(DayBias.BEARISH)
+        prev.pdc = 100.0
+        prev.pdl = 99.0
+        prev.pdh = 102.0
+        prev.day_range = 3.0
+        # Gap-up open at 101, price holding at 101
+        candles = _candles(15, "flat", 101.0)
+        candles[0] = Candle(open=101.0, high=101.5, low=100.8, close=101.0, volume=500)
+        vwap = make_vwap(100.8)
+        result = compute_intraday_bias(prev, candles, vwap, 101.0)
+        assert result.score > 0.20, f"Gap-up day should be BULLISH, got score={result.score:.3f}"
+        assert result.bias == DayBias.BULLISH
 
 
 class TestNiftyBiasScore:
