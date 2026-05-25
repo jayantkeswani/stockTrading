@@ -107,10 +107,10 @@ export default function SettingsPage() {
     // Cross-field confidence check (same invariant as backend)
     const cs = tradingSettings ? { ...tradingSettings, ...clean } : null;
     if (cs) {
-      const p = cs.min_confidence_to_persist;
-      const s = cs.min_confidence_for_shadow;
-      const e = cs.min_confidence_for_execution;
-      if (!(p < s && s <= e)) {
+      const p = cs.min_confidence_to_persist as number | undefined;
+      const s = cs.min_confidence_for_shadow as number | undefined;
+      const e = cs.min_confidence_for_execution as number | undefined;
+      if (typeof p === "number" && typeof s === "number" && typeof e === "number" && !(p < s && s <= e)) {
         setSaveMsg(`Confidence must satisfy persist (${p}) < shadow (${s}) ≤ execution (${e})`);
         setTimeout(() => setSaveMsg(null), 5000);
         return;
@@ -120,8 +120,9 @@ export default function SettingsPage() {
     setSaving(true);
     setSaveMsg(null);
     try {
-      const updated = await api.updateTradingSettings(clean) as TradingSettings;
-      setTradingSettings(updated);
+      await api.updateTradingSettings(clean);
+      const latest = await api.getTradingSettings();
+      setTradingSettings(latest as TradingSettings);
       setTradingDraft({});
       setSaveMsg("Saved");
       setTimeout(() => setSaveMsg(null), 2000);
@@ -347,7 +348,7 @@ export default function SettingsPage() {
                   step="5"
                   min="0"
                   max="100"
-                  value={currentSettings.min_confidence_to_persist}
+                  value={currentSettings.min_confidence_to_persist ?? 0}
                   onChange={(e) => setTradingDraft((d) => ({ ...d, min_confidence_to_persist: Number(e.target.value) }))}
                   className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
                 />
@@ -359,7 +360,7 @@ export default function SettingsPage() {
                   step="5"
                   min="0"
                   max="100"
-                  value={currentSettings.min_confidence_for_shadow}
+                  value={currentSettings.min_confidence_for_shadow ?? 0}
                   onChange={(e) => setTradingDraft((d) => ({ ...d, min_confidence_for_shadow: Number(e.target.value) }))}
                   className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
                 />
@@ -371,7 +372,7 @@ export default function SettingsPage() {
                   step="5"
                   min="0"
                   max="100"
-                  value={currentSettings.min_confidence_for_execution}
+                  value={currentSettings.min_confidence_for_execution ?? 0}
                   onChange={(e) => setTradingDraft((d) => ({ ...d, min_confidence_for_execution: Number(e.target.value) }))}
                   className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
                 />

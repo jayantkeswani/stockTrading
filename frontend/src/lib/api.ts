@@ -278,7 +278,20 @@ export const api = {
     shadow_skip_permanent_watchlist?: boolean;
     yolo_skip_permanent_watchlist?: boolean;
   }) =>
-    request(`/api/v1/settings/trading`, {
+    request<{
+      capital: number;
+      max_daily_drawdown_pct: number;
+      max_daily_profit: number;
+      max_risk_per_trade_pct: number;
+      max_trades_per_day: number;
+      paper_trading: boolean;
+      autonomy_level: string;
+      min_confidence_to_persist: number;
+      min_confidence_for_shadow: number;
+      min_confidence_for_execution: number;
+      shadow_skip_permanent_watchlist: boolean;
+      yolo_skip_permanent_watchlist: boolean;
+    }>(`/api/v1/settings/trading`, {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
