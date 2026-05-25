@@ -78,14 +78,14 @@ async def get_strategy_params(strategy_name: str, session=None) -> dict:
     If session is None, opens its own session.
     """
     if strategy_name in _cache:
-        return _cache[strategy_name]
+        return {**_cache[strategy_name]}
 
     defaults = _STRATEGY_DEFAULTS.get(strategy_name, {})
     db_params = await _load_from_db(strategy_name, session)
 
     merged = {**defaults, **db_params}
     _cache[strategy_name] = merged
-    return merged
+    return {**merged}
 
 
 def get_strategy_params_sync(strategy_name: str) -> dict:

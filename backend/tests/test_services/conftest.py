@@ -16,7 +16,6 @@ def clear_strategy_runner_caches():
     strategy_runner._s5_session_cache.clear()
     strategy_runner._s5_oi_cache.clear()
     strategy_runner._s5_counts_cache = None
-    strategy_runner._s5_rvol_profiles.clear()
     strategy_runner._oi_analysis_cache.clear()
     strategy_runner._daily_candles_cache.clear()
     strategy_runner._canslim_symbol_cache.clear()

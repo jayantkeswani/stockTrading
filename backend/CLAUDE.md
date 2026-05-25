@@ -339,7 +339,7 @@ Strategy 2 uses prefix `"strat2"`, Strategy 5 uses `"strat5"`.
 
 #### `strategy_params.py`
 
-- `get_strategy_params(strategy_name, session=None) -> dict` — async; loads from DB `strategy_configs.parameters` JSONB, merges with defaults, caches in-memory. Used by: strategy_runner, morning_screener
+- `get_strategy_params(strategy_name, session=None) -> dict` — async; loads from DB `strategy_configs.parameters` JSONB, merges with defaults, caches in-memory. Returns a shallow copy so callers can safely mutate without cross-contaminating concurrent evaluations. Used by: strategy_runner, morning_screener
 - `get_strategy_params_sync(strategy_name) -> dict` — sync; returns cache or defaults (no DB call). Used by: trade_monitor
 - `clear_strategy_params_cache(strategy_name=None) -> None` — invalidates cache (all strategies if None). Used by: strategies API PUT endpoint
 - `get_defaults_for_strategy(strategy_name) -> dict` — raw defaults for frontend form rendering. Used by: strategies API
@@ -405,7 +405,7 @@ Key private methods (documented because they're central to flow):
 - `_is_dedup_skip(existing, new)` — AI gate pre-check; if identical signal exists, skips Gemini call + DB write
 - `_init_index_futures()` — on first candle close, resolves + subscribes near-month futures for each index (NIFTY_FUT, etc.)
 - `_calculate_vwap_from_buffer(symbol)` — always uses futures candle volumes for index symbols (Fyers index volume is unreliable)
-- `_is_permanent_watchlist` extraction: extracted from watchlist `manual` field and injected into `signal.indicators` immediately after `strategy.evaluate()` returns and BEFORE any `await` (prevents async race condition with shared params dict)
+- `_is_permanent_watchlist` extraction: extracted from watchlist `manual` field into per-symbol `_s5_session_cache`, then injected into `signal.indicators` after `strategy.evaluate()` returns
 
 **Per-symbol concurrency guard**: `_evaluating_symbols: set[str]` — busy flag checked at the top of `_evaluate_strategies`. If the symbol is already being evaluated by a prior candle's asyncio task, the new evaluation is skipped (not queued). Prevents concurrent candle tasks from racing on signal persist / YOLO execution. Different symbols are never blocked. Cleared in `finally` block to survive exceptions.
 
@@ -417,7 +417,6 @@ Key private methods (documented because they're central to flow):
 - `_s5_oi_cache` — FUT OI direction per symbol, TTL = 600s
 - `_s5_shift_last_checked` — global cues shift detection throttle, 5-min min between checks per symbol
 - `_s5_counts_cache` — S5 position/trade counts, TTL = 60s
-- `_s5_rvol_profiles` — RVOL baseline profile per symbol, stable for session
 - `_oi_analysis_cache` — OI analysis for index symbols only, TTL = 180s
 - `_canslim_symbol_cache` — CAN SLIM membership, TTL = trading day
 - `_last_nifty_bias_score` — float | None, updated every NIFTY candle close

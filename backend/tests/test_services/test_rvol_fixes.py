@@ -112,7 +112,8 @@ class TestFirstTickVolumeSeeding:
 class TestPerSymbolRvolProfile:
     """Issue #2: _enrich_strategy5_params stored the RVOL profile in the shared
     params dict. The first symbol's profile was used for all subsequent symbols.
-    With the fix, profiles are cached per-symbol in _s5_rvol_profiles.
+    Fixed by get_strategy_params() returning a copy — each evaluation gets its
+    own dict, so cross-symbol contamination is impossible.
     """
 
     @pytest.mark.asyncio
@@ -136,62 +137,14 @@ class TestPerSymbolRvolProfile:
         mock_redis.get = AsyncMock(side_effect=fake_get)
         mock_get_redis.return_value = mock_redis
 
-        params = {"some_existing_param": True}
+        vedl_params = {"some_existing_param": True}
+        tcs_params = {"some_existing_param": True}
 
-        # Enrich for VEDL
-        await strategy_runner._enrich_strategy5_params("VEDL", params)
-        vedl_result = params["_rvol_profile"]
-        assert vedl_result is not None
-        assert vedl_result["0"] == 10000.0
+        await strategy_runner._enrich_strategy5_params("VEDL", vedl_params)
+        assert vedl_params["_rvol_profile"] is not None
+        assert vedl_params["_rvol_profile"]["0"] == 10000.0
 
-        # Enrich for TCS — should get TCS profile, not VEDL's
-        await strategy_runner._enrich_strategy5_params("TCS", params)
-        tcs_result = params["_rvol_profile"]
-        assert tcs_result is not None
-        assert tcs_result["0"] == 5000.0
-        assert tcs_result != vedl_result
-
-    @pytest.mark.asyncio
-    @patch("app.services.strategy_runner.get_redis")
-    async def test_profile_cached_after_first_load(self, mock_get_redis):
-        """Redis should only be called once per symbol for RVOL — subsequent calls use cache."""
-        from app.services.strategy_runner import strategy_runner
-
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=json.dumps({"0": 8000.0}))
-        mock_get_redis.return_value = mock_redis
-
-        params = {}
-        await strategy_runner._enrich_strategy5_params("SUNPHARMA", params)
-        await strategy_runner._enrich_strategy5_params("SUNPHARMA", params)
-        await strategy_runner._enrich_strategy5_params("SUNPHARMA", params)
-
-        # Count only RVOL baseline calls (other Redis reads happen for counts, OI, etc.)
-        rvol_calls = [
-            c for c in mock_redis.get.call_args_list
-            if "rvol_baseline" in str(c)
-        ]
-        assert len(rvol_calls) == 1
-
-    @pytest.mark.asyncio
-    @patch("app.services.strategy_runner.get_redis")
-    async def test_missing_profile_cached_as_none(self, mock_get_redis):
-        """If Redis has no profile for a symbol, cache None (don't retry every candle)."""
-        from app.services.strategy_runner import strategy_runner
-
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
-        mock_get_redis.return_value = mock_redis
-
-        params = {}
-        await strategy_runner._enrich_strategy5_params("NEWSTOCK", params)
-        assert params["_rvol_profile"] is None
-        assert strategy_runner._s5_rvol_profiles["NEWSTOCK"] is None
-
-        # Second call doesn't hit Redis again for RVOL
-        await strategy_runner._enrich_strategy5_params("NEWSTOCK", params)
-        rvol_calls = [
-            c for c in mock_redis.get.call_args_list
-            if "rvol_baseline" in str(c)
-        ]
-        assert len(rvol_calls) == 1
+        await strategy_runner._enrich_strategy5_params("TCS", tcs_params)
+        assert tcs_params["_rvol_profile"] is not None
+        assert tcs_params["_rvol_profile"]["0"] == 5000.0
+        assert tcs_params["_rvol_profile"] != vedl_params["_rvol_profile"]

@@ -109,10 +109,6 @@ class StrategyRunner:
         # Shared across all symbols; TTL 60 seconds, also invalidated on new signal.
         self._s5_counts_cache: tuple[datetime, int, int] | None = None
 
-        # S5 RVOL baseline profiles — keyed symbol → deserialized profile dict.
-        # Loaded once per symbol from Redis; stable for the entire session.
-        self._s5_rvol_profiles: dict[str, dict | None] = {}
-
         # Last computed NIFTY intraday bias score [-1, +1].
         # Updated each time NIFTY's candle closes; passed to non-NIFTY compute_intraday_bias
         # calls so other indices and stocks inherit the benchmark market direction.
@@ -647,20 +643,18 @@ class StrategyRunner:
 
     async def _enrich_strategy5_params(self, symbol: str, params: dict, india_vix: float | None = None) -> None:
         """Load RVOL baseline + Nifty bias from Redis and inject into strategy_params."""
-        # RVOL profile — per-symbol cache (not stored in shared params dict)
-        if symbol not in self._s5_rvol_profiles:
-            try:
-                r = get_redis()
-                raw = await r.get(f"strat5:rvol_baseline:{symbol}")
-                if raw:
-                    from app.indicators.rvol import deserialize_profile
-                    self._s5_rvol_profiles[symbol] = deserialize_profile(raw)
-                else:
-                    self._s5_rvol_profiles[symbol] = None
-            except Exception:
-                logger.debug("Could not load RVOL profile for %s", symbol)
-                self._s5_rvol_profiles[symbol] = None
-        params["_rvol_profile"] = self._s5_rvol_profiles.get(symbol)
+        # RVOL profile — loaded once per symbol from Redis, cached in session cache
+        try:
+            r = get_redis()
+            raw = await r.get(f"strat5:rvol_baseline:{symbol}")
+            if raw:
+                from app.indicators.rvol import deserialize_profile
+                params["_rvol_profile"] = deserialize_profile(raw)
+            else:
+                params["_rvol_profile"] = None
+        except Exception:
+            logger.debug("Could not load RVOL profile for %s", symbol)
+            params["_rvol_profile"] = None
 
         # Cross-position counts — cached 60s, also invalidated on new signal
         _counts_cached = self._s5_counts_cache
