@@ -1,5 +1,7 @@
 # StockTrading - Indian Options & Futures Trading System
 
+> **Detailed docs:** [`backend/CLAUDE.md`](backend/CLAUDE.md) (API, services, strategies) | [`frontend/CLAUDE.md`](frontend/CLAUDE.md) (pages, components, stores). Read these only when working on the respective layer.
+
 ## Git Worktree Policy
 
 **Before making any code changes, ask the user whether other Claude Code sessions are active on this repo.** If yes, create a worktree from the current branch and work inside it. Merge results back when done. This does NOT apply to subagents spawned within a single session.
