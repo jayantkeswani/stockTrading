@@ -43,7 +43,8 @@ async def auto_execute_signal(signal_id) -> dict | None:
     """Attempt to auto-execute a signal in YOLO mode.
 
     Gate order: PENDING + executable → confidence >= min_confidence_for_execution →
-    per-strategy yolo_enabled → permanent watchlist check → open position dedup →
+    per-strategy yolo_enabled → permanent watchlist check → open YOLO trade dedup
+    (same signal_id) → open position dedup (same symbol+direction) →
     _final_risk_check (drawdown, max-trades, daily profit cap).
     Lot sizing via compute_lots_for_yolo(). SL/target recomputed from live LTP.
 
@@ -104,6 +105,18 @@ async def auto_execute_signal(signal_id) -> dict | None:
                 "YOLO skip: %s is a permanent watchlist signal (yolo_skip_permanent_watchlist=True)",
                 signal.symbol,
             )
+            return None
+
+        # Skip if an open YOLO trade already exists for this signal
+        existing_yolo = await session.execute(
+            select(Trade.id).where(
+                Trade.signal_id == signal.id,
+                Trade.source == TradeSource.YOLO.value,
+                Trade.status == TradeStatus.OPEN.value,
+            ).limit(1)
+        )
+        if existing_yolo.scalar_one_or_none() is not None:
+            logger.debug("Auto-execute: open YOLO trade already exists for signal %s, skipping", signal_id)
             return None
 
         # Check for existing open position on the same symbol + direction (exclude shadow)

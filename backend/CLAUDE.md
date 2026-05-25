@@ -33,7 +33,7 @@ Credentials: user=`trader`, password=`trader_dev_123`, db=`stocktrading`, port=5
 
 Three independent consumers of every signal, fully isolated:
 
-1. **Shadow executor** (`shadow_executor.py`) — creates SHADOW trade/position based on global `min_confidence_for_shadow` and per-strategy `shadow_enabled` flag. Always 1 lot, no capital gates. One open shadow per signal; closed shadows don't block (allows fresh shadow on Case-2 re-fire).
+1. **Shadow executor** (`shadow_executor.py`) — creates SHADOW trade/position based on global `min_confidence_for_shadow` and per-strategy `shadow_enabled` flag. Always 1 lot, no capital gates. Two dedup layers: one open shadow per signal_id, AND one open shadow per symbol+strategy (prevents stacking from different signals on same underlying). Closed shadows don't block (allows fresh shadow on Case-2 re-fire).
 2. **YOLO executor** (`auto_executor.py`) — creates YOLO trade/position based on global `min_confidence_for_execution` and per-strategy `yolo_enabled` flag. Enforces drawdown, max-trades, and daily profit cap gates; lot sizing via `compute_lots_for_yolo`.
 3. **Manual execution** (`signals.py`) — signal stays PENDING, user clicks EXEC. Lot sizing via `compute_lots_for_manual`; no blocking gates, warnings shown instead.
 
@@ -793,13 +793,13 @@ Internal flow per position check:
 
 #### `auto_executor.py`
 
-- `auto_execute_signal(signal_id) -> dict | None` — YOLO gate order: (1) PENDING + executable; (2) confidence gate (`min_confidence_for_execution`); (3) per-strategy `yolo_enabled` gate (from `strategy_configs`); (4) open position dedup (non-shadow only); (5) `_final_risk_check` (drawdown, max-trades, daily profit cap); (6) permanent watchlist gate (`yolo_skip_permanent_watchlist`). Sets `Trade.source = "YOLO"`. Used by: agent_runner.on_new_signal()
+- `auto_execute_signal(signal_id) -> dict | None` — YOLO gate order: (1) PENDING + executable; (2) confidence gate (`min_confidence_for_execution`); (3) per-strategy `yolo_enabled` gate (from `strategy_configs`); (4) permanent watchlist gate (`yolo_skip_permanent_watchlist`); (5) open YOLO trade dedup per signal_id (prevents re-executing same signal); (6) open position dedup per symbol+direction (non-shadow only); (7) `_final_risk_check` (drawdown, max-trades, daily profit cap). Sets `Trade.source = "YOLO"`. Used by: agent_runner.on_new_signal()
 
 Lot sizing via `compute_lots_for_yolo()`. SL/target recomputed from live LTP via `recompute_sl_target()`. Sets `margin_required` on Trade + Position. Broadcasts `trade:open` (includes `margin_required`) + `agent:auto_executed`.
 
 #### `shadow_executor.py`
 
-- `shadow_execute_signal(signal_id) -> None` — fire-and-forget; gate order: (1) PENDING or EXECUTED (allows shadow mirroring of YOLO-executed signals); (2) open shadow dedup (CLOSED shadows don't block — allows fresh shadow on Case-2 re-fire); (3) past close deadline; (4) F&O ban; (5) resolution failure; (6) per-strategy `shadow_enabled` gate (from `strategy_configs`); (7) confidence gate (`min_confidence_for_shadow`); (8) permanent watchlist gate (`shadow_skip_permanent_watchlist`). Creates `Trade(source="SHADOW")` + `Position(is_shadow=True)`. Used by: strategy_runner._handle_signal(), strategy_runner._dedup_signal() (Case-2)
+- `shadow_execute_signal(signal_id) -> None` — fire-and-forget; gate order: (1) PENDING or EXECUTED (allows shadow mirroring of YOLO-executed signals); (2) open shadow trade dedup per signal_id (CLOSED shadows don't block — allows fresh shadow on Case-2 re-fire); (3) open shadow position dedup per symbol+strategy (prevents stacking shadow positions from different signals on same underlying); (4) past close deadline; (5) F&O ban; (6) resolution failure; (7) per-strategy `shadow_enabled` gate (from `strategy_configs`); (8) confidence gate (`min_confidence_for_shadow`); (9) permanent watchlist gate (`shadow_skip_permanent_watchlist`). Creates `Trade(source="SHADOW")` + `Position(is_shadow=True)`. Used by: strategy_runner._handle_signal(), strategy_runner._dedup_signal() (Case-2)
 
 Always 1 lot. No capital gates (even VIX extreme, drawdown, max-trades, outside window — these blocked signals are shadow-executed to measure what would have happened). SL/target recomputed from live LTP. See `docs/ai/shadow-agent.md` for isolation guarantees.
 

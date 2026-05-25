@@ -109,10 +109,10 @@ class TestShadowExecuteSignal:
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
-    async def test_shadow_no_dedup_two_calls_same_symbol(
+    async def test_shadow_dedup_blocks_second_signal_same_symbol_strategy(
         self, mock_deadline, mock_session_factory, mock_cfg, mock_price, mock_ws
     ):
-        """Two signals on the same symbol both produce shadow trades — no dedup."""
+        """Two signals on the same symbol+strategy: first creates trade, second is blocked."""
         signal_id_1 = uuid.uuid4()
         signal_id_2 = uuid.uuid4()
         added_1: list = []
@@ -124,12 +124,24 @@ class TestShadowExecuteSignal:
 
         from app.agent.shadow_executor import shadow_execute_signal
 
-        # Run both independently
+        # First call: all dedup checks return None (no existing)
+        session_1 = _make_raw_session(_make_signal(signal_id_1), added_1)
+
+        # Second call: signal_id dedup returns None, but symbol+strategy dedup finds existing
+        session_2 = AsyncMock()
+        signal_result_2 = MagicMock()
+        signal_result_2.scalar_one_or_none.return_value = _make_signal(signal_id_2)
+        no_result = MagicMock()
+        no_result.scalar_one_or_none.return_value = None
+        existing_pos = MagicMock()
+        existing_pos.scalar_one_or_none.return_value = uuid.uuid4()  # found existing shadow position
+        session_2.execute = AsyncMock(side_effect=[signal_result_2, no_result, existing_pos])
+        session_2.add = lambda obj: added_2.append(obj)
+        session_2.flush = AsyncMock()
+        session_2.commit = AsyncMock()
+
         mock_session_factory.return_value.__aenter__ = AsyncMock(
-            side_effect=[
-                _make_raw_session(_make_signal(signal_id_1), added_1),
-                _make_raw_session(_make_signal(signal_id_2), added_2),
-            ]
+            side_effect=[session_1, session_2]
         )
         mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
@@ -139,7 +151,7 @@ class TestShadowExecuteSignal:
         trades_1 = [o for o in added_1 if type(o).__name__ == "Trade"]
         trades_2 = [o for o in added_2 if type(o).__name__ == "Trade"]
         assert len(trades_1) == 1
-        assert len(trades_2) == 1
+        assert len(trades_2) == 0
 
     @pytest.mark.asyncio
     @patch("app.agent.shadow_executor.ws_manager")
@@ -357,10 +369,10 @@ def _make_raw_session(signal, added_objects):
     signal_result.scalar_one_or_none.return_value = signal
     no_result = MagicMock()
     no_result.scalar_one_or_none.return_value = None
-    # (1) signal lookup, (2) shadow trade dedup, (3) StrategyConfig lookup
+    # (1) signal lookup, (2) shadow trade dedup, (3) symbol+strategy position dedup, (4) StrategyConfig lookup
     strategy_cfg_result = MagicMock()
     strategy_cfg_result.scalar_one_or_none.return_value = None
-    session.execute = AsyncMock(side_effect=[signal_result, no_result, strategy_cfg_result])
+    session.execute = AsyncMock(side_effect=[signal_result, no_result, no_result, strategy_cfg_result])
     session.add = lambda obj: added_objects.append(obj)
     session.flush = AsyncMock()
     session.commit = AsyncMock()

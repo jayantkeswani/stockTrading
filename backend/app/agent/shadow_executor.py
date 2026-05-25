@@ -1,9 +1,10 @@
 """Shadow executor — auto-executes every signal for signal accuracy measurement.
 
-Unlike the YOLO auto-executor this path has zero gating:
+Unlike the YOLO auto-executor this path has minimal gating:
 - No `executable` check (fires on blocked signals too).
-- No open-position dedup (one shadow trade per signal regardless of existing shadows).
 - No `_final_risk_check` (risk limits must never be polluted by shadow data).
+- Dedup: per-signal (no open shadow trade for same signal_id) AND per-symbol+strategy
+  (no open shadow position for same symbol+strategy across any signal).
 
 Trades are tagged source="SHADOW" and positions tagged is_shadow=True so they are
 invisible to all real-trading queries, risk calculations, and the default Trades page.
@@ -48,7 +49,8 @@ async def shadow_execute_signal(signal_id) -> None:
 async def _do_shadow_execute(signal_id) -> None:
     """Core shadow execution logic — creates a SHADOW Trade + Position for the signal.
 
-    Gate order: PENDING/EXECUTED status → no open shadow for signal → past close deadline →
+    Gate order: PENDING/EXECUTED status → no open shadow trade for this signal →
+    no open shadow position for this symbol+strategy → past close deadline →
     F&O ban → resolution failure → per-strategy shadow_enabled →
     confidence >= min_confidence_for_shadow → permanent watchlist check.
     Always uses 1 lot, no capital gates.
@@ -77,6 +79,21 @@ async def _do_shadow_execute(signal_id) -> None:
         )
         if existing_shadow.scalar_one_or_none() is not None:
             logger.debug("Shadow execute: open shadow trade already exists for signal %s, skipping", signal_id)
+            return
+
+        # Skip if an open shadow position already exists for this symbol + strategy
+        existing_symbol_shadow = await session.execute(
+            select(Position.id).where(
+                Position.symbol == signal.symbol,
+                Position.strategy_name == signal.strategy_name,
+                Position.is_shadow == True,  # noqa: E712
+            ).limit(1)
+        )
+        if existing_symbol_shadow.scalar_one_or_none() is not None:
+            logger.debug(
+                "Shadow skip: open shadow position already exists for %s / %s, skipping signal %s",
+                signal.symbol, signal.strategy_name, signal_id,
+            )
             return
 
         # Hard deadline — past 3:15 PM IST, markets are closed
