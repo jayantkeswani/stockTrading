@@ -355,8 +355,12 @@ async def hold_analysis(
             hypo_exit = eod[0] if eod else None
             hold_exit_time = eod[1] if eod else None
         else:
-            hypo_exit = max_high if body.scenario == "best" else min_low
-            target_col = MarketData1m.high if body.scenario == "best" else MarketData1m.low
+            if trade.side == "SELL":
+                hypo_exit = min_low if body.scenario == "best" else max_high
+                target_col = MarketData1m.low if body.scenario == "best" else MarketData1m.high
+            else:
+                hypo_exit = max_high if body.scenario == "best" else min_low
+                target_col = MarketData1m.high if body.scenario == "best" else MarketData1m.low
             time_row = await db.execute(
                 select(MarketData1m.timestamp)
                 .where(MarketData1m.symbol == md_symbol)

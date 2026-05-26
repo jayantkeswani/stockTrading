@@ -209,6 +209,52 @@ class TestHoldAnalysisS5WorstCase:
         assert r.hold_charges_json is not None
 
 
+class TestHoldAnalysisSellSide:
+    """SELL trades: best=min_low (price drops=profit), worst=max_high (price rises=loss)."""
+
+    @pytest.mark.asyncio
+    async def test_sell_best_uses_min_low(self):
+        from app.api.v1.trades import hold_analysis
+        from app.schemas.trade import HoldAnalysisRequest
+
+        trade = _make_trade(
+            side="SELL",
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            status="CLOSED",
+            exit_time=_ts_ist(11, 0),
+        )
+        db = _make_db_with_agg(trade, (Decimal("520.00"), Decimal("480.00")))
+
+        body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="best")
+        response = await hold_analysis(body, db)
+
+        r = response.results[0]
+        assert r.hold_exit_price == Decimal("480.00")
+        assert r.hold_pnl == Decimal("20.00") * 800
+
+    @pytest.mark.asyncio
+    async def test_sell_worst_uses_max_high(self):
+        from app.api.v1.trades import hold_analysis
+        from app.schemas.trade import HoldAnalysisRequest
+
+        trade = _make_trade(
+            side="SELL",
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            status="CLOSED",
+            exit_time=_ts_ist(11, 0),
+        )
+        db = _make_db_with_agg(trade, (Decimal("520.00"), Decimal("480.00")))
+
+        body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="worst")
+        response = await hold_analysis(body, db)
+
+        r = response.results[0]
+        assert r.hold_exit_price == Decimal("520.00")
+        assert r.hold_pnl == Decimal("-20.00") * 800
+
+
 class TestHoldAnalysisS2OptionSymbolUsed:
     """S2 (vwap_pullback) trade uses fyers_option_symbol as the market_data_1m key."""
 
