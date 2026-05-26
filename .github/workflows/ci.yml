@@ -47,5 +47,6 @@ jobs:
           file: infrastructure/docker/Dockerfile.frontend
           push: true
           tags: ${{ env.FRONTEND_IMAGE }}:latest,${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          build-args: DEPLOYMENT_ID=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

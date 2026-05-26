@@ -9,7 +9,9 @@ RUN --mount=type=cache,target=/root/.npm \
 
 COPY frontend/ .
 
+ARG DEPLOYMENT_ID
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV DEPLOYMENT_ID=${DEPLOYMENT_ID}
 RUN --mount=type=cache,target=/root/.npm \
     npm run build
 
