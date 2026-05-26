@@ -228,8 +228,8 @@ make infra-up                # Create/update infrastructure
 > **SAFE TO PUSH TO MASTER.** Master push only builds Docker images (CI validation) — does NOT deploy. Deploy: cut a semver tag.
 
 - **Build** (master push): GitHub Actions builds images → pushes to ghcr.io with `:<sha>` + `:latest` tags (~2-4 min)
-- **Deploy** (tag push): retags existing `:latest` image as `:v1.0.0` (no rebuild, ~5s) → SSHes to VM → pulls + migrates + deploys
-- **IMPORTANT**: Always wait for the Build workflow to complete before pushing a deploy tag. Deploy retags `:latest` — if the build hasn't finished, it deploys the previous commit's image.
+- **Deploy** (tag push): retags the `:<sha>` image as `:v1.0.0` (no rebuild, ~5s) → SSHes to VM → pulls + migrates + deploys
+- **IMPORTANT**: Always wait for the Build workflow to complete before pushing a deploy tag. Deploy retags the commit's `:<sha>` image — if the build hasn't pushed it yet, the retag step fails.
 
 ### Versioning
 
