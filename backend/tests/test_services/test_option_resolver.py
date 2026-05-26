@@ -307,9 +307,10 @@ class TestStrategySignalInstrumentType:
         from app.core.enums import CPRType, DayBias
 
         strategy = VWAPPullbackStrategy()
-        price = 100.05
+        price = 100.10
 
         # Build context that triggers a CALL signal
+        # Price 0.10% above VWAP — between min_distance (0.05%) and proximity (0.15%)
         candles = []
         base = [
             Candle(open=price, high=price + 1, low=price - 1, close=price + 0.5, volume=100),

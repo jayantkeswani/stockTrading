@@ -69,7 +69,7 @@ class TestVWAPSignalWithIndexLevels:
     """Verify strategy emits index_sl/index_target from market structure."""
 
     def test_call_signal_has_index_sl_and_target(self):
-        # NIFTY at 24050, VWAP at 24048 (within 0.15% proximity)
+        # NIFTY at 24050, VWAP at 24030 (0.08% below — between min_distance 0.05% and proximity 0.15%)
         # VWAP bands: lower=24000, upper=24100
         # PDH=24200, PDL=23900
         # CPR: BC=24010, TC=24090, S1=23950, R1=24130
@@ -77,7 +77,7 @@ class TestVWAPSignalWithIndexLevels:
             symbol="NIFTY",
             current_price=24050,
             candles_5m=_make_bullish_candles(24050),
-            vwap=VWAPResult(vwap=24048, upper_band=24100, lower_band=24000),
+            vwap=VWAPResult(vwap=24030, upper_band=24100, lower_band=24000),
             previous_day=PreviousDayLevels(
                 pdh=24200, pdl=23900, pdc=24000, pdo=23950,
                 day_range=300, bias=DayBias.BULLISH,
@@ -130,12 +130,12 @@ class TestVWAPSignalWithIndexLevels:
         print(f"R:R ratio:     1:{rr:.2f}")
 
     def test_put_signal_has_index_sl_and_target(self):
-        # NIFTY at 24050, VWAP at 24052 (within proximity, price below VWAP)
+        # NIFTY at 24050, VWAP at 24070 (0.08% above — between min_distance 0.05% and proximity 0.15%)
         ctx = MarketContext(
             symbol="NIFTY",
             current_price=24050,
             candles_5m=_make_bearish_candles(24050),
-            vwap=VWAPResult(vwap=24052, upper_band=24100, lower_band=24000),
+            vwap=VWAPResult(vwap=24070, upper_band=24100, lower_band=24000),
             previous_day=PreviousDayLevels(
                 pdh=24200, pdl=23900, pdc=24000, pdo=24050,
                 day_range=300, bias=DayBias.BEARISH,
