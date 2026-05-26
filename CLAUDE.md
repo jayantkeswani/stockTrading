@@ -4,7 +4,7 @@
 
 ## Git Worktree Policy
 
-**Before making any code changes, ask the user whether other Claude Code sessions are active on this repo.** If yes, create a worktree from the current branch and work inside it. Merge results back when done. This does NOT apply to subagents spawned within a single session.
+**Before making any code changes, ask the user whether other Claude Code sessions are active on this repo.** If yes, create a worktree under /Users/jaykeswani/projects/stockTrading/.claude/worktrees from the current branch and work inside it. Merge results back when done. This does NOT apply to subagents spawned within a single session.
 
 ## Subagent Model Policy
 
