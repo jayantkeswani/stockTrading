@@ -135,6 +135,7 @@ async def _gather_briefing_data(today: date) -> dict:
     from sqlalchemy import and_, desc, func, select
 
     from app.core.database import async_session_factory
+    from app.core.enums import TradeSource
     from app.data.sectors import get_sector
     from app.models.global_market_snapshot import GlobalMarketSnapshot
     from app.models.trade import Trade
@@ -143,25 +144,27 @@ async def _gather_briefing_data(today: date) -> dict:
     five_days_ago = today - timedelta(days=7)
 
     async with async_session_factory() as session:
-        # Yesterday's trades (full detail)
+        # Yesterday's trades (full detail, excludes shadow)
         result = await session.execute(
             select(Trade).where(
                 and_(
                     Trade.strategy_name == "intraday_futures",
                     func.date(Trade.entry_time) >= yesterday,
                     func.date(Trade.entry_time) <= yesterday,
+                    Trade.source != TradeSource.SHADOW.value,
                 )
             )
         )
         yesterday_trades = result.scalars().all()
 
-        # Last 5 trading days (closed only)
+        # Last 5 trading days (closed only, excludes shadow)
         result = await session.execute(
             select(Trade).where(
                 and_(
                     Trade.strategy_name == "intraday_futures",
                     func.date(Trade.entry_time) >= five_days_ago,
                     Trade.status == "CLOSED",
+                    Trade.source != TradeSource.SHADOW.value,
                 )
             )
         )

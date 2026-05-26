@@ -146,6 +146,7 @@ async def _run_eod_summary() -> None:
 
     try:
         from app.core.database import async_session_factory
+        from app.core.enums import TradeSource
         from app.models.trade import Trade
         from sqlalchemy import select, and_, func
 
@@ -161,6 +162,7 @@ async def _run_eod_summary() -> None:
                     and_(
                         Trade.strategy_name == "intraday_futures",
                         func.date(Trade.entry_time) == today,
+                        Trade.source != TradeSource.SHADOW.value,
                     )
                 )
             )
