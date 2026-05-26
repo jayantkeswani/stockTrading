@@ -35,6 +35,7 @@ export function Header() {
   const { wsConnected, marketStatus, setMarketStatus, setAgentStatus, updatePrice } = useStore();
   const [time, setTime] = useState("");
   const [deployedVersion, setDeployedVersion] = useState("");
+  const [dataFeedReady, setDataFeedReady] = useState(true);
 
   // Clock
   useEffect(() => {
@@ -54,9 +55,21 @@ export function Header() {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch deployed version once on mount
+  // Fetch deployed version + readiness on mount; poll until ready
   useEffect(() => {
-    api.health().then((h) => setDeployedVersion(h?.version || "")).catch(() => {});
+    let stopped = false;
+    async function check() {
+      try {
+        const h = await api.health();
+        setDeployedVersion(h?.version || "");
+        setDataFeedReady(h?.data_feed_ready ?? true);
+        if (!h?.data_feed_ready && !stopped) {
+          setTimeout(check, 3000);
+        }
+      } catch { /* API not running */ }
+    }
+    check();
+    return () => { stopped = true; };
   }, []);
 
   // Poll market status + prices every 10s
@@ -113,6 +126,9 @@ export function Header() {
           <span className="text-xs font-mono text-warning">DEAD ZONE</span>
         )}
         <BiasIndicator />
+        {!dataFeedReady && (
+          <span className="text-xs font-mono text-warning animate-pulse">STARTING…</span>
+        )}
       </div>
 
       <div className="flex items-center gap-3">

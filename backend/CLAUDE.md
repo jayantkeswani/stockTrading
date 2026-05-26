@@ -3,7 +3,7 @@
 ## Tech Stack
 
 - Python 3.11 (virtualenv at `backend/.venv`)
-- FastAPI with async support, runs on port **8080**
+- FastAPI with async support, runs on port **8080** (dual-stack `--host ::` — never use `--host 0.0.0.0`, macOS resolves localhost to IPv6)
 - SQLAlchemy 2.0 (async engine via asyncpg, declarative models)
 - Alembic for database migrations (PostgreSQL on port 5433)
 - Pydantic v2 for schemas/settings
@@ -109,25 +109,36 @@ Pydantic Settings loading from `.env`. Key groups:
 
 ### `app/main.py` — FastAPI Application + Startup Sequence
 
-**Startup (lifespan)**:
+**Startup state**: `StartupState` dataclass (module-level `startup_state`) tracks background startup progress. Fields: `data_feed_ready: bool`, `startup_error: str | None`. Exposed via `GET /api/v1/health`. Imported by `router.py` (deferred import to avoid circular ref).
+
+**Startup (lifespan)** — the server begins accepting HTTP requests immediately after step 3. Heavy data tasks run in background:
+
+*Before yield (blocking — fast, config + schedulers only):*
 
 1. `ensure_seeded()` — insert singleton `trading_config` row if absent
 2. Start config listener pubsub (`start_config_listener()`)
 3. Start all schedulers: Fyers login, symbol master, OI snapshot, fundamental data, daily summary, global market, morning workflow, bhav copy, F&O ban list, signal expiry, sector update
-4. Force-download fresh symbol master via `symbol_master.refresh()` (inline/blocking — ensures rolled contracts resolve on the very first candle)
-5. Load sector classifications from DB (`load_db_sectors()`)
-6. Start fundamental data background task (5s delay, non-blocking)
-7. Start global market background task (non-blocking)
-8. Auto-start data feed if Fyers token in Redis — or unconditionally in simulated mode (subscribes indices + strategy symbols + watchlist + S5 watchlist + open positions + today's closed trades). In simulated mode: skips token check and candle backfill
-9. Start deep backfill background task (10s delay, non-blocking)
-10. Auto-start `agent_runner` (trade monitor at 500ms interval — autonomy from DB config)
-11. Start Telegram bot polling (`start_telegram_bot()`)
+4. Start Telegram bot polling (`start_telegram_bot()`)
+5. Launch `_background_startup()` as fire-and-forget asyncio task
+
+*Background startup (non-blocking — `_background_startup()`):*
+
+6. Download fresh symbol master via `symbol_master.refresh()`
+7. Load sector classifications from DB (`load_db_sectors()`)
+8. Auto-start data feed if Fyers token in Redis — or unconditionally in simulated mode. Skips if already connected (fyers_login_task race guard). Subscribes indices + strategy symbols + watchlist + S5 watchlist + open positions + today's closed trades. In simulated mode: skips token check and candle backfill
+9. Auto-start `agent_runner` (trade monitor at 500ms interval — autonomy from DB config)
+10. Launch fire-and-forget tasks: fundamental data (5s delay), global market data, deep backfill (10s delay)
+11. Set `startup_state.data_feed_ready = True`
+
+On failure: each step logs the error and sets `startup_state.startup_error`. Data feed or agent_runner failure aborts remaining steps (fire-and-forget tasks depend on the feed).
 
 **Key private helpers** (used by both startup and reauth):
 
-- `_get_watchlist_symbols() -> list[str]` — loads dashboard watchlist Fyers symbols from Redis hash `watchlist:items`. Used by: main.py startup, fyers_login_task reauth
-- `_get_strat5_watchlist_symbols() -> dict[str, str]` — loads S5 screener watchlist from Redis `strat5:watchlist:{today}`, returns `{short_name: fyers_symbol}`. Used by: main.py startup, fyers_login_task reauth
-- `_get_position_symbols() -> list[str]` — queries open `Position.fyers_option_symbol` + today's closed `Trade.fyers_option_symbol` via SQL `union_all`. Today's closed trades included for hold analysis candle continuity. Used by: main.py startup, fyers_login_task reauth
+- `_start_data_feed_if_authenticated()` — starts WS feed + backfills. Has `is_connected` guard to prevent double-start when fyers_login_task wins the race. Used by: _background_startup(), fyers_login_task reauth
+- `_background_startup()` — orchestrates heavy startup: symbol_master → sectors → data_feed → agent → fire-and-forget tasks. Sets `startup_state.data_feed_ready` on success. Used by: lifespan
+- `_get_watchlist_symbols() -> list[str]` — loads dashboard watchlist Fyers symbols from Redis hash `watchlist:items`. Used by: _background_startup (via _start_data_feed_if_authenticated), fyers_login_task reauth
+- `_get_strat5_watchlist_symbols() -> dict[str, str]` — loads S5 screener watchlist from Redis `strat5:watchlist:{today}`, returns `{short_name: fyers_symbol}`. Used by: _background_startup (via _start_data_feed_if_authenticated), fyers_login_task reauth
+- `_get_position_symbols() -> list[str]` — queries open `Position.fyers_option_symbol` + today's closed `Trade.fyers_option_symbol` via SQL `union_all`. Today's closed trades included for hold analysis candle continuity. Used by: _background_startup (via _start_data_feed_if_authenticated), fyers_login_task reauth
 
 **File logging**: `RotatingFileHandler` on root logger → `backend/logs/app.log` (10 MB × 5 rotations). All `logging.getLogger(__name__)` calls propagate automatically.
 

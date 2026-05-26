@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 import logging.handlers
 import os
@@ -25,6 +26,17 @@ logging.basicConfig(
 logging.getLogger().addHandler(_file_handler)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass
+class StartupState:
+    """Tracks readiness of heavy background startup tasks (symbol master, data feed, agent)."""
+    data_feed_ready: bool = False
+    startup_error: str | None = None
+
+
+startup_state = StartupState()
+
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
@@ -58,7 +70,11 @@ async def _start_data_feed_if_authenticated():
 
     Also backfills previous trading day's candles so strategies have
     previous-day context (PDH/PDL/PDC) available from the first candle.
+    Skips if data feed is already connected (e.g. fyers_login_task won the race).
     """
+    if fyers_ws_client.is_connected:
+        logger.info("Data feed already connected — skipping startup start")
+        return
     from app.core.redis import get_redis
     from app.services.candle_backfill import (
         backfill_previous_day, backfill_today, _get_all_backfill_symbols,
@@ -223,6 +239,52 @@ async def _deep_backfill_background():
         print(f"Deep backfill failed: {e}")
 
 
+async def _background_startup():
+    """Run heavy startup tasks after the server starts accepting requests."""
+    import asyncio
+
+    try:
+        await symbol_master.refresh()
+        print(f"Symbol master loaded: {symbol_master.count} symbols")
+    except Exception as e:
+        print(f"Symbol master refresh failed (will retry on first search): {e}")
+        startup_state.startup_error = f"symbol_master: {e}"
+
+    try:
+        from app.data.sectors import load_db_sectors
+        await load_db_sectors()
+    except Exception as e:
+        logger.error("load_db_sectors failed: %s", e)
+        startup_state.startup_error = f"load_db_sectors: {e}"
+
+    try:
+        await _start_data_feed_if_authenticated()
+        task_registry.register("fyers_data_feed", TaskType.SERVICE, metadata={"description": "Fyers WebSocket live data feed"})
+    except Exception as e:
+        logger.error("Data feed startup failed: %s", e, exc_info=True)
+        startup_state.startup_error = f"data_feed: {e}"
+        return
+
+    try:
+        await agent_runner.start()
+        task_registry.register("agent_runner", TaskType.SERVICE, metadata={"description": "Trade monitor — SL/target/EOD exits"})
+    except Exception as e:
+        logger.error("agent_runner startup failed: %s", e, exc_info=True)
+        startup_state.startup_error = f"agent_runner: {e}"
+        return
+
+    t2 = asyncio.create_task(_fetch_fundamentals_background(), name="fundamental_data_startup")
+    task_registry.track_asyncio_task("fundamental_data_startup", t2, metadata={"description": "Fetch CAN SLIM fundamentals"})
+
+    t3 = asyncio.create_task(_fetch_global_market_background(), name="global_market_startup")
+    task_registry.track_asyncio_task("global_market_startup", t3, metadata={"description": "Initial global market data fetch"})
+
+    t4 = asyncio.create_task(_deep_backfill_background(), name="deep_backfill")
+    task_registry.track_asyncio_task("deep_backfill", t4, metadata={"description": "Backfill 120d candle history for CAN SLIM"})
+
+    startup_state.data_feed_ready = True
+    logger.info("Background startup complete — data feed ready")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -270,40 +332,14 @@ async def lifespan(app: FastAPI):
     await start_sector_update_scheduler()
     task_registry.register("sector_update_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 07:00 IST"})
 
-    # --- Symbol master (must complete before data feed so futures resolution uses fresh contracts) ---
-    try:
-        await symbol_master.refresh()
-        print(f"Symbol master loaded: {symbol_master.count} symbols")
-    except Exception as e:
-        print(f"Symbol master refresh failed (will retry on first search): {e}")
-
-    # --- Load sector classifications from DB ---
-    from app.data.sectors import load_db_sectors
-    await load_db_sectors()
-
-    # --- One-shot startup tasks (tracked via done callback) ---
-    t2 = asyncio.create_task(_fetch_fundamentals_background(), name="fundamental_data_startup")
-    task_registry.track_asyncio_task("fundamental_data_startup", t2, metadata={"description": "Fetch CAN SLIM fundamentals"})
-
-    t3 = asyncio.create_task(_fetch_global_market_background(), name="global_market_startup")
-    task_registry.track_asyncio_task("global_market_startup", t3, metadata={"description": "Initial global market data fetch"})
-
-    # --- Data feed (service) ---
-    await _start_data_feed_if_authenticated()
-    task_registry.register("fyers_data_feed", TaskType.SERVICE, metadata={"description": "Fyers WebSocket live data feed"})
-
-    # --- Deep backfill (startup task) ---
-    t3 = asyncio.create_task(_deep_backfill_background(), name="deep_backfill")
-    task_registry.track_asyncio_task("deep_backfill", t3, metadata={"description": "Backfill 120d candle history for CAN SLIM"})
-
-    # --- Agent (trade monitor + auto-executor) ---
-    await agent_runner.start()
-    task_registry.register("agent_runner", TaskType.SERVICE, metadata={"description": "Trade monitor — SL/target/EOD exits (SEMI mode)"})
-
-    # --- Telegram bot (inbound command polling) ---
+    # --- Telegram bot (inbound command polling — lightweight, stays before yield) ---
     t_tg = start_telegram_bot()
     if t_tg:
         task_registry.track_asyncio_task("telegram_bot_poll", t_tg, metadata={"description": "Telegram bot long-polling (/shadow)"})
+
+    # --- Heavy startup tasks run in background after server is ready ---
+    t_bg = asyncio.create_task(_background_startup(), name="background_startup")
+    task_registry.track_asyncio_task("background_startup", t_bg, metadata={"description": "symbol_master → sectors → data_feed → agent"})
 
     yield
 

@@ -100,7 +100,7 @@ Images are built on the GitHub runner (7GB RAM, free) and pushed to GitHub Conta
 
 ### Version Visibility
 
-- `GET /api/v1/health` returns `{"version": "v1.0.0", "deployed_at": "..."}` in production
+- `GET /api/v1/health` returns `{"version": "v1.0.0", "deployed_at": "...", "data_feed_ready": true|false, "startup_error": null|"..."}` in production. `data_feed_ready=false` means background startup (symbol master, backfill, data feed, agent) is still in progress
 - Frontend Header shows the deployed version next to the WS indicator
 - `make show-version` prints the health response from local machine
 - `APP_VERSION` env var written to `.env` on VM during each deploy

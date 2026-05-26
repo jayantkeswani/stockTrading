@@ -168,8 +168,11 @@ make dev
 
 # Or individually:
 docker compose up -d          # Start PostgreSQL + Redis
-make backend                  # Backend on :8080
+make backend                  # Backend on :8080 (dual-stack IPv4+IPv6)
 make frontend                 # Frontend on :3000
+
+# IMPORTANT: Always use `make backend` or `--host ::` when starting uvicorn manually.
+# `--host 0.0.0.0` is IPv4-only — macOS resolves localhost to IPv6, causing 503s from the browser.
 make test                     # Run pytest suite
 make migrate                  # Run Alembic migrations
 make migration msg="desc"     # Generate new migration
@@ -356,6 +359,8 @@ make test                      # Unit tests first
 make backend                   # Startup tasks run but no live candles
 
 # REST endpoints that work without live data
+# Health check — returns data_feed_ready (bool) and startup_error (str|null)
+# data_feed_ready=false means background startup (symbol master, backfill, WS) is still running
 curl -s http://localhost:8080/api/v1/health | python3 -m json.tool
 curl -s http://localhost:8080/api/v1/tasks | python3 -m json.tool
 curl -s http://localhost:8080/api/v1/strategies | python3 -m json.tool
@@ -388,6 +393,7 @@ curl -s -X POST http://localhost:8787/sim/session -H "Content-Type: application/
 }'
 
 # 5. Verify: prices flowing, candles forming, strategies evaluating
+# Health check includes data_feed_ready — wait for it to be true before testing strategies
 curl -s http://localhost:8080/api/v1/health | python3 -m json.tool
 curl -s http://localhost:8080/api/v1/market/prices | python3 -m json.tool
 ```
