@@ -344,7 +344,7 @@ class TestFetchStockFuturesOI:
         mock_fyers_cls,
         mock_session_factory,
     ):
-        """Symbols with no quote data should still produce a row with oi=0."""
+        """Symbols with no quote data (oi=0) should be skipped, not inserted."""
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(return_value="test-token")
         mock_get_redis.return_value = mock_redis
@@ -356,7 +356,7 @@ class TestFetchStockFuturesOI:
             "TCS", "NSE:TCS26APRFUT", expiry,
         )
 
-        # Quote response with no matching symbol (quote lookup miss)
+        # Quote response with no matching symbol (quote lookup miss → oi=0)
         mock_client = AsyncMock()
         mock_client.get_quotes = AsyncMock(return_value={
             "s": "ok",
@@ -378,10 +378,8 @@ class TestFetchStockFuturesOI:
 
         await fetch_stock_futures_oi()
 
-        # Should still persist with oi=0
-        assert len(captured_stmts) == 1
-        params = captured_stmts[0].compile().params
-        assert params.get("open_interest_m0") == 0
+        # Zero-OI rows are skipped — no DB insert should happen
+        assert len(captured_stmts) == 0
 
 
 # ---------------------------------------------------------------------------

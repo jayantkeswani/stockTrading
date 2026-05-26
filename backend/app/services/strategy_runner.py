@@ -875,6 +875,7 @@ class StrategyRunner:
                             and_(
                                 OISnapshot.symbol == symbol,
                                 OISnapshot.option_type == "FUT",
+                                OISnapshot.open_interest > 0,
                             )
                         )
                         .order_by(OISnapshot.timestamp.desc())

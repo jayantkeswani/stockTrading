@@ -45,6 +45,7 @@ from app.tasks.global_market_task import start_global_market_scheduler, stop_glo
 from app.tasks.morning_workflow_task import start_morning_workflow_scheduler, stop_morning_workflow_scheduler
 from app.tasks.nse_bhav_copy_task import start_nse_bhav_copy_scheduler, stop_nse_bhav_copy_scheduler
 from app.tasks.fo_ban_list_task import start_fo_ban_list_scheduler, stop_fo_ban_list_scheduler
+from app.tasks.sector_update_task import start_sector_update_scheduler, stop_sector_update_scheduler
 from app.tasks.signal_expiry_task import start_signal_expiry_scheduler, stop_signal_expiry_scheduler
 from app.agent.agent_runner import agent_runner
 from app.agent.telegram_bot import start_telegram_bot, stop_telegram_bot
@@ -266,12 +267,19 @@ async def lifespan(app: FastAPI):
     await start_signal_expiry_scheduler()
     task_registry.register("signal_expiry_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 15:30 IST"})
 
+    await start_sector_update_scheduler()
+    task_registry.register("sector_update_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 07:00 IST"})
+
     # --- Symbol master (must complete before data feed so futures resolution uses fresh contracts) ---
     try:
         await symbol_master.refresh()
         print(f"Symbol master loaded: {symbol_master.count} symbols")
     except Exception as e:
         print(f"Symbol master refresh failed (will retry on first search): {e}")
+
+    # --- Load sector classifications from DB ---
+    from app.data.sectors import load_db_sectors
+    await load_db_sectors()
 
     # --- One-shot startup tasks (tracked via done callback) ---
     t2 = asyncio.create_task(_fetch_fundamentals_background(), name="fundamental_data_startup")
@@ -334,6 +342,9 @@ async def lifespan(app: FastAPI):
 
     await stop_signal_expiry_scheduler()
     task_registry.update_status("signal_expiry_scheduler", TaskStatus.STOPPED)
+
+    await stop_sector_update_scheduler()
+    task_registry.update_status("sector_update_scheduler", TaskStatus.STOPPED)
 
     await ws_manager.disconnect_all()
     print("StockTrading backend stopped.")

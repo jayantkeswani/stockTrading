@@ -220,6 +220,8 @@ def _fetch_stock_info_sync(ticker: str) -> StockInfo:
         fifty_two_week_high=info.get("fiftyTwoWeekHigh"),
         fifty_two_week_low=info.get("fiftyTwoWeekLow"),
         current_price=info.get("currentPrice") or info.get("regularMarketPrice"),
+        sector=info.get("sector"),
+        industry=info.get("industry"),
     )
 
 

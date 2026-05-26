@@ -293,6 +293,8 @@ async def fetch_stock_futures_oi():
         quote = all_quotes.get(fyers_symbol, {})
         # Fyers REST quotes API returns "oi" for open interest (not "open_interest")
         oi = int(quote.get("oi", 0) or quote.get("open_interest", 0) or 0)
+        if oi <= 0:
+            continue
 
         rows.append({
             "symbol": symbol,

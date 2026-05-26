@@ -76,6 +76,10 @@ class StockFundamental(Base, TimestampMixin):
     is_fo_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     lot_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Sector classification (auto-populated from yfinance)
+    sector: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    industry: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
     # Refresh tracking
     last_refreshed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

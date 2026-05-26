@@ -62,3 +62,5 @@ class StockInfo:
     fifty_two_week_high: float | None = None
     fifty_two_week_low: float | None = None
     current_price: float | None = None
+    sector: str | None = None
+    industry: str | None = None

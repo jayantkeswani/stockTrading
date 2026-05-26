@@ -284,6 +284,8 @@ async def _fetch_and_store_symbol(
         price_52w_high=price_52w_high,
         pct_from_52w_high=pct_from_52w_high,
         lot_size=lot_size,
+        sector=info.sector if info else None,
+        industry=info.industry if info else None,
     )
 
     # Store quarterly history

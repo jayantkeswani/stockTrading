@@ -988,9 +988,8 @@ class IntradayFuturesStrategy(BaseStrategy):
 
         return round(max(0, min(100, composite)), 1)
 
-    @staticmethod
     def _build_indicator_snapshot(
-        ctx: MarketContext, params: dict, indicators: dict
+        self, ctx: MarketContext, params: dict, indicators: dict
     ) -> None:
         """Enrich indicators dict with context data so the LLM overlay sees full picture."""
         if ctx.vwap:
@@ -1023,6 +1022,24 @@ class IntradayFuturesStrategy(BaseStrategy):
         if trend_score is not None:
             indicators["stock_trend_score"] = trend_score
             indicators["stock_trend_strength"] = params.get("_stock_trend_strength")
+
+        gap_dir = params.get("_gap_direction")
+        if gap_dir:
+            indicators.setdefault("gap_direction", gap_dir)
+            gap_pct = params.get("_stock_gap_pct")
+            if gap_pct is not None:
+                indicators.setdefault("gap_pct", gap_pct)
+
+        orb = getattr(self, "_orb_levels", {}).get(ctx.symbol)
+        if orb:
+            indicators.setdefault("orb_high", orb["high"])
+            indicators.setdefault("orb_low", orb["low"])
+
+        if "adr_pct" not in indicators and ctx.candles_daily:
+            from app.indicators.adr import compute_adr
+            adr_val = compute_adr(ctx.candles_daily)
+            if adr_val:
+                indicators["adr_pct"] = round(adr_val, 2)
 
     def should_exit(
         self,

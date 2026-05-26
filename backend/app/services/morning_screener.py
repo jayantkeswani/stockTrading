@@ -490,6 +490,43 @@ async def run_morning_screener(as_of: date | None = None) -> list[dict]:
     permanent_symbols = set(json.loads(perm_raw)) if perm_raw else set()
     if permanent_symbols:
         existing_symbols = {c["symbol"] for c in candidates}
+
+        # Batch-fetch last trading day's daily bar for permanent symbols
+        # that need stub injection (not in all_scores_lookup)
+        perm_needing_daily = [
+            sym for sym in permanent_symbols
+            if sym not in existing_symbols and sym not in all_scores_lookup
+        ]
+        perm_daily_data: dict[str, dict] = {}
+        if perm_needing_daily:
+            try:
+                from app.core.database import async_session_factory
+                from app.models.market_data_daily import MarketDataDaily
+                from sqlalchemy import select
+                async with async_session_factory() as session:
+                    stmt = (
+                        select(
+                            MarketDataDaily.symbol,
+                            MarketDataDaily.high,
+                            MarketDataDaily.low,
+                            MarketDataDaily.close,
+                        )
+                        .where(MarketDataDaily.symbol.in_(perm_needing_daily))
+                        .distinct(MarketDataDaily.symbol)
+                        .order_by(MarketDataDaily.symbol, MarketDataDaily.date.desc())
+                    )
+                    rows = (await session.execute(stmt)).all()
+                    for row in rows:
+                        perm_daily_data[row.symbol] = {
+                            "pdh": float(row.high),
+                            "pdl": float(row.low),
+                            "pdc": float(row.close),
+                        }
+                if perm_daily_data:
+                    logger.info("Fetched PDH/PDL/PDC from market_data_daily for %d permanent WL stubs", len(perm_daily_data))
+            except Exception:
+                logger.warning("Could not fetch daily data for permanent WL stubs", exc_info=True)
+
         injected = 0
         for sym in permanent_symbols:
             if sym not in existing_symbols:
@@ -497,6 +534,7 @@ async def run_morning_screener(as_of: date | None = None) -> list[dict]:
                 if scored:
                     candidate = {**scored, "manual": True}
                 else:
+                    daily = perm_daily_data.get(sym, {})
                     candidate = {
                         "symbol": sym,
                         "composite_score": 0,
@@ -517,9 +555,9 @@ async def run_morning_screener(as_of: date | None = None) -> list[dict]:
                             "delivery_pct": 50.0,
                             "high_52w_proximity": 50.0,
                         },
-                        "pdh": None,
-                        "pdl": None,
-                        "pdc": None,
+                        "pdh": daily.get("pdh"),
+                        "pdl": daily.get("pdl"),
+                        "pdc": daily.get("pdc"),
                         "lot_size": 0,
                         "manual": True,
                     }
