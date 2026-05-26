@@ -10,7 +10,9 @@ import pytest
 from app.indicators.candle_patterns import Candle
 from app.services.morning_screener import (
     _BRIEFING_SCHEMA,
+    _STAGE3_BATCH_SCHEMA,
     _STAGE3_CONFIDENCE_SCHEMA,
+    _deduplicate_correlated_sectors,
     _compute_stock_score,
     _compute_trade_stats,
     _synthesize_briefing,
@@ -338,6 +340,71 @@ class TestStage3ConfidenceSchema:
         groups = _STAGE3_CONFIDENCE_SCHEMA["properties"]["correlated_groups"]
         item = groups["items"]
         assert set(item["required"]) == {"symbols", "sector", "keep"}
+
+
+class TestStage3BatchSchema:
+    """Validate the batch schema used for per-batch LLM calls."""
+
+    def test_required_fields(self):
+        assert set(_STAGE3_BATCH_SCHEMA["required"]) == {"ratings"}
+
+    def test_ratings_items(self):
+        per_stock = _STAGE3_BATCH_SCHEMA["properties"]["ratings"]["items"]
+        assert set(per_stock["required"]) == {"symbol", "confidence", "reason"}
+        assert set(per_stock["properties"]["confidence"]["enum"]) == {
+            "HIGH", "MEDIUM", "LOW",
+        }
+
+    def test_no_correlated_groups(self):
+        assert "correlated_groups" not in _STAGE3_BATCH_SCHEMA["properties"]
+
+
+class TestDeduplicateCorrelatedSectors:
+    """Tests for deterministic sector dedup."""
+
+    def _make_candidate(self, symbol, sector, score):
+        return {
+            "symbol": symbol,
+            "composite_score": score,
+            "factors": {"sector": sector},
+        }
+
+    def test_no_drops_when_under_limit(self):
+        candidates = [
+            self._make_candidate("A", "BANKING", 80),
+            self._make_candidate("B", "BANKING", 70),
+        ]
+        drops = _deduplicate_correlated_sectors(candidates, max_per_sector=2)
+        assert drops == set()
+
+    def test_drops_lowest_scores(self):
+        candidates = [
+            self._make_candidate("A", "METALS", 90),
+            self._make_candidate("B", "METALS", 50),
+            self._make_candidate("C", "METALS", 70),
+        ]
+        drops = _deduplicate_correlated_sectors(candidates, max_per_sector=2)
+        assert drops == {"B"}
+
+    def test_multiple_sectors_independent(self):
+        candidates = [
+            self._make_candidate("A", "BANKING", 90),
+            self._make_candidate("B", "BANKING", 80),
+            self._make_candidate("C", "BANKING", 70),
+            self._make_candidate("D", "IT", 60),
+            self._make_candidate("E", "IT", 50),
+            self._make_candidate("F", "IT", 40),
+        ]
+        drops = _deduplicate_correlated_sectors(candidates, max_per_sector=2)
+        assert drops == {"C", "F"}
+
+    def test_no_sector_candidates_unaffected(self):
+        candidates = [
+            self._make_candidate("A", None, 80),
+            self._make_candidate("B", None, 70),
+        ]
+        drops = _deduplicate_correlated_sectors(candidates, max_per_sector=2)
+        assert drops == set()
 
 
 class TestSynthesizeBriefing:

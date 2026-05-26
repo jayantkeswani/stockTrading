@@ -1001,65 +1001,75 @@ async def _stage2_news_sentiment(candidates: list[dict]) -> list[dict]:
     return screened[:TOP_N_FOR_CONFIDENCE] + manual_pins
 
 
-async def _stage3_llm_confidence(candidates: list[dict]) -> list[dict]:
-    """Batched LLM confidence check enriched with global cues, briefing,
-    fundamentals, and our own trade history per stock."""
-    if not candidates:
-        return []
+_STAGE3_BATCH_SIZE = 10
 
-    from app.core.utils import now_ist
+_STAGE3_BATCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ratings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "confidence": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+                    "reason": {"type": "string"},
+                },
+                "required": ["symbol", "confidence", "reason"],
+            },
+        },
+    },
+    "required": ["ratings"],
+}
 
-    today = now_ist().date()
+_STAGE3_SYSTEM = (
+    "You are a senior quantitative analyst reviewing stock candidates for "
+    "intraday futures trading on NSE India.\n\n"
+    "## Rating criteria\n"
+    "HIGH: Strong quant score (>60) + supportive or neutral news + no sector "
+    "headwinds + fundamentals show institutional interest (FII >15% or rising). "
+    "Prime candidate for aggressive sizing.\n"
+    "MEDIUM: Decent profile but one concern (mixed news, weak volume trend, "
+    "sector rotation risk, low institutional interest, or low quant score 30-60). "
+    "Standard watchlist inclusion.\n"
+    "LOW: Specific red flag making intraday trading DANGEROUS today — regulatory "
+    "risk, earnings tonight (not yet reported), active SEBI investigation, severe "
+    "negative news score (<-0.5), or analyst downgrade within 48h. Will be DROPPED "
+    "from the watchlist.\n\n"
+    "IMPORTANT: Only rate LOW for concrete, stock-specific dangers. Do NOT rate "
+    "LOW for: low quant scores alone, weak volume, general sector weakness, "
+    "no news (neutral is fine), or limited trade history. Those are MEDIUM.\n\n"
+    "## Using the morning briefing\n"
+    "The briefing sets today's approach (aggressive/normal/conservative), sector "
+    "bias, and sector to avoid. Apply these:\n"
+    "  - If briefing says 'avoid PHARMA', downgrade PHARMA candidates by one tier "
+    "unless they have exceptional quant+news.\n"
+    "  - If briefing says 'sector_bias: METALS', give METALS candidates the benefit "
+    "of the doubt on borderline ratings.\n"
+    "  - Conservative approach: be stricter — require stronger evidence for HIGH.\n\n"
+    "## Trade history interpretation\n"
+    "our_history shows our own recent results trading this stock:\n"
+    "  - No history (trades=0): neutral — don't penalize, we just haven't traded it.\n"
+    "  - 1-2 trades: too small a sample — mention but don't let it drive the rating.\n"
+    "  - 3+ trades with <30% win rate: flag as concern, factor into rating.\n"
+    "  - 3+ trades with >60% win rate: mild positive (we trade this stock well).\n\n"
+    "## Token efficiency\n"
+    "Every candidate MUST have a reason (1 short sentence). If you run out of "
+    "reasoning space, write 'Score X, news Y' — never leave reason empty."
+)
 
-    # --- Gather enrichment data in parallel ---
-    global_cues, briefing, fundamentals, trade_history = await asyncio.gather(
-        _get_confidence_global_cues(today),
-        _get_confidence_briefing(today),
-        _get_confidence_fundamentals([c["symbol"] for c in candidates]),
-        _get_confidence_trade_history([c["symbol"] for c in candidates]),
-    )
 
-    llm = create_llm_client(pro=True)
-    system = (
-        "You are a senior quantitative analyst reviewing stock candidates for "
-        "intraday futures trading on NSE India.\n\n"
-        "## Rating criteria\n"
-        "HIGH: Strong quant score (>60) + supportive or neutral news + no sector "
-        "headwinds + fundamentals show institutional interest (FII >15% or rising). "
-        "Prime candidate for aggressive sizing.\n"
-        "MEDIUM: Decent profile but one concern (mixed news, weak volume trend, "
-        "sector rotation risk, low institutional interest, or low quant score 30-60). "
-        "Standard watchlist inclusion.\n"
-        "LOW: Specific red flag making intraday trading DANGEROUS today — regulatory "
-        "risk, earnings tonight (not yet reported), active SEBI investigation, severe "
-        "negative news score (<-0.5), or analyst downgrade within 48h. Will be DROPPED "
-        "from the watchlist.\n\n"
-        "IMPORTANT: Only rate LOW for concrete, stock-specific dangers. Do NOT rate "
-        "LOW for: low quant scores alone, weak volume, general sector weakness, "
-        "no news (neutral is fine), or limited trade history. Those are MEDIUM.\n\n"
-        "## Using the morning briefing\n"
-        "The briefing sets today's approach (aggressive/normal/conservative), sector "
-        "bias, and sector to avoid. Apply these:\n"
-        "  - If briefing says 'avoid PHARMA', downgrade PHARMA candidates by one tier "
-        "unless they have exceptional quant+news.\n"
-        "  - If briefing says 'sector_bias: METALS', give METALS candidates the benefit "
-        "of the doubt on borderline ratings.\n"
-        "  - Conservative approach: be stricter — require stronger evidence for HIGH.\n\n"
-        "## Trade history interpretation\n"
-        "our_history shows our own recent results trading this stock:\n"
-        "  - No history (trades=0): neutral — don't penalize, we just haven't traded it.\n"
-        "  - 1-2 trades: too small a sample — mention but don't let it drive the rating.\n"
-        "  - 3+ trades with <30% win rate: flag as concern, factor into rating.\n"
-        "  - 3+ trades with >60% win rate: mild positive (we trade this stock well).\n\n"
-        "## Correlated groups\n"
-        "Aggressively identify sector clusters. If 3+ candidates share a sector "
-        "(especially BANKING, NBFC, IT, METALS), recommend keeping only the 1-2 "
-        "strongest by quant score + news quality. Mark the rest for dropping.\n\n"
-        "## Token efficiency\n"
-        "Every candidate MUST have a reason (1 short sentence). If you run out of "
-        "reasoning space, write 'Score X, news Y' — never leave reason empty."
-    )
-
+async def _rate_confidence_batch(
+    batch: list[dict],
+    global_cues: dict,
+    briefing: dict,
+    fundamentals: dict,
+    trade_history: dict,
+    llm: "LLMClient",
+    batch_num: int,
+    total_batches: int,
+) -> dict[str, dict]:
+    """Rate a single batch of candidates via LLM. Returns {symbol: rating_dict}."""
     candidates_json = json.dumps(
         [
             {
@@ -1077,12 +1087,12 @@ async def _stage3_llm_confidence(candidates: list[dict]) -> list[dict]:
                 "fundamentals": fundamentals.get(c["symbol"], {}),
                 "our_history": trade_history.get(c["symbol"], {}),
             }
-            for c in candidates
+            for c in batch
         ],
         indent=1,
     )
 
-    prompt = f"""Rate these {len(candidates)} intraday futures candidates for today.
+    prompt = f"""Rate these {len(batch)} intraday futures candidates for today.
 
 ## Market Conditions
 {json.dumps(global_cues, indent=1)}
@@ -1093,24 +1103,21 @@ async def _stage3_llm_confidence(candidates: list[dict]) -> list[dict]:
 ## Candidates
 {candidates_json}
 
-Rate EVERY candidate. Every reason must be non-empty (1 sentence).
+Rate EVERY candidate. Every reason must be non-empty (1 short sentence).
 
 Respond in JSON:
 {{
     "ratings": [
         {{"symbol": "SYMBOL", "confidence": "HIGH" | "MEDIUM" | "LOW", "reason": "<1 sentence>"}},
         ...
-    ],
-    "correlated_groups": [
-        {{"symbols": ["SYM1", "SYM2"], "sector": "BANKING", "keep": "SYM1"}}
     ]
 }}"""
 
     try:
         result = await asyncio.wait_for(
             llm.generate_json(
-                prompt=prompt, system=system, max_tokens=8192,
-                response_schema=_STAGE3_CONFIDENCE_SCHEMA,
+                prompt=prompt, system=_STAGE3_SYSTEM, max_tokens=4096,
+                response_schema=_STAGE3_BATCH_SCHEMA,
             ),
             timeout=60,
         )
@@ -1118,20 +1125,96 @@ Respond in JSON:
         if isinstance(ratings_raw, list):
             ratings = {r["symbol"]: r for r in ratings_raw if "symbol" in r}
         else:
-            ratings = ratings_raw
-        correlated_groups = result.get("correlated_groups", [])
+            ratings = ratings_raw if isinstance(ratings_raw, dict) else {}
+        logger.info(
+            "Stage 3 batch %d/%d: rated %d/%d symbols",
+            batch_num, total_batches, len(ratings), len(batch),
+        )
+        return ratings
     except Exception as e:
-        logger.warning("LLM confidence check failed: %s — keeping all candidates", e)
-        ratings = {}
-        correlated_groups = []
+        logger.warning(
+            "Stage 3 batch %d/%d failed: %s — defaulting to MEDIUM",
+            batch_num, total_batches, e,
+        )
+        return {}
 
-    # Build set of symbols to drop from correlated groups
-    correlated_drops: set[str] = set()
-    for group in correlated_groups:
-        keep = group.get("keep", "")
-        for sym in group.get("symbols", []):
-            if sym != keep:
-                correlated_drops.add(sym)
+
+def _deduplicate_correlated_sectors(
+    candidates: list[dict], max_per_sector: int = 2,
+) -> set[str]:
+    """Drop excess candidates from over-represented sectors.
+
+    Keeps the top candidates (by composite_score) per sector. Returns the set
+    of symbols to drop.
+    """
+    from collections import defaultdict
+
+    sector_groups: dict[str, list[dict]] = defaultdict(list)
+    for c in candidates:
+        sector = c.get("factors", {}).get("sector")
+        if sector:
+            sector_groups[sector].append(c)
+
+    drops: set[str] = set()
+    for sector, members in sector_groups.items():
+        if len(members) <= max_per_sector:
+            continue
+        ranked = sorted(members, key=lambda c: c["composite_score"], reverse=True)
+        for c in ranked[max_per_sector:]:
+            drops.add(c["symbol"])
+        kept = [c["symbol"] for c in ranked[:max_per_sector]]
+        logger.info(
+            "Sector %s: keeping %s, dropping %s",
+            sector, kept, [c["symbol"] for c in ranked[max_per_sector:]],
+        )
+    return drops
+
+
+async def _stage3_llm_confidence(candidates: list[dict]) -> list[dict]:
+    """Batched LLM confidence check enriched with global cues, briefing,
+    fundamentals, and our own trade history per stock.
+
+    Splits candidates into batches to avoid exceeding LLM output token limits.
+    Sector correlation dedup is done deterministically after rating.
+    """
+    if not candidates:
+        return []
+
+    from app.core.utils import now_ist
+
+    today = now_ist().date()
+
+    # --- Gather enrichment data in parallel ---
+    global_cues, briefing, fundamentals, trade_history = await asyncio.gather(
+        _get_confidence_global_cues(today),
+        _get_confidence_briefing(today),
+        _get_confidence_fundamentals([c["symbol"] for c in candidates]),
+        _get_confidence_trade_history([c["symbol"] for c in candidates]),
+    )
+
+    llm = create_llm_client(pro=True)
+
+    # --- Split into batches and rate sequentially ---
+    batches = [
+        candidates[i : i + _STAGE3_BATCH_SIZE]
+        for i in range(0, len(candidates), _STAGE3_BATCH_SIZE)
+    ]
+    total_batches = len(batches)
+    logger.info(
+        "Stage 3: rating %d candidates in %d batch(es) of %d",
+        len(candidates), total_batches, _STAGE3_BATCH_SIZE,
+    )
+
+    ratings: dict[str, dict] = {}
+    for idx, batch in enumerate(batches, 1):
+        batch_ratings = await _rate_confidence_batch(
+            batch, global_cues, briefing, fundamentals, trade_history,
+            llm, idx, total_batches,
+        )
+        ratings.update(batch_ratings)
+
+    # --- Deterministic sector dedup (replaces LLM correlated_groups) ---
+    correlated_drops = _deduplicate_correlated_sectors(candidates)
 
     watchlist = []
     for c in candidates:
