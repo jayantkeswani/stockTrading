@@ -75,15 +75,15 @@ echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━�
 echo -e "  ${GREEN}Dashboard${NC}  → http://localhost:3000"
 echo -e "  ${GREEN}API${NC}        → http://localhost:8080"
 echo -e "  ${GREEN}API Docs${NC}   → http://localhost:8080/docs"
-echo -e "  ${GREEN}DB${NC}         → postgresql://trader:trader_dev_123@localhost:5432/stocktrading"
-echo -e "  ${GREEN}Redis${NC}      → redis://localhost:6379"
+echo -e "  ${GREEN}DB${NC}         → postgresql://trader:trader_dev_123@localhost:5433/stocktrading"
+echo -e "  ${GREEN}Redis${NC}      → redis://localhost:6380"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
 # Start backend
 cd "$ROOT/backend"
 source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8080 &
+uvicorn app.main:app --reload --host :: --port 8080 &
 BACKEND_PID=$!
 
 # Start frontend
