@@ -313,6 +313,7 @@ async def auto_execute_signal(signal_id) -> dict | None:
             "position_type": position_type,
             "opened_at": now.isoformat(),
             "margin_required": margin,
+            "signal_generated_at": signal.generated_at.isoformat() if signal.generated_at else None,
         },
     )
 

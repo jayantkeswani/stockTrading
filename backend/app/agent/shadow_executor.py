@@ -304,6 +304,7 @@ async def _do_shadow_execute(signal_id) -> None:
             "position_type": position_type,
             "opened_at": now.isoformat(),
             "margin_required": margin,
+            "signal_generated_at": signal.generated_at.isoformat() if signal.generated_at else None,
         },
     )
 

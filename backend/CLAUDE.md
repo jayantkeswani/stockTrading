@@ -282,7 +282,7 @@ Single `/ws` endpoint (handler in `app/api/router.py`). Uses `receive_text()` + 
 | `price:update`   | feed_manager                           | `{symbol, ltp, change_pct, ...}`                                                                                     |
 | `signal:new`     | strategy_runner                        | Full signal dict incl. `indicators`, `ai_*`, `fyers_option_symbol`, `fyers_futures_symbol`, `is_permanent_watchlist` |
 | `signal:updated` | strategy_runner (Case-2 dedup)         | Same as `signal:new`                                                                                                 |
-| `trade:open`     | auto_executor, shadow_executor, manual | Includes `margin_required`, `is_shadow`                                                                              |
+| `trade:open`     | auto_executor, shadow_executor, manual | Includes `margin_required`, `is_shadow`, `signal_generated_at`                                                       |
 | `trade:close`    | trade_monitor, positions API           | `{trade_id, position_id, pnl, exit_reason}`                                                                          |
 | `position:pnl`   | trade_monitor                          | `{position_id, unrealized_pnl, current_price}`                                                                       |
 | `agent:action`   | agent_runner                           | `AgentLogResponse` dict (id, action_type, trade_id, details, requires_confirmation, ...)                             |

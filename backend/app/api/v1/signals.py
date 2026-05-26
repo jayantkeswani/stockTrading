@@ -327,6 +327,7 @@ async def execute_signal(
             "is_paper": cfg.paper_trading,
             "position_type": position_type,
             "opened_at": now.isoformat(),
+            "signal_generated_at": signal.generated_at.isoformat() if signal.generated_at else None,
         },
     )
 
