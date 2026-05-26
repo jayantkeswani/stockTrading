@@ -163,7 +163,6 @@ async def send_daily_summary() -> None:
             llm_result = await llm.generate_json(
                 prompt=f"Generate post-market analysis from this data:\n{json.dumps(eod_data, default=str)}",
                 system=_EOD_SYSTEM_PROMPT,
-                max_tokens=1024,
                 response_schema=_EOD_SCHEMA,
             )
         except Exception:
@@ -183,10 +182,32 @@ async def send_daily_summary() -> None:
             llm_result=llm_result,
         )
         from app.agent.notification import send_telegram
-        await send_telegram(msg)
+        for part in msg:
+            await send_telegram(part)
 
     except Exception:
         logger.exception("Error sending daily summary")
+
+
+_TELEGRAM_MSG_LIMIT = 4096
+
+
+def _split_message(msg: str) -> list[str]:
+    """Split a message into parts that fit within Telegram's 4096-char limit."""
+    if len(msg) <= _TELEGRAM_MSG_LIMIT:
+        return [msg]
+    parts: list[str] = []
+    while msg:
+        if len(msg) <= _TELEGRAM_MSG_LIMIT:
+            parts.append(msg)
+            break
+        # Split at last newline before the limit
+        cut = msg.rfind("\n", 0, _TELEGRAM_MSG_LIMIT)
+        if cut <= 0:
+            cut = _TELEGRAM_MSG_LIMIT
+        parts.append(msg[:cut])
+        msg = msg[cut:].lstrip("\n")
+    return parts
 
 
 def _format_eod_message(
@@ -287,9 +308,7 @@ def _format_eod_message(
         lines.append(f"💡 {assessment}")
 
     msg = "\n".join(lines)
-    if len(msg) > 4000:
-        msg = msg[:3997] + "..."
-    return msg
+    return _split_message(msg)
 
 
 async def start_daily_summary_scheduler() -> None:
