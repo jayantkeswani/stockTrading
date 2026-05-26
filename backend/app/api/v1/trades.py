@@ -188,12 +188,81 @@ async def margin_analysis(
     )
 
 
+def _resolve_md_symbol(trade) -> str | None:
+    """Return the market_data_1m symbol key for a trade, or None if unavailable."""
+    if trade.strategy_name == StrategyName.INTRADAY_FUTURES.value:
+        return trade.symbol
+    return trade.fyers_option_symbol
+
+
+async def _build_reentry_map(
+    db: AsyncSession,
+    trades: list,
+) -> dict[str, datetime]:
+    """Build a map of trade_id → next re-entry time on same instrument+side+day.
+
+    Queries the trades table (not just the request batch) so filtered-out
+    trades are still accounted for.
+    """
+    reentry_map: dict[str, datetime] = {}
+
+    groups: dict[tuple[str, str], list] = {}
+    for t in trades:
+        if t.status != TradeStatus.CLOSED.value or t.exit_time is None:
+            continue
+        md_sym = _resolve_md_symbol(t)
+        if not md_sym:
+            continue
+        key = (md_sym, t.side)
+        groups.setdefault(key, []).append(t)
+
+    for (md_sym, side), group_trades in groups.items():
+        dates = {t.exit_time.astimezone(_IST).date() for t in group_trades}
+        for trading_date in dates:
+            day_start = _IST.localize(datetime.combine(trading_date, dt_time(0, 0)))
+            day_end = _IST.localize(datetime.combine(trading_date, dt_time(23, 59, 59)))
+
+            is_option = not any(
+                t.strategy_name == StrategyName.INTRADAY_FUTURES.value
+                for t in group_trades
+            )
+            if is_option:
+                sym_filter = Trade.fyers_option_symbol == md_sym
+            else:
+                sym_filter = Trade.symbol == md_sym
+
+            rows = await db.execute(
+                select(Trade.entry_time)
+                .where(sym_filter)
+                .where(Trade.side == side)
+                .where(Trade.entry_time >= day_start)
+                .where(Trade.entry_time <= day_end)
+                .order_by(Trade.entry_time)
+            )
+            day_entries = [r[0] for r in rows.all()]
+
+            day_trades = [
+                t for t in group_trades
+                if t.exit_time.astimezone(_IST).date() == trading_date
+            ]
+            for t in day_trades:
+                for et in day_entries:
+                    if et > t.exit_time:
+                        reentry_map[str(t.id)] = et
+                        break
+
+    return reentry_map
+
+
 @router.post("/hold-analysis", response_model=HoldAnalysisResponse)
 async def hold_analysis(
     body: HoldAnalysisRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """For each closed trade, query max HIGH / min LOW from 1m candles between exit and 15:30 IST."""
+    """For each closed trade, query max HIGH / min LOW from 1m candles between exit and hold cutoff.
+
+    Hold cutoff = min(next re-entry on same instrument+side, 15:30 IST same day).
+    """
     if body.scenario not in ("best", "worst"):
         raise HTTPException(status_code=400, detail="scenario must be 'best' or 'worst'")
 
@@ -202,23 +271,23 @@ async def hold_analysis(
     )
     trades = result.scalars().all()
 
+    reentry_map = await _build_reentry_map(db, trades)
+
     results: list[PerTradeHoldResult] = []
     for trade in trades:
         if trade.status != TradeStatus.CLOSED.value or trade.exit_time is None:
             results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))
             continue
 
-        is_s5 = trade.strategy_name == StrategyName.INTRADAY_FUTURES.value
-        if is_s5:
-            md_symbol = trade.symbol
-        else:
-            md_symbol = trade.fyers_option_symbol
-            if not md_symbol:
-                results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))
-                continue
+        md_symbol = _resolve_md_symbol(trade)
+        if not md_symbol:
+            results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))
+            continue
 
         exit_ist = trade.exit_time.astimezone(_IST)
-        cutoff = _IST.localize(datetime.combine(exit_ist.date(), _MARKET_CLOSE))
+        market_close = _IST.localize(datetime.combine(exit_ist.date(), _MARKET_CLOSE))
+        reentry_time = reentry_map.get(str(trade.id))
+        cutoff = min(reentry_time, market_close) if reentry_time else market_close
 
         if cutoff <= trade.exit_time:
             results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))

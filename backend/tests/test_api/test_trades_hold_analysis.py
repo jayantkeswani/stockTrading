@@ -88,10 +88,15 @@ def _make_db_for_trades(trades: list) -> AsyncMock:
 _current_trade: list = [None]
 
 
-def _make_db_with_agg(trade: MagicMock, agg_row: tuple, exit_time_val: datetime | None = None) -> AsyncMock:
+def _make_db_with_agg(
+    trade: MagicMock,
+    agg_row: tuple,
+    exit_time_val: datetime | None = None,
+    reentry_entries: list[datetime] | None = None,
+) -> AsyncMock:
     """Convenience wrapper: single trade with one aggregation result.
 
-    Handles 3 execute calls: trades fetch, agg query, timestamp query.
+    Handles 4 execute calls: trades fetch, re-entry query, agg query, timestamp query.
     """
     trade._agg_row = agg_row
     _current_trade[0] = trade
@@ -105,6 +110,9 @@ def _make_db_with_agg(trade: MagicMock, agg_row: tuple, exit_time_val: datetime 
         if call_count == 1:
             mock_result.scalars.return_value.all.return_value = [trade]
         elif call_count == 2:
+            entries = reentry_entries or []
+            mock_result.all.return_value = [(et,) for et in entries]
+        elif call_count == 3:
             _current_trade[0] = trade
             mock_result.one_or_none.return_value = agg_row
         else:
@@ -222,8 +230,8 @@ class TestHoldAnalysisS2OptionSymbolUsed:
         assert r.hold_pnl == Decimal("30.00") * 375
         assert r.hold_charges_json is not None
 
-        # 3 execute calls: trades fetch + agg + timestamp
-        assert db.execute.call_count == 3
+        # 4 execute calls: trades fetch + re-entry query + agg + timestamp
+        assert db.execute.call_count == 4
 
 
 class TestHoldAnalysisOpenTradeSkipped:
@@ -308,8 +316,8 @@ class TestHoldAnalysisExitAfterMarketClose:
         r = response.results[0]
         assert r.data_found is False
         assert r.max_high is None
-        # Only the initial trades fetch should have been executed
-        assert mock_db.execute.call_count == 1
+        # trades fetch + re-entry query (trade is closed so reentry map processes it)
+        assert mock_db.execute.call_count == 2
 
 
 class TestHoldAnalysisInvalidScenario:
@@ -358,3 +366,102 @@ class TestHoldAnalysisMissingFyersSymbol:
         assert r.max_high is None
         # No aggregation query should have been issued
         assert mock_db.execute.call_count == 1
+
+
+class TestHoldAnalysisReentryCapping:
+    """Hold window capped at next same-instrument same-side re-entry."""
+
+    @pytest.mark.asyncio
+    async def test_reentry_caps_window(self):
+        """Trade 1 exits at 10:14, trade 2 re-enters at 10:15 on same symbol+side.
+        Hold window for trade 1 should be capped at 10:15, not 15:30."""
+        from app.api.v1.trades import hold_analysis
+        from app.schemas.trade import HoldAnalysisRequest
+
+        trade = _make_trade(
+            strategy_name="intraday_futures",
+            symbol="VEDL",
+            status="CLOSED",
+            exit_time=_ts_ist(10, 14),
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            side="BUY",
+        )
+        # Re-entry at 10:15 — the reentry query returns this entry_time
+        reentry_at = _ts_ist(10, 15)
+        # max_high=510 in the CAPPED window (10:14 to 10:15)
+        db = _make_db_with_agg(
+            trade,
+            (Decimal("510.00"), Decimal("495.00")),
+            reentry_entries=[reentry_at],
+        )
+
+        body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="best")
+        response = await hold_analysis(body, db)
+
+        r = response.results[0]
+        assert r.data_found is True
+        assert r.max_high == Decimal("510.00")
+        # P&L from entry 500 to hold exit 510, qty 800
+        assert r.hold_pnl == Decimal("10.00") * 800
+
+    @pytest.mark.asyncio
+    async def test_opposite_side_does_not_cap(self):
+        """BUY exit followed by SELL entry on same symbol should NOT cap."""
+        from app.api.v1.trades import hold_analysis
+        from app.schemas.trade import HoldAnalysisRequest
+
+        trade = _make_trade(
+            strategy_name="intraday_futures",
+            symbol="VEDL",
+            status="CLOSED",
+            exit_time=_ts_ist(10, 14),
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            side="BUY",
+        )
+        # Re-entry query returns empty — opposite side trade not matched
+        db = _make_db_with_agg(
+            trade,
+            (Decimal("520.00"), Decimal("490.00")),
+            reentry_entries=[],
+        )
+
+        body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="best")
+        response = await hold_analysis(body, db)
+
+        r = response.results[0]
+        assert r.data_found is True
+        # Full window to 15:30 — uncapped
+        assert r.max_high == Decimal("520.00")
+        assert r.hold_pnl == Decimal("20.00") * 800
+
+    @pytest.mark.asyncio
+    async def test_last_trade_uses_market_close(self):
+        """Last trade in a sequence (no subsequent re-entry) uses 15:30 cutoff."""
+        from app.api.v1.trades import hold_analysis
+        from app.schemas.trade import HoldAnalysisRequest
+
+        trade = _make_trade(
+            strategy_name="intraday_futures",
+            symbol="VEDL",
+            status="CLOSED",
+            exit_time=_ts_ist(14, 0),
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            side="BUY",
+        )
+        # No re-entries after this trade
+        db = _make_db_with_agg(
+            trade,
+            (Decimal("515.00"), Decimal("498.00")),
+            reentry_entries=[],
+        )
+
+        body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="best")
+        response = await hold_analysis(body, db)
+
+        r = response.results[0]
+        assert r.data_found is True
+        assert r.max_high == Decimal("515.00")
+        assert r.hold_pnl == Decimal("15.00") * 800
