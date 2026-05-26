@@ -75,7 +75,7 @@ All three paths fill at the live LTP (not the stale signal premium). SL/target a
 
 - `_check_regulatory_limits` (`strategy_runner.py`) — F&O ban list only; all execution paths
 - Drawdown / max-trades / **daily profit cap** — YOLO executor only (`_final_risk_check` in `auto_executor.py`). Profit cap block writes an `AgentLog` (no Telegram) — trade_monitor sends the one Telegram notification when it closes positions
-- **Daily profit cap** (`max_daily_profit`, INR, 0 = disabled): when realized + unrealized PnL ≥ cap, monitor closes all open non-shadow positions (`ExitReason.PROFIT_CAP`) and blocks further YOLO executions
+- **Daily profit cap** (`max_daily_profit`, INR, 0 = disabled): when **net** P&L (after brokerage, STT, exchange, GST, SEBI, stamp duty) ≥ cap, monitor closes all open non-shadow positions (`ExitReason.PROFIT_CAP`) and blocks further YOLO executions. Closed trades use stored `net_pnl`; open positions estimate charges via `compute_charges()` with LTP as exit price
 - Shadow executor — zero capital gates
 - Manual executor — no blocking gates; warnings computed but not enforced
 
@@ -779,11 +779,12 @@ All extend `BaseResearchAgent` (`agents/base.py`), return `AgentResult(findings:
 
 Internal flow per position check:
 
-1. `_check_profit_cap(db)` — if cap enabled and realized+unrealized ≥ cap: close all non-shadow positions (`ExitReason.PROFIT_CAP`), send Telegram, short-circuit loop
-2. `_check_position(db, pos, yolo_mode)` — SL hit? Target hit? Time exit? Trailing SL update?
-3. `_close_position(db, pos, exit_price, exit_reason, ...)` — closes trade, computes `brokerage_calculator.compute_charges()`, stores in `Trade.charges_json`, broadcasts `trade:close` + `agent:action`
-4. `_request_profit_confirmation(db, pos)` — for SEMI mode target hits; guards against duplicate confirmation requests
-5. `_roll_futures_position(db, pos)` — 3 days before expiry: close old + open next month via `futures_resolver`; preserves `source=SHADOW` and `is_shadow=True`
+1. `_check_profit_cap(db)` — if cap enabled and net PnL (after charges) ≥ cap: close all non-shadow positions (`ExitReason.PROFIT_CAP`), send Telegram, short-circuit loop. Uses `_unrealized_net_pnl()` for open position charge estimation
+2. `_unrealized_net_pnl(db)` — sums unrealized P&L minus estimated charges (via `compute_charges` with LTP) for all open non-shadow positions. Used by: _check_profit_cap
+3. `_check_position(db, pos, yolo_mode)` — SL hit? Target hit? Time exit? Trailing SL update?
+4. `_close_position(db, pos, exit_price, exit_reason, ...)` — closes trade, computes `brokerage_calculator.compute_charges()`, stores in `Trade.charges_json`, broadcasts `trade:close` + `agent:action`
+5. `_request_profit_confirmation(db, pos)` — for SEMI mode target hits; guards against duplicate confirmation requests
+6. `_roll_futures_position(db, pos)` — 3 days before expiry: close old + open next month via `futures_resolver`; preserves `source=SHADOW` and `is_shadow=True`
 
 **Direction detection**: uses `target_price < entry_price` (target below entry = SHORT). **SHORT position support**: direction-aware SL hit, target hit, unrealized PnL, HWM (lowest price for shorts), trailing SL direction.
 

@@ -62,7 +62,10 @@ async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[d
 
 
 async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
-    """Close all open non-shadow positions if daily profit cap is reached.
+    """Close all open non-shadow positions if daily net profit cap is reached.
+
+    Uses net P&L (after brokerage, STT, exchange, GST, SEBI, stamp duty).
+    Closed trades use stored net_pnl; open positions estimate charges from LTP.
 
     Returns list of close actions if cap was hit, None otherwise.
     """
@@ -73,9 +76,12 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
     today = now_ist().date()
     today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
 
-    # Realized PnL from today's closed non-shadow trades
+    # Realized net PnL from today's closed non-shadow trades
     pnl_result = await db.execute(
-        select(func.coalesce(func.sum(Trade.pnl), 0)).where(
+        select(
+            func.coalesce(func.sum(Trade.net_pnl), 0),
+            func.coalesce(func.sum(Trade.pnl), 0),
+        ).where(
             and_(
                 Trade.entry_time >= today_start,
                 Trade.status == TradeStatus.CLOSED.value,
@@ -83,15 +89,14 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
             )
         )
     )
-    realized_pnl = float(pnl_result.scalar_one())
+    row = pnl_result.one()
+    realized_net_pnl = float(row[0])
+    realized_gross_pnl = float(row[1])
+    # Fall back to gross if no trades have net_pnl yet
+    realized_pnl = realized_net_pnl if realized_net_pnl != 0 or realized_gross_pnl == 0 else realized_gross_pnl
 
-    # Unrealized PnL from open non-shadow positions
-    unrealized_result = await db.execute(
-        select(func.coalesce(func.sum(Position.unrealized_pnl), 0)).where(
-            Position.is_shadow == False,  # noqa: E712
-        )
-    )
-    unrealized_pnl = float(unrealized_result.scalar_one())
+    # Unrealized net PnL from open non-shadow positions (gross minus estimated charges)
+    unrealized_pnl = await _unrealized_net_pnl(db)
 
     total_pnl = realized_pnl + unrealized_pnl
     if total_pnl < cfg.max_daily_profit:
@@ -133,10 +138,39 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
         logger.warning("Failed to send profit cap Telegram notification")
 
     logger.info(
-        "Profit cap hit: total PnL ₹%.0f >= target ₹%.0f, closed %d positions",
+        "Profit cap hit: net PnL ₹%.0f >= target ₹%.0f, closed %d positions",
         total_pnl, cfg.max_daily_profit, len(open_positions),
     )
     return actions
+
+
+async def _unrealized_net_pnl(db: AsyncSession) -> float:
+    """Sum unrealized P&L for open non-shadow positions, minus estimated charges."""
+    from app.services.brokerage_calculator import compute_charges
+
+    result = await db.execute(
+        select(Position, Trade).join(Trade, Trade.id == Position.trade_id).where(
+            Position.is_shadow == False,  # noqa: E712
+        )
+    )
+    rows = result.all()
+
+    total = 0.0
+    for pos, trade in rows:
+        gross = float(pos.unrealized_pnl or 0)
+
+        price_symbol = pos.fyers_option_symbol or pos.symbol
+        price_data = await get_cached_price(price_symbol)
+        exit_price = Decimal(str(price_data["ltp"])) if price_data else (pos.current_price or pos.entry_price)
+
+        instrument_type = "OPTION" if trade.option_type else "FUTURE"
+        charges = compute_charges(
+            instrument_type, pos.entry_price, exit_price,
+            pos.quantity, trade.side,
+        )
+        total += gross - float(charges.total)
+
+    return total
 
 
 async def _check_position(
