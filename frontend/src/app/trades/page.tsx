@@ -140,7 +140,7 @@ function FilterPill({ label, active, onClick }: { label: string; active: boolean
 
 export default function TradesPage() {
   const {
-    positionViewMode, setPositionViewMode,
+    tradesViewMode, setTradesViewMode,
     tradesPeriodLabel, tradesPeriodStart, tradesPeriodEnd, setTradesPeriod,
     tradesStrategy, setTradesStrategy,
     tradesSimOpen, setTradesSimOpen,
@@ -159,7 +159,7 @@ export default function TradesPage() {
   const [holdMap, setHoldMap] = useState<HoldResultMap>(new Map());
   const [holdLoading, setHoldLoading] = useState(false);
 
-  const mode = positionViewMode === "SHADOW" ? "SHADOW" : "REAL";
+  const mode = tradesViewMode === "SHADOW" ? "SHADOW" : "REAL";
   const sim = tradesSim;
   const simOpen = tradesSimOpen;
   const simActive = simOpen && isSimActive(sim);
@@ -313,7 +313,7 @@ export default function TradesPage() {
           {/* Real / Shadow toggle */}
           <div className="flex items-center rounded border border-border overflow-hidden text-[10px] font-mono">
             <button
-              onClick={() => setPositionViewMode("REAL")}
+              onClick={() => setTradesViewMode("REAL")}
               className={`px-2 py-1 transition-colors ${
                 mode === "REAL" ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"
               }`}
@@ -321,7 +321,7 @@ export default function TradesPage() {
               Real
             </button>
             <button
-              onClick={() => setPositionViewMode("SHADOW")}
+              onClick={() => setTradesViewMode("SHADOW")}
               className={`px-2 py-1 border-l border-border transition-colors ${
                 mode === "SHADOW" ? "bg-purple-500/15 text-purple-400" : "text-text-muted hover:text-text-secondary"
               }`}

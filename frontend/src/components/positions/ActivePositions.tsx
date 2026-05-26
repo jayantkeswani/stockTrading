@@ -50,7 +50,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
   const prices = useStore((s) => s.prices);
   const {
     positions, closedToday, setClosedToday,
-    positionViewMode, setPositionViewMode,
+    dashboardViewMode, setDashboardViewMode,
     shadowPositions, setShadowPositions,
     shadowClosedToday, setShadowClosedToday,
     positionsMinConfidence, setPositionsMinConfidence,
@@ -58,8 +58,8 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     positions: s.positions,
     closedToday: s.closedToday,
     setClosedToday: s.setClosedToday,
-    positionViewMode: s.positionViewMode,
-    setPositionViewMode: s.setPositionViewMode,
+    dashboardViewMode: s.dashboardViewMode,
+    setDashboardViewMode: s.setDashboardViewMode,
     shadowPositions: s.shadowPositions,
     setShadowPositions: s.setShadowPositions,
     shadowClosedToday: s.shadowClosedToday,
@@ -72,7 +72,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
   const [watchlistStatuses, setWatchlistStatuses] = useState<Record<string, string>>({});
   const prevPositionsLen = useRef(positions.length);
 
-  const isShadow = positionViewMode === "SHADOW";
+  const isShadow = dashboardViewMode === "SHADOW";
 
   // Fetch real closed trades today
   const fetchClosed = useCallback(async () => {
@@ -124,7 +124,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
 
   const handleToggle = () => {
     const next = isShadow ? "REAL" : "SHADOW";
-    setPositionViewMode(next);
+    setDashboardViewMode(next);
   };
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));

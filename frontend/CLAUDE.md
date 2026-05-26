@@ -268,7 +268,8 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 **Slices:**
 - `prices: Record<string, PriceData>` — `updatePrice()` uses RAF batching + LTP dedup (batch flushes once per `requestAnimationFrame`; unchanged LTPs skipped)
 - `positions / closedToday / shadowPositions / shadowClosedToday` — position state; `addPosition()` skips shadow events; `prependClosedTrade()` deduplicates by id
-- `positionViewMode: "REAL" | "SHADOW"` — drives ActivePositions + PnLCard toggle
+- `dashboardViewMode: "REAL" | "SHADOW"` — drives ActivePositions + PnLCard toggle (dashboard)
+- `tradesViewMode: "REAL" | "SHADOW"` — drives Trades page Real/Shadow filter (independent from dashboard)
 - `signals` — `addSignal()` deduplicates by id (used for both new signals and dedup updates)
 - `scanLogs: ScanLogEntry[]` — capped at 20 entries; `addScanLog()` prepends
 - `risk: RiskDashboard | null`
@@ -279,7 +280,7 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 - `watchlistItems / intradayBias`
 
 **Persisted keys** (via `partialize`):
-- `scanLogs`, `activeTimeframe`, `positionViewMode`, `showNetPnL`
+- `scanLogs`, `activeTimeframe`, `dashboardViewMode`, `tradesViewMode`, `showNetPnL`
 - `tradesShowOpen`, `tradesExcludePinned`, `tradesPeriodLabel`, `tradesPeriodStart`, `tradesPeriodEnd`, `tradesStrategy`, `tradesSimOpen`, `tradesSim`, `tradesHoldOpen`, `tradesHold: { scenario }`
 - `scannerShowExecuted`, `scannerMinConfidence`
 - `signalsMinConfidence`, `signalsPeriodLabel`, `signalsPeriodStart`, `signalsPeriodEnd`, `signalsStrategy`, `signalsHideInformational`

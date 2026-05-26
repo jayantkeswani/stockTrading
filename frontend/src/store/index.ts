@@ -40,9 +40,11 @@ interface AppState {
   setClosedToday: (trades: Trade[]) => void;
   prependClosedTrade: (trade: Trade) => void;
 
-  // Position view mode (Real vs Shadow/Signal Test)
-  positionViewMode: "REAL" | "SHADOW";
-  setPositionViewMode: (mode: "REAL" | "SHADOW") => void;
+  // Position view mode (Real vs Shadow/Signal Test) — independent per page
+  dashboardViewMode: "REAL" | "SHADOW";
+  setDashboardViewMode: (mode: "REAL" | "SHADOW") => void;
+  tradesViewMode: "REAL" | "SHADOW";
+  setTradesViewMode: (mode: "REAL" | "SHADOW") => void;
   shadowPositions: Position[];
   setShadowPositions: (positions: Position[]) => void;
   shadowClosedToday: Trade[];
@@ -236,9 +238,11 @@ export const useStore = create<AppState>()(
           closedToday: [trade, ...state.closedToday.filter((t) => t.id !== trade.id)],
         })),
 
-      // Position view mode
-      positionViewMode: "REAL",
-      setPositionViewMode: (mode) => set({ positionViewMode: mode }),
+      // Position view mode — independent per page
+      dashboardViewMode: "REAL",
+      setDashboardViewMode: (mode) => set({ dashboardViewMode: mode }),
+      tradesViewMode: "REAL",
+      setTradesViewMode: (mode) => set({ tradesViewMode: mode }),
       shadowPositions: [],
       setShadowPositions: (shadowPositions) => set({ shadowPositions }),
       shadowClosedToday: [],
@@ -414,7 +418,8 @@ export const useStore = create<AppState>()(
       partialize: (state) => ({
         scanLogs: state.scanLogs,
         activeTimeframe: state.activeTimeframe,
-        positionViewMode: state.positionViewMode,
+        dashboardViewMode: state.dashboardViewMode,
+        tradesViewMode: state.tradesViewMode,
         showNetPnL: state.showNetPnL,
         tradesShowOpen: state.tradesShowOpen,
         tradesExcludePinned: state.tradesExcludePinned,

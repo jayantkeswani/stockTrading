@@ -5,9 +5,9 @@ import { useStore } from "@/store";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 
 export function PnLCard() {
-  const { risk, positions, prices, positionViewMode, shadowPositions, shadowClosedToday, positionsMinConfidence } = useStore();
+  const { risk, positions, prices, dashboardViewMode, shadowPositions, shadowClosedToday, positionsMinConfidence } = useStore();
 
-  const isShadow = positionViewMode === "SHADOW";
+  const isShadow = dashboardViewMode === "SHADOW";
   const rawPositions = isShadow ? shadowPositions : positions;
   const activePositions = positionsMinConfidence > 0
     ? rawPositions.filter((p) => p.signal_confidence != null && Number(p.signal_confidence) >= positionsMinConfidence)
