@@ -16,7 +16,7 @@ All pages use `'use client'` directive.
 
 - `layout.tsx` — Root layout with AppShell wrapper
 - `page.tsx` — Dashboard: sticky PnLStrip at top, 8-col left (ScannerHeader, ScannerPanel, ActivePositions, FuturesWatchlist) + 4-col right (Watchlist, ScanFeed, AgentFeed). ChartModal overlay.
-- `trades/page.tsx` — Kite-style P&L dashboard. Filter state (period, strategy, Shadow/Real, sim panel) lives in Zustand store, persisted via `persist` middleware. SummaryStrip, PnLHeatmap, TradesTable, Margin Analysis section. Real/Shadow toggle, Net P&L toggle, "+ Open" toggle, "− Pinned" toggle. Simulation filter panel: min confidence, AI action, simulate lots, instrument type, signal type — all applied client-side via `applySimLots()` (scales P&L, charges, and `margin_required` by lot ratio). **Hold Analysis panel**: "Hold ▲/▾" toggle (amber when open). Panel has Scenario pills (Best Case / Worst Case). On open/scenario change, fetches `POST /trades/hold-analysis` for all closed trade IDs; backend returns `max_high`/`min_low` per trade from `market_data_1m` (same-day 15:30 IST cutoff). `applyHoldAnalysis()` replaces `pnl`/`pnl_percent`; sets `net_pnl=null`. Pipeline: `trades → filteredTrades → simTrades → holdTrades → {SummaryStrip, dailyPnL→PnLHeatmap, displayedTrades→TradesTable}`. Hold sits after Sim so lot-scaling applies first.
+- `trades/page.tsx` — Kite-style P&L dashboard. Filter state (period, strategy, Shadow/Real, sim panel) lives in Zustand store, persisted via `persist` middleware. SummaryStrip, PnLHeatmap, TradesTable, Margin Analysis section. Real/Shadow toggle, Net P&L toggle, "+ Open" toggle, "− Pinned" toggle. Simulation filter panel: min confidence, AI action, simulate lots, instrument type, signal type — all applied client-side via `applySimLots()` (scales P&L, charges, and `margin_required` by lot ratio). **Hold Analysis panel**: "Hold ▲/▾" toggle (amber when open). Panel has Scenario pills (Best Case / Worst Case). On open/scenario change, fetches `POST /trades/hold-analysis` for all closed trade IDs; backend returns `max_high`/`min_low` per trade from `market_data_1m` (same-day 15:30 IST cutoff). Hold no longer overwrites trade P&L — instead computes `holdDataMap` (per-trade hold exit price + P&L) for extra table columns and `holdTrades` for a second SummaryStrip. Pipeline: `trades → filteredTrades → simTrades → {SummaryStrip, dailyPnL→PnLHeatmap, displayedTrades→TradesTable(+holdDataMap)}`. Second `SummaryStrip` with `label="HOLD"` renders below when hold is active. TradesTable shows "Hold Exit" and "Hold P&L" columns alongside actual values.
 - `signals/page.tsx` — Signal history feed. PeriodFilter + strategy pills + min-confidence slider + symbol/reason search bar. All filters persisted. `ConfidenceFactorsBar` uses strategy-aware label maps. `SignalCard` includes `SignalHistoryPanel`.
 - `settings/page.tsx` — Strategy config (is_active, auto_mode, shadow_enabled, yolo_enabled, symbols with autocomplete + group presets), risk params, StrategyParams collapsible numeric inputs, "Skip Pinned Signals" row with Shadow/YOLO toggles. Save validation includes confidence tier ordering check.
 - `research/page.tsx` — AI Research: symbol search, real-time agent progress, full report with expandable cards, past reports history.
@@ -29,7 +29,7 @@ All pages use `'use client'` directive.
 
 **layout/**
 - `AppShell.tsx` — Main wrapper: sidebar (48px, fixed) + header (36px, fixed) + content area. `<main>` is `fixed top-9 left-12 right-0 bottom-0` with `overflow-y-auto` — makes it the scroll container so `sticky` elements work. Applies `noise-bg` texture.
-- `Header.tsx` — Thin status bar (36px): IST clock, market status, VIX, Tasks/Fyers/Agent/WS indicators. Polls `getAllPrices()` + market status every 10s.
+- `Header.tsx` — Thin status bar (36px): IST clock, market status, VIX, Tasks/Fyers/Agent/WS indicators, "STARTING…" pulse when `data_feed_ready=false` (polls health every 3s until ready). Polls `getAllPrices()` + market status every 10s.
 - `TasksPopup.tsx` — Background tasks popup (click-to-open). Shows all registered tasks with status dots, type badges, schedule/description, timestamps, errors. Polls every 5s while open.
 - `AgentPopup.tsx` — Agent control popup: start/stop, SEMI/YOLO toggle, positions monitored, pending confirmations, uptime, profit cap status. Reads Zustand store, writes via API. Click-outside to close.
 - `Sidebar.tsx` — Narrow icon rail (48px): Dashboard → Futures (trending-up) → Options (bar chart) → Research → Trades → Signals (zap) → Agent → Settings.
@@ -66,9 +66,9 @@ All pages use `'use client'` directive.
 
 **trades/**
 - `PeriodFilter.tsx` — Period pill bar (Today / Week / 30D / 3M / Custom). 30D = rolling last 30 days; 3M = rolling last 3 months via `subDaysIST`/`subMonthsIST`. Custom opens two date inputs + Apply. Emits `{ start, end, label }`.
-- `SummaryStrip.tsx` — Inline metrics strip: total P&L, closed trades, open count badge, win rate, best/worst day, avg P&L, profit factor. Accepts `showNetPnL?` (uses `net_pnl`, falls back to gross) and `peakMargin?` (amber accent when > 0).
+- `SummaryStrip.tsx` — Inline metrics strip: total P&L, closed trades, open count badge, win rate, best/worst day, avg P&L, profit factor. Accepts `showNetPnL?` (uses `net_pnl`, falls back to gross), `peakMargin?` (amber accent when > 0), and `label?` (shown as prefix, amber border styling when set — used for "HOLD" strip).
 - `PnLHeatmap.tsx` — Continuous week-strip heatmap (GitHub-style). Mon–Fri only, single strip across period. Cell color: `rgba` green/red by alpha (0.30–0.95). Clicking a cell fires `onSelectDay`; clicking again deselects. Today has amber ring.
-- `TradesTable.tsx` — Dense table with expandable `TradeDetailsPanel` rows. Accepts `showSource?`, `showSignalData?`, `simLots?`, `showNetPnL?`. Columns: Date/Time (entry + exit time + signal-to-fill latency), Symbol, Type, Lots (qty), Entry, SL/Tgt, Exit, P&L (net toggle + charges tooltip), Strategy, [Conf], [AI], Exit Reason, Margin, Status, [Source]. Signal snapshot in details row: AI badge, AI summary/rationale, confidence factors bar (strategy-aware), supports/risks grid, `SignalHistoryPanel`.
+- `TradesTable.tsx` — Dense table with expandable `TradeDetailsPanel` rows. Exports `HoldData` type. Accepts `showSource?`, `showSignalData?`, `simLots?`, `showNetPnL?`, `holdData?`. Columns: Date/Time (entry + exit time + signal-to-fill latency), Symbol, Type, Lots (qty), Entry, Exit, SL/Tgt, P&L (net toggle + charges tooltip), [Hold Exit], [Hold P&L], Strategy, [Conf], [AI], Exit Reason, Margin, Status, [Source]. Hold columns appear when `holdData` is provided with entries. Signal snapshot in details row: AI badge, AI summary/rationale, confidence factors bar (strategy-aware), supports/risks grid, `SignalHistoryPanel`.
 
 **options/**
 - `AgentLog.tsx` — Reverse-chronological Strategy 2 gate diagnostics. Paginated (100/page), IntersectionObserver infinite scroll, 10s auto-refresh in live mode. Category filter pills: GATE (red), SIGNAL (green), SKIP (grey).
@@ -92,7 +92,7 @@ All pages use `'use client'` directive.
 All API calls go through this module via a single `request()` helper (parses error responses — string/array/other `detail` shapes). Environment-aware base URL: port 3000 → `:8080`, otherwise same host.
 
 **Market**
-- `api.health()` — `GET /api/v1/health`. Used by: Header
+- `api.health()` — `GET /api/v1/health`. Returns `data_feed_ready` (bool) and `startup_error` (str|null) in addition to version/deployed_at. Used by: Header
 - `api.getPrice(symbol)` — `GET /api/v1/market/price/{symbol}`
 - `api.getAllPrices()` — `GET /api/v1/market/prices`. Used by: Header
 - `api.refreshQuotes()` — `POST /api/v1/market/feed/refresh`

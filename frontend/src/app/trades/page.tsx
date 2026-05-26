@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { api } from "@/lib/api";
-import { startOfDayIST, endOfDayIST, startOfWeekIST, subDaysIST, subMonthsIST, isoDateIST, formatINR } from "@/lib/formatters";
+import { startOfDayIST, endOfDayIST, startOfWeekIST, subDaysIST, subMonthsIST, isoDateIST, formatINR, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import type { Trade } from "@/lib/types";
 import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
 import { SummaryStrip } from "@/components/trades/SummaryStrip";
 import { PnLHeatmap } from "@/components/trades/PnLHeatmap";
-import { TradesTable } from "@/components/trades/TradesTable";
+import { TradesTable, type HoldData } from "@/components/trades/TradesTable";
 import { useStore } from "@/store";
 
 function periodFromLabel(label: string): Period {
@@ -114,11 +114,6 @@ function computeMarginTimeline(trades: Trade[]): { peak_margin: number; peak_tim
   };
 }
 
-function computePeakMargin(trades: Trade[]): number | undefined {
-  const result = computeMarginTimeline(trades);
-  return result && result.peak_margin > 0 ? result.peak_margin : undefined;
-}
-
 function isSimActive(sim: { min_confidence: number; ai_action: string; instrument_type: string; signal_types: string[]; sim_lots: number | null }): boolean {
   return sim.min_confidence > 0 || sim.ai_action !== "" || sim.instrument_type !== "" || sim.signal_types.length > 0 || sim.sim_lots !== null;
 }
@@ -147,6 +142,8 @@ export default function TradesPage() {
     tradesSim, setTradesSim, resetTradesSim,
     tradesHoldOpen, setTradesHoldOpen,
     tradesHold, setTradesHold, resetTradesHold,
+    tradesShowHeatmap, setTradesShowHeatmap,
+    tradesMarginOpen, setTradesMarginOpen,
     showNetPnL, setShowNetPnL,
     tradesShowOpen, setTradesShowOpen,
     tradesExcludePinned, setTradesExcludePinned,
@@ -155,9 +152,10 @@ export default function TradesPage() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [marginResult, setMarginResult] = useState<{ peak_margin: number; peak_time: string | null; total_margin: number; trade_count: number } | null>(null);
   const [holdMap, setHoldMap] = useState<HoldResultMap>(new Map());
   const [holdLoading, setHoldLoading] = useState(false);
+  const [simExpanded, setSimExpanded] = useState(false);
+  const [holdExpanded, setHoldExpanded] = useState(false);
 
   const mode = tradesViewMode === "SHADOW" ? "SHADOW" : "REAL";
   const sim = tradesSim;
@@ -254,6 +252,24 @@ export default function TradesPage() {
     return filteredTrades.map((t) => applySimLots(t, sim.sim_lots));
   }, [filteredTrades, simOpen, sim.sim_lots]);
 
+  const holdDataMap = useMemo((): HoldData => {
+    if (!holdOpen || holdMap.size === 0) return new Map();
+    const map: HoldData = new Map();
+    for (const t of simTrades) {
+      if (t.status !== "CLOSED" || t.exit_price == null) continue;
+      const result = holdMap.get(t.id);
+      if (!result) continue;
+      const hypoExit = hold.scenario === "best" ? result.max_high : result.min_low;
+      if (hypoExit == null) continue;
+      const entry = Number(t.entry_price);
+      const qty = Number(t.quantity);
+      if (entry === 0 || qty === 0) continue;
+      const diff = t.side === "SELL" ? (entry - hypoExit) : (hypoExit - entry);
+      map.set(t.id, { exitPrice: hypoExit, pnl: diff * qty, pnlPercent: (diff / entry) * 100 });
+    }
+    return map;
+  }, [simTrades, holdOpen, holdMap, hold.scenario]);
+
   const holdTrades = useMemo(() => {
     if (!holdOpen || holdMap.size === 0) return simTrades;
     return simTrades.map((t) => applyHoldAnalysis(t, holdMap, hold.scenario));
@@ -261,28 +277,39 @@ export default function TradesPage() {
 
   const dailyPnL = useMemo(() => {
     const map = new Map<string, number>();
-    for (const t of holdTrades) {
+    for (const t of simTrades) {
       const pnl = effectivePnl(t, showNetPnL);
       if (t.status !== "CLOSED" || pnl == null) continue;
       const key = isoDateIST(new Date(t.entry_time));
       map.set(key, (map.get(key) ?? 0) + pnl);
     }
     return map;
-  }, [holdTrades, showNetPnL]);
+  }, [simTrades, showNetPnL]);
+
 
   const displayedTrades = useMemo(() => {
+    if (!selectedDay) return simTrades;
+    return simTrades.filter((t) => isoDateIST(new Date(t.entry_time)) === selectedDay);
+  }, [simTrades, selectedDay]);
+
+  const displayedDailyPnL = useMemo(() => {
+    if (!selectedDay) return dailyPnL;
+    const map = new Map<string, number>();
+    const val = dailyPnL.get(selectedDay);
+    if (val != null) map.set(selectedDay, val);
+    return map;
+  }, [dailyPnL, selectedDay]);
+
+  const displayedHoldTrades = useMemo(() => {
     if (!selectedDay) return holdTrades;
     return holdTrades.filter((t) => isoDateIST(new Date(t.entry_time)) === selectedDay);
   }, [holdTrades, selectedDay]);
 
-  const peakMargin = useMemo(() => {
-    return computePeakMargin(holdTrades);
-  }, [holdTrades]);
 
-  const handleMarginAnalysis = useCallback(() => {
-    if (displayedTrades.length === 0) return;
-    setMarginResult(computeMarginTimeline(displayedTrades));
-  }, [displayedTrades]);
+  const marginResult = useMemo(() => {
+    if (!tradesMarginOpen || displayedTrades.length === 0) return null;
+    return computeMarginTimeline(displayedTrades);
+  }, [tradesMarginOpen, displayedTrades]);
 
   const periodLabel = `${period.start.toLocaleDateString("en-IN", {
     timeZone: "Asia/Kolkata", day: "2-digit", month: "short",
@@ -340,6 +367,28 @@ export default function TradesPage() {
           >
             Net P&amp;L
           </button>
+          {/* Heatmap toggle */}
+          <button
+            onClick={() => setTradesShowHeatmap(!tradesShowHeatmap)}
+            className={`px-2 py-1 rounded border text-[10px] font-mono transition-colors ${
+              tradesShowHeatmap
+                ? "border-accent/50 bg-accent/10 text-accent"
+                : "border-border text-text-muted hover:text-text-secondary"
+            }`}
+          >
+            Heatmap
+          </button>
+          {/* Margin Analysis toggle */}
+          <button
+            onClick={() => setTradesMarginOpen(!tradesMarginOpen)}
+            className={`px-2 py-1 rounded border text-[10px] font-mono transition-colors ${
+              tradesMarginOpen
+                ? "border-accent/50 bg-accent/10 text-accent"
+                : "border-border text-text-muted hover:text-text-secondary"
+            }`}
+          >
+            Margin
+          </button>
           {/* Show Open trades toggle */}
           <button
             onClick={() => setTradesShowOpen(!tradesShowOpen)}
@@ -394,185 +443,218 @@ export default function TradesPage() {
 
       {/* Simulation filter panel */}
       {simOpen && (
-        <div className="rounded border border-accent/20 bg-bg-secondary p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="text-[11px] font-mono font-semibold uppercase tracking-widest text-text-secondary">
-                Simulation Filters
+        <div className="rounded border border-accent/20 bg-bg-secondary px-3 py-2">
+          {/* Compact row — always visible */}
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-mono font-semibold uppercase tracking-widest text-text-secondary">Sim</span>
+            {simActive && (
+              <span className="text-[8px] font-mono px-1.5 py-0.5 rounded border border-accent/60 text-accent tracking-widest uppercase">
+                Active
               </span>
+            )}
+            {simActive && (
+              <div className="flex items-center gap-2 text-[9px] font-mono text-text-muted">
+                {sim.min_confidence > 0 && <span>Conf ≥{sim.min_confidence}%</span>}
+                {sim.ai_action && <span>· {sim.ai_action}</span>}
+                {sim.sim_lots != null && <span>· {sim.sim_lots}L</span>}
+                {sim.instrument_type && <span>· {sim.instrument_type}</span>}
+                {sim.signal_types.length > 0 && <span>· {sim.signal_types.map(s => s.replace("_", " ")).join(", ")}</span>}
+              </div>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => setSimExpanded(!simExpanded)}
+                className="text-[9px] font-mono text-text-muted hover:text-accent transition-colors"
+              >
+                {simExpanded ? "▲" : "▼"}
+              </button>
+              <button
+                onClick={resetTradesSim}
+                className="text-[9px] font-mono px-2 py-0.5 rounded border border-border text-text-muted hover:border-accent/40 hover:text-accent transition-colors"
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+
+          {/* Expanded controls */}
+          {simExpanded && (
+            <div className="mt-3 pt-3 border-t border-border/30 space-y-4">
+              <div className="grid grid-cols-5 gap-6">
+                {/* Min Confidence */}
+                <div className="space-y-2">
+                  <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">Min Confidence</span>
+                  <div className="text-sm font-mono font-medium text-accent leading-none">
+                    {sim.min_confidence > 0 ? `${sim.min_confidence}% and above` : "Any"}
+                  </div>
+                  <input
+                    type="range" min={0} max={100} step={5}
+                    value={sim.min_confidence}
+                    onChange={(e) => setTradesSim({ min_confidence: Number(e.target.value) })}
+                    className="w-full h-1.5 accent-amber-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[8px] font-mono text-text-muted/40">
+                    <span>0</span><span>50</span><span>100</span>
+                  </div>
+                </div>
+
+                {/* AI Action */}
+                <div className="space-y-2">
+                  <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">AI Action</span>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(["PROCEED", "RECONSIDER", "SKIP", ""] as const).map((val) => (
+                      <FilterPill
+                        key={val || "any"}
+                        label={val || "Any"}
+                        active={sim.ai_action === val}
+                        onClick={() => setTradesSim({ ai_action: sim.ai_action === val ? "" : val })}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Simulate Lots */}
+                <div className="space-y-2">
+                  <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">Simulate Lots</span>
+                  <div className="text-[9px] font-mono text-text-muted/60 leading-tight">
+                    Recalculate P&amp;L as if every trade used N lots
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <button
+                      onClick={() => setTradesSim({ sim_lots: Math.max(1, (sim.sim_lots ?? 1) - 1) })}
+                      className="w-6 h-6 rounded border border-border text-text-muted hover:border-accent/40 hover:text-accent font-mono text-sm leading-none transition-colors flex items-center justify-center"
+                    >
+                      −
+                    </button>
+                    <span className={`text-lg font-mono font-semibold w-8 text-center ${sim.sim_lots != null ? "text-accent" : "text-text-muted/40"}`}>
+                      {sim.sim_lots ?? "—"}
+                    </span>
+                    <button
+                      onClick={() => setTradesSim({ sim_lots: (sim.sim_lots ?? 0) + 1 })}
+                      className="w-6 h-6 rounded border border-border text-text-muted hover:border-accent/40 hover:text-accent font-mono text-sm leading-none transition-colors flex items-center justify-center"
+                    >
+                      +
+                    </button>
+                    {sim.sim_lots != null && (
+                      <button
+                        onClick={() => setTradesSim({ sim_lots: null })}
+                        className="text-[9px] font-mono text-text-muted/40 hover:text-text-muted ml-1 transition-colors"
+                      >
+                        actual
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Instrument Type */}
+                <div className="space-y-2">
+                  <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">Instrument Type</span>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(["FUTURE", "OPTION", "EQUITY"] as const).map((val) => (
+                      <FilterPill
+                        key={val}
+                        label={val}
+                        active={sim.instrument_type === val}
+                        onClick={() => setTradesSim({ instrument_type: sim.instrument_type === val ? "" : val })}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Signal Type */}
+                <div className="space-y-2">
+                  <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">Signal Type</span>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(["BUY_FUT", "SELL_FUT", "BUY_CE", "BUY_PE"] as const).map((val) => (
+                      <FilterPill
+                        key={val}
+                        label={val.replace("_", " ")}
+                        active={sim.signal_types.includes(val)}
+                        onClick={() => setTradesSim({ signal_types: toggleItem(sim.signal_types, val) })}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               {simActive && (
-                <span className="text-[8px] font-mono px-1.5 py-0.5 rounded border border-accent/60 text-accent tracking-widest uppercase">
-                  Active
-                </span>
+                <p className="text-[9px] font-mono text-text-muted/40">
+                  {sim.sim_lots != null && `P&L recalculated as if every trade used ${sim.sim_lots} lot${sim.sim_lots !== 1 ? "s" : ""}. `}
+                  Confidence / AI action / instrument filters exclude trades with no linked signal. Signal type filtered client-side.
+                </p>
               )}
             </div>
-            <button
-              onClick={resetTradesSim}
-              className="text-[10px] font-mono px-3 py-1.5 rounded border border-border text-text-muted hover:border-accent/40 hover:text-accent transition-colors"
-            >
-              Reset all
-            </button>
-          </div>
-
-          <div className="grid grid-cols-5 gap-6">
-            {/* Min Confidence */}
-            <div className="space-y-2">
-              <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">Min Confidence</span>
-              <div className="text-sm font-mono font-medium text-accent leading-none">
-                {sim.min_confidence > 0 ? `${sim.min_confidence}% and above` : "Any"}
-              </div>
-              <input
-                type="range" min={0} max={100} step={5}
-                value={sim.min_confidence}
-                onChange={(e) => setTradesSim({ min_confidence: Number(e.target.value) })}
-                className="w-full h-1.5 accent-amber-500 cursor-pointer"
-              />
-              <div className="flex justify-between text-[8px] font-mono text-text-muted/40">
-                <span>0</span><span>50</span><span>100</span>
-              </div>
-            </div>
-
-            {/* AI Action */}
-            <div className="space-y-2">
-              <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">AI Action</span>
-              <div className="grid grid-cols-2 gap-1">
-                {(["PROCEED", "RECONSIDER", "SKIP", ""] as const).map((val) => (
-                  <FilterPill
-                    key={val || "any"}
-                    label={val || "Any"}
-                    active={sim.ai_action === val}
-                    onClick={() => setTradesSim({ ai_action: sim.ai_action === val ? "" : val })}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Simulate Lots */}
-            <div className="space-y-2">
-              <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">Simulate Lots</span>
-              <div className="text-[9px] font-mono text-text-muted/60 leading-tight">
-                Recalculate P&amp;L as if every trade used N lots
-              </div>
-              <div className="flex items-center gap-2 mt-1">
-                <button
-                  onClick={() => setTradesSim({ sim_lots: Math.max(1, (sim.sim_lots ?? 1) - 1) })}
-                  className="w-6 h-6 rounded border border-border text-text-muted hover:border-accent/40 hover:text-accent font-mono text-sm leading-none transition-colors flex items-center justify-center"
-                >
-                  −
-                </button>
-                <span className={`text-lg font-mono font-semibold w-8 text-center ${sim.sim_lots != null ? "text-accent" : "text-text-muted/40"}`}>
-                  {sim.sim_lots ?? "—"}
-                </span>
-                <button
-                  onClick={() => setTradesSim({ sim_lots: (sim.sim_lots ?? 0) + 1 })}
-                  className="w-6 h-6 rounded border border-border text-text-muted hover:border-accent/40 hover:text-accent font-mono text-sm leading-none transition-colors flex items-center justify-center"
-                >
-                  +
-                </button>
-                {sim.sim_lots != null && (
-                  <button
-                    onClick={() => setTradesSim({ sim_lots: null })}
-                    className="text-[9px] font-mono text-text-muted/40 hover:text-text-muted ml-1 transition-colors"
-                  >
-                    actual
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Instrument Type */}
-            <div className="space-y-2">
-              <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">Instrument Type</span>
-              <div className="grid grid-cols-2 gap-1">
-                {(["FUTURE", "OPTION", "EQUITY"] as const).map((val) => (
-                  <FilterPill
-                    key={val}
-                    label={val}
-                    active={sim.instrument_type === val}
-                    onClick={() => setTradesSim({ instrument_type: sim.instrument_type === val ? "" : val })}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Signal Type */}
-            <div className="space-y-2">
-              <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">Signal Type</span>
-              <div className="grid grid-cols-2 gap-1">
-                {(["BUY_FUT", "SELL_FUT", "BUY_CE", "BUY_PE"] as const).map((val) => (
-                  <FilterPill
-                    key={val}
-                    label={val.replace("_", " ")}
-                    active={sim.signal_types.includes(val)}
-                    onClick={() => setTradesSim({ signal_types: toggleItem(sim.signal_types, val) })}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {simActive && (
-            <p className="text-[9px] font-mono text-text-muted/40">
-              {sim.sim_lots != null && `P&L recalculated as if every trade used ${sim.sim_lots} lot${sim.sim_lots !== 1 ? "s" : ""}. `}
-              Confidence / AI action / instrument filters exclude trades with no linked signal. Signal type filtered client-side.
-            </p>
           )}
         </div>
       )}
 
       {/* Hold Analysis panel */}
-      {holdOpen && (
-        <div className="rounded border border-accent/20 bg-bg-secondary p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="text-[11px] font-mono font-semibold uppercase tracking-widest text-text-secondary">
-                Hold Analysis
+      {holdOpen && (() => {
+        const holdClosed = displayedHoldTrades.filter((t) => t.status === "CLOSED" && t.pnl != null);
+        const holdTotalPnl = holdClosed.reduce((s, t) => s + Number(t.pnl), 0);
+        const holdWinners = holdClosed.filter((t) => Number(t.pnl) > 0).length;
+        const holdWinRate = holdClosed.length > 0 ? (holdWinners / holdClosed.length) * 100 : 0;
+        return (
+        <div className="rounded border border-accent/20 bg-bg-secondary px-3 py-2">
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-mono font-semibold uppercase tracking-widest text-text-secondary">Hold</span>
+            {holdLoading ? (
+              <span className="text-[8px] font-mono px-1.5 py-0.5 rounded border border-accent/60 text-accent tracking-widest uppercase animate-pulse">
+                Loading
               </span>
-              {holdLoading && (
-                <span className="text-[8px] font-mono px-1.5 py-0.5 rounded border border-accent/60 text-accent tracking-widest uppercase animate-pulse">
-                  Loading
-                </span>
-              )}
-              {!holdLoading && holdMap.size > 0 && (
-                <span className="text-[8px] font-mono px-1.5 py-0.5 rounded border border-accent/60 text-accent tracking-widest uppercase">
-                  Active
-                </span>
-              )}
-            </div>
-            <button
-              onClick={resetTradesHold}
-              className="text-[10px] font-mono px-3 py-1.5 rounded border border-border text-text-muted hover:border-accent/40 hover:text-accent transition-colors"
-            >
-              Reset
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">
-              Scenario
-            </span>
-            <div className="flex gap-1">
+            ) : holdMap.size > 0 ? (
+              <span className="text-[8px] font-mono px-1.5 py-0.5 rounded border border-accent/60 text-accent tracking-widest uppercase">
+                Active
+              </span>
+            ) : null}
+            <div className="flex items-center gap-1">
               <FilterPill
-                label="Best Case"
+                label="Best"
                 active={hold.scenario === "best"}
                 onClick={() => setTradesHold({ scenario: "best" })}
               />
               <FilterPill
-                label="Worst Case"
+                label="Worst"
                 active={hold.scenario === "worst"}
                 onClick={() => setTradesHold({ scenario: "worst" })}
               />
             </div>
+            {!holdLoading && holdMap.size > 0 && holdClosed.length > 0 && (
+              <>
+                <div className="w-px h-4 bg-border" />
+                <span className={`text-xs font-mono font-bold ${pnlColor(holdTotalPnl)}`}>{formatINR(holdTotalPnl)}</span>
+                <span className="text-[9px] font-mono text-text-muted">{holdWinners}W / {holdClosed.length - holdWinners}L · {holdWinRate.toFixed(0)}%</span>
+              </>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => setHoldExpanded(!holdExpanded)}
+                className="text-[9px] font-mono text-text-muted hover:text-accent transition-colors"
+              >
+                {holdExpanded ? "▲" : "▼"}
+              </button>
+              <button
+                onClick={resetTradesHold}
+                className="text-[9px] font-mono px-2 py-0.5 rounded border border-border text-text-muted hover:border-accent/40 hover:text-accent transition-colors"
+              >
+                Reset
+              </button>
+            </div>
           </div>
 
-          <p className="text-[9px] font-mono text-text-muted/40">
-            P&L recomputed using{" "}
-            {hold.scenario === "best" ? "max HIGH" : "min LOW"} from 1m candles
-            between actual exit and 15:30 IST same day. Charges unchanged; net P&L
-            falls back to gross.
-          </p>
+          {holdExpanded && (
+            <div className="mt-2 pt-2 border-t border-border/30">
+              <p className="text-[9px] font-mono text-text-muted/40">
+                P&L recomputed using{" "}
+                {hold.scenario === "best" ? "max HIGH" : "min LOW"} from 1m candles
+                between actual exit and 15:30 IST same day. Charges unchanged; net P&L
+                falls back to gross.
+              </p>
+            </div>
+          )}
         </div>
-      )}
+        );
+      })()}
 
       {mode === "SHADOW" && (
         <div className="px-3 py-1.5 rounded border border-purple-500/20 bg-purple-500/5">
@@ -582,28 +664,15 @@ export default function TradesPage() {
         </div>
       )}
 
-      <SummaryStrip trades={holdTrades} dailyPnL={dailyPnL} showNetPnL={showNetPnL} peakMargin={peakMargin} />
-
-      <PnLHeatmap
-        period={period}
-        dailyPnL={dailyPnL}
-        selectedDay={selectedDay}
-        onSelectDay={setSelectedDay}
-      />
+      <div className="sticky top-0 z-10">
+        <SummaryStrip trades={displayedTrades} dailyPnL={displayedDailyPnL} showNetPnL={showNetPnL} />
+      </div>
 
       {/* Margin Analysis */}
+      {tradesMarginOpen && (
       <div className="rounded border border-border bg-bg-secondary px-3 py-2 flex items-center gap-4">
-        <span className="text-[9px] font-mono uppercase tracking-wider text-text-muted">Margin Analysis</span>
-        <button
-          onClick={handleMarginAnalysis}
-          disabled={displayedTrades.length === 0}
-          className="px-2 py-1 rounded border text-[10px] font-mono transition-colors border-border text-text-muted hover:border-accent/40 hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          Analyze Margin
-        </button>
+        <span className="text-[9px] font-mono uppercase tracking-wider text-text-muted">Margin</span>
         {marginResult && (
-          <>
-            <div className="w-px h-4 bg-border" />
             <div className="flex items-center gap-4">
               <div className="flex flex-col">
                 <span className="text-[8px] font-mono uppercase tracking-wider text-text-muted/50">Peak Concurrent</span>
@@ -626,9 +695,18 @@ export default function TradesPage() {
                 </div>
               )}
             </div>
-          </>
         )}
       </div>
+      )}
+
+      {tradesShowHeatmap && (
+        <PnLHeatmap
+          period={period}
+          dailyPnL={dailyPnL}
+          selectedDay={selectedDay}
+          onSelectDay={setSelectedDay}
+        />
+      )}
 
       <div
         className={`rounded border border-border bg-bg-secondary overflow-hidden transition-opacity ${
@@ -657,6 +735,7 @@ export default function TradesPage() {
           showSignalData={simActive}
           simLots={simOpen ? sim.sim_lots : null}
           showNetPnL={showNetPnL}
+          holdData={holdActive ? holdDataMap : undefined}
         />
       </div>
     </div>

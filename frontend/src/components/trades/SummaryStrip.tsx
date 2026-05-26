@@ -8,6 +8,7 @@ interface Props {
   dailyPnL: Map<string, number>;
   showNetPnL?: boolean;
   peakMargin?: number;
+  label?: string;
 }
 
 function tradePnl(t: Trade, showNet: boolean): number {
@@ -15,7 +16,7 @@ function tradePnl(t: Trade, showNet: boolean): number {
   return Number(t.pnl);
 }
 
-export function SummaryStrip({ trades, dailyPnL, showNetPnL = false, peakMargin }: Props) {
+export function SummaryStrip({ trades, dailyPnL, showNetPnL = false, peakMargin, label }: Props) {
   const closed = trades.filter((t) => t.status === "CLOSED" && t.pnl != null);
   const openCount = trades.filter((t) => t.status === "OPEN").length;
   const totalPnl = closed.reduce((s, t) => s + tradePnl(t, showNetPnL), 0);
@@ -39,8 +40,11 @@ export function SummaryStrip({ trades, dailyPnL, showNetPnL = false, peakMargin 
       : `${(grossProfit / grossLoss).toFixed(2)}`;
 
   return (
-    <div className="flex items-center gap-5 px-3 py-1.5 rounded border border-border bg-bg-secondary flex-wrap">
+    <div className={`flex items-center gap-5 px-3 py-1.5 rounded border ${label ? "border-accent/30 bg-accent/5" : "border-border bg-bg-secondary"} flex-wrap`}>
       <div className="flex items-center gap-2">
+        {label && (
+          <span className="text-[10px] font-mono font-semibold uppercase tracking-widest text-accent">{label}</span>
+        )}
         <span className="text-[10px] text-text-muted font-mono uppercase tracking-wider">P&amp;L</span>
         <span className={`text-sm font-bold font-mono ${pnlColor(totalPnl)}`}>
           {formatINR(totalPnl)}

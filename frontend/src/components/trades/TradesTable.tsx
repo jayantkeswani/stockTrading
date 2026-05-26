@@ -6,6 +6,8 @@ import { STRATEGY_LABELS, STATUS_COLORS } from "@/lib/constants";
 import { SignalHistoryPanel } from "@/components/signals/SignalHistoryPanel";
 import type { Trade } from "@/lib/types";
 
+export type HoldData = Map<string, { exitPrice: number; pnl: number; pnlPercent: number }>;
+
 interface Props {
   trades: Trade[];
   loading: boolean;
@@ -13,6 +15,7 @@ interface Props {
   showSignalData?: boolean;
   simLots?: number | null;
   showNetPnL?: boolean;
+  holdData?: HoldData;
 }
 
 function confidenceColor(conf: number | null): string {
@@ -207,12 +210,14 @@ function TradeRow({
   showSignalData,
   showNetPnL,
   colCount,
+  holdData,
 }: {
   trade: Trade;
   showSource: boolean;
   showSignalData: boolean;
   showNetPnL: boolean;
   colCount: number;
+  holdData?: HoldData;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetails = trade.signal_snapshot || trade.signal_id;
@@ -296,6 +301,24 @@ function TradeRow({
             "—"
           )}
         </td>
+        {holdData && (() => {
+          const h = holdData.get(trade.id);
+          return (
+            <>
+              <td className="px-3 py-1.5 text-right font-mono">
+                {h ? formatINR(h.exitPrice) : "—"}
+              </td>
+              <td className={`px-3 py-1.5 text-right font-mono font-medium whitespace-nowrap ${h ? pnlColor(h.pnl) : ""}`}>
+                {h ? (
+                  <div>
+                    {formatINR(h.pnl)}
+                    <div className="text-[10px]">{formatPercent(h.pnlPercent)}</div>
+                  </div>
+                ) : "—"}
+              </td>
+            </>
+          );
+        })()}
         <td className="px-3 py-1.5">
           <span className="text-[10px] font-mono px-1 py-px rounded bg-accent/10 text-accent">
             {STRATEGY_LABELS[trade.strategy_name] || trade.strategy_name}
@@ -361,7 +384,7 @@ function TradeRow({
   );
 }
 
-export function TradesTable({ trades, loading, showSource = false, showSignalData = false, simLots = null, showNetPnL = false }: Props) {
+export function TradesTable({ trades, loading, showSource = false, showSignalData = false, simLots = null, showNetPnL = false, holdData }: Props) {
   if (loading) {
     return (
       <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
@@ -380,6 +403,7 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
   let colCount = 13;
   if (showSignalData) colCount += 2;
   if (showSource) colCount += 1;
+  if (holdData && holdData.size > 0) colCount += 2;
 
   return (
     <div className="overflow-x-auto">
@@ -400,6 +424,8 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
                 <span className="normal-case font-normal text-accent/60 ml-1">sim {simLots}L</span>
               )}
             </th>
+            {holdData && holdData.size > 0 && <th className="text-right px-3 py-1.5 text-accent/70">Hold Exit</th>}
+            {holdData && holdData.size > 0 && <th className="text-right px-3 py-1.5 text-accent/70">Hold P&amp;L</th>}
             <th className="text-left px-3 py-1.5">Strategy</th>
             {showSignalData && <th className="text-right px-3 py-1.5">Conf</th>}
             {showSignalData && <th className="text-left px-3 py-1.5">AI</th>}
@@ -419,6 +445,7 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
               showSignalData={showSignalData}
               showNetPnL={showNetPnL}
               colCount={colCount}
+              holdData={holdData && holdData.size > 0 ? holdData : undefined}
             />
           ))}
         </tbody>

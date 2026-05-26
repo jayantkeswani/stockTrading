@@ -136,6 +136,12 @@ interface AppState {
   setTradesSim: (updates: Partial<AppState["tradesSim"]>) => void;
   resetTradesSim: () => void;
 
+  // View toggles
+  tradesShowHeatmap: boolean;
+  tradesMarginOpen: boolean;
+  setTradesShowHeatmap: (v: boolean) => void;
+  setTradesMarginOpen: (v: boolean) => void;
+
   // Hold Analysis panel
   tradesHoldOpen: boolean;
   tradesHold: {
@@ -379,6 +385,11 @@ export const useStore = create<AppState>()(
       setTradesSim: (updates) => set((state) => ({ tradesSim: { ...state.tradesSim, ...updates } })),
       resetTradesSim: () => set({ tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null } }),
 
+      tradesShowHeatmap: false,
+      tradesMarginOpen: false,
+      setTradesShowHeatmap: (v) => set({ tradesShowHeatmap: v }),
+      setTradesMarginOpen: (v) => set({ tradesMarginOpen: v }),
+
       tradesHoldOpen: false,
       tradesHold: { scenario: "best" },
       setTradesHoldOpen: (open) => set({ tradesHoldOpen: open }),
@@ -427,6 +438,8 @@ export const useStore = create<AppState>()(
         tradesPeriodStart: state.tradesPeriodStart,
         tradesPeriodEnd: state.tradesPeriodEnd,
         tradesStrategy: state.tradesStrategy,
+        tradesShowHeatmap: state.tradesShowHeatmap,
+        tradesMarginOpen: state.tradesMarginOpen,
         tradesSimOpen: state.tradesSimOpen,
         tradesSim: state.tradesSim,
         tradesHoldOpen: state.tradesHoldOpen,
