@@ -78,7 +78,7 @@ strategy_runner.py — _enrich_strategy5_params()
   |-- Stores as params["_is_permanent_watchlist"]
   |
   v
-strategy_runner.py — after strategy.evaluate()
+strategy_runner.py — after strategy.evaluate() [both auto and manual paths]
   |-- signal.indicators["is_permanent_watchlist"] = params["_is_permanent_watchlist"]
   |
   v

@@ -392,13 +392,14 @@ All three backfill from Fyers historical API + persist via `ON CONFLICT DO NOTHI
 Core evaluation engine. Two trigger paths: (1) auto-mode on candle close, (2) manual via strategies API.
 
 - `get_auto_strategies_for_symbol(symbol) -> list[StrategyName]` — which strategies auto-evaluate for a symbol. Used by: feed_manager
+- `evaluate_manual(symbol, strategy_name) -> StrategySignal | None` — on-demand single-symbol evaluation (manual scan); builds MarketContext from existing candles + Redis price cache; for INTRADAY_FUTURES also injects `is_permanent_watchlist` into the signal from enriched params (same as auto path). Used by: strategies API `POST /evaluate`
 
 Key private methods (documented because they're central to flow):
 
 - `_build_market_context(symbol, candle_data)` — builds full `MarketContext` from in-memory buffers + Redis. `today_open` is the open of the first candle with timestamp >= MARKET_OPEN (skips pre-market candles)
 - `_query_previous_day(session, symbol, today)` — queries last trading day's 1m candles; `yesterday_cutoff` is midnight IST (`time.min`), not MARKET_OPEN, so pre-open candles (08:42–09:07) don't bleed into today's query
 - `_enrich_signal_snapshot(signal, ...)` — injects `nifty_spot`, `nifty_day_change_pct`, `trigger_candle`, `minutes_since_open` into every signal's indicators JSONB
-- `_enrich_strategy5_params(symbol, params, india_vix=None)` — loads RVOL profiles, cross-position counts, Nifty bias, ORB levels, briefing, global cues shift, per-stock gap/trend data, FUT OI direction into strategy params; throttled to once per 5 min per symbol for global cues check
+- `_enrich_strategy5_params(symbol, params, india_vix=None)` — loads RVOL profiles, cross-position counts, Nifty bias, ORB levels, briefing, global cues shift, per-stock gap/trend data, FUT OI direction into strategy params; throttled to once per 5 min per symbol for global cues check; only caches result in `_s5_session_cache` when `watchlist_loaded` is True (prevents empty defaults from being locked in before the 8:30 AM morning screener runs)
 - `_dedup_signal(existing, new, ai_fields)` — Case-1 (noise: skip), Case-2 (meaningful: archive to `signal_history` → update all fields including `ai_*` → re-fire shadow), Case-3 (acted on: return None → create new signal)
 - `_persist_signal(signal)` — writes signal to DB; copies `_is_permanent_watchlist` from indicators to `Signal.is_permanent_watchlist`; gates on `min_confidence_to_persist`
 - `_check_regulatory_limits(symbol)` — F&O ban list check (reads `nse:fo_ban_list:{today}`)

@@ -242,6 +242,8 @@ class StrategyRunner:
         await self._flush_strategy_logs(strategy)
         if signal is not None:
             signal.indicators["window_state"] = window_state
+            if strategy.name == StrategyName.INTRADAY_FUTURES:
+                signal.indicators["is_permanent_watchlist"] = params.get("_is_permanent_watchlist", False)
             await self._enrich_signal_snapshot(signal)
             if signal.instrument_type == InstrumentType.OPTION:
                 signal, executable, blocked_reason = await self._resolve_option(
@@ -764,11 +766,13 @@ class StrategyRunner:
             except Exception:
                 logger.debug("Could not load morning briefing for Strategy 5")
 
+            watchlist_loaded = False
             try:
                 r = get_redis()
                 import json as _json
                 wl_raw = await r.get(f"strat5:watchlist:{today}")
                 if wl_raw:
+                    watchlist_loaded = True
                     watchlist = _json.loads(wl_raw)
                     for item in watchlist:
                         if item.get("symbol") == symbol:
@@ -785,7 +789,11 @@ class StrategyRunner:
             except Exception:
                 logger.debug("Could not load screener score for %s", symbol)
 
-            self._s5_session_cache[symbol] = entry
+            # Only cache when the watchlist key existed — a Scanner batch
+            # evaluate before the morning screener (8:30 AM) would otherwise
+            # lock in empty defaults for the rest of the day.
+            if watchlist_loaded:
+                self._s5_session_cache[symbol] = entry
             # Inject into params
             for key in (
                 "_briefing_approach", "_briefing_max_lots", "_briefing_sector_bias",
