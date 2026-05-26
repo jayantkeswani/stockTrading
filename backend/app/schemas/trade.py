@@ -58,17 +58,17 @@ class MarginAnalysisResponse(BaseModel):
 
 class HoldAnalysisRequest(BaseModel):
     trade_ids: list[uuid.UUID]
-    scenario: str  # "best" or "worst"
+    scenario: str  # "best", "worst", or "eod"
 
 
 class PerTradeHoldResult(BaseModel):
     trade_id: uuid.UUID
-    max_high: Decimal | None = None
-    min_low: Decimal | None = None
+    hold_exit_price: Decimal | None = None
     hold_pnl: Decimal | None = None
     hold_net_pnl: Decimal | None = None
     hold_charges_json: dict | None = None
     hold_exit_time: datetime | None = None
+    hold_outcome: str | None = None
     data_found: bool = False
 
 

@@ -26,12 +26,12 @@ function toggleItem(arr: string[], item: string): string[] {
 }
 
 type HoldResultMap = Map<string, {
-  max_high: number | null;
-  min_low: number | null;
+  hold_exit_price: number | null;
   hold_pnl: number | null;
   hold_net_pnl: number | null;
   hold_charges_json: { brokerage: number; stt: number; exchange_txn: number; gst: number; sebi_charges: number; stamp_duty: number; total: number } | null;
   hold_exit_time: string | null;
+  hold_outcome: string | null;
 }>;
 
 function applySimLots(trade: Trade, simLots: number | null): Trade {
@@ -207,12 +207,12 @@ export default function TradesPage() {
         const m: HoldResultMap = new Map();
         for (const r of res.results) {
           m.set(r.trade_id, {
-            max_high: r.max_high,
-            min_low: r.min_low,
+            hold_exit_price: r.hold_exit_price,
             hold_pnl: r.hold_pnl,
             hold_net_pnl: r.hold_net_pnl,
             hold_charges_json: r.hold_charges_json,
             hold_exit_time: r.hold_exit_time,
+            hold_outcome: r.hold_outcome,
           });
         }
         setHoldMap(m);
@@ -246,18 +246,18 @@ export default function TradesPage() {
       if (t.status !== "CLOSED" || t.exit_price == null) continue;
       const result = holdMap.get(t.id);
       if (!result || result.hold_pnl == null) continue;
-      const hypoExit = hold.scenario === "best" ? result.max_high : result.min_low;
-      if (hypoExit == null) continue;
+      if (result.hold_exit_price == null) continue;
       const entry = Number(t.entry_price);
       if (entry === 0) continue;
       const pnl = Number(result.hold_pnl);
       map.set(t.id, {
-        exitPrice: hypoExit,
+        exitPrice: result.hold_exit_price,
         pnl,
         netPnl: result.hold_net_pnl != null ? Number(result.hold_net_pnl) : null,
         pnlPercent: (pnl / (entry * Number(t.quantity))) * 100,
         chargesJson: result.hold_charges_json,
         exitTime: result.hold_exit_time,
+        outcome: result.hold_outcome,
       });
     }
     return map;
@@ -608,6 +608,16 @@ export default function TradesPage() {
                 active={hold.scenario === "worst"}
                 onClick={() => setTradesHold({ scenario: "worst" })}
               />
+              <FilterPill
+                label="EOD"
+                active={hold.scenario === "eod"}
+                onClick={() => setTradesHold({ scenario: "eod" })}
+              />
+              <FilterPill
+                label="SL/TGT"
+                active={hold.scenario === "sl_tgt"}
+                onClick={() => setTradesHold({ scenario: "sl_tgt" })}
+              />
             </div>
             {!holdLoading && holdMap.size > 0 && holdEntries.length > 0 && (
               <>
@@ -637,8 +647,8 @@ export default function TradesPage() {
             <div className="mt-2 pt-2 border-t border-border/30">
               <p className="text-[9px] font-mono text-text-muted/40">
                 P&L recomputed using{" "}
-                {hold.scenario === "best" ? "max HIGH" : "min LOW"} from 1m candles
-                between actual exit and 15:30 IST same day. Charges recomputed for
+                {hold.scenario === "best" ? "max HIGH" : hold.scenario === "worst" ? "min LOW" : hold.scenario === "eod" ? "last candle CLOSE" : "first SL or TGT hit (fallback to EOD close)"} from 1m candles
+                between entry and hold cutoff (re-entry or 15:30 IST). Charges recomputed for
                 hypothetical exit price.
               </p>
             </div>
@@ -727,6 +737,7 @@ export default function TradesPage() {
           simLots={simOpen ? sim.sim_lots : null}
           showNetPnL={showNetPnL}
           holdData={holdActive ? holdDataMap : undefined}
+          holdScenario={holdActive ? hold.scenario : undefined}
         />
       </div>
     </div>

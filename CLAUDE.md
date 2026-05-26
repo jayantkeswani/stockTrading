@@ -25,9 +25,8 @@ This is an AI-first project. Documentation ships WITH every code change — not 
 1. Update the relevant CLAUDE.md (root, backend/, frontend/) if the change adds/removes/renames files, changes conventions, or adds new patterns
 2. Update ARCHITECTURE.md if the change affects data flow, system design, or ports
 3. Update docs/strategies/*.md if strategy logic changes
-4. Run `/test-runner` to validate tests pass
-5. Run `/review-code` to check quality and consistency
-6. Run `/update-docs` as a final verification that docs match code
+4. Update docs/*md if any code changed that has reference over there
+5. Run tests to validate tests pass
 
 **Function registry format** — every public function in backend/frontend CLAUDE.md uses this format:
 `- \`functionName(params) — one-liner. Used by: caller1.py, caller2.py`
@@ -49,9 +48,9 @@ This is an AI-first project. Documentation ships WITH every code change — not 
 
 ### Testing Rules
 
+- **NEVER change code solely to make a test pass** — if the test fails, either the test is wrong (fix the test) or there's a real bug (fix the bug)
 - Modify existing tests when the tested behavior has changed — don't always add new ones
 - Mock external dependencies when needed for isolation
-- **NEVER change production code solely to make a test pass** — if the test fails, either the test is wrong (fix the test) or there's a real bug (fix the bug)
 - Run research integration tests only when changing research module files
 
 ### Operational Rules
@@ -409,5 +408,3 @@ curl -s http://localhost:8080/api/v1/market/prices | python3 -m json.tool
 ## Known Cleanup Tasks
 
 - **Purge stale daily-bar rows from `market_data_1m`**: ~9,600 rows at midnight UTC — old daily candle hack predating `market_data_daily`. Soak period ended 2026-05-08; ready to run: `DELETE FROM market_data_1m WHERE EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC') = 0 AND EXTRACT(MINUTE FROM timestamp AT TIME ZONE 'UTC') = 0;`
-
-

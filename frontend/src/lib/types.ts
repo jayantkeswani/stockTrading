@@ -413,8 +413,7 @@ export interface S5SetupStats {
 
 export interface PerTradeHoldResult {
   trade_id: string;
-  max_high: number | null;
-  min_low: number | null;
+  hold_exit_price: number | null;
   hold_pnl: number | null;
   hold_net_pnl: number | null;
   hold_charges_json: {
@@ -427,6 +426,7 @@ export interface PerTradeHoldResult {
     total: number;
   } | null;
   hold_exit_time: string | null;
+  hold_outcome: string | null;
   data_found: boolean;
 }
 

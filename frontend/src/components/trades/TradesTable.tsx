@@ -13,6 +13,7 @@ export type HoldData = Map<string, {
   pnlPercent: number;
   chargesJson: { brokerage: number; stt: number; exchange_txn: number; gst: number; sebi_charges: number; stamp_duty: number; total: number } | null;
   exitTime: string | null;
+  outcome: string | null;
 }>;
 
 interface Props {
@@ -23,6 +24,7 @@ interface Props {
   simLots?: number | null;
   showNetPnL?: boolean;
   holdData?: HoldData;
+  holdScenario?: string;
 }
 
 function confidenceColor(conf: number | null): string {
@@ -218,6 +220,7 @@ function TradeRow({
   showNetPnL,
   colCount,
   holdData,
+  holdScenario,
 }: {
   trade: Trade;
   showSource: boolean;
@@ -225,6 +228,7 @@ function TradeRow({
   showNetPnL: boolean;
   colCount: number;
   holdData?: HoldData;
+  holdScenario?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetails = trade.signal_snapshot || trade.signal_id;
@@ -344,9 +348,22 @@ function TradeRow({
                   </div>
                 ) : "—"}
               </td>
-              <td className="px-3 py-1.5 text-right font-mono text-text-muted whitespace-nowrap">
-                {h?.exitTime ? formatTime(h.exitTime) : "—"}
+              <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap">
+                <span className="text-accent/70">{h?.exitTime ? formatTime(h.exitTime) : "—"}</span>
+                <span className="text-text-muted/60"> / </span>
+                <span className="text-text-muted">{trade.exit_time ? formatTime(trade.exit_time) : "—"}</span>
               </td>
+              {holdScenario === "sl_tgt" && (
+                <td className="px-3 py-1.5 text-center font-mono text-[10px] font-bold">
+                  {h?.outcome === "TGT" ? (
+                    <span className="text-green-400">TGT</span>
+                  ) : h?.outcome === "SL" ? (
+                    <span className="text-red-400">SL</span>
+                  ) : (
+                    <span className="text-text-muted">—</span>
+                  )}
+                </td>
+              )}
             </>
           );
         })()}
@@ -415,7 +432,7 @@ function TradeRow({
   );
 }
 
-export function TradesTable({ trades, loading, showSource = false, showSignalData = false, simLots = null, showNetPnL = false, holdData }: Props) {
+export function TradesTable({ trades, loading, showSource = false, showSignalData = false, simLots = null, showNetPnL = false, holdData, holdScenario }: Props) {
   if (loading) {
     return (
       <div className="px-3 py-6 text-center text-text-muted text-xs font-mono">loading...</div>
@@ -434,7 +451,7 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
   let colCount = 13;
   if (showSignalData) colCount += 2;
   if (showSource) colCount += 1;
-  if (holdData && holdData.size > 0) colCount += 3;
+  if (holdData && holdData.size > 0) colCount += holdScenario === "sl_tgt" ? 4 : 3;
 
   return (
     <div className="overflow-x-auto">
@@ -462,7 +479,8 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
                 {showNetPnL && <span className="normal-case font-normal text-accent/60 ml-1">net</span>}
               </th>
             )}
-            {holdData && holdData.size > 0 && <th className="text-right px-3 py-1.5 text-accent/70">Hold Exit Time</th>}
+            {holdData && holdData.size > 0 && <th className="text-right px-3 py-1.5"><span className="text-accent/70">Hold Exit Time</span> / Exit Time</th>}
+            {holdData && holdData.size > 0 && holdScenario === "sl_tgt" && <th className="text-center px-3 py-1.5 text-accent/70">Outcome</th>}
             <th className="text-left px-3 py-1.5">Strategy</th>
             {showSignalData && <th className="text-right px-3 py-1.5">Conf</th>}
             {showSignalData && <th className="text-left px-3 py-1.5">AI</th>}
@@ -483,6 +501,7 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
               showNetPnL={showNetPnL}
               colCount={colCount}
               holdData={holdData && holdData.size > 0 ? holdData : undefined}
+              holdScenario={holdScenario}
             />
           ))}
         </tbody>

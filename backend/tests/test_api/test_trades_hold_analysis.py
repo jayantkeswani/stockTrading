@@ -93,10 +93,15 @@ def _make_db_with_agg(
     agg_row: tuple,
     exit_time_val: datetime | None = None,
     reentry_entries: list[datetime] | None = None,
+    outcome_candles: list[tuple] | None = None,
+    eod_fallback: tuple | None = None,
+    scenario: str = "best",
 ) -> AsyncMock:
     """Convenience wrapper: single trade with one aggregation result.
 
-    Handles 4 execute calls: trades fetch, re-entry query, agg query, timestamp query.
+    Call sequence varies by scenario:
+    - best/worst: trades fetch, re-entry, agg, timestamp (4 calls)
+    - sl_tgt: trades fetch, re-entry, agg, candle walk, [EOD fallback] (4-5 calls)
     """
     trade._agg_row = agg_row
     _current_trade[0] = trade
@@ -115,8 +120,13 @@ def _make_db_with_agg(
         elif call_count == 3:
             _current_trade[0] = trade
             mock_result.one_or_none.return_value = agg_row
-        else:
-            mock_result.scalar_one_or_none.return_value = exit_time_val or _ts_ist(14, 30)
+        elif call_count == 4:
+            if scenario == "sl_tgt":
+                mock_result.all.return_value = outcome_candles or []
+            else:
+                mock_result.scalar_one_or_none.return_value = exit_time_val or _ts_ist(14, 30)
+        elif call_count == 5:
+            mock_result.one_or_none.return_value = eod_fallback
         return mock_result
 
     mock_db = AsyncMock()
@@ -135,7 +145,7 @@ def _make_db_no_data(trade: MagicMock) -> AsyncMock:
 
 
 class TestHoldAnalysisS5BestCase:
-    """S5 trade, scenario=best → max_high reflects the seeded max."""
+    """S5 trade, scenario=best → hold_exit_price reflects the seeded max."""
 
     @pytest.mark.asyncio
     async def test_hold_analysis_s5_best_case(self):
@@ -160,7 +170,7 @@ class TestHoldAnalysisS5BestCase:
         r = response.results[0]
         assert r.trade_id == trade.id
         assert r.data_found is True
-        assert r.max_high == Decimal("520.50")
+        assert r.hold_exit_price == Decimal("520.50")
         assert r.hold_pnl == Decimal("20.50") * 800
         assert r.hold_net_pnl is not None
         assert r.hold_net_pnl < r.hold_pnl
@@ -169,7 +179,7 @@ class TestHoldAnalysisS5BestCase:
 
 
 class TestHoldAnalysisS5WorstCase:
-    """S5 trade, scenario=worst → min_low reflects the seeded minimum."""
+    """S5 trade, scenario=worst → hold_exit_price reflects the seeded minimum."""
 
     @pytest.mark.asyncio
     async def test_hold_analysis_s5_worst_case(self):
@@ -193,7 +203,7 @@ class TestHoldAnalysisS5WorstCase:
         assert len(response.results) == 1
         r = response.results[0]
         assert r.data_found is True
-        assert r.min_low == Decimal("195.75")
+        assert r.hold_exit_price == Decimal("195.75")
         assert r.hold_pnl == Decimal("-4.25") * 800
         assert r.hold_net_pnl is not None
         assert r.hold_charges_json is not None
@@ -226,7 +236,7 @@ class TestHoldAnalysisS2OptionSymbolUsed:
 
         r = response.results[0]
         assert r.data_found is True
-        assert r.max_high == Decimal("330.00")
+        assert r.hold_exit_price == Decimal("330.00")
         assert r.hold_pnl == Decimal("30.00") * 375
         assert r.hold_charges_json is not None
 
@@ -235,7 +245,7 @@ class TestHoldAnalysisS2OptionSymbolUsed:
 
 
 class TestHoldAnalysisOpenTradeSkipped:
-    """OPEN status trade → data_found=False, max_high=None."""
+    """OPEN status trade → data_found=False, hold_exit_price=None."""
 
     @pytest.mark.asyncio
     async def test_hold_analysis_open_trade_skipped(self):
@@ -260,7 +270,7 @@ class TestHoldAnalysisOpenTradeSkipped:
         assert len(response.results) == 1
         r = response.results[0]
         assert r.data_found is False
-        assert r.max_high is None
+        assert r.hold_exit_price is None
         # Aggregation should never be queried for an open trade
         assert mock_db.execute.call_count == 1
 
@@ -286,12 +296,11 @@ class TestHoldAnalysisNoMarketData:
 
         r = response.results[0]
         assert r.data_found is False
-        assert r.max_high is None
-        assert r.min_low is None
+        assert r.hold_exit_price is None
 
 
 class TestHoldAnalysisExitAfterMarketClose:
-    """exit_time at or after 15:30 IST → data_found=False (no window remains)."""
+    """exit_time after 15:30 IST — window is entry_time→15:30, still valid."""
 
     @pytest.mark.asyncio
     async def test_hold_analysis_exit_after_market_close(self):
@@ -303,21 +312,20 @@ class TestHoldAnalysisExitAfterMarketClose:
             symbol="VEDL",
             status="CLOSED",
             exit_time=_ts_ist(15, 35),  # 5 minutes past market close
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            side="BUY",
         )
-        # Aggregation should never be called — we use a simple single-result mock
-        mock_result_trades = MagicMock()
-        mock_result_trades.scalars.return_value.all.return_value = [trade]
-        mock_db = AsyncMock()
-        mock_db.execute = AsyncMock(return_value=mock_result_trades)
+        # Window is entry_time (9:30) → 15:30, queries proceed
+        db = _make_db_with_agg(trade, (Decimal("520.00"), Decimal("490.00")))
 
         body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="worst")
-        response = await hold_analysis(body, mock_db)
+        response = await hold_analysis(body, db)
 
         r = response.results[0]
-        assert r.data_found is False
-        assert r.max_high is None
-        # trades fetch + re-entry query (trade is closed so reentry map processes it)
-        assert mock_db.execute.call_count == 2
+        assert r.data_found is True
+        assert r.hold_exit_price == Decimal("490.00")
+        assert r.hold_pnl == Decimal("-10.00") * 800
 
 
 class TestHoldAnalysisInvalidScenario:
@@ -339,7 +347,7 @@ class TestHoldAnalysisInvalidScenario:
 
 
 class TestHoldAnalysisMissingFyersSymbol:
-    """S2 trade with fyers_option_symbol=None → data_found=False (can't query)."""
+    """S2 trade with fyers_option_symbol=None → falls back to trade.symbol for lookup."""
 
     @pytest.mark.asyncio
     async def test_hold_analysis_missing_fyers_symbol(self):
@@ -353,19 +361,15 @@ class TestHoldAnalysisMissingFyersSymbol:
             status="CLOSED",
             exit_time=_ts_ist(11, 45),
         )
-        mock_result_trades = MagicMock()
-        mock_result_trades.scalars.return_value.all.return_value = [trade]
-        mock_db = AsyncMock()
-        mock_db.execute = AsyncMock(return_value=mock_result_trades)
+        # Falls back to trade.symbol, queries proceed but no 1m data found
+        db = _make_db_no_data(trade)
 
         body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="best")
-        response = await hold_analysis(body, mock_db)
+        response = await hold_analysis(body, db)
 
         r = response.results[0]
         assert r.data_found is False
-        assert r.max_high is None
-        # No aggregation query should have been issued
-        assert mock_db.execute.call_count == 1
+        assert r.hold_exit_price is None
 
 
 class TestHoldAnalysisReentryCapping:
@@ -401,7 +405,7 @@ class TestHoldAnalysisReentryCapping:
 
         r = response.results[0]
         assert r.data_found is True
-        assert r.max_high == Decimal("510.00")
+        assert r.hold_exit_price == Decimal("510.00")
         # P&L from entry 500 to hold exit 510, qty 800
         assert r.hold_pnl == Decimal("10.00") * 800
 
@@ -433,7 +437,7 @@ class TestHoldAnalysisReentryCapping:
         r = response.results[0]
         assert r.data_found is True
         # Full window to 15:30 — uncapped
-        assert r.max_high == Decimal("520.00")
+        assert r.hold_exit_price == Decimal("520.00")
         assert r.hold_pnl == Decimal("20.00") * 800
 
     @pytest.mark.asyncio
@@ -463,5 +467,138 @@ class TestHoldAnalysisReentryCapping:
 
         r = response.results[0]
         assert r.data_found is True
-        assert r.max_high == Decimal("515.00")
+        assert r.hold_exit_price == Decimal("515.00")
         assert r.hold_pnl == Decimal("15.00") * 800
+
+
+class TestHoldAnalysisOutcome:
+    """hold_outcome: SL, TGT, or None based on candle data in hold window."""
+
+    @pytest.mark.asyncio
+    async def test_target_hit(self):
+        """Candle high reaches target → outcome=TGT."""
+        from app.api.v1.trades import hold_analysis
+        from app.schemas.trade import HoldAnalysisRequest
+
+        trade = _make_trade(
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            side="BUY",
+            status="CLOSED",
+            exit_time=_ts_ist(11, 0),
+        )
+        trade.stop_loss = Decimal("485.00")
+        trade.target_price = Decimal("522.00")
+        candles = [
+            (Decimal("515.00"), Decimal("498.00"), _ts_ist(11, 1)),  # no hit
+            (Decimal("525.00"), Decimal("510.00"), _ts_ist(11, 2)),  # high=525 >= 522 — TGT hit
+        ]
+        db = _make_db_with_agg(
+            trade,
+            (Decimal("525.00"), Decimal("498.00")),
+            outcome_candles=candles,
+            scenario="sl_tgt",
+        )
+
+        body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="sl_tgt")
+        response = await hold_analysis(body, db)
+        r = response.results[0]
+        assert r.hold_outcome == "TGT"
+        assert r.hold_exit_price == Decimal("522.00")
+
+    @pytest.mark.asyncio
+    async def test_sl_hit(self):
+        """Candle low breaches SL → outcome=SL."""
+        from app.api.v1.trades import hold_analysis
+        from app.schemas.trade import HoldAnalysisRequest
+
+        trade = _make_trade(
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            side="BUY",
+            status="CLOSED",
+            exit_time=_ts_ist(11, 0),
+        )
+        trade.stop_loss = Decimal("485.00")
+        trade.target_price = Decimal("522.00")
+        candles = [
+            (Decimal("505.00"), Decimal("495.00"), _ts_ist(11, 1)),  # no hit
+            (Decimal("498.00"), Decimal("480.00"), _ts_ist(11, 2)),  # low=480 <= 485 — SL hit
+        ]
+        db = _make_db_with_agg(
+            trade,
+            (Decimal("505.00"), Decimal("480.00")),
+            outcome_candles=candles,
+            scenario="sl_tgt",
+        )
+
+        body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="sl_tgt")
+        response = await hold_analysis(body, db)
+        r = response.results[0]
+        assert r.hold_outcome == "SL"
+        assert r.hold_exit_price == Decimal("485.00")
+
+    @pytest.mark.asyncio
+    async def test_neither_hit(self):
+        """No candle reaches SL or target → outcome=None."""
+        from app.api.v1.trades import hold_analysis
+        from app.schemas.trade import HoldAnalysisRequest
+
+        trade = _make_trade(
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            side="BUY",
+            status="CLOSED",
+            exit_time=_ts_ist(11, 0),
+        )
+        trade.stop_loss = Decimal("485.00")
+        trade.target_price = Decimal("522.00")
+        candles = [
+            (Decimal("510.00"), Decimal("495.00"), _ts_ist(11, 1)),  # no hit
+            (Decimal("515.00"), Decimal("490.00"), _ts_ist(11, 2)),  # no hit
+        ]
+        db = _make_db_with_agg(
+            trade,
+            (Decimal("515.00"), Decimal("490.00")),
+            outcome_candles=candles,
+            eod_fallback=(Decimal("512.00"), _ts_ist(15, 29)),
+            scenario="sl_tgt",
+        )
+
+        body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="sl_tgt")
+        response = await hold_analysis(body, db)
+        r = response.results[0]
+        assert r.hold_outcome is None
+        assert r.hold_exit_price == Decimal("512.00")
+
+    @pytest.mark.asyncio
+    async def test_sl_hit_first_when_both_breached(self):
+        """SL hit on candle 1, target hit on candle 2 → outcome=SL (first wins)."""
+        from app.api.v1.trades import hold_analysis
+        from app.schemas.trade import HoldAnalysisRequest
+
+        trade = _make_trade(
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            side="BUY",
+            status="CLOSED",
+            exit_time=_ts_ist(11, 0),
+        )
+        trade.stop_loss = Decimal("485.00")
+        trade.target_price = Decimal("522.00")
+        candles = [
+            (Decimal("505.00"), Decimal("480.00"), _ts_ist(11, 1)),  # SL hit first (low=480 <= 485)
+            (Decimal("525.00"), Decimal("510.00"), _ts_ist(11, 2)),  # TGT hit later
+        ]
+        db = _make_db_with_agg(
+            trade,
+            (Decimal("525.00"), Decimal("480.00")),
+            outcome_candles=candles,
+            scenario="sl_tgt",
+        )
+
+        body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="sl_tgt")
+        response = await hold_analysis(body, db)
+        r = response.results[0]
+        assert r.hold_outcome == "SL"
+        assert r.hold_exit_price == Decimal("485.00")

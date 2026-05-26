@@ -375,7 +375,7 @@ export const api = {
     }),
 
   // Hold Analysis
-  holdAnalysis: (tradeIds: string[], scenario: "best" | "worst") =>
+  holdAnalysis: (tradeIds: string[], scenario: "best" | "worst" | "eod" | "sl_tgt") =>
     request<import("./types").HoldAnalysisResponse>(`/api/v1/trades/hold-analysis`, {
       method: "POST",
       body: JSON.stringify({ trade_ids: tradeIds, scenario }),

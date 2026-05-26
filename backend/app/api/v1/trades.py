@@ -190,9 +190,7 @@ async def margin_analysis(
 
 def _resolve_md_symbol(trade) -> str | None:
     """Return the market_data_1m symbol key for a trade, or None if unavailable."""
-    if trade.strategy_name == StrategyName.INTRADAY_FUTURES.value:
-        return trade.symbol
-    return trade.fyers_option_symbol
+    return trade.fyers_option_symbol or trade.symbol
 
 
 async def _build_reentry_map(
@@ -222,14 +220,7 @@ async def _build_reentry_map(
             day_start = _IST.localize(datetime.combine(trading_date, dt_time(0, 0)))
             day_end = _IST.localize(datetime.combine(trading_date, dt_time(23, 59, 59)))
 
-            is_option = not any(
-                t.strategy_name == StrategyName.INTRADAY_FUTURES.value
-                for t in group_trades
-            )
-            if is_option:
-                sym_filter = Trade.fyers_option_symbol == md_sym
-            else:
-                sym_filter = Trade.symbol == md_sym
+            sym_filter = Trade.fyers_option_symbol == md_sym
 
             rows = await db.execute(
                 select(Trade.entry_time)
@@ -263,8 +254,8 @@ async def hold_analysis(
 
     Hold cutoff = min(next re-entry on same instrument+side, 15:30 IST same day).
     """
-    if body.scenario not in ("best", "worst"):
-        raise HTTPException(status_code=400, detail="scenario must be 'best' or 'worst'")
+    if body.scenario not in ("best", "worst", "eod", "sl_tgt"):
+        raise HTTPException(status_code=400, detail="scenario must be 'best', 'worst', 'eod', or 'sl_tgt'")
 
     result = await db.execute(
         select(Trade).where(Trade.id.in_(body.trade_ids))
@@ -289,14 +280,14 @@ async def hold_analysis(
         reentry_time = reentry_map.get(str(trade.id))
         cutoff = min(reentry_time, market_close) if reentry_time else market_close
 
-        if cutoff <= trade.exit_time:
+        if cutoff <= trade.entry_time:
             results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))
             continue
 
         agg = await db.execute(
             select(func.max(MarketData1m.high), func.min(MarketData1m.low))
             .where(MarketData1m.symbol == md_symbol)
-            .where(MarketData1m.timestamp > trade.exit_time)
+            .where(MarketData1m.timestamp >= trade.entry_time)
             .where(MarketData1m.timestamp <= cutoff)
         )
         row = agg.one_or_none()
@@ -307,19 +298,79 @@ async def hold_analysis(
             results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))
             continue
 
-        hypo_exit = max_high if body.scenario == "best" else min_low
-        target_col = MarketData1m.high if body.scenario == "best" else MarketData1m.low
+        hypo_exit = None
+        hold_exit_time = None
+        hold_outcome: str | None = None
 
-        time_row = await db.execute(
-            select(MarketData1m.timestamp)
-            .where(MarketData1m.symbol == md_symbol)
-            .where(MarketData1m.timestamp > trade.exit_time)
-            .where(MarketData1m.timestamp <= cutoff)
-            .where(target_col == hypo_exit)
-            .order_by(MarketData1m.timestamp)
-            .limit(1)
-        )
-        hold_exit_time = time_row.scalar_one_or_none()
+        if body.scenario == "sl_tgt":
+            sl = trade.stop_loss
+            tgt = trade.target_price
+            if sl is not None and tgt is not None:
+                candles = await db.execute(
+                    select(MarketData1m.high, MarketData1m.low, MarketData1m.timestamp)
+                    .where(MarketData1m.symbol == md_symbol)
+                    .where(MarketData1m.timestamp >= trade.entry_time)
+                    .where(MarketData1m.timestamp <= cutoff)
+                    .order_by(MarketData1m.timestamp)
+                )
+                for high, low, ts in candles.all():
+                    if trade.side == "BUY":
+                        sl_hit = low <= sl
+                        tgt_hit = high >= tgt
+                    else:
+                        sl_hit = high >= sl
+                        tgt_hit = low <= tgt
+                    if sl_hit:
+                        hypo_exit = sl
+                        hold_exit_time = ts
+                        hold_outcome = "SL"
+                        break
+                    if tgt_hit:
+                        hypo_exit = tgt
+                        hold_exit_time = ts
+                        hold_outcome = "TGT"
+                        break
+            if hypo_exit is None:
+                eod_row = await db.execute(
+                    select(MarketData1m.close, MarketData1m.timestamp)
+                    .where(MarketData1m.symbol == md_symbol)
+                    .where(MarketData1m.timestamp >= trade.entry_time)
+                    .where(MarketData1m.timestamp <= cutoff)
+                    .order_by(MarketData1m.timestamp.desc())
+                    .limit(1)
+                )
+                eod = eod_row.one_or_none()
+                hypo_exit = eod[0] if eod else None
+                hold_exit_time = eod[1] if eod else None
+        elif body.scenario == "eod":
+            eod_row = await db.execute(
+                select(MarketData1m.close, MarketData1m.timestamp)
+                .where(MarketData1m.symbol == md_symbol)
+                .where(MarketData1m.timestamp >= trade.entry_time)
+                .where(MarketData1m.timestamp <= cutoff)
+                .order_by(MarketData1m.timestamp.desc())
+                .limit(1)
+            )
+            eod = eod_row.one_or_none()
+            hypo_exit = eod[0] if eod else None
+            hold_exit_time = eod[1] if eod else None
+        else:
+            hypo_exit = max_high if body.scenario == "best" else min_low
+            target_col = MarketData1m.high if body.scenario == "best" else MarketData1m.low
+            time_row = await db.execute(
+                select(MarketData1m.timestamp)
+                .where(MarketData1m.symbol == md_symbol)
+                .where(MarketData1m.timestamp >= trade.entry_time)
+                .where(MarketData1m.timestamp <= cutoff)
+                .where(target_col == hypo_exit)
+                .order_by(MarketData1m.timestamp)
+                .limit(1)
+            )
+            hold_exit_time = time_row.scalar_one_or_none()
+
+        if hypo_exit is None:
+            results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))
+            continue
 
         entry = Decimal(str(trade.entry_price))
         qty = int(trade.quantity)
@@ -332,12 +383,12 @@ async def hold_analysis(
 
         results.append(PerTradeHoldResult(
             trade_id=trade.id,
-            max_high=max_high,
-            min_low=min_low,
+            hold_exit_price=hypo_exit,
             hold_pnl=hold_pnl,
             hold_net_pnl=hold_net_pnl,
             hold_charges_json=charges.to_dict(),
             hold_exit_time=hold_exit_time,
+            hold_outcome=hold_outcome,
             data_found=True,
         ))
 

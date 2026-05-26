@@ -145,7 +145,7 @@ interface AppState {
   // Hold Analysis panel
   tradesHoldOpen: boolean;
   tradesHold: {
-    scenario: "best" | "worst";
+    scenario: "best" | "worst" | "eod" | "sl_tgt";
   };
   setTradesHoldOpen: (open: boolean) => void;
   setTradesHold: (updates: Partial<AppState["tradesHold"]>) => void;
