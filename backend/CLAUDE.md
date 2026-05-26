@@ -243,7 +243,7 @@ Convention: `{Entity}Create`, `{Entity}Response`, `{Entity}Update`.
 
 Key additions (other schemas are standard CRUD):
 
-- `trade.py`: `MarginAnalysisRequest(trade_ids: list[UUID])`, `MarginAnalysisResponse(peak_margin, peak_time, total_margin, trade_count)`, `HoldAnalysisRequest`, `PerTradeHoldResult`, `HoldAnalysisResponse`, `TradeResponse` includes `margin_required`, `signal_*` snapshot columns
+- `trade.py`: `MarginAnalysisRequest(trade_ids: list[UUID])`, `MarginAnalysisResponse(peak_margin, peak_time, total_margin, trade_count)`, `HoldAnalysisRequest`, `PerTradeHoldResult(data_found, max_high, min_low, hold_pnl, hold_net_pnl, hold_charges_json, hold_exit_time)`, `HoldAnalysisResponse`, `TradeResponse` includes `margin_required`, `signal_*` snapshot columns
 - `signal.py`: `SignalPreviewResponse(risk, notional, margin_required, sizing_meta, warnings, entry_price, stop_loss, target_price, lots)`
 - `risk.py`: `RiskDashboardResponse(notional, risk, margin_utilized, max_daily_profit, is_profit_capped, closed_pnl, total_pnl, drawdown_pct)`
 - `position.py`: `PositionResponse` includes `margin_required`, `signal_confidence`, `signal_generated_at`, `unrealized_pnl`, `current_price`, `is_permanent_watchlist`
@@ -275,7 +275,7 @@ Key additions (other schemas are standard CRUD):
 
 - `GET /trades` supports `source=SHADOW` to see shadow-only trades, `exclude_permanent=true` to hide permanent-watchlist trades, `min_lots`/`max_lots` filters
 - `POST /close-all` registered BEFORE `{trade_id}` paths to avoid path conflict
-- `POST /hold-analysis` — accepts `{trade_ids, scenario ("best"/"worst")}`; for each closed trade queries `market_data_1m` for `MAX(high)` / `MIN(low)` between `exit_time` and 15:30 IST same day. S5 futures queried via `trade.symbol` (short name); options queried via `trade.fyers_option_symbol` (full Fyers symbol, stored via `_fyers_to_internal()` pass-through). Returns `data_found=false` for open trades, missing symbols, or no data in window
+- `POST /hold-analysis` — accepts `{trade_ids, scenario ("best"/"worst")}`; for each closed trade queries `market_data_1m` for `MAX(high)` / `MIN(low)` between `exit_time` and 15:30 IST same day. S5 futures queried via `trade.symbol` (short name); options queried via `trade.fyers_option_symbol` (full Fyers symbol, stored via `_fyers_to_internal()` pass-through). Also computes `hold_pnl` (gross, from entry price to `max_high`/`min_low`), `hold_net_pnl` (after charges via `compute_charges()` from `brokerage_calculator`), `hold_charges_json` (full breakdown), and `hold_exit_time` (timestamp of the candle containing `max_high`/`min_low`). Returns `data_found=false` for open trades, missing symbols, or no data in window
 - `GET /signals/{id}/preview` calls `compute_lots_for_manual` + `recompute_sl_target` + `compute_margin` so confirm modal shows correct risk
 - `GET /intraday-futures/agent-log` returns `{entries, total}` when `limit > 0`; bare list when `limit=0` (internal callers)
 - `POST /watchlist` stores full Fyers-format symbol (e.g. `NSE:RELIANCE26MAYFUT`) — never reconstruct from short name (causes double-prefix bug)

@@ -6,7 +6,14 @@ import { STRATEGY_LABELS, STATUS_COLORS } from "@/lib/constants";
 import { SignalHistoryPanel } from "@/components/signals/SignalHistoryPanel";
 import type { Trade } from "@/lib/types";
 
-export type HoldData = Map<string, { exitPrice: number; pnl: number; pnlPercent: number }>;
+export type HoldData = Map<string, {
+  exitPrice: number;
+  pnl: number;
+  netPnl: number | null;
+  pnlPercent: number;
+  chargesJson: { brokerage: number; stt: number; exchange_txn: number; gst: number; sebi_charges: number; stamp_duty: number; total: number } | null;
+  exitTime: string | null;
+}>;
 
 interface Props {
   trades: Trade[];
@@ -303,18 +310,42 @@ function TradeRow({
         </td>
         {holdData && (() => {
           const h = holdData.get(trade.id);
+          const holdDisplayPnl = h ? (showNetPnL && h.netPnl != null ? h.netPnl : h.pnl) : 0;
           return (
             <>
               <td className="px-3 py-1.5 text-right font-mono">
                 {h ? formatINR(h.exitPrice) : "—"}
               </td>
-              <td className={`px-3 py-1.5 text-right font-mono font-medium whitespace-nowrap ${h ? pnlColor(h.pnl) : ""}`}>
+              <td className={`px-3 py-1.5 text-right font-mono font-medium whitespace-nowrap ${h ? pnlColor(holdDisplayPnl) : ""}`}>
                 {h ? (
-                  <div>
-                    {formatINR(h.pnl)}
-                    <div className="text-[10px]">{formatPercent(h.pnlPercent)}</div>
+                  <div className="flex items-center justify-end gap-0.5">
+                    <div>
+                      {formatINR(holdDisplayPnl)}
+                      <div className="text-[10px]">{formatPercent(h.pnlPercent)}</div>
+                    </div>
+                    {showNetPnL && h.chargesJson && (
+                      <div className="relative group inline-block ml-1 cursor-help text-text-muted/40 text-[9px]">
+                        i
+                        <div className="absolute top-full right-0 z-50 hidden group-hover:block
+                                        bg-bg-elevated border border-border rounded p-2 text-[9px]
+                                        font-mono w-44 shadow-lg whitespace-nowrap text-text-secondary font-normal text-left mt-1">
+                          <div>Brokerage: {formatINR(h.chargesJson.brokerage)}</div>
+                          <div>STT: {formatINR(h.chargesJson.stt)}</div>
+                          <div>Exchange: {formatINR(h.chargesJson.exchange_txn)}</div>
+                          <div>GST: {formatINR(h.chargesJson.gst)}</div>
+                          <div>SEBI: {formatINR(h.chargesJson.sebi_charges)}</div>
+                          <div>Stamp: {formatINR(h.chargesJson.stamp_duty)}</div>
+                          <div className="border-t border-border/40 mt-1 pt-1 text-text-primary">
+                            Total: {formatINR(h.chargesJson.total)}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : "—"}
+              </td>
+              <td className="px-3 py-1.5 text-right font-mono text-text-muted whitespace-nowrap">
+                {h?.exitTime ? formatTime(h.exitTime) : "—"}
               </td>
             </>
           );
@@ -403,7 +434,7 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
   let colCount = 13;
   if (showSignalData) colCount += 2;
   if (showSource) colCount += 1;
-  if (holdData && holdData.size > 0) colCount += 2;
+  if (holdData && holdData.size > 0) colCount += 3;
 
   return (
     <div className="overflow-x-auto">
@@ -425,7 +456,13 @@ export function TradesTable({ trades, loading, showSource = false, showSignalDat
               )}
             </th>
             {holdData && holdData.size > 0 && <th className="text-right px-3 py-1.5 text-accent/70">Hold Exit</th>}
-            {holdData && holdData.size > 0 && <th className="text-right px-3 py-1.5 text-accent/70">Hold P&amp;L</th>}
+            {holdData && holdData.size > 0 && (
+              <th className="text-right px-3 py-1.5 text-accent/70">
+                Hold P&amp;L
+                {showNetPnL && <span className="normal-case font-normal text-accent/60 ml-1">net</span>}
+              </th>
+            )}
+            {holdData && holdData.size > 0 && <th className="text-right px-3 py-1.5 text-accent/70">Hold Exit Time</th>}
             <th className="text-left px-3 py-1.5">Strategy</th>
             {showSignalData && <th className="text-right px-3 py-1.5">Conf</th>}
             {showSignalData && <th className="text-left px-3 py-1.5">AI</th>}

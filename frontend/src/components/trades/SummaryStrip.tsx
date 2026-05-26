@@ -46,6 +46,7 @@ export function SummaryStrip({ trades, dailyPnL, showNetPnL = false, peakMargin,
           <span className="text-[10px] font-mono font-semibold uppercase tracking-widest text-accent">{label}</span>
         )}
         <span className="text-[10px] text-text-muted font-mono uppercase tracking-wider">P&amp;L</span>
+        {showNetPnL && <span className="text-[8px] font-mono text-accent/60">net</span>}
         <span className={`text-sm font-bold font-mono ${pnlColor(totalPnl)}`}>
           {formatINR(totalPnl)}
         </span>

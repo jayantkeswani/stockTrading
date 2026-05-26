@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.core.enums import StrategyName, TradeSource, TradeStatus
 from app.models.market_data import MarketData1m
 from app.models.trade import Trade
+from app.services.brokerage_calculator import compute_charges
 from app.schemas.trade import (
     HoldAnalysisRequest,
     HoldAnalysisResponse,
@@ -233,11 +234,42 @@ async def hold_analysis(
         max_high = row[0] if row else None
         min_low = row[1] if row else None
 
+        if max_high is None or min_low is None:
+            results.append(PerTradeHoldResult(trade_id=trade.id, data_found=False))
+            continue
+
+        hypo_exit = max_high if body.scenario == "best" else min_low
+        target_col = MarketData1m.high if body.scenario == "best" else MarketData1m.low
+
+        time_row = await db.execute(
+            select(MarketData1m.timestamp)
+            .where(MarketData1m.symbol == md_symbol)
+            .where(MarketData1m.timestamp > trade.exit_time)
+            .where(MarketData1m.timestamp <= cutoff)
+            .where(target_col == hypo_exit)
+            .order_by(MarketData1m.timestamp)
+            .limit(1)
+        )
+        hold_exit_time = time_row.scalar_one_or_none()
+
+        entry = Decimal(str(trade.entry_price))
+        qty = int(trade.quantity)
+        diff = (entry - hypo_exit) if trade.side == "SELL" else (hypo_exit - entry)
+        hold_pnl = diff * qty
+
+        instrument_type = "OPTION" if trade.option_type else "FUTURE"
+        charges = compute_charges(instrument_type, entry, hypo_exit, qty, trade.side)
+        hold_net_pnl = hold_pnl - charges.total
+
         results.append(PerTradeHoldResult(
             trade_id=trade.id,
             max_high=max_high,
             min_low=min_low,
-            data_found=max_high is not None and min_low is not None,
+            hold_pnl=hold_pnl,
+            hold_net_pnl=hold_net_pnl,
+            hold_charges_json=charges.to_dict(),
+            hold_exit_time=hold_exit_time,
+            data_found=True,
         ))
 
     return HoldAnalysisResponse(results=results)

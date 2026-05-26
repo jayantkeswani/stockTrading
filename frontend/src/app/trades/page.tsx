@@ -25,7 +25,14 @@ function toggleItem(arr: string[], item: string): string[] {
   return arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item];
 }
 
-type HoldResultMap = Map<string, { max_high: number | null; min_low: number | null }>;
+type HoldResultMap = Map<string, {
+  max_high: number | null;
+  min_low: number | null;
+  hold_pnl: number | null;
+  hold_net_pnl: number | null;
+  hold_charges_json: { brokerage: number; stt: number; exchange_txn: number; gst: number; sebi_charges: number; stamp_duty: number; total: number } | null;
+  hold_exit_time: string | null;
+}>;
 
 function applySimLots(trade: Trade, simLots: number | null): Trade {
   if (simLots == null || trade.pnl == null || trade.lots == null || trade.lots === 0) return trade;
@@ -61,33 +68,6 @@ function effectivePnl(trade: Trade, showNet: boolean): number | null {
   return Number(trade.pnl);
 }
 
-function applyHoldAnalysis(
-  trade: Trade,
-  holdMap: HoldResultMap,
-  scenario: "best" | "worst"
-): Trade {
-  if (trade.status !== "CLOSED" || trade.exit_price == null) return trade;
-  const result = holdMap.get(trade.id);
-  if (!result) return trade;
-
-  const hypoExit = scenario === "best" ? result.max_high : result.min_low;
-  if (hypoExit == null) return trade;
-
-  const entry = Number(trade.entry_price);
-  const qty = Number(trade.quantity);
-  if (entry === 0 || qty === 0) return trade;
-
-  const diff = trade.side === "SELL" ? (entry - hypoExit) : (hypoExit - entry);
-  const hypoPnl = diff * qty;
-  const hypoPnlPct = (diff / entry) * 100;
-
-  return {
-    ...trade,
-    pnl: hypoPnl,
-    pnl_percent: hypoPnlPct,
-    net_pnl: null,
-  };
-}
 
 function computeMarginTimeline(trades: Trade[]): { peak_margin: number; peak_time: string | null; total_margin: number; trade_count: number } | null {
   const withMargin = trades.filter((t) => t.margin_required != null && Number(t.margin_required) > 0);
@@ -226,7 +206,14 @@ export default function TradesPage() {
         if (cancelled) return;
         const m: HoldResultMap = new Map();
         for (const r of res.results) {
-          m.set(r.trade_id, { max_high: r.max_high, min_low: r.min_low });
+          m.set(r.trade_id, {
+            max_high: r.max_high,
+            min_low: r.min_low,
+            hold_pnl: r.hold_pnl,
+            hold_net_pnl: r.hold_net_pnl,
+            hold_charges_json: r.hold_charges_json,
+            hold_exit_time: r.hold_exit_time,
+          });
         }
         setHoldMap(m);
       })
@@ -258,21 +245,22 @@ export default function TradesPage() {
     for (const t of simTrades) {
       if (t.status !== "CLOSED" || t.exit_price == null) continue;
       const result = holdMap.get(t.id);
-      if (!result) continue;
+      if (!result || result.hold_pnl == null) continue;
       const hypoExit = hold.scenario === "best" ? result.max_high : result.min_low;
       if (hypoExit == null) continue;
       const entry = Number(t.entry_price);
-      const qty = Number(t.quantity);
-      if (entry === 0 || qty === 0) continue;
-      const diff = t.side === "SELL" ? (entry - hypoExit) : (hypoExit - entry);
-      map.set(t.id, { exitPrice: hypoExit, pnl: diff * qty, pnlPercent: (diff / entry) * 100 });
+      if (entry === 0) continue;
+      const pnl = Number(result.hold_pnl);
+      map.set(t.id, {
+        exitPrice: hypoExit,
+        pnl,
+        netPnl: result.hold_net_pnl != null ? Number(result.hold_net_pnl) : null,
+        pnlPercent: (pnl / (entry * Number(t.quantity))) * 100,
+        chargesJson: result.hold_charges_json,
+        exitTime: result.hold_exit_time,
+      });
     }
     return map;
-  }, [simTrades, holdOpen, holdMap, hold.scenario]);
-
-  const holdTrades = useMemo(() => {
-    if (!holdOpen || holdMap.size === 0) return simTrades;
-    return simTrades.map((t) => applyHoldAnalysis(t, holdMap, hold.scenario));
   }, [simTrades, holdOpen, holdMap, hold.scenario]);
 
   const dailyPnL = useMemo(() => {
@@ -299,12 +287,6 @@ export default function TradesPage() {
     if (val != null) map.set(selectedDay, val);
     return map;
   }, [dailyPnL, selectedDay]);
-
-  const displayedHoldTrades = useMemo(() => {
-    if (!selectedDay) return holdTrades;
-    return holdTrades.filter((t) => isoDateIST(new Date(t.entry_time)) === selectedDay);
-  }, [holdTrades, selectedDay]);
-
 
   const marginResult = useMemo(() => {
     if (!tradesMarginOpen || displayedTrades.length === 0) return null;
@@ -590,10 +572,18 @@ export default function TradesPage() {
 
       {/* Hold Analysis panel */}
       {holdOpen && (() => {
-        const holdClosed = displayedHoldTrades.filter((t) => t.status === "CLOSED" && t.pnl != null);
-        const holdTotalPnl = holdClosed.reduce((s, t) => s + Number(t.pnl), 0);
-        const holdWinners = holdClosed.filter((t) => Number(t.pnl) > 0).length;
-        const holdWinRate = holdClosed.length > 0 ? (holdWinners / holdClosed.length) * 100 : 0;
+        const holdEntries = displayedTrades
+          .filter((t) => t.status === "CLOSED" && holdDataMap.has(t.id))
+          .map((t) => holdDataMap.get(t.id)!);
+        const holdTotalPnl = holdEntries.reduce((s, h) => {
+          const v = showNetPnL && h.netPnl != null ? h.netPnl : h.pnl;
+          return s + v;
+        }, 0);
+        const holdWinners = holdEntries.filter((h) => {
+          const v = showNetPnL && h.netPnl != null ? h.netPnl : h.pnl;
+          return v > 0;
+        }).length;
+        const holdWinRate = holdEntries.length > 0 ? (holdWinners / holdEntries.length) * 100 : 0;
         return (
         <div className="rounded border border-accent/20 bg-bg-secondary px-3 py-2">
           <div className="flex items-center gap-3">
@@ -619,11 +609,12 @@ export default function TradesPage() {
                 onClick={() => setTradesHold({ scenario: "worst" })}
               />
             </div>
-            {!holdLoading && holdMap.size > 0 && holdClosed.length > 0 && (
+            {!holdLoading && holdMap.size > 0 && holdEntries.length > 0 && (
               <>
                 <div className="w-px h-4 bg-border" />
                 <span className={`text-xs font-mono font-bold ${pnlColor(holdTotalPnl)}`}>{formatINR(holdTotalPnl)}</span>
-                <span className="text-[9px] font-mono text-text-muted">{holdWinners}W / {holdClosed.length - holdWinners}L · {holdWinRate.toFixed(0)}%</span>
+                {showNetPnL && <span className="text-[8px] font-mono text-accent/60">net</span>}
+                <span className="text-[9px] font-mono text-text-muted">{holdWinners}W / {holdEntries.length - holdWinners}L · {holdWinRate.toFixed(0)}%</span>
               </>
             )}
             <div className="ml-auto flex items-center gap-2">
@@ -647,8 +638,8 @@ export default function TradesPage() {
               <p className="text-[9px] font-mono text-text-muted/40">
                 P&L recomputed using{" "}
                 {hold.scenario === "best" ? "max HIGH" : "min LOW"} from 1m candles
-                between actual exit and 15:30 IST same day. Charges unchanged; net P&L
-                falls back to gross.
+                between actual exit and 15:30 IST same day. Charges recomputed for
+                hypothetical exit price.
               </p>
             </div>
           )}

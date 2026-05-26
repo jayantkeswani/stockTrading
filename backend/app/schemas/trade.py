@@ -65,6 +65,10 @@ class PerTradeHoldResult(BaseModel):
     trade_id: uuid.UUID
     max_high: Decimal | None = None
     min_low: Decimal | None = None
+    hold_pnl: Decimal | None = None
+    hold_net_pnl: Decimal | None = None
+    hold_charges_json: dict | None = None
+    hold_exit_time: datetime | None = None
     data_found: bool = False
 
 

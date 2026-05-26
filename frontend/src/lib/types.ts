@@ -415,6 +415,18 @@ export interface PerTradeHoldResult {
   trade_id: string;
   max_high: number | null;
   min_low: number | null;
+  hold_pnl: number | null;
+  hold_net_pnl: number | null;
+  hold_charges_json: {
+    brokerage: number;
+    stt: number;
+    exchange_txn: number;
+    gst: number;
+    sebi_charges: number;
+    stamp_duty: number;
+    total: number;
+  } | null;
+  hold_exit_time: string | null;
   data_found: boolean;
 }
 

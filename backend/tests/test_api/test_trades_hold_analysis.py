@@ -35,6 +35,10 @@ def _make_trade(
     status: str = "CLOSED",
     exit_time: datetime | None = None,
     entry_time: datetime | None = None,
+    entry_price: Decimal = Decimal("500.00"),
+    quantity: int = 800,
+    side: str = "BUY",
+    option_type: str | None = None,
 ) -> MagicMock:
     """Create a mock Trade object with fields used by hold_analysis."""
     t = MagicMock()
@@ -45,6 +49,10 @@ def _make_trade(
     t.status = status
     t.entry_time = entry_time or _ts_ist(9, 30)
     t.exit_time = exit_time
+    t.entry_price = entry_price
+    t.quantity = quantity
+    t.side = side
+    t.option_type = option_type
     return t
 
 
@@ -80,8 +88,11 @@ def _make_db_for_trades(trades: list) -> AsyncMock:
 _current_trade: list = [None]
 
 
-def _make_db_with_agg(trade: MagicMock, agg_row: tuple) -> AsyncMock:
-    """Convenience wrapper: single trade with one aggregation result."""
+def _make_db_with_agg(trade: MagicMock, agg_row: tuple, exit_time_val: datetime | None = None) -> AsyncMock:
+    """Convenience wrapper: single trade with one aggregation result.
+
+    Handles 3 execute calls: trades fetch, agg query, timestamp query.
+    """
     trade._agg_row = agg_row
     _current_trade[0] = trade
 
@@ -93,9 +104,11 @@ def _make_db_with_agg(trade: MagicMock, agg_row: tuple) -> AsyncMock:
         mock_result = MagicMock()
         if call_count == 1:
             mock_result.scalars.return_value.all.return_value = [trade]
-        else:
+        elif call_count == 2:
             _current_trade[0] = trade
             mock_result.one_or_none.return_value = agg_row
+        else:
+            mock_result.scalar_one_or_none.return_value = exit_time_val or _ts_ist(14, 30)
         return mock_result
 
     mock_db = AsyncMock()
@@ -126,8 +139,10 @@ class TestHoldAnalysisS5BestCase:
             symbol="VEDL",
             status="CLOSED",
             exit_time=_ts_ist(11, 0),
+            entry_price=Decimal("500.00"),
+            quantity=800,
+            side="BUY",
         )
-        # Seed: best HIGH after exit is 520.5
         db = _make_db_with_agg(trade, (Decimal("520.50"), Decimal("490.00")))
 
         body = HoldAnalysisRequest(trade_ids=[trade.id], scenario="best")
@@ -138,6 +153,11 @@ class TestHoldAnalysisS5BestCase:
         assert r.trade_id == trade.id
         assert r.data_found is True
         assert r.max_high == Decimal("520.50")
+        assert r.hold_pnl == Decimal("20.50") * 800
+        assert r.hold_net_pnl is not None
+        assert r.hold_net_pnl < r.hold_pnl
+        assert r.hold_charges_json is not None
+        assert r.hold_exit_time is not None
 
 
 class TestHoldAnalysisS5WorstCase:
@@ -153,6 +173,9 @@ class TestHoldAnalysisS5WorstCase:
             symbol="SAIL",
             status="CLOSED",
             exit_time=_ts_ist(10, 30),
+            entry_price=Decimal("200.00"),
+            quantity=800,
+            side="BUY",
         )
         db = _make_db_with_agg(trade, (Decimal("210.00"), Decimal("195.75")))
 
@@ -163,6 +186,9 @@ class TestHoldAnalysisS5WorstCase:
         r = response.results[0]
         assert r.data_found is True
         assert r.min_low == Decimal("195.75")
+        assert r.hold_pnl == Decimal("-4.25") * 800
+        assert r.hold_net_pnl is not None
+        assert r.hold_charges_json is not None
 
 
 class TestHoldAnalysisS2OptionSymbolUsed:
@@ -180,6 +206,10 @@ class TestHoldAnalysisS2OptionSymbolUsed:
             fyers_option_symbol=fyers_sym,
             status="CLOSED",
             exit_time=_ts_ist(12, 15),
+            entry_price=Decimal("300.00"),
+            quantity=375,
+            side="BUY",
+            option_type="CE",
         )
         db = _make_db_with_agg(trade, (Decimal("330.00"), Decimal("280.00")))
 
@@ -189,14 +219,11 @@ class TestHoldAnalysisS2OptionSymbolUsed:
         r = response.results[0]
         assert r.data_found is True
         assert r.max_high == Decimal("330.00")
+        assert r.hold_pnl == Decimal("30.00") * 375
+        assert r.hold_charges_json is not None
 
-        # Verify the aggregation query was issued (2 execute calls: trades fetch + agg)
-        assert db.execute.call_count == 2
-        # The compiled statement uses bind params, so we verify the query was called
-        # for this S2 trade (if symbol were wrong, data_found would be driven by a
-        # different key). The key correctness test is that the function chose
-        # fyers_option_symbol (not trade.symbol) — which we confirm by checking the
-        # response is correct (db was seeded for the fyers symbol key).
+        # 3 execute calls: trades fetch + agg + timestamp
+        assert db.execute.call_count == 3
 
 
 class TestHoldAnalysisOpenTradeSkipped:
