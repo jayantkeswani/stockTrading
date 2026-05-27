@@ -447,6 +447,11 @@ class IntradayFuturesStrategy(BaseStrategy):
 
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "ORB", rvol, breakout_vol, is_long=is_long, indicators=indicators)
+
+        if confidence < self._min_confidence_to_persist():
+            self._pending_logs.append(("GATE", f"{ctx.symbol} ORB: confidence {confidence:.1f} < persist threshold"))
+            return None
+
         self._build_indicator_snapshot(ctx, params, indicators)
 
         return StrategySignal(
@@ -547,6 +552,11 @@ class IntradayFuturesStrategy(BaseStrategy):
 
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "VWAP_BOUNCE", rvol, breakout_vol, is_long=is_long, indicators=indicators)
+
+        if confidence < self._min_confidence_to_persist():
+            self._pending_logs.append(("GATE", f"{ctx.symbol} VWAP_BOUNCE: confidence {confidence:.1f} < persist threshold"))
+            return None
+
         self._build_indicator_snapshot(ctx, params, indicators)
 
         return StrategySignal(
@@ -667,6 +677,11 @@ class IntradayFuturesStrategy(BaseStrategy):
 
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "PDH_PDL", rvol, breakout_vol, is_long=is_long, indicators=indicators)
+
+        if confidence < self._min_confidence_to_persist():
+            self._pending_logs.append(("GATE", f"{ctx.symbol} PDH_PDL: confidence {confidence:.1f} < persist threshold"))
+            return None
+
         self._build_indicator_snapshot(ctx, params, indicators)
 
         return StrategySignal(
@@ -767,6 +782,11 @@ class IntradayFuturesStrategy(BaseStrategy):
 
         breakout_vol = ctx.candles_5m[-1].volume if ctx.candles_5m else None
         confidence = self._compute_confidence(ctx, phase, params, "GAP_CONTINUATION", rvol, breakout_vol, is_long=is_long, indicators=indicators)
+
+        if confidence < self._min_confidence_to_persist():
+            self._pending_logs.append(("GATE", f"{ctx.symbol} GAP_CONTINUATION: confidence {confidence:.1f} < persist threshold"))
+            return None
+
         self._build_indicator_snapshot(ctx, params, indicators)
 
         return StrategySignal(
@@ -783,6 +803,13 @@ class IntradayFuturesStrategy(BaseStrategy):
             reason=f"Gap {gap['direction']} continuation ({gap['gap_pct']:.1f}%) from {gap['gap_level']:.2f}",
             indicators=indicators,
         )
+
+    @staticmethod
+    def _min_confidence_to_persist() -> float:
+        """Global persist threshold from trading_config."""
+        from app.services.trading_config import get_trading_config_sync
+        cfg = get_trading_config_sync()
+        return cfg.min_confidence_to_persist if cfg else 30.0
 
     def _get_current_rvol(self, ctx: MarketContext) -> float | None:
         """Compute current RVOL from cached baseline profile."""

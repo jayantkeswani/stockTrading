@@ -261,8 +261,17 @@ class StrategyRunner:
 
             ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
 
-            # Confidence gating — global execution threshold
             cfg = await get_trading_config()
+
+            # Post-AI persist gate — discard if AI overlay dropped confidence below persist threshold
+            if signal.confidence < cfg.min_confidence_to_persist:
+                logger.info(
+                    "Signal discarded post-AI: %s %s confidence %.1f < persist %.1f",
+                    signal.symbol, signal.signal_type, signal.confidence, cfg.min_confidence_to_persist,
+                )
+                return signal
+
+            # Confidence gating — global execution threshold
             min_conf = cfg.min_confidence_for_execution
             if executable and signal.confidence < min_conf:
                 executable = False
@@ -1494,8 +1503,17 @@ class StrategyRunner:
                     # LLM confidence overlay — after resolve, ctx still in scope
                     ai_fields = await self._run_ai_confidence_overlay(signal, ctx)
 
-                    # Confidence gating — global execution threshold
                     cfg = await get_trading_config()
+
+                    # Post-AI persist gate — discard if AI overlay dropped confidence below persist threshold
+                    if signal.confidence < cfg.min_confidence_to_persist:
+                        logger.info(
+                            "Signal discarded post-AI: %s %s confidence %.1f < persist %.1f",
+                            signal.symbol, signal.signal_type, signal.confidence, cfg.min_confidence_to_persist,
+                        )
+                        continue
+
+                    # Confidence gating — global execution threshold
                     min_conf = cfg.min_confidence_for_execution
                     if strat_executable and signal.confidence < min_conf:
                         strat_executable = False

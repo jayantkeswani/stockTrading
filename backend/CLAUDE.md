@@ -37,7 +37,7 @@ Three independent consumers of every signal, fully isolated:
 2. **YOLO executor** (`auto_executor.py`) — creates YOLO trade/position based on global `min_confidence_for_execution` and per-strategy `yolo_enabled` flag. Enforces drawdown, max-trades, and daily profit cap gates; lot sizing via `compute_lots_for_yolo`.
 3. **Manual execution** (`signals.py`) — signal stays PENDING, user clicks EXEC. Lot sizing via `compute_lots_for_manual`; no blocking gates, warnings shown instead.
 
-All three confidence thresholds (`min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`) are global in `trading_config`. Cross-field validation enforces `persist < shadow <= execution`.
+All three confidence thresholds (`min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`) are global in `trading_config`. Cross-field validation enforces `persist < shadow <= execution`. `min_confidence_to_persist` is enforced twice: (1) pre-AI inside each strategy's `evaluate()` (S2, S5), and (2) post-AI in `strategy_runner` after `_run_ai_confidence_overlay` adjusts confidence — signals that drop below the threshold after AI adjustment are discarded.
 
 **WS subscription**: happens at resolve time (`_resolve_option` / `_resolve_futures` in strategy_runner), not at trade creation. This ensures ticks are flowing before shadow/YOLO open the position.
 
@@ -415,9 +415,10 @@ Key private methods (documented because they're central to flow):
 - `_enrich_signal_snapshot(signal, ...)` — injects `nifty_spot`, `nifty_day_change_pct`, `trigger_candle`, `minutes_since_open` into every signal's indicators JSONB
 - `_enrich_strategy5_params(symbol, params, india_vix=None)` — loads RVOL profiles, cross-position counts, Nifty bias, ORB levels, briefing, global cues shift, per-stock gap/trend data, FUT OI direction into strategy params; throttled to once per 5 min per symbol for global cues check; only caches result in `_s5_session_cache` when `watchlist_loaded` is True (prevents empty defaults from being locked in before the 8:30 AM morning screener runs). OI query filters out zero-OI rows (`open_interest > 0`)
 - `_dedup_signal(existing, new, ai_fields)` — Case-1 (noise: skip), Case-2 (meaningful: archive to `signal_history` → update all fields including `ai_*` → re-fire shadow), Case-3 (acted on: return None → create new signal)
-- `_persist_signal(signal)` — writes signal to DB; copies `_is_permanent_watchlist` from indicators to `Signal.is_permanent_watchlist`; gates on `min_confidence_to_persist`
+- `_persist_signal(signal)` — writes signal to DB; copies `_is_permanent_watchlist` from indicators to `Signal.is_permanent_watchlist`
 - `_check_regulatory_limits(symbol)` — F&O ban list check (reads `nse:fo_ban_list:{today}`)
 - `_is_dedup_skip(existing, new)` — AI gate pre-check; if identical signal exists, skips Gemini call + DB write
+- **Post-AI persist gate** — after `_run_ai_confidence_overlay` adjusts `signal.confidence`, if confidence < `min_confidence_to_persist` the signal is discarded (not persisted, not broadcast). Applies in both single-eval and batch-eval paths. This complements the pre-AI persist gate inside each strategy's `evaluate()`.
 - `_init_index_futures()` — on first candle close, resolves + subscribes near-month futures for each index (NIFTY_FUT, etc.)
 - `_calculate_vwap_from_buffer(symbol)` — always uses futures candle volumes for index symbols (Fyers index volume is unreliable)
 - `_is_permanent_watchlist` extraction: extracted from watchlist `manual` field into per-symbol `_s5_session_cache`, then injected into `signal.indicators` after `strategy.evaluate()` returns
@@ -495,6 +496,8 @@ Sets `instrument_type=FUTURE`, `holding_type=INTRADAY`, `max_lots=2`. Full spec:
 `**_build_indicator_snapshot(self, ctx, params, indicators) -> None`** — enriches the signal's `indicators` JSONB with cross-cutting context: VWAP, PDH/PDL/PDC, CPR, VIX, intraday bias, global score, FUT OI direction, stock trend, gap direction/pct, ORB levels, ADR. Uses `setdefault` so sub-setup-specific values take precedence. Called by all 4 sub-setups after `_compute_confidence`. Used by: strategy_runner (via AI confidence overlay)
 
 `**_compute_confidence(ctx, params, indicators=None) -> float`** — 9-factor composite (RVOL 0.15, setup quality 0.14, Nifty bias 0.12, phase 0.12, volume 0.10, gap alignment 0.10, stock trend 0.10, OI direction 0.10, screener rank 0.07); injects `confidence_factors` dict (9 keys) into signal indicators JSONB.
+
+`**_min_confidence_to_persist() -> float`** — static method; reads `min_confidence_to_persist` from `get_trading_config_sync()` (defaults to 30.0). All 4 sub-setups gate on this after `_compute_confidence` — returns None if confidence is below threshold (same pattern as Strategy 2). Used by: _check_orb_breakout, _check_vwap_bounce, _check_pdh_pdl_breakout, _check_gap_continuation
 
 `**_compute_lots(signal, ctx, params) -> int**` — 6-condition sizing (RVOL, Nifty bias, screener score, briefing, enhanced ORB, trend STRONG/MODERATE, VIX cap); called by `lot_sizing.compute_lots_for_yolo`/`compute_lots_for_manual` at execution time only (not during evaluate).
 

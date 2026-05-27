@@ -186,6 +186,7 @@ class TestEvaluateManual:
         from app.services.strategy_runner import strategy_runner
 
         _cfg = MagicMock()
+        _cfg.min_confidence_to_persist = 10.0
         _cfg.min_confidence_for_execution = 60.0
         mock_trading_cfg.return_value = _cfg
         mock_price.return_value = 24000.0

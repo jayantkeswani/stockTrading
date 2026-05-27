@@ -10,11 +10,28 @@ from app.core.enums import InstrumentType, SignalType, StrategyName
 from app.indicators.candle_patterns import Candle
 from app.indicators.previous_day import PreviousDayLevels
 from app.indicators.vwap import VWAPResult
+from app.services.trading_config import TradingConfigDTO
 from app.strategies.base import StrategySignal
 from app.strategies.strategy_5_intraday_futures import (
     IntradayFuturesStrategy,
     get_current_phase,
 )
+
+_LOW_PERSIST_CFG = TradingConfigDTO(
+    capital=1_000_000, max_daily_drawdown_pct=5.0, max_daily_profit=0.0, max_risk_per_trade_pct=2.0,
+    max_trades_per_day=3, paper_trading=True, autonomy_level="SEMI",
+    min_confidence_to_persist=10.0, min_confidence_for_shadow=70.0, min_confidence_for_execution=70.0,
+    shadow_skip_permanent_watchlist=True, yolo_skip_permanent_watchlist=True,
+)
+
+
+@pytest.fixture(autouse=True)
+def _mock_trading_config_sync():
+    with patch(
+        "app.services.trading_config.get_trading_config_sync",
+        return_value=_LOW_PERSIST_CFG,
+    ):
+        yield
 
 
 def _make_ctx(
