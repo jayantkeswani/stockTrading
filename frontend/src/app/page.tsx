@@ -18,7 +18,6 @@ import type { AgentLog, Position, Signal, RiskDashboard } from "@/lib/types";
 export default function DashboardPage() {
   const [chartOpen, setChartOpen] = useState(false);
   const [chartSymbol, setChartSymbol] = useState<string | undefined>(undefined);
-  const { setSelectedSymbol, setSignals, setPositions, setRisk, setAgentLogs } = useStore();
   const scannerShowExecuted = useStore((s) => s.scannerShowExecuted);
 
   // Load signals, open positions, risk dashboard, and agent logs on mount
@@ -45,10 +44,11 @@ export default function DashboardPage() {
         const allSignals = extraSignals.length > 0
           ? [...pendingSignals, ...extraSignals[0]]
           : pendingSignals;
-        setSignals(allSignals);
-        setPositions(positions);
-        setRisk(risk);
-        setAgentLogs(agentLogs);
+        const s = useStore.getState();
+        s.setSignals(allSignals);
+        s.setPositions(positions);
+        s.setRisk(risk);
+        s.setAgentLogs(agentLogs);
       } catch {
         // API may not be running yet
       }
@@ -59,23 +59,23 @@ export default function DashboardPage() {
     const interval = setInterval(async () => {
       try {
         const riskData = (await api.getRiskDashboard()) as RiskDashboard;
-        setRisk(riskData);
+        useStore.getState().setRisk(riskData);
       } catch {
         // ignore
       }
     }, 30_000);
     return () => clearInterval(interval);
-  }, [setSignals, setPositions, setRisk, setAgentLogs, scannerShowExecuted]);
+  }, [scannerShowExecuted]);
 
   const handleOpenChart = useCallback(
     (symbol?: string) => {
       if (symbol) {
-        setSelectedSymbol(symbol);
+        useStore.getState().setSelectedSymbol(symbol);
         setChartSymbol(symbol);
       }
       setChartOpen(true);
     },
-    [setSelectedSymbol]
+    []
   );
 
   const handleCloseChart = useCallback(() => {

@@ -29,25 +29,25 @@ All pages use `'use client'` directive.
 
 **layout/**
 - `AppShell.tsx` — Main wrapper: sidebar (48px, fixed) + header (36px, fixed) + content area. `<main>` is `fixed top-9 left-12 right-0 bottom-0` with `overflow-y-auto` — makes it the scroll container so `sticky` elements work. Applies `noise-bg` texture.
-- `Header.tsx` — Thin status bar (36px): IST clock, market status, VIX, Tasks/Fyers/Agent/WS indicators, "STARTING…" pulse when `data_feed_ready=false` (polls health every 3s until ready). Polls `getAllPrices()` + market status every 10s.
+- `Header.tsx` — Thin status bar (36px): IST clock, market status, VIX, Tasks/Fyers/Agent/WS indicators, "STARTING…" pulse when `data_feed_ready=false` (polls health every 3s until ready). Polls `getAllPrices()` + market status every 10s. Uses `useShallow` selector (no price-tick re-renders). `BiasIndicator` sub-component uses scoped `(s) => s.intradayBias` selector.
 - `TasksPopup.tsx` — Background tasks popup (click-to-open). Shows all registered tasks with status dots, type badges, schedule/description, timestamps, errors. Polls every 5s while open.
 - `AgentPopup.tsx` — Agent control popup: start/stop, SEMI/YOLO toggle, positions monitored, pending confirmations, uptime, profit cap status. Reads Zustand store, writes via API. Click-outside to close.
 - `Sidebar.tsx` — Narrow icon rail (48px): Dashboard → Futures (trending-up) → Options (bar chart) → Research → Trades → Signals (zap) → Agent → Settings.
 
 **charts/**
-- `PriceChart.tsx` — TradingView candlestick chart (1m/5m/15m/1h/1D). Active timeframe stored in Zustand. Refresh button re-fetches without recreating chart. Live updates via `prices[selectedSymbol]` store. IST display via `localization.timeFormatter` adding `IST_OFFSET` (19800s) for axis labels only — backend timestamps fed as UTC unix seconds, do NOT shift them. `fitContent()` always called after data load; `rightOffset: 5` reserves space. OHLC legend via `subscribeCrosshairMove`. Three-effect architecture: create/destroy chart, load data, live ticks.
+- `PriceChart.tsx` — TradingView candlestick chart (1m/5m/15m/1h/1D). Active timeframe stored in Zustand. Refresh button re-fetches without recreating chart. Live updates via scoped `(s) => s.prices[s.selectedSymbol]` selector (re-renders only on selected symbol's price change, not all ticks). IST display via `localization.timeFormatter` adding `IST_OFFSET` (19800s) for axis labels only — backend timestamps fed as UTC unix seconds, do NOT shift them. `fitContent()` always called after data load; `rightOffset: 5` reserves space. OHLC legend via `subscribeCrosshairMove`. Three-effect architecture: create/destroy chart, load data, live ticks.
 - `ChartModal.tsx` — Modal (90vw × 85vh) for detailed chart view. Symbol tabs: 5 default indices + custom watchlist items (fetched on open). Pop-out opens `/chart?symbol=…` in a new tab.
 
 **dashboard/**
-- `PnLCard.tsx` — Single-line strip: Day P&L with inline U/R breakdown, drawdown bar, trades count, NOTIONAL/RISK/MARGIN metrics. Filters by `positionsMinConfidence` from store. Shadow mode: computes from `shadowPositions` + `shadowClosedToday`.
+- `PnLCard.tsx` — Single-line strip: Day P&L with inline U/R breakdown, drawdown bar, trades count, NOTIONAL/RISK/MARGIN metrics. Filters by `positionsMinConfidence` from store. Shadow mode: computes from `shadowPositions` + `shadowClosedToday`. Prices via `(s) => s.prices` selector; non-price fields via `useShallow`.
 - `Watchlist.tsx` — Uniform symbol list (indices + custom items). Search via `<SymbolSearchInput>`. Custom items stored via `/api/v1/watchlist`. Max-height 300px with scroll.
-- `ScannerHeader.tsx` — Ultra-compact strategy pill bar. Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end to ScanFeed.
-- `ScannerPanel.tsx` — Structured signal cards with strategy-aware rendering. "+ Executed" toggle, symbol search, confidence filter. Three card sections: header (direction, symbol, `P` badge, timestamp, WindowBadge, confidence, strategy badge), prices (entry/SL/target/R:R + strategy context), actions (EXEC, Watch, Details expander, AI panel, dismiss). Details and AI panels mutually exclusive. AI button shows `✦ AI` when `ai_summary` present.
+- `ScannerHeader.tsx` — Ultra-compact strategy pill bar. Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end to ScanFeed. Uses `(s) => s.addScanLog` selector (no price-tick re-renders).
+- `ScannerPanel.tsx` — Structured signal cards with strategy-aware rendering. "+ Executed" toggle, symbol search, confidence filter. Uses `useShallow` for signal state (no price-tick re-renders). Three card sections: header (direction, symbol, `P` badge, timestamp, WindowBadge, confidence, strategy badge), prices (entry/SL/target/R:R + strategy context), actions (EXEC, Watch, Details expander, AI panel, dismiss). Details and AI panels mutually exclusive. AI button shows `✦ AI` when `ai_summary` present.
 - `ExecuteSignalModal.tsx` — Pre-trade confirm modal. Fetches `GET /signals/{id}/preview` for live entry price + computed lots. Shows lot stepper, quantity, Notional, Margin, `preview.warnings`. Submits `POST /signals/{id}/execute` with optional lots override.
-- `QuickStats.tsx` — Compact stats card: Trades Today (vs max), Open Positions count, Notional. Reads `risk` + `positions` from store. Shows HALTED banner when `risk.is_halted`.
-- `SymbolSelector.tsx` — Tab row for selecting the active index symbol. One button per SYMBOL (5 indices). Shows LTP + change % from store `prices`. Active button styled with amber accent.
-- `ScanFeed.tsx` — Compact scan log, max-height 160px. Filters `scanLogs` to today-only (IST timestamp comparison, not string prefix).
-- `AgentFeed.tsx` — Agent action log. All/Real/Shadow filter. Purple `SHADOW` pill for shadow entries. Trailing SL detection: `action_type === "SL_TRIGGERED"` + `details.reason === "TRAILING_SL"` → amber "TRAILING SL" text.
+- `QuickStats.tsx` — Compact stats card: Trades Today (vs max), Open Positions count, Notional. Reads `risk` + `positions` via `useShallow` (no price-tick re-renders). Shows HALTED banner when `risk.is_halted`.
+- `SymbolSelector.tsx` — Tab row for selecting the active index symbol. One button per SYMBOL (5 indices). Shows LTP + change % from store `prices`. Prices via `(s) => s.prices` selector; selection state via `useShallow`. Active button styled with amber accent.
+- `ScanFeed.tsx` — Compact scan log, max-height 160px. Filters `scanLogs` to today-only (IST timestamp comparison, not string prefix). Uses `(s) => s.scanLogs` selector (no price-tick re-renders).
+- `AgentFeed.tsx` — Agent action log. All/Real/Shadow filter. Purple `SHADOW` pill for shadow entries. Trailing SL detection: `action_type === "SL_TRIGGERED"` + `details.reason === "TRAILING_SL"` → amber "TRAILING SL" text. Uses `(s) => s.agentLogs` selector (no price-tick re-renders).
 
 **shared/**
 - `SymbolSearchInput.tsx` — Reusable debounced symbol search with autocomplete. Props: `onSelect(result)`, `placeholder?`, `segmentFilter?`. 300ms debounce. Shows "Only equity stocks can be added here" when `segmentFilter` filters out all results. Exports `SymbolResult` interface. Used by `dashboard/Watchlist.tsx` and `intraday-futures/PermanentWatchlist.tsx`.
@@ -237,12 +237,12 @@ All API calls go through this module via a single `request()` helper (parses err
 ### `src/hooks/` - Custom Hooks
 
 #### hooks/useWebSocket.ts
-Single hook managing the WebSocket connection. Returns `wsRef`. Auto-reconnects on close (3s delay). Guards all event handlers with `ws === wsRef.current` staleness check to prevent React Strict Mode race conditions. Sends application-level heartbeat ping every 25s to keep the connection alive (backend `manager.py` responds with pong).
+Single hook managing the WebSocket connection. Returns `wsRef`. Auto-reconnects on close (3s delay). Guards all event handlers with `ws === wsRef.current` staleness check to prevent React Strict Mode race conditions. Sends application-level heartbeat ping every 25s to keep the connection alive (backend `manager.py` responds with pong). **All store interactions use `useStore.getState()`** — no reactive subscriptions, so AppShell (which hosts this hook) never re-renders from store changes.
 
 **No symbol subscription filtering** — backend broadcasts all price ticks; frontend receives all prices automatically.
 
 **Events handled:**
-- `price:update` → `updatePrice(symbol, data)` (RAF-batched in store)
+- `price:update` → `updatePrice(symbol, data)` (500ms-batched in store)
 - `trade:open` → `addPosition(data)` (skips if `data.is_shadow`)
 - `position:update` → `updatePosition(id, {current_price, unrealized_pnl})`
 - `position:closed` → `removePosition(id)`
@@ -267,7 +267,7 @@ Single hook managing the WebSocket connection. Returns `wsRef`. Auto-reconnects 
 Single store created with `create()` + `persist()` middleware. Storage key: `"scan-logs-storage"` in `localStorage`.
 
 **Slices:**
-- `prices: Record<string, PriceData>` — `updatePrice()` uses RAF batching + LTP dedup (batch flushes once per `requestAnimationFrame`; unchanged LTPs skipped)
+- `prices: Record<string, PriceData>` — `updatePrice()` uses 500ms batching + LTP dedup (batch flushes once per 500ms `setTimeout`; unchanged LTPs skipped)
 - `positions / closedToday / shadowPositions / shadowClosedToday` — position state; `addPosition()` skips shadow events; `prependClosedTrade()` deduplicates by id
 - `dashboardViewMode: "REAL" | "SHADOW"` — drives ActivePositions + PnLCard toggle (dashboard)
 - `tradesViewMode: "REAL" | "SHADOW"` — drives Trades page Real/Shadow filter (independent from dashboard)
@@ -358,9 +358,17 @@ const { positions, closedToday } = useStore(useShallow((s) => ({
   positions: s.positions,
   closedToday: s.closedToday,
 })));
+
+// CORRECT — setter-only usage: use getState() to avoid subscribing entirely
+// Use this in callbacks, effects, and event handlers that only call store actions.
+const handleClick = useCallback(() => {
+  useStore.getState().setSelectedSymbol(symbol);
+}, [symbol]);
 ```
 
-**`updatePrice` uses RAF batching + LTP dedup** — price ticks accumulated in `_pendingPrices`, flushed once per `requestAnimationFrame`. Unchanged LTPs skipped. Do not remove the batching or the LTP check.
+**`useWebSocket` uses `getState()` exclusively** — the hook only calls store actions (setters), never reads state reactively. This ensures AppShell (which hosts the hook) never re-renders from store changes, preventing full-tree cascade re-renders.
+
+**`updatePrice` uses 500ms batching + LTP dedup** — price ticks accumulated in `_pendingPrices`, flushed via `setTimeout(500ms)` (~2 updates/sec). Unchanged LTPs skipped. Do not remove the batching or the LTP check.
 
 **`prices` is a shared map for ALL subscribed symbols** — backend broadcasts all prices. Components read only the keys they need.
 

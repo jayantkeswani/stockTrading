@@ -15,7 +15,7 @@ interface StrategyConfig {
 export function ScannerHeader() {
   const [strategies, setStrategies] = useState<StrategyConfig[]>([]);
   const [scanning, setScanning] = useState<string | null>(null);
-  const { addScanLog } = useStore();
+  const addScanLog = useStore((s) => s.addScanLog);
 
   useEffect(() => {
     async function load() {

@@ -17,7 +17,7 @@ function formatTime(iso: string): string {
 }
 
 export function ScanFeed() {
-  const { scanLogs } = useStore();
+  const scanLogs = useStore((s) => s.scanLogs);
   const todayStart = startOfDayIST(new Date()).getTime();
   const todayLogs = scanLogs.filter((e) => new Date(e.timestamp).getTime() >= todayStart);
 

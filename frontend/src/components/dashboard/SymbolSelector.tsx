@@ -1,11 +1,16 @@
 "use client";
 
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import { SYMBOLS } from "@/lib/constants";
 import { formatINR, pnlColor } from "@/lib/formatters";
 
 export function SymbolSelector() {
-  const { selectedSymbol, setSelectedSymbol, prices } = useStore();
+  const prices = useStore((s) => s.prices);
+  const { selectedSymbol, setSelectedSymbol } = useStore(useShallow((s) => ({
+    selectedSymbol: s.selectedSymbol,
+    setSelectedSymbol: s.setSelectedSymbol,
+  })));
 
   return (
     <div className="flex gap-2">

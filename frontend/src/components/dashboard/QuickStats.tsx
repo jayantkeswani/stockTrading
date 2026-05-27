@@ -1,10 +1,14 @@
 "use client";
 
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import { formatINR } from "@/lib/formatters";
 
 export function QuickStats() {
-  const { risk, positions } = useStore();
+  const { risk, positions } = useStore(useShallow((s) => ({
+    risk: s.risk,
+    positions: s.positions,
+  })));
 
   const stats = [
     {

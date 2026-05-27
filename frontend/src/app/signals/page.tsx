@@ -8,6 +8,7 @@ import type { Signal } from "@/lib/types";
 import { SignalHistoryPanel } from "@/components/signals/SignalHistoryPanel";
 import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 
 function periodFromLabel(label: string, customStart?: string, customEnd?: string): Period {
   const now = new Date();
@@ -272,7 +273,12 @@ export default function SignalsPage() {
     signalsPeriodLabel, signalsPeriodStart, signalsPeriodEnd, setSignalsPeriod,
     signalsStrategy, setSignalsStrategy,
     signalsHideInformational,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    signalsMinConfidence: s.signalsMinConfidence, setSignalsMinConfidence: s.setSignalsMinConfidence,
+    signalsPeriodLabel: s.signalsPeriodLabel, signalsPeriodStart: s.signalsPeriodStart, signalsPeriodEnd: s.signalsPeriodEnd, setSignalsPeriod: s.setSignalsPeriod,
+    signalsStrategy: s.signalsStrategy, setSignalsStrategy: s.setSignalsStrategy,
+    signalsHideInformational: s.signalsHideInformational,
+  })));
 
   const period = periodFromLabel(signalsPeriodLabel, signalsPeriodStart, signalsPeriodEnd);
   const handlePeriodChange = (p: Period) => setSignalsPeriod(p.label, p.start, p.end);

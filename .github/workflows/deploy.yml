@@ -170,8 +170,8 @@ jobs:
             sleep 5
             docker compose -f docker-compose.prod.yml ps
 
-            # Cleanup old images
-            docker image prune -f
+            # Cleanup old images (remove all images not used by running containers)
+            docker image prune -a -f
 
             echo "Deploy complete! Version: ${{ needs.retag.outputs.deploy_version }}"
           DEPLOY_SCRIPT

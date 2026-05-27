@@ -30,7 +30,7 @@ function isShadowLog(log: { action_type: string; details?: Record<string, unknow
 }
 
 export function AgentFeed() {
-  const { agentLogs } = useStore();
+  const agentLogs = useStore((s) => s.agentLogs);
   const [filter, setFilter] = useState<FeedFilter>("all");
 
   const displayed = useMemo(() => {

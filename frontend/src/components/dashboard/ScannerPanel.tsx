@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import { formatINR, isoDateIST } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
@@ -45,7 +46,15 @@ function formatSignalTime(isoString: string): string {
 }
 
 export function ScannerPanel() {
-  const { signals, updateSignal, removeSignal, scannerMinConfidence, setScannerMinConfidence, scannerShowExecuted, setScannerShowExecuted } = useStore();
+  const { signals, updateSignal, removeSignal, scannerMinConfidence, setScannerMinConfidence, scannerShowExecuted, setScannerShowExecuted } = useStore(useShallow((s) => ({
+    signals: s.signals,
+    updateSignal: s.updateSignal,
+    removeSignal: s.removeSignal,
+    scannerMinConfidence: s.scannerMinConfidence,
+    setScannerMinConfidence: s.setScannerMinConfidence,
+    scannerShowExecuted: s.scannerShowExecuted,
+    setScannerShowExecuted: s.setScannerShowExecuted,
+  })));
   const [searchQuery, setSearchQuery] = useState("");
   const today = isoDateIST(new Date());
   const allowedStatuses = scannerShowExecuted ? ["PENDING", "EXECUTED"] : ["PENDING"];

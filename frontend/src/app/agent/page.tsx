@@ -29,7 +29,7 @@ const ACTION_COLORS: Record<string, string> = {
 };
 
 export default function AgentPage() {
-  const { agentStatus, setAgentStatus, setRisk } = useStore();
+  const agentStatus = useStore((s) => s.agentStatus);
   const risk = useStore((s) => s.risk);
   const [logs, setLogs] = useState<AgentLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,14 +49,15 @@ export default function AgentPage() {
           api.getAgentStatus(),
           api.getRiskDashboard() as Promise<RiskDashboard>,
         ]);
-        setAgentStatus(status as never);
-        setRisk(riskData);
+        const s = useStore.getState();
+        s.setAgentStatus(status as never);
+        s.setRisk(riskData);
       } catch {
         // API not running yet
       }
     }
     loadStatus();
-  }, [setAgentStatus, setRisk]);
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -120,10 +121,10 @@ export default function AgentPage() {
     try {
       if (agentStatus?.running) {
         await api.stopAgent();
-        setAgentStatus({ ...agentStatus, running: false } as never);
+        useStore.getState().setAgentStatus({ ...agentStatus, running: false } as never);
       } else {
         await api.startAgent();
-        setAgentStatus({ ...(agentStatus || {}), running: true } as never);
+        useStore.getState().setAgentStatus({ ...(agentStatus || {}), running: true } as never);
       }
     } catch (err) {
       console.error("Failed to toggle agent:", err);
@@ -134,7 +135,7 @@ export default function AgentPage() {
     try {
       const newState = !agentStatus?.yolo_mode;
       await api.toggleYolo(newState);
-      setAgentStatus({
+      useStore.getState().setAgentStatus({
         ...(agentStatus || {}),
         yolo_mode: newState,
         autonomy_level: newState ? "yolo" : "semi",

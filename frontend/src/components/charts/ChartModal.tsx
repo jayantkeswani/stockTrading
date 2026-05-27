@@ -13,14 +13,14 @@ interface ChartModalProps {
 }
 
 export function ChartModal({ isOpen, onClose, initialSymbol }: ChartModalProps) {
-  const { selectedSymbol, setSelectedSymbol } = useStore();
+  const selectedSymbol = useStore((s) => s.selectedSymbol);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
 
   useEffect(() => {
     if (isOpen && initialSymbol) {
-      setSelectedSymbol(initialSymbol);
+      useStore.getState().setSelectedSymbol(initialSymbol);
     }
-  }, [isOpen, initialSymbol, setSelectedSymbol]);
+  }, [isOpen, initialSymbol]);
 
   // Fetch custom watchlist symbols to show alongside the 5 default indices
   useEffect(() => {
@@ -83,7 +83,7 @@ export function ChartModal({ isOpen, onClose, initialSymbol }: ChartModalProps) 
             {allSymbols.map((sym) => (
               <button
                 key={sym}
-                onClick={() => setSelectedSymbol(sym)}
+                onClick={() => useStore.getState().setSelectedSymbol(sym)}
                 className={`px-2 py-0.5 text-xs font-mono font-medium rounded transition-colors shrink-0 ${
                   selectedSymbol === sym
                     ? "bg-accent/15 text-accent border border-accent/30"

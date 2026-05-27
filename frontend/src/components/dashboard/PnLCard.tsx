@@ -2,10 +2,19 @@
 
 import { useMemo } from "react";
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 
 export function PnLCard() {
-  const { risk, positions, prices, dashboardViewMode, shadowPositions, shadowClosedToday, positionsMinConfidence } = useStore();
+  const prices = useStore((s) => s.prices);
+  const { risk, positions, dashboardViewMode, shadowPositions, shadowClosedToday, positionsMinConfidence } = useStore(useShallow((s) => ({
+    risk: s.risk,
+    positions: s.positions,
+    dashboardViewMode: s.dashboardViewMode,
+    shadowPositions: s.shadowPositions,
+    shadowClosedToday: s.shadowClosedToday,
+    positionsMinConfidence: s.positionsMinConfidence,
+  })));
 
   const isShadow = dashboardViewMode === "SHADOW";
   const rawPositions = isShadow ? shadowPositions : positions;

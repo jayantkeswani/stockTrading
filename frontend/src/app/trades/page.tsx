@@ -10,6 +10,7 @@ import { SummaryStrip } from "@/components/trades/SummaryStrip";
 import { PnLHeatmap } from "@/components/trades/PnLHeatmap";
 import { TradesTable, type HoldData } from "@/components/trades/TradesTable";
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 
 function periodFromLabel(label: string): Period {
   const now = new Date();
@@ -127,7 +128,20 @@ export default function TradesPage() {
     showNetPnL, setShowNetPnL,
     tradesShowOpen, setTradesShowOpen,
     tradesExcludePinned, setTradesExcludePinned,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    tradesViewMode: s.tradesViewMode, setTradesViewMode: s.setTradesViewMode,
+    tradesPeriodLabel: s.tradesPeriodLabel, tradesPeriodStart: s.tradesPeriodStart, tradesPeriodEnd: s.tradesPeriodEnd, setTradesPeriod: s.setTradesPeriod,
+    tradesStrategy: s.tradesStrategy, setTradesStrategy: s.setTradesStrategy,
+    tradesSimOpen: s.tradesSimOpen, setTradesSimOpen: s.setTradesSimOpen,
+    tradesSim: s.tradesSim, setTradesSim: s.setTradesSim, resetTradesSim: s.resetTradesSim,
+    tradesHoldOpen: s.tradesHoldOpen, setTradesHoldOpen: s.setTradesHoldOpen,
+    tradesHold: s.tradesHold, setTradesHold: s.setTradesHold, resetTradesHold: s.resetTradesHold,
+    tradesShowHeatmap: s.tradesShowHeatmap, setTradesShowHeatmap: s.setTradesShowHeatmap,
+    tradesMarginOpen: s.tradesMarginOpen, setTradesMarginOpen: s.setTradesMarginOpen,
+    showNetPnL: s.showNetPnL, setShowNetPnL: s.setShowNetPnL,
+    tradesShowOpen: s.tradesShowOpen, setTradesShowOpen: s.setTradesShowOpen,
+    tradesExcludePinned: s.tradesExcludePinned, setTradesExcludePinned: s.setTradesExcludePinned,
+  })));
 
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);

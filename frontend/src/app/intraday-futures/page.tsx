@@ -15,13 +15,11 @@ export default function IntradayFuturesPage() {
   const [briefingKey, setBriefingKey] = useState(0);
   const [chartOpen, setChartOpen] = useState(false);
   const [chartSymbol, setChartSymbol] = useState<string | undefined>(undefined);
-  const { setSelectedSymbol } = useStore();
-
   const handleOpenChart = useCallback((symbol: string) => {
-    setSelectedSymbol(symbol);
+    useStore.getState().setSelectedSymbol(symbol);
     setChartSymbol(symbol);
     setChartOpen(true);
-  }, [setSelectedSymbol]);
+  }, []);
 
   const handleCloseChart = useCallback(() => {
     setChartOpen(false);

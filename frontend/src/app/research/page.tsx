@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import { api } from "@/lib/api";
 import type { ResearchReport as ResearchReportType, ResearchReportListItem } from "@/lib/types";
 import { ResearchSearch } from "@/components/research/ResearchSearch";
@@ -13,11 +14,12 @@ export default function ResearchPage() {
   const {
     activeResearches,
     selectedResearchId,
-    setSelectedResearchId,
     researchReports,
-    setResearchReports,
-    startResearchSession,
-  } = useStore();
+  } = useStore(useShallow((s) => ({
+    activeResearches: s.activeResearches,
+    selectedResearchId: s.selectedResearchId,
+    researchReports: s.researchReports,
+  })));
 
   const [fullReport, setFullReport] = useState<ResearchReportType | null>(null);
   const [loading, setLoading] = useState(false);
@@ -28,13 +30,13 @@ export default function ResearchPage() {
     async function loadHistory() {
       try {
         const reports = await api.getResearchReports({ limit: 20 });
-        setResearchReports(reports);
+        useStore.getState().setResearchReports(reports);
       } catch {
         // API not ready
       }
     }
     loadHistory();
-  }, [setResearchReports]);
+  }, []);
 
   // Load full report when selectedResearchId changes and research is NOT in-progress
   useEffect(() => {
@@ -60,14 +62,14 @@ export default function ResearchPage() {
       // Also refresh history
       try {
         const reports = await api.getResearchReports({ limit: 20 });
-        setResearchReports(reports);
+        useStore.getState().setResearchReports(reports);
       } catch {
         // ignore
       }
     }, activeResearch ? 500 : 0); // 500ms delay if just completed, instant for history clicks
 
     return () => clearTimeout(timer);
-  }, [selectedResearchId, activeResearches, setResearchReports]);
+  }, [selectedResearchId, activeResearches]);
 
   const handleStartResearch = useCallback(
     async (symbol: string) => {
@@ -77,30 +79,30 @@ export default function ResearchPage() {
         const result = await api.startResearch(symbol);
         // The WebSocket handler will call startResearchSession
         // but we also call it here for immediate UI feedback
-        startResearchSession(result.report_id, symbol, result.agents_total);
-        setSelectedResearchId(result.report_id);
+        useStore.getState().startResearchSession(result.report_id, symbol, result.agents_total);
+        useStore.getState().setSelectedResearchId(result.report_id);
         setFullReport(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to start research");
       }
       setLoading(false);
     },
-    [startResearchSession, setSelectedResearchId]
+    []
   );
 
   const handleSelectReport = useCallback(
     (id: string) => {
-      setSelectedResearchId(id);
+      useStore.getState().setSelectedResearchId(id);
       setFullReport(null);
       api.getResearchReport(id).then(setFullReport).catch(() => {});
     },
-    [setSelectedResearchId]
+    []
   );
 
   const handleCloseReport = useCallback(() => {
     setFullReport(null);
-    setSelectedResearchId(null);
-  }, [setSelectedResearchId]);
+    useStore.getState().setSelectedResearchId(null);
+  }, []);
 
   // Escape key to close report
   useEffect(() => {
@@ -116,17 +118,18 @@ export default function ResearchPage() {
       try {
         await api.deleteResearchReport(id);
         // Remove from history list
-        setResearchReports(researchReports.filter((r) => r.id !== id));
+        const s = useStore.getState();
+        s.setResearchReports(s.researchReports.filter((r) => r.id !== id));
         // Clear selection if this was the selected report
-        if (selectedResearchId === id) {
-          setSelectedResearchId(null);
+        if (s.selectedResearchId === id) {
+          s.setSelectedResearchId(null);
           setFullReport(null);
         }
       } catch {
         // Ignore delete errors
       }
     },
-    [researchReports, selectedResearchId, setResearchReports, setSelectedResearchId]
+    []
   );
 
   // Current active research for progress display

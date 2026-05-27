@@ -2,13 +2,14 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import { api } from "@/lib/api";
 import type { MarketStatus } from "@/lib/types";
 import { AgentPopup } from "./AgentPopup";
 import { TasksPopup } from "./TasksPopup";
 
 function BiasIndicator() {
-  const { intradayBias } = useStore();
+  const intradayBias = useStore((s) => s.intradayBias);
   if (!intradayBias) return null;
 
   const staleMs = Date.now() - new Date(intradayBias.updated_at).getTime();
@@ -32,7 +33,13 @@ function BiasIndicator() {
 }
 
 export function Header() {
-  const { wsConnected, marketStatus, setMarketStatus, setAgentStatus, updatePrice } = useStore();
+  const { wsConnected, marketStatus, setMarketStatus, setAgentStatus, updatePrice } = useStore(useShallow((s) => ({
+    wsConnected: s.wsConnected,
+    marketStatus: s.marketStatus,
+    setMarketStatus: s.setMarketStatus,
+    setAgentStatus: s.setAgentStatus,
+    updatePrice: s.updatePrice,
+  })));
   const [time, setTime] = useState("");
   const [deployedVersion, setDeployedVersion] = useState("");
   const [dataFeedReady, setDataFeedReady] = useState(true);

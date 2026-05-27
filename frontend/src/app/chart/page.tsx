@@ -10,12 +10,12 @@ import { api } from "@/lib/api";
 function ChartContent() {
   const searchParams = useSearchParams();
   const symbol = searchParams.get("symbol") || "NIFTY";
-  const { selectedSymbol, setSelectedSymbol } = useStore();
+  const selectedSymbol = useStore((s) => s.selectedSymbol);
   const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([]);
 
   useEffect(() => {
-    setSelectedSymbol(symbol);
-  }, [symbol, setSelectedSymbol]);
+    useStore.getState().setSelectedSymbol(symbol);
+  }, [symbol]);
 
   useEffect(() => {
     api
@@ -38,7 +38,7 @@ function ChartContent() {
         {allSymbols.map((sym) => (
           <button
             key={sym}
-            onClick={() => setSelectedSymbol(sym)}
+            onClick={() => useStore.getState().setSelectedSymbol(sym)}
             className={`px-2 py-0.5 text-xs font-mono font-medium rounded transition-colors shrink-0 ${
               selectedSymbol === sym
                 ? "bg-accent/15 text-accent border border-accent/30"

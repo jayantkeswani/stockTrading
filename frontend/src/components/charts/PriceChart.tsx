@@ -11,6 +11,7 @@ import {
   type CandlestickData,
 } from "lightweight-charts";
 import { useStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import { api } from "@/lib/api";
 import { displaySymbol } from "@/lib/constants";
 import type { Timeframe } from "@/lib/constants";
@@ -86,7 +87,12 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
   const lastCandleRef = useRef<CandlestickData<UTCTimestamp> | null>(null);
   const lastVolRef = useRef<number>(0);
 
-  const { selectedSymbol, prices, activeTimeframe, setActiveTimeframe } = useStore();
+  const { selectedSymbol, activeTimeframe, setActiveTimeframe } = useStore(useShallow((s) => ({
+    selectedSymbol: s.selectedSymbol,
+    activeTimeframe: s.activeTimeframe,
+    setActiveTimeframe: s.setActiveTimeframe,
+  })));
+  const selectedPrice = useStore((s) => s.prices[s.selectedSymbol]);
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [ohlcInfo, setOhlcInfo] = useState<OHLCInfo | null>(null);
@@ -265,13 +271,12 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
   }, [selectedSymbol, activeTimeframe, refreshKey]);
 
   // Effect 3: live price tick → update current candle
-  const priceData = prices[selectedSymbol];
   useEffect(() => {
     const series = candleSeriesRef.current;
     const last = lastCandleRef.current;
-    if (!series || !last || !priceData?.ltp) return;
+    if (!series || !last || !selectedPrice?.ltp) return;
 
-    const ltp = priceData.ltp;
+    const ltp = selectedPrice.ltp;
     const bucketTime = currentBucketTime(activeTimeframe) as UTCTimestamp;
 
     if (bucketTime === last.time) {
@@ -301,7 +306,7 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
         color: "rgba(0, 230, 138, 0.3)",
       });
     }
-  }, [priceData?.ltp, activeTimeframe]);
+  }, [selectedPrice?.ltp, activeTimeframe]);
 
   const isUp = ohlcInfo ? ohlcInfo.close >= ohlcInfo.open : true;
 
