@@ -35,7 +35,7 @@ Automated trading system for Indian stock market (NSE/BSE). Focuses on **buying*
 # 1. Copy and fill environment file
 cp .env.example .env
 # Required: FYERS_APP_ID, FYERS_SECRET_KEY, FYERS_USERNAME, FYERS_PIN, FYERS_TOTP_SECRET
-# Required for alerts: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+# Required for alerts: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS
 
 # 2. Start PostgreSQL + Redis
 docker compose up -d

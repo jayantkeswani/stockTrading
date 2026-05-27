@@ -17,8 +17,8 @@ _TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
 async def send_telegram(message: str) -> bool:
-    """Send a Telegram message with up to 3 retries. Returns True on success."""
-    if not settings.telegram_bot_token or not settings.telegram_chat_id:
+    """Send a Telegram message to all configured chat IDs. Returns True if at least one succeeds."""
+    if not settings.telegram_bot_token or not settings.telegram_chat_id_set:
         logger.warning("Telegram not configured — skipping notification")
         return False
     if not settings.telegram_enabled:
@@ -26,26 +26,31 @@ async def send_telegram(message: str) -> bool:
         return False
     url = _TELEGRAM_API.format(token=settings.telegram_bot_token)
 
-    # Sync httpx via asyncio.to_thread — avoids anyio async TLS failures on
-    # macOS 15.2 + Python 3.11.x where httpx.AsyncClient raises ConnectError('').
-    def _send_sync() -> bool:
-        with httpx.Client(timeout=10) as client:
-            r = client.post(
-                url,
-                json={"chat_id": settings.telegram_chat_id, "text": message, "parse_mode": "HTML"},
-            )
-            r.raise_for_status()
-            return True
+    any_success = False
+    for chat_id in settings.telegram_chat_id_set:
+        # Sync httpx via asyncio.to_thread — avoids anyio async TLS failures on
+        # macOS 15.2 + Python 3.11.x where httpx.AsyncClient raises ConnectError('').
+        def _send_sync(cid: str = chat_id) -> bool:
+            with httpx.Client(timeout=10) as client:
+                r = client.post(
+                    url,
+                    json={"chat_id": cid, "text": message, "parse_mode": "HTML"},
+                )
+                r.raise_for_status()
+                return True
 
-    async def _send() -> bool:
-        import asyncio
-        return await asyncio.to_thread(_send_sync)
+        async def _send() -> bool:
+            import asyncio
+            return await asyncio.to_thread(_send_sync)
 
-    try:
-        return await async_retry(_send, retries=3, base_delay=2.0, label="telegram_send")
-    except Exception as e:
-        logger.error("Telegram send failed after retries: %s", e)
-        return False
+        try:
+            result = await async_retry(_send, retries=3, base_delay=2.0, label="telegram_send")
+            if result:
+                any_success = True
+        except Exception as e:
+            logger.error("Telegram send to chat_id %s failed after retries: %s", chat_id, e)
+
+    return any_success
 
 
 def _paper() -> str:

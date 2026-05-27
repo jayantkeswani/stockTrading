@@ -117,7 +117,7 @@ jobs:
           FYERS_PIN=${{ secrets.FYERS_PIN }}
           FYERS_TOTP_SECRET=${{ secrets.FYERS_TOTP_SECRET }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_IDS=${{ secrets.TELEGRAM_CHAT_IDS }}
           GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
           GCP_PROJECT_ID=stock-trading-prod
           VERTEX_AI_LOCATION=global

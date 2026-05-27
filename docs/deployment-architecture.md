@@ -131,7 +131,7 @@ Secrets **never** live in the codebase or in GCP Secret Manager. They flow from 
 | `FYERS_PIN` | User's Fyers PIN | Backend auto-login |
 | `FYERS_TOTP_SECRET` | User's TOTP seed | Backend auto-login |
 | `TELEGRAM_BOT_TOKEN` | Telegram BotFather | Backend notifications |
-| `TELEGRAM_CHAT_ID` | Telegram | Backend notifications |
+| `TELEGRAM_CHAT_IDS` | Telegram | Backend notifications (comma-separated) |
 | `GOOGLE_API_KEY` | Terraform output `gemini_api_key` | Backend AI/research (AI Studio fallback, local dev) |
 
 Non-secret env vars hardcoded in the deploy workflow:

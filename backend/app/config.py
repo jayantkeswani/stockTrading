@@ -29,8 +29,15 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: str = ""
-    telegram_chat_id: str = ""
+    telegram_chat_ids: str = ""  # comma-separated chat IDs
     telegram_enabled: bool = True
+
+    @property
+    def telegram_chat_id_set(self) -> set[str]:
+        """Parse telegram_chat_ids into a set."""
+        if not self.telegram_chat_ids:
+            return set()
+        return {cid.strip() for cid in self.telegram_chat_ids.split(",") if cid.strip()}
 
     # Trading Config — SEED-ONLY: used once at first startup to populate the
     # trading_config DB table. After seeding, all runtime code reads from the DB

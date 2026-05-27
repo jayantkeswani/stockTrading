@@ -2,7 +2,7 @@
 
 Polls getUpdates in a background asyncio task. On startup, advances past any
 old messages so stale commands aren't replayed. Ignores messages from any
-chat_id other than settings.telegram_chat_id (single-user safety gate).
+chat_id not in settings.telegram_chat_id_set (allowlist parsed from TELEGRAM_CHAT_IDS).
 
 Commands supported:
   /status  — system snapshot (market, agent, feed, trades)
@@ -102,7 +102,7 @@ async def _poll_loop() -> None:
                 if not msg:
                     continue
                 chat_id = str(msg.get("chat", {}).get("id", ""))
-                if chat_id != settings.telegram_chat_id:
+                if chat_id not in settings.telegram_chat_id_set:
                     logger.warning("Ignoring message from unknown chat_id %s", chat_id)
                     continue
                 text = (msg.get("text") or "").strip()
@@ -121,7 +121,7 @@ async def _poll_loop() -> None:
 def start_telegram_bot() -> asyncio.Task | None:
     """Start the Telegram bot long-polling task. Returns None if Telegram is not configured or disabled."""
     global _polling_task
-    if not settings.telegram_bot_token or not settings.telegram_chat_id:
+    if not settings.telegram_bot_token or not settings.telegram_chat_id_set:
         logger.info("Telegram not configured — bot polling skipped")
         return None
     if not settings.telegram_enabled:

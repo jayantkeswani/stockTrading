@@ -100,7 +100,7 @@ Pydantic Settings loading from `.env`. Key groups:
 - **Fyers**: `FYERS_APP_ID`, `FYERS_SECRET_KEY`, `FYERS_REDIRECT_URI`, `FYERS_USERNAME`, `FYERS_PIN`, `FYERS_TOTP_SECRET`
 - **Trading**: `CAPITAL`, `MAX_DAILY_DRAWDOWN_PCT`, `MAX_RISK_PER_TRADE_PCT`, `MAX_TRADES_PER_DAY`
 - **AI**: `GOOGLE_API_KEY` (AI Studio), `GCP_PROJECT_ID` (Vertex AI, takes precedence), `VERTEX_AI_LOCATION` (default "global"), `RESEARCH_LLM_MODEL` (flash), `RESEARCH_LLM_MODEL_PRO` (pro — for briefing, Stage 3, synthesis), `AI_CONFIDENCE_ENABLED`, `AI_CONFIDENCE_TIMEOUT_SECONDS` (25)
-- **Telegram**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ENABLED` (set False to disable all Telegram I/O — single kill switch for local dev alongside production)
+- **Telegram**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_IDS` (comma-separated), `TELEGRAM_ENABLED` (set False to disable all Telegram I/O — single kill switch for local dev alongside production). `settings.telegram_chat_id_set` property parses into a `set[str]`
 - **Market Simulator**: `MARKET_MODE` (`"live"` default, `"simulated"` for offline testing), `SIMULATOR_URL` (`http://localhost:8787`)
 - **Version**: `APP_VERSION` (semver tag set by deploy pipeline), `DEPLOYED_AT`
 - `model_config = extra="ignore"` — unrecognized `.env` vars (Telegram MTProto keys, etc.) don't crash startup
@@ -830,7 +830,7 @@ Always 1 lot. No capital gates (even VIX extreme, drawdown, max-trades, outside 
 
 All outbound Telegram messages. No ORM imports — callers pass plain scalars.
 
-- `send_telegram(message) -> bool` — early-returns False when `TELEGRAM_ENABLED=false`; retries 3× with 2s base delay. Uses sync `httpx.Client` via `asyncio.to_thread` (TLS fix for macOS 15.2 async TLS regression)
+- `send_telegram(message) -> bool` — sends to all `settings.telegram_chat_id_set`; returns True if at least one succeeds. Early-returns False when `TELEGRAM_ENABLED=false`; retries 3× per chat ID with 2s base delay. Uses sync `httpx.Client` via `asyncio.to_thread` (TLS fix for macOS 15.2 async TLS regression)
 - `notify_signal_generated(signal, ...)` — confidence floor gate; `blocked_reason` HTML-escaped before embedding
 - `notify_auto_executed(trade, signal)` — YOLO execution notification
 - `notify_manual_executed(trade, signal)` — ✋ Manual Exec notification; called from signals.py
@@ -851,8 +851,8 @@ All outbound Telegram messages. No ORM imports — callers pass plain scalars.
 
 - `start_telegram_bot()` / `stop_telegram_bot()` — wired into main.py lifespan; task tracked in TaskRegistry as `telegram_bot_poll`
 - Long-polls `getUpdates` (timeout=30); on startup advances past queued messages (avoids replaying stale commands after restart)
-- Security gate: ignores messages from any `chat_id` ≠ `settings.telegram_chat_id`
-- Skips startup if `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` missing, or `TELEGRAM_ENABLED=false`
+- Security gate: ignores messages from any `chat_id` not in `settings.telegram_chat_id_set`
+- Skips startup if `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_IDS` missing, or `TELEGRAM_ENABLED=false`
 
 #### `telegram_commands.py`
 
