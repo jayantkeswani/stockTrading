@@ -97,5 +97,5 @@ Instructs the LLM to:
 
 - If the LLM consistently gives +0 adjustment, the deterministic composite is well-calibrated.
 - If it systematically gives negative adjustments for out-of-window signals, consider adding a window-state penalty to `compute_confidence` instead.
-- The `suggested_lot_adjustment` field can be used to auto-halve lots for borderline signals; currently applied in `strategy_runner._run_ai_confidence_overlay`.
+- The `suggested_lot_adjustment` field is available in the schema and can be used to auto-halve lots for borderline signals; it is not yet consumed by the executor or runner.
 - System prompt is verbatim in `signal_confidence.py` — edit there to tune behaviour. No abstraction layer.

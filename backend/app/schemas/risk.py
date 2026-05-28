@@ -1,6 +1,15 @@
+import uuid
 from decimal import Decimal
 
 from pydantic import BaseModel
+
+
+class ProfileRiskSummary(BaseModel):
+    id: uuid.UUID
+    name: str
+    profit_cap: float
+    current_pnl: float
+    is_capped: bool
 
 
 class RiskDashboardResponse(BaseModel):
@@ -15,9 +24,9 @@ class RiskDashboardResponse(BaseModel):
     risk: Decimal
     margin_utilized: Decimal
     is_halted: bool
-    max_daily_profit: float
     is_profit_capped: bool
     positions_open: int
+    profiles: list[ProfileRiskSummary] = []
 
 
 class MarketStatusResponse(BaseModel):

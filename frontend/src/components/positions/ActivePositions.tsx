@@ -1,12 +1,12 @@
 "use client";
 
-import { Fragment, useState, useEffect, useRef, useCallback } from "react";
+import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
-import type { Position, Trade } from "@/lib/types";
+import type { Position, Trade, YoloProfile } from "@/lib/types";
 
 interface ActivePositionsProps {
   compact?: boolean;
@@ -54,6 +54,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     shadowPositions, setShadowPositions,
     shadowClosedToday, setShadowClosedToday,
     positionsMinConfidence, setPositionsMinConfidence,
+    yoloProfiles,
   } = useStore(useShallow((s) => ({
     positions: s.positions,
     closedToday: s.closedToday,
@@ -66,13 +67,28 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     setShadowClosedToday: s.setShadowClosedToday,
     positionsMinConfidence: s.positionsMinConfidence,
     setPositionsMinConfidence: s.setPositionsMinConfidence,
+    yoloProfiles: s.yoloProfiles,
   })));
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [watchlistStatuses, setWatchlistStatuses] = useState<Record<string, string>>({});
   const prevPositionsLen = useRef(positions.length);
 
-  const isShadow = dashboardViewMode === "SHADOW";
+  const activeProfiles = useMemo(
+    () => (Array.isArray(yoloProfiles) ? yoloProfiles : []).filter((p) => p.is_active).sort((a, b) => a.sort_order - b.sort_order),
+    [yoloProfiles],
+  );
+
+  const effectiveMode = useMemo(() => {
+    if (dashboardViewMode === "SHADOW") return "SHADOW";
+    if (dashboardViewMode === "MANUAL") return "MANUAL";
+    if ((Array.isArray(yoloProfiles) ? yoloProfiles : []).some((p) => p.id === dashboardViewMode)) return dashboardViewMode;
+    const first = activeProfiles[0];
+    return first ? first.id : "MANUAL";
+  }, [dashboardViewMode, yoloProfiles, activeProfiles]);
+
+  const isShadow = effectiveMode === "SHADOW";
+  const isManual = effectiveMode === "MANUAL";
 
   // Fetch real closed trades today
   const fetchClosed = useCallback(async () => {
@@ -86,7 +102,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
   const fetchShadowData = useCallback(async () => {
     try {
       const [allPositions, closedTrades] = await Promise.all([
-        api.getPositions(true) as Promise<Position[]>,
+        api.getPositions({ includeShadow: true }) as Promise<Position[]>,
         api.getClosedTradesToday("SHADOW"),
       ]);
       setShadowPositions((allPositions as Position[]).filter((p) => p.is_shadow));
@@ -120,11 +136,6 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     } catch (err) {
       console.error("Failed to close position:", err);
     }
-  };
-
-  const handleToggle = () => {
-    const next = isShadow ? "REAL" : "SHADOW";
-    setDashboardViewMode(next);
   };
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
@@ -178,8 +189,16 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     addToWatchlistById(t.id, null, t.symbol, t.option_type || null, t.strike_price, t.expiry_date);
   };
 
-  const rawPositions = isShadow ? shadowPositions : positions;
-  const rawClosed = isShadow ? shadowClosedToday : closedToday;
+  const rawPositions = isShadow
+    ? shadowPositions
+    : isManual
+      ? positions.filter((p) => !p.yolo_profile_id)
+      : positions.filter((p) => p.yolo_profile_id === effectiveMode);
+  const rawClosed = isShadow
+    ? shadowClosedToday
+    : isManual
+      ? closedToday.filter((t) => t.source === "MANUAL")
+      : closedToday.filter((t) => t.yolo_profile_id === effectiveMode);
 
   const activePositions = positionsMinConfidence > 0
     ? rawPositions.filter((p) => p.signal_confidence != null && Number(p.signal_confidence) >= positionsMinConfidence)
@@ -219,13 +238,22 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
           </label>
           <div className="flex items-center rounded border border-border overflow-hidden text-[9px] font-mono">
             <button
-              onClick={handleToggle}
-              className={`px-1.5 py-0.5 transition-colors ${!isShadow ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"}`}
+              onClick={() => setDashboardViewMode("MANUAL")}
+              className={`px-1.5 py-0.5 transition-colors ${isManual ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"}`}
             >
-              Real
+              Manual
             </button>
+            {activeProfiles.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setDashboardViewMode(p.id)}
+                className={`px-1.5 py-0.5 border-l border-border transition-colors ${effectiveMode === p.id ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"}`}
+              >
+                {p.name}
+              </button>
+            ))}
             <button
-              onClick={handleToggle}
+              onClick={() => setDashboardViewMode("SHADOW")}
               className={`px-1.5 py-0.5 border-l border-border transition-colors ${isShadow ? "bg-purple-500/15 text-purple-400" : "text-text-muted hover:text-text-secondary"}`}
             >
               Shadow

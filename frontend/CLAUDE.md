@@ -15,12 +15,12 @@
 All pages use `'use client'` directive.
 
 - `layout.tsx` — Root layout with AppShell wrapper
-- `page.tsx` — Dashboard: sticky PnLStrip at top, 8-col left (ScannerHeader, ScannerPanel, ActivePositions, FuturesWatchlist) + 4-col right (Watchlist, ScanFeed, AgentFeed). ChartModal overlay.
-- `trades/page.tsx` — Kite-style P&L dashboard. Filter state (period, strategy, Shadow/Real, sim panel) lives in Zustand store, persisted via `persist` middleware. SummaryStrip, PnLHeatmap, TradesTable, Margin Analysis section. Real/Shadow toggle, Net P&L toggle, "+ Open" toggle, "− Pinned" toggle. Simulation filter panel: min confidence, AI action, simulate lots, instrument type, signal type — all applied client-side via `applySimLots()` (scales P&L, charges, and `margin_required` by lot ratio). **Hold Analysis panel**: "Hold ▲/▾" toggle (amber when open). Panel has Scenario pills (Best / Worst / EOD / SL/TGT). On open/scenario change, fetches `POST /trades/hold-analysis` for all closed trade IDs; backend returns per-trade `hold_exit_price`, `hold_pnl`, `hold_net_pnl`, `hold_charges_json`, `hold_exit_time`, and `hold_outcome` from `market_data_1m` (window: entry_time → hold cutoff, where cutoff = min(next same-instrument same-side re-entry, 15:30 IST)). Best=max high, Worst=min low, EOD=last candle close, SL/TGT=first SL or TGT hit (fallback to EOD close). `hold_outcome` only populated for `sl_tgt` scenario. Computes `holdDataMap` (keyed by trade ID) for extra table columns. Passes `holdScenario` to TradesTable for conditional Outcome column. Pipeline: `trades → filteredTrades → simTrades → {SummaryStrip, dailyPnL→PnLHeatmap, displayedTrades→TradesTable(+holdDataMap, holdScenario)}`. Second `SummaryStrip` with `label="HOLD"` renders below when hold is active and respects `showNetPnL` toggle via `holdDataMap` directly. TradesTable shows "Hold Exit", "Hold P&L", "Hold Exit Time / Exit Time" columns alongside actual values, plus "Outcome" column only when `sl_tgt` scenario is active.
+- `page.tsx` — Dashboard: sticky PnLStrip at top, 8-col left (ScannerHeader, ScannerPanel, ActivePositions, FuturesWatchlist) + 4-col right (Watchlist, ScanFeed, AgentFeed). ChartModal overlay. Fetches YOLO profiles on mount alongside other dashboard data.
+- `trades/page.tsx` — Kite-style P&L dashboard. Filter state (period, strategy, Shadow/Real, sim panel) lives in Zustand store, persisted via `persist` middleware. SummaryStrip, PnLHeatmap, TradesTable, Margin Analysis section. Source pills `[Manual | <profile1> | … | Shadow]` driven by `yoloProfiles` store — fetched on mount. Active pill drives data fetch: `source: "MANUAL"`, `yolo_profile_id: <uuid>`, or `source: "SHADOW"`. Net P&L toggle, "+ Open" toggle, "− Pinned" toggle. Simulation filter panel: min confidence, AI action, simulate lots, instrument type, signal type — all applied client-side via `applySimLots()` (scales P&L, charges, and `margin_required` by lot ratio). **Hold Analysis panel**: "Hold ▲/▾" toggle (amber when open). Panel has Scenario pills (Best / Worst / EOD / SL/TGT). On open/scenario change, fetches `POST /trades/hold-analysis` for all closed trade IDs; backend returns per-trade `hold_exit_price`, `hold_pnl`, `hold_net_pnl`, `hold_charges_json`, `hold_exit_time`, and `hold_outcome` from `market_data_1m` (window: entry_time → hold cutoff, where cutoff = min(next same-instrument same-side re-entry, 15:30 IST)). Best=max high, Worst=min low, EOD=last candle close, SL/TGT=first SL or TGT hit (fallback to EOD close). `hold_outcome` only populated for `sl_tgt` scenario. Computes `holdDataMap` (keyed by trade ID) for extra table columns. Passes `holdScenario` to TradesTable for conditional Outcome column. Pipeline: `trades → filteredTrades → simTrades → {SummaryStrip, dailyPnL→PnLHeatmap, displayedTrades→TradesTable(+holdDataMap, holdScenario)}`. Second `SummaryStrip` with `label="HOLD"` renders below when hold is active and respects `showNetPnL` toggle via `holdDataMap` directly. TradesTable shows "Hold Exit", "Hold P&L", "Hold Exit Time / Exit Time" columns alongside actual values, plus "Outcome" column only when `sl_tgt` scenario is active.
 - `signals/page.tsx` — Signal history feed. PeriodFilter + strategy pills + min-confidence slider + symbol/reason search bar. All filters persisted. `ConfidenceFactorsBar` uses strategy-aware label maps. `SignalCard` includes `SignalHistoryPanel`.
-- `settings/page.tsx` — Strategy config (is_active, auto_mode, shadow_enabled, yolo_enabled, symbols with autocomplete + group presets), risk params, StrategyParams collapsible numeric inputs, "Skip Pinned Signals" row with Shadow/YOLO toggles. Save validation includes confidence tier ordering check.
+- `settings/page.tsx` — Strategy config (is_active, auto_mode, shadow_enabled, yolo_enabled, symbols with autocomplete + group presets), risk params, StrategyParams collapsible numeric inputs, "Skip Pinned Signals" row with Shadow/YOLO toggles. Save validation includes confidence tier ordering check. **YOLO Profiles section**: CRUD management for profiles (name, profit cap, active toggle). Profile changes call the YOLO profile API directly (no page-level save needed). CRUD operations sync to Zustand store (`setYoloProfiles`) so Dashboard/Trades pills update without page reload. Uses `committedProfilesRef` to track API-known values for onBlur dirty-checking.
 - `research/page.tsx` — AI Research: symbol search, real-time agent progress, full report with expandable cards, past reports history.
-- `agent/page.tsx` — Agent dashboard: YOLO toggle, autonomy level badge, 5-card status grid (incl. Profit Cap card), activity log. PeriodFilter, action-type pills, strategy pills, All/Real/Shadow filter, symbol text input, "Pending" checkbox. `autonomy_level` badge comparisons use `.toLowerCase()` — do not change to direct equality.
+- `agent/page.tsx` — Agent dashboard: YOLO toggle (disabled + grey when agent stopped), 6-card status grid (Mode card shows "OFF" when stopped, "YOLO"/"SEMI" when running; Profit Cap card shows per-profile status from `risk.profiles[]`), activity log. PeriodFilter, action-type pills, strategy pills, All/Real/Shadow filter, symbol text input, "Pending" checkbox. Toggle handlers re-fetch full status from API after mutation (no optimistic spread).
 - `chart/page.tsx` — Full TradingView chart page. Symbol tab row (all 5 indices + watchlist items).
 - `options/page.tsx` — Strategy 2 (VWAP Pullback) dedicated page. DayStatusBar-style header + window state badge. AgentLog in col-span-8.
 - `intraday-futures/page.tsx` — Strategy 5 dedicated page. Fixed DayStatusBar, fixed-height two-column grid (`h-[calc(100vh-96px)]`) with per-column `overflow-y-auto`. 8-col left (Watchlist + PermanentWatchlist), 4-col right (AgentLog, SetupPerformance, GlobalCues). Config managed via Settings page. ChartModal overlay pattern.
@@ -31,7 +31,7 @@ All pages use `'use client'` directive.
 - `AppShell.tsx` — Main wrapper: sidebar (48px, fixed) + header (36px, fixed) + content area. `<main>` is `fixed top-9 left-12 right-0 bottom-0` with `overflow-y-auto` — makes it the scroll container so `sticky` elements work. Applies `noise-bg` texture.
 - `Header.tsx` — Thin status bar (36px): IST clock, market status, VIX, Tasks/Fyers/Agent/WS indicators, "STARTING…" pulse when `data_feed_ready=false` (polls health every 3s until ready). Polls `getAllPrices()` + market status every 10s. Uses `useShallow` selector (no price-tick re-renders). `BiasIndicator` sub-component uses scoped `(s) => s.intradayBias` selector.
 - `TasksPopup.tsx` — Background tasks popup (click-to-open). Shows all registered tasks with status dots, type badges, schedule/description, timestamps, errors. Polls every 5s while open.
-- `AgentPopup.tsx` — Agent control popup: start/stop, SEMI/YOLO toggle, positions monitored, pending confirmations, uptime, profit cap status. Reads Zustand store, writes via API. Click-outside to close.
+- `AgentPopup.tsx` — Agent control popup: start/stop, SEMI/YOLO toggle, positions monitored, pending confirmations, uptime. Profit Cap section shows per-profile cap status with current P&L vs cap for each active profile. Reads Zustand store, writes via API. Click-outside to close.
 - `Sidebar.tsx` — Narrow icon rail (48px): Dashboard → Futures (trending-up) → Options (bar chart) → Research → Trades → Signals (zap) → Agent → Settings.
 
 **charts/**
@@ -39,7 +39,7 @@ All pages use `'use client'` directive.
 - `ChartModal.tsx` — Modal (90vw × 85vh) for detailed chart view. Symbol tabs: 5 default indices + custom watchlist items (fetched on open). Pop-out opens `/chart?symbol=…` in a new tab.
 
 **dashboard/**
-- `PnLCard.tsx` — Single-line strip: Day P&L with inline U/R breakdown, drawdown bar, trades count, NOTIONAL/RISK/MARGIN metrics. Filters by `positionsMinConfidence` from store. Shadow mode: computes from `shadowPositions` + `shadowClosedToday`. Prices via `(s) => s.prices` selector; non-price fields via `useShallow`.
+- `PnLCard.tsx` — Single-line strip: Day P&L with inline U/R breakdown, drawdown bar, trades count, NOTIONAL/RISK/MARGIN metrics. Filters by `positionsMinConfidence` from store. Profile-aware: filters positions and closed trades by active profile/manual mode based on `dashboardViewMode`. Shadow mode: computes from `shadowPositions` + `shadowClosedToday`. Prices via `(s) => s.prices` selector; non-price fields via `useShallow`.
 - `Watchlist.tsx` — Uniform symbol list (indices + custom items). Search via `<SymbolSearchInput>`. Custom items stored via `/api/v1/watchlist`. Max-height 300px with scroll.
 - `ScannerHeader.tsx` — Ultra-compact strategy pill bar. Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end to ScanFeed. Uses `(s) => s.addScanLog` selector (no price-tick re-renders).
 - `ScannerPanel.tsx` — Structured signal cards with strategy-aware rendering. "+ Executed" toggle, symbol search, confidence filter. Uses `useShallow` for signal state (no price-tick re-renders). Three card sections: header (direction, symbol, `P` badge, timestamp, WindowBadge, confidence, strategy badge), prices (entry/SL/target/R:R + strategy context), actions (EXEC, Watch, Details expander, AI panel, dismiss). Details and AI panels mutually exclusive. AI button shows `✦ AI` when `ai_summary` present.
@@ -82,7 +82,7 @@ All pages use `'use client'` directive.
 - `GlobalCues.tsx` — Collapsible morning briefing + global market cues. Manual `↻ refresh` button passes `force=true` to bypass Redis cache. Shows: overnight bias badge, global score bar (BiasBar), Nifty Gap, Nifty/S&P/Nasdaq/Dow Futures/Crude/USD-INR/DXY/India VIX/US VIX. `preopen_reassessed` shown as `pre-open ✓` badge.
 
 **positions/**
-- `ActivePositions.tsx` — Dense table of open positions: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy, Close button. `P` badge on permanent watchlist positions (open) and closed-today trades. Expanded detail: Opened time + fill latency, Strategy, Expiry, Lots/Qty, Stop Loss, Target, Margin (`pos.margin_required` coerced via `Number()`). Closed Today section shows fill latency from `signal_snapshot.generated_at`. Watchlist button resolves symbol via `api.searchSymbols()`. Confidence filter from store. Real/Shadow toggle. Direction-aware P/L and SL distance. Trailing SL exit reason in amber. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks.
+- `ActivePositions.tsx` — Dense table of open positions: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy, Close button. `P` badge on permanent watchlist positions (open) and closed-today trades. Expanded detail: Opened time + fill latency, Strategy, Expiry, Lots/Qty, Stop Loss, Target, Margin (`pos.margin_required` coerced via `Number()`). Closed Today section shows fill latency from `signal_snapshot.generated_at`. Watchlist button resolves symbol via `api.searchSymbols()`. Confidence filter from store. Source pills `[Manual | <profile1> | … | Shadow]` driven by `yoloProfiles` store — for profile mode, filters positions by `yolo_profile_id`; for manual mode, filters by `source === "MANUAL"`. Direction-aware P/L and SL distance. Trailing SL exit reason in amber. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks.
 
 ---
 
@@ -104,14 +104,14 @@ All API calls go through this module via a single `request()` helper (parses err
 - `api.getFyersStatus()` — `GET /api/v1/auth/fyers/status`. Used by: Header
 
 **Positions**
-- `api.getPositions(includeShadow?)` — `GET /api/v1/positions`. Used by: ActivePositions
+- `api.getPositions(opts?)` — `GET /api/v1/positions`. `opts`: `{ includeShadow?, yolo_profile_id? }`. Used by: ActivePositions
 - `api.closePosition(id, reason?)` — `POST /api/v1/positions/{id}/close`. Used by: ActivePositions
 - `api.updateSL(id, stopLoss)` — `PATCH /api/v1/positions/{id}/sl`
 
 **Trades**
-- `api.getTrades(params?)` — `GET /api/v1/trades` with optional filters: `status`, `source`, `strategy`, `limit`, `entry_since/until`, `min/max_confidence`, `ai_action`, `instrument_type`, `signal_type`, `min/max_lots`, `exclude_permanent`. Used by: trades/page
+- `api.getTrades(params?)` — `GET /api/v1/trades` with optional filters: `status`, `source`, `yolo_profile_id`, `strategy`, `limit`, `entry_since/until`, `min/max_confidence`, `ai_action`, `instrument_type`, `signal_type`, `min/max_lots`, `exclude_permanent`. Used by: trades/page
 - `api.getClosedTradesToday(source?)` — `GET /api/v1/trades?status=CLOSED&closed_since={IST-midnight}`. Used by: ActivePositions, dashboard/page
-- `api.getTradeSummary(source?, exclude_permanent?)` — `GET /api/v1/trades/summary`. Used by: trades/page
+- `api.getTradeSummary(opts?)` — `GET /api/v1/trades/summary`. `opts`: `{ source?, yolo_profile_id?, exclude_permanent? }`. Used by: trades/page
 - `api.holdAnalysis(tradeIds, scenario)` — `POST /api/v1/trades/hold-analysis`, scenario: `"best"|"worst"|"eod"|"sl_tgt"` → `HoldAnalysisResponse`. Used by: trades/page
 - `api.marginAnalysis(tradeIds[])` — `POST /api/v1/trades/margin-analysis` → `{peak_margin, peak_time, total_margin, trade_count}`. Used by: trades/page
 
@@ -124,12 +124,18 @@ All API calls go through this module via a single `request()` helper (parses err
 - `api.getSignalHistory(id)` — `GET /api/v1/signals/{id}/history` → `SignalHistory[]`. Used by: SignalHistoryPanel
 
 **Risk / Agent**
-- `api.getRiskDashboard()` — `GET /api/v1/risk/dashboard`. Used by: dashboard/page, agent/page, AgentPopup
+- `api.getRiskDashboard(yolo_profile_id?)` — `GET /api/v1/risk/dashboard`. Optional `yolo_profile_id` scopes all top-level metrics (daily_pnl, closed_pnl, trades_today, notional, risk, margin_utilized, is_profit_capped) to that profile; `profiles[]` array always covers all active profiles. Used by: dashboard/page, agent/page, AgentPopup
 - `api.getAgentStatus()` — `GET /api/v1/agent/status`. Used by: agent/page, AgentPopup
 - `api.startAgent()` / `api.stopAgent()` — `POST /api/v1/agent/start|stop`. Used by: AgentPopup
 - `api.getAgentLogs(opts?)` — `GET /api/v1/agent/logs` with `limit`, `since`, `until`. Used by: agent/page
 - `api.confirmAction(logId, approved)` — `POST /api/v1/agent/confirm/{logId}`. Used by: agent/page
 - `api.toggleYolo(enabled)` — `PATCH /api/v1/agent/yolo`. Used by: AgentPopup
+
+**YOLO Profiles**
+- `api.getYoloProfiles()` — `GET /api/v1/yolo-profiles` → `YoloProfile[]`. Used by: trades/page, ActivePositions, settings/page, page.tsx (dashboard)
+- `api.createYoloProfile(data)` — `POST /api/v1/yolo-profiles`. Used by: settings/page
+- `api.updateYoloProfile(id, data)` — `PATCH /api/v1/yolo-profiles/{id}`. Used by: settings/page
+- `api.deleteYoloProfile(id)` — `DELETE /api/v1/yolo-profiles/{id}`. Used by: settings/page
 
 **Watchlist**
 - `api.getWatchlist()` — `GET /api/v1/watchlist`. Used by: dashboard/Watchlist, ChartModal
@@ -212,12 +218,13 @@ All API calls go through this module via a single `request()` helper (parses err
 #### lib/types.ts — Key Interfaces
 - `PriceData` — `{symbol, ltp, bid, ask, volume, change, change_pct, timestamp}`
 - `Candle` — `{timestamp, open, high, low, close, volume}`
-- `Position` — open position; key fields: `is_shadow`, `signal_confidence`, `signal_generated_at`, `margin_required`, `fyers_option_symbol`, `position_type`, `is_permanent_watchlist`
-- `Trade` — closed/open trade; key fields: `source` (`MANUAL|YOLO|SHADOW`), `charges_json` (brokerage/STT/exchange/GST/SEBI/stamp/total), `net_pnl`, `margin_required`, `is_permanent_watchlist`, `signal_confidence/ai_action/ai_summary/instrument_type/signal_type` (snapshotted columns), `signal_snapshot` (full JSONB), `signal_is_permanent_watchlist`
+- `YoloProfile` — `{id, name, profit_cap, is_active, sort_order, is_capped_today?}`
+- `Position` — open position; key fields: `is_shadow`, `signal_confidence`, `signal_generated_at`, `margin_required`, `fyers_option_symbol`, `position_type`, `is_permanent_watchlist`, `yolo_profile_id: string | null`
+- `Trade` — closed/open trade; key fields: `source` (`MANUAL|YOLO|SHADOW`), `charges_json` (brokerage/STT/exchange/GST/SEBI/stamp/total), `net_pnl`, `margin_required`, `is_permanent_watchlist`, `yolo_profile_id: string | null`, `signal_confidence/ai_action/ai_summary/instrument_type/signal_type` (snapshotted columns), `signal_snapshot` (full JSONB), `signal_is_permanent_watchlist`
 - `Signal` — trading opportunity; key fields: `signal_type` (`BUY_CE|BUY_PE|BUY_FUT|SELL_FUT`), `instrument_type` (`OPTION|FUTURE|EQUITY`), `confidence`, `is_permanent_watchlist`, `ai_summary/rationale/adjustment/action`; **no `lots` or `quantity` fields** (resolved at execution via preview endpoint)
 - `SignalHistory` — Case-2 snapshot; `version`, `entry_price/stop_loss/target_price`, `confidence`, `ai_*` fields, `captured_at`
 - `SignalPreview` — from `GET /signals/{id}/preview`: `{lots, quantity, lot_size, entry_price, stop_loss, target_price, risk, notional, margin_required, sizing_meta, warnings[]}`
-- `RiskDashboard` — `{capital, daily_pnl, closed_pnl, daily_drawdown_pct, max_daily_drawdown_pct, trades_today, max_trades_per_day, notional, risk, margin_utilized, is_halted, max_daily_profit, is_profit_capped, positions_open}`
+- `RiskDashboard` — `{capital, daily_pnl, closed_pnl, daily_drawdown_pct, max_daily_drawdown_pct, trades_today, max_trades_per_day, notional, risk, margin_utilized, is_halted, is_profit_capped, positions_open, profiles: Array<{id, name, profit_cap, current_pnl, is_capped}>}`
 - `MarketStatus` — `{is_open, in_trading_window, in_dead_zone, minutes_to_close, india_vix, cpr_type, day_bias, fyers_connected}`
 - `AgentStatus` — `{running, yolo_mode, autonomy_level: "manual"|"semi"|"yolo", last_action_at, pending_confirmations, positions_monitored, uptime_seconds}`
 - `AgentLog` — agent action record with `action_type`, `details`, `requires_confirmation`, `confirmation_status`
@@ -269,8 +276,9 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 **Slices:**
 - `prices: Record<string, PriceData>` — `updatePrice()` uses 500ms batching + LTP dedup (batch flushes once per 500ms `setTimeout`; unchanged LTPs skipped)
 - `positions / closedToday / shadowPositions / shadowClosedToday` — position state; `addPosition()` skips shadow events; `prependClosedTrade()` deduplicates by id
-- `dashboardViewMode: "REAL" | "SHADOW"` — drives ActivePositions + PnLCard toggle (dashboard)
-- `tradesViewMode: "REAL" | "SHADOW"` — drives Trades page Real/Shadow filter (independent from dashboard)
+- `yoloProfiles: YoloProfile[]` + `setYoloProfiles` — list of YOLO profiles from the API; consumed by ActivePositions, trades/page, PnLCard, dashboard/page
+- `dashboardViewMode: string` — `"MANUAL"` | profile UUID | `"SHADOW"`. Drives ActivePositions + PnLCard source filtering. Default: `"MANUAL"`
+- `tradesViewMode: string` — `"MANUAL"` | profile UUID | `"SHADOW"`. Drives Trades page source filtering (independent from dashboard). Default: `"MANUAL"`
 - `signals` — `addSignal()` deduplicates by id (used for both new signals and dedup updates)
 - `scanLogs: ScanLogEntry[]` — capped at 20 entries; `addScanLog()` prepends
 - `risk: RiskDashboard | null`
@@ -281,7 +289,7 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 - `watchlistItems / intradayBias`
 
 **Persisted keys** (via `partialize`):
-- `scanLogs`, `activeTimeframe`, `dashboardViewMode`, `tradesViewMode`, `showNetPnL`
+- `scanLogs`, `activeTimeframe`, `dashboardViewMode` (string — `"MANUAL"` | UUID | `"SHADOW"`), `tradesViewMode` (same values), `showNetPnL`
 - `tradesShowOpen`, `tradesExcludePinned`, `tradesPeriodLabel`, `tradesPeriodStart`, `tradesPeriodEnd`, `tradesStrategy`, `tradesSimOpen`, `tradesSim`, `tradesHoldOpen`, `tradesHold: { scenario: "best"|"worst"|"eod"|"sl_tgt" }`
 - `scannerShowExecuted`, `scannerMinConfidence`
 - `signalsMinConfidence`, `signalsPeriodLabel`, `signalsPeriodStart`, `signalsPeriodEnd`, `signalsStrategy`, `signalsHideInformational`

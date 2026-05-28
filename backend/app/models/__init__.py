@@ -13,6 +13,7 @@ from app.models.trading_config import TradingConfig
 from app.models.global_market_snapshot import GlobalMarketSnapshot
 from app.models.market_data_daily import MarketDataDaily
 from app.models.signal_history import SignalHistory
+from app.models.yolo_profile import YoloProfile
 
 __all__ = [
     "Base",
@@ -32,4 +33,5 @@ __all__ = [
     "GlobalMarketSnapshot",
     "MarketDataDaily",
     "SignalHistory",
+    "YoloProfile",
 ]

@@ -45,13 +45,14 @@ async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[d
 
     Returns list of actions taken.
     """
+    actions = []
+
     cap_actions = await _check_profit_cap(db)
     if cap_actions:
-        return cap_actions
+        actions.extend(cap_actions)
 
     result = await db.execute(select(Position))
     positions = result.scalars().all()
-    actions = []
 
     for pos in positions:
         action = await _check_position(db, pos, yolo_mode=yolo_mode)
@@ -62,97 +63,128 @@ async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[d
 
 
 async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
-    """Close all open non-shadow positions if daily net profit cap is reached.
+    """Close open positions for any YOLO profile whose daily net profit cap is reached.
+
+    Each profile is checked independently — only that profile's positions are
+    closed when its cap is hit. Other profiles continue trading.
 
     Uses net P&L (after brokerage, STT, exchange, GST, SEBI, stamp duty).
     Closed trades use stored net_pnl; open positions estimate charges from LTP.
 
-    Returns list of close actions if cap was hit, None otherwise.
+    Returns list of close actions if any cap was hit, None otherwise.
     """
-    cfg = await get_trading_config()
-    if cfg.max_daily_profit <= 0:
+    from app.services.yolo_profile_service import get_active_profiles, get_uncapped_profile_ids
+
+    profiles = await get_active_profiles()
+    if not profiles:
         return None
 
     today = now_ist().date()
     today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
 
-    # Realized net PnL from today's closed non-shadow trades
-    pnl_result = await db.execute(
-        select(
-            func.coalesce(func.sum(Trade.net_pnl), 0),
-            func.coalesce(func.sum(Trade.pnl), 0),
-        ).where(
-            and_(
-                Trade.entry_time >= today_start,
-                Trade.status == TradeStatus.CLOSED.value,
-                Trade.source != TradeSource.SHADOW.value,
+    uncapped_ids = await get_uncapped_profile_ids(today)
+    profiles = [p for p in profiles if p.id in uncapped_ids]
+    if not profiles:
+        return None
+
+    all_actions = []
+    capped_profiles = []
+
+    for profile in profiles:
+        # Realized net PnL for this profile today
+        pnl_result = await db.execute(
+            select(
+                func.coalesce(func.sum(Trade.net_pnl), 0),
+                func.coalesce(func.sum(Trade.pnl), 0),
+            ).where(
+                and_(
+                    Trade.entry_time >= today_start,
+                    Trade.status == TradeStatus.CLOSED.value,
+                    Trade.yolo_profile_id == profile.id,
+                )
             )
         )
-    )
-    row = pnl_result.one()
-    realized_net_pnl = float(row[0])
-    realized_gross_pnl = float(row[1])
-    # Fall back to gross if no trades have net_pnl yet
-    realized_pnl = realized_net_pnl if realized_net_pnl != 0 or realized_gross_pnl == 0 else realized_gross_pnl
+        row = pnl_result.one()
+        realized_net_pnl = float(row[0])
+        realized_gross_pnl = float(row[1])
+        realized_pnl = realized_net_pnl if realized_net_pnl != 0 or realized_gross_pnl == 0 else realized_gross_pnl
 
-    # Unrealized net PnL from open non-shadow positions (gross minus estimated charges)
-    unrealized_pnl = await _unrealized_net_pnl(db)
+        unrealized_pnl = await _unrealized_net_pnl(db, profile_id=profile.id)
 
-    total_pnl = realized_pnl + unrealized_pnl
-    if total_pnl < cfg.max_daily_profit:
-        return None
+        total_pnl = realized_pnl + unrealized_pnl
+        if total_pnl < float(profile.profit_cap):
+            continue
 
-    # Profit cap hit — close all open non-shadow positions
-    result = await db.execute(
-        select(Position).where(Position.is_shadow == False)  # noqa: E712
-    )
-    open_positions = result.scalars().all()
-    if not open_positions:
-        return None
-
-    actions = []
-    for pos in open_positions:
-        price_symbol = pos.fyers_option_symbol or pos.symbol
-        price_data = await get_cached_price(price_symbol)
-        if price_data:
-            exit_price = Decimal(str(price_data.get("ltp", 0)))
-        else:
-            exit_price = pos.current_price or pos.entry_price
-
-        action = await _close_position(
-            db, pos, exit_price,
-            ExitReason.PROFIT_CAP,
-            AgentActionType.PROFIT_CAP_CLOSE,
+        # Cap hit for this profile — close its open positions
+        result = await db.execute(
+            select(Position).where(
+                Position.is_shadow == False,  # noqa: E712
+                Position.yolo_profile_id == profile.id,
+            )
         )
-        actions.append(action)
+        open_positions = result.scalars().all()
+        if not open_positions:
+            continue
+
+        for pos in open_positions:
+            price_symbol = pos.fyers_option_symbol or pos.symbol
+            price_data = await get_cached_price(price_symbol)
+            if price_data:
+                exit_price = Decimal(str(price_data.get("ltp", 0)))
+            else:
+                exit_price = pos.current_price or pos.entry_price
+
+            action = await _close_position(
+                db, pos, exit_price,
+                ExitReason.PROFIT_CAP,
+                AgentActionType.PROFIT_CAP_CLOSE,
+            )
+            all_actions.append(action)
+
+        capped_profiles.append({
+            "name": profile.name,
+            "total_pnl": total_pnl,
+            "cap": float(profile.profit_cap),
+            "positions_closed": len(open_positions),
+        })
+
+    if not all_actions:
+        return None
 
     await db.commit()
 
-    try:
-        await notify_profit_cap_halt(
-            daily_pnl=total_pnl,
-            limit=cfg.max_daily_profit,
-            positions_closed=len(open_positions),
+    for cp in capped_profiles:
+        try:
+            await notify_profit_cap_halt(
+                daily_pnl=cp["total_pnl"],
+                limit=cp["cap"],
+                positions_closed=cp["positions_closed"],
+                profile_name=cp["name"],
+            )
+        except Exception:
+            logger.warning("Failed to send profit cap notification for profile %s", cp["name"])
+
+        logger.info(
+            "Profit cap hit for profile %s: net PnL ₹%.0f >= cap ₹%.0f, closed %d positions",
+            cp["name"], cp["total_pnl"], cp["cap"], cp["positions_closed"],
         )
-    except Exception:
-        logger.warning("Failed to send profit cap Telegram notification")
 
-    logger.info(
-        "Profit cap hit: net PnL ₹%.0f >= target ₹%.0f, closed %d positions",
-        total_pnl, cfg.max_daily_profit, len(open_positions),
-    )
-    return actions
+    return all_actions
 
 
-async def _unrealized_net_pnl(db: AsyncSession) -> float:
-    """Sum unrealized P&L for open non-shadow positions, minus estimated charges."""
+async def _unrealized_net_pnl(db: AsyncSession, profile_id=None) -> float:
+    """Sum unrealized P&L for open non-shadow positions, minus estimated charges.
+
+    When profile_id is given, only that YOLO profile's positions are included.
+    """
     from app.services.brokerage_calculator import compute_charges
 
-    result = await db.execute(
-        select(Position, Trade).join(Trade, Trade.id == Position.trade_id).where(
-            Position.is_shadow == False,  # noqa: E712
-        )
+    query = select(Position, Trade).join(Trade, Trade.id == Position.trade_id).where(
+        Position.is_shadow == False,  # noqa: E712
     )
+    if profile_id is not None:
+        query = query.where(Position.yolo_profile_id == profile_id)
+    result = await db.execute(query)
     rows = result.all()
 
     total = 0.0
@@ -581,6 +613,9 @@ async def _roll_futures_position(
     )
     if pos.is_shadow:
         trade_kwargs["source"] = TradeSource.SHADOW.value
+    if pos.yolo_profile_id:
+        trade_kwargs["source"] = TradeSource.YOLO.value
+        trade_kwargs["yolo_profile_id"] = pos.yolo_profile_id
     original_trade = (await db.execute(select(Trade).where(Trade.id == pos.trade_id))).scalar_one_or_none()
     if original_trade:
         trade_kwargs["is_permanent_watchlist"] = original_trade.is_permanent_watchlist
@@ -613,6 +648,7 @@ async def _roll_futures_position(
         opened_at=now,
         signal_generated_at=pos.signal_generated_at,
         margin_required=margin,
+        yolo_profile_id=pos.yolo_profile_id,
     )
     db.add(new_position)
 

@@ -2,7 +2,7 @@ import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.api.v1 import agent, auth, intraday_futures, market_data, options, positions, research, risk, settings, signals, strategies, tasks, trades, watchlist
+from app.api.v1 import agent, auth, intraday_futures, market_data, options, positions, research, risk, settings, signals, strategies, tasks, trades, watchlist, yolo_profiles
 from app.websocket.manager import ws_manager
 
 api_router = APIRouter()
@@ -22,6 +22,7 @@ api_router.include_router(research.router, prefix="/api/v1/research", tags=["res
 api_router.include_router(settings.router, prefix="/api/v1/settings", tags=["settings"])
 api_router.include_router(intraday_futures.router, prefix="/api/v1/intraday-futures", tags=["intraday-futures"])
 api_router.include_router(options.router, prefix="/api/v1/options", tags=["options"])
+api_router.include_router(yolo_profiles.router, prefix="/api/v1/yolo-profiles", tags=["yolo-profiles"])
 
 
 @api_router.get("/api/v1/health")

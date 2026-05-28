@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { api } from "@/lib/api";
 import { startOfDayIST, endOfDayIST, startOfWeekIST, subDaysIST, subMonthsIST, isoDateIST, formatINR, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
-import type { Trade } from "@/lib/types";
+import type { Trade, YoloProfile } from "@/lib/types";
 import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
 import { SummaryStrip } from "@/components/trades/SummaryStrip";
 import { PnLHeatmap } from "@/components/trades/PnLHeatmap";
@@ -151,7 +151,29 @@ export default function TradesPage() {
   const [simExpanded, setSimExpanded] = useState(false);
   const [holdExpanded, setHoldExpanded] = useState(false);
 
-  const mode = tradesViewMode === "SHADOW" ? "SHADOW" : "REAL";
+  const yoloProfiles = useStore((s) => s.yoloProfiles);
+  const setYoloProfiles = useStore((s) => s.setYoloProfiles);
+
+  const activeProfiles = useMemo(
+    () => (Array.isArray(yoloProfiles) ? yoloProfiles : []).filter((p) => p.is_active).sort((a, b) => a.sort_order - b.sort_order),
+    [yoloProfiles],
+  );
+
+  const effectiveMode = useMemo(() => {
+    if (tradesViewMode === "SHADOW") return "SHADOW";
+    if (tradesViewMode === "MANUAL") return "MANUAL";
+    if ((Array.isArray(yoloProfiles) ? yoloProfiles : []).some((p) => p.id === tradesViewMode)) return tradesViewMode;
+    const first = activeProfiles[0];
+    return first ? first.id : "MANUAL";
+  }, [tradesViewMode, yoloProfiles, activeProfiles]);
+
+  const isShadow = effectiveMode === "SHADOW";
+  const isManual = effectiveMode === "MANUAL";
+
+  useEffect(() => {
+    api.getYoloProfiles().then((p) => setYoloProfiles(p as YoloProfile[])).catch(() => {});
+  }, [setYoloProfiles]);
+
   const sim = tradesSim;
   const simOpen = tradesSimOpen;
   const simActive = simOpen && isSimActive(sim);
@@ -178,7 +200,8 @@ export default function TradesPage() {
           entry_since: period.start.toISOString(),
           entry_until: period.end.toISOString(),
           limit: 1000,
-          source: mode === "SHADOW" ? "SHADOW" : undefined,
+          source: isShadow ? "SHADOW" : isManual ? "MANUAL" : undefined,
+          yolo_profile_id: !isShadow && !isManual ? effectiveMode : undefined,
           strategy: tradesStrategy || undefined,
           status: tradesShowOpen ? undefined : "CLOSED",
           exclude_permanent: tradesExcludePinned || undefined,
@@ -200,7 +223,7 @@ export default function TradesPage() {
     load();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period.start, period.end, mode, tradesStrategy, tradesShowOpen, tradesExcludePinned, simOpen, sim.min_confidence, sim.ai_action, sim.instrument_type]);
+  }, [period.start, period.end, effectiveMode, isShadow, isManual, tradesStrategy, tradesShowOpen, tradesExcludePinned, simOpen, sim.min_confidence, sim.ai_action, sim.instrument_type]);
 
   useEffect(() => {
     if (!holdOpen) {
@@ -333,20 +356,31 @@ export default function TradesPage() {
               <option key={key} value={key}>{label}</option>
             ))}
           </select>
-          {/* Real / Shadow toggle */}
+          {/* Source pills: Manual | profiles... | Shadow */}
           <div className="flex items-center rounded border border-border overflow-hidden text-[10px] font-mono">
             <button
-              onClick={() => setTradesViewMode("REAL")}
+              onClick={() => setTradesViewMode("MANUAL")}
               className={`px-2 py-1 transition-colors ${
-                mode === "REAL" ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"
+                isManual ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"
               }`}
             >
-              Real
+              Manual
             </button>
+            {activeProfiles.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setTradesViewMode(p.id)}
+                className={`px-2 py-1 border-l border-border transition-colors ${
+                  effectiveMode === p.id ? "bg-accent/15 text-accent" : "text-text-muted hover:text-text-secondary"
+                }`}
+              >
+                {p.name}
+              </button>
+            ))}
             <button
               onClick={() => setTradesViewMode("SHADOW")}
               className={`px-2 py-1 border-l border-border transition-colors ${
-                mode === "SHADOW" ? "bg-purple-500/15 text-purple-400" : "text-text-muted hover:text-text-secondary"
+                isShadow ? "bg-purple-500/15 text-purple-400" : "text-text-muted hover:text-text-secondary"
               }`}
             >
               Shadow
@@ -671,7 +705,7 @@ export default function TradesPage() {
         );
       })()}
 
-      {mode === "SHADOW" && (
+      {isShadow && (
         <div className="px-3 py-1.5 rounded border border-purple-500/20 bg-purple-500/5">
           <p className="text-[10px] font-mono text-purple-400/70">
             Shadow mode — showing shadow trades that execute every signal (including blocked ones) to measure raw signal accuracy. These do not affect P&amp;L, risk, or active positions.
@@ -746,7 +780,7 @@ export default function TradesPage() {
         <TradesTable
           trades={displayedTrades}
           loading={loading}
-          showSource={mode === "SHADOW"}
+          showSource={isShadow}
           showSignalData={simActive}
           simLots={simOpen ? sim.sim_lots : null}
           showNetPnL={showNetPnL}

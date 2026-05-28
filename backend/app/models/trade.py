@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, Index, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -69,10 +69,14 @@ class Trade(Base, TimestampMixin):
     signal_instrument_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
     signal_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
     signal_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    yolo_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("yolo_profiles.id", ondelete="SET NULL"), nullable=True
+    )
 
     __table_args__ = (
         Index("idx_trades_status", "status"),
         Index("idx_trades_entry_time", "entry_time"),
         Index("idx_trades_strategy", "strategy_name"),
         Index("idx_trades_source", "source"),
+        Index("idx_trades_yolo_profile_id", "yolo_profile_id"),
     )

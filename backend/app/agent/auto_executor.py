@@ -3,14 +3,13 @@
 When YOLO mode is enabled, this module:
 1. Picks up new executable signals (via direct call from the agent runner)
 2. Validates risk limits one final time before execution
-3. Creates a Trade + Position from the signal
+3. Creates a Trade + Position per active uncapped YOLO profile
 4. Marks the signal as EXECUTED
 5. Sends a Telegram notification
 """
 
 import logging
 from datetime import datetime
-from decimal import Decimal
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +25,7 @@ from app.services.live_price import get_live_price
 from app.services.lot_sizing import compute_lots_for_yolo
 from app.services.margin_calculator import compute_margin
 from app.services.trading_config import get_trading_config
+from app.services.yolo_profile_service import get_active_profiles, get_uncapped_profile_ids
 from app.core.database import async_session_factory
 from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
 from app.core.utils import now_ist
@@ -39,45 +39,37 @@ from app.websocket.manager import ws_manager
 logger = logging.getLogger(__name__)
 
 
-async def auto_execute_signal(signal_id) -> dict | None:
-    """Attempt to auto-execute a signal in YOLO mode.
+async def auto_execute_signal(signal_id) -> list[dict]:
+    """Attempt to auto-execute a signal in YOLO mode across all uncapped profiles.
 
-    Gate order: PENDING + executable → confidence >= min_confidence_for_execution →
-    per-strategy yolo_enabled → permanent watchlist check → open YOLO trade dedup
-    (same signal_id) → open position dedup (same symbol+direction) →
-    _final_risk_check (drawdown, max-trades, daily profit cap).
-    Lot sizing via compute_lots_for_yolo(). SL/target recomputed from live LTP.
+    Each active uncapped YOLO profile gets its own Trade + Position. Shared
+    computation (price, lots, SL/target, margin) happens once; per-profile
+    gates (position dedup, risk check) are evaluated independently.
 
-    Args:
-        signal_id: UUID of the signal to execute.
-
-    Returns:
-        Action dict if executed, None if skipped.
+    Returns list of action dicts (one per profile that executed), empty list if skipped.
     """
     async with async_session_factory() as session:
-        # Load the signal
+        # ── Signal-level gates (shared across all profiles) ──────────
+
         result = await session.execute(
             select(Signal).where(Signal.id == signal_id)
         )
         signal = result.scalar_one_or_none()
         if signal is None:
             logger.warning("Auto-execute: signal %s not found", signal_id)
-            return None
+            return []
 
-        # Only execute pending, executable signals
         if signal.status != SignalStatus.PENDING.value:
             logger.debug("Auto-execute: signal %s status is %s, skipping", signal_id, signal.status)
-            return None
+            return []
 
         if not signal.executable:
             logger.info(
                 "Auto-execute: signal %s not executable (%s), skipping",
-                signal_id,
-                signal.blocked_reason,
+                signal_id, signal.blocked_reason,
             )
-            return None
+            return []
 
-        # Confidence gate — only execute signals above the global execution threshold
         cfg = await get_trading_config()
         min_exec_conf = cfg.min_confidence_for_execution
         if signal.confidence is not None:
@@ -86,9 +78,8 @@ async def auto_execute_signal(signal_id) -> dict | None:
                     "Auto-execute: confidence %.0f < execution threshold %.0f for %s, skipping",
                     float(signal.confidence), min_exec_conf, signal.symbol,
                 )
-                return None
+                return []
 
-        # Per-strategy YOLO gate
         sc_result = await session.execute(
             select(StrategyConfig).where(StrategyConfig.strategy_name == signal.strategy_name)
         )
@@ -98,57 +89,34 @@ async def auto_execute_signal(signal_id) -> dict | None:
                 "YOLO skip: strategy %s has yolo_enabled=False for signal %s",
                 signal.strategy_name, signal_id,
             )
-            return None
+            return []
 
         if signal.is_permanent_watchlist and cfg.yolo_skip_permanent_watchlist:
             logger.info(
                 "YOLO skip: %s is a permanent watchlist signal (yolo_skip_permanent_watchlist=True)",
                 signal.symbol,
             )
-            return None
+            return []
 
-        # Skip if an open YOLO trade already exists for this signal
-        existing_yolo = await session.execute(
-            select(Trade.id).where(
-                Trade.signal_id == signal.id,
-                Trade.source == TradeSource.YOLO.value,
-                Trade.status == TradeStatus.OPEN.value,
-            ).limit(1)
-        )
-        if existing_yolo.scalar_one_or_none() is not None:
-            logger.debug("Auto-execute: open YOLO trade already exists for signal %s, skipping", signal_id)
-            return None
+        # ── Uncapped profiles ────────────────────────────────────────
 
-        # Check for existing open position on the same symbol + direction (exclude shadow)
-        direction = signal.signal_type.replace("BUY_", "") if signal.instrument_type == "OPTION" else None
-        pos_query = select(Position).where(
-            Position.symbol == signal.symbol,
-            Position.is_shadow == False,  # noqa: E712
-        )
-        if direction:
-            pos_query = pos_query.where(Position.option_type == direction)
-        existing_pos = (await session.execute(pos_query)).scalar_one_or_none()
-        if existing_pos:
-            logger.info("Auto-execute: open position already exists for %s %s, skipping", signal.symbol, direction or "FUT")
-            return None
+        today = now_ist().date()
+        uncapped_ids = await get_uncapped_profile_ids(today)
+        active_profiles = await get_active_profiles()
+        profiles = [p for p in active_profiles if p.id in uncapped_ids]
 
-        # Final risk check before execution
-        is_safe, reason = await _final_risk_check(session, signal.symbol)
-        if not is_safe:
-            signal.executable = False
-            signal.blocked_reason = reason
-            await session.commit()
-            logger.warning("Auto-execute: final risk check failed for %s — %s", signal_id, reason)
-            return None
+        if not profiles:
+            logger.info("Auto-execute: no uncapped profiles for signal %s, skipping", signal_id)
+            return []
 
-        # Determine lot size and quantity
+        # ── Shared computation (once for all profiles) ───────────────
+
         is_futures = signal.instrument_type == "FUTURE"
         if is_futures:
             lot_size = int((signal.indicators or {}).get("futures_lot_size", 1))
         else:
             lot_size = LOT_SIZES.get(signal.symbol, 75)
 
-        # Read India VIX from Redis for lot sizing
         india_vix = None
         try:
             from app.core.redis import get_redis
@@ -162,13 +130,10 @@ async def auto_execute_signal(signal_id) -> dict | None:
 
         lots, sizing_meta = await compute_lots_for_yolo(signal, lot_size, india_vix)
         quantity = lots * lot_size
-
         now = now_ist()
 
-        # Derive option_type and position_type based on instrument
         if is_futures:
             option_type = None
-            # Determine holding type from strategy
             from app.strategies.registry import get_strategy
             from app.core.enums import StrategyName
             try:
@@ -180,10 +145,8 @@ async def auto_execute_signal(signal_id) -> dict | None:
             option_type = signal.signal_type.replace("BUY_", "")
             position_type = "INTRADAY"
 
-        # Use futures symbol if available, otherwise option symbol
         trading_symbol = signal.fyers_futures_symbol or signal.fyers_option_symbol
 
-        # Fetch live price — YOLO executes at current market price, not stale premium
         if trading_symbol:
             try:
                 live_entry = await get_live_price(trading_symbol)
@@ -195,7 +158,6 @@ async def auto_execute_signal(signal_id) -> dict | None:
         else:
             live_entry = float(signal.entry_price)
 
-        # Recompute SL/target from the live fill price so R:R is preserved
         stop_loss, target_price = recompute_sl_target(
             float(signal.entry_price),
             float(signal.stop_loss),
@@ -205,130 +167,186 @@ async def auto_execute_signal(signal_id) -> dict | None:
             signal.signal_type,
         )
 
-        # Compute margin
         instrument = "FUTURE" if is_futures else "OPTION"
         margin = compute_margin(signal.symbol, live_entry, quantity, instrument)
+        direction = signal.signal_type.replace("BUY_", "") if signal.instrument_type == "OPTION" else None
 
-        # Create Trade
-        trade = Trade(
-            signal_id=signal.id,
-            strategy_name=signal.strategy_name,
-            symbol=signal.symbol,
-            expiry_date=signal.expiry_date,
-            strike_price=signal.strike_price,
-            option_type=option_type,
-            side="SELL" if "SELL" in signal.signal_type else "BUY",
-            quantity=quantity,
-            lots=lots,
-            entry_price=live_entry,
-            stop_loss=stop_loss,
-            target_price=target_price,
-            status=TradeStatus.OPEN.value,
-            position_type=position_type,
-            is_paper=cfg.paper_trading,
-            source=TradeSource.YOLO.value,
-            entry_time=now,
-            fyers_option_symbol=trading_symbol,
-            margin_required=margin,
-            is_permanent_watchlist=bool(signal.is_permanent_watchlist),
-            signal_confidence=signal.confidence,
-            signal_ai_action=signal.ai_action,
-            signal_ai_summary=signal.ai_summary,
-            signal_instrument_type=signal.instrument_type,
-            signal_type=signal.signal_type,
-            signal_snapshot=build_signal_snapshot(signal),
-        )
-        session.add(trade)
-        await session.flush()  # Get trade.id
+        # ── Per-profile Trade + Position creation ────────────────────
 
-        # Create Position
-        position = Position(
-            trade_id=trade.id,
-            symbol=signal.symbol,
-            strike_price=signal.strike_price,
-            option_type=option_type or "",
-            expiry_date=signal.expiry_date,
-            lots=lots,
-            quantity=quantity,
-            entry_price=live_entry,
-            stop_loss=stop_loss,
-            target_price=target_price,
-            fyers_option_symbol=trading_symbol,
-            strategy_name=signal.strategy_name,
-            position_type=position_type,
-            is_paper=cfg.paper_trading,
-            opened_at=now,
-            signal_generated_at=signal.generated_at,
-            margin_required=margin,
-        )
-        session.add(position)
+        actions = []
+        ws_payloads = []
+        first_trade_id = None
 
-        # Mark signal as executed
-        signal.status = SignalStatus.EXECUTED.value
-        signal.executed_trade_id = trade.id
+        for profile in profiles:
+            # Position dedup scoped to this profile
+            pos_query = select(Position).where(
+                Position.symbol == signal.symbol,
+                Position.is_shadow == False,  # noqa: E712
+                Position.yolo_profile_id == profile.id,
+            )
+            if direction:
+                pos_query = pos_query.where(Position.option_type == direction)
+            existing_pos = (await session.execute(pos_query)).scalar_one_or_none()
+            if existing_pos:
+                logger.info(
+                    "Auto-execute: open position for %s %s on profile %s, skipping",
+                    signal.symbol, direction or "FUT", profile.name,
+                )
+                continue
 
-        # Log agent action
-        log = AgentLog(
-            action_type=AgentActionType.AUTO_EXECUTED.value,
-            trade_id=trade.id,
-            details={
+            is_safe, reason = await _final_risk_check(
+                session, signal.symbol, profile.id, profile.profit_cap,
+            )
+            if not is_safe:
+                logger.info(
+                    "Auto-execute: risk check failed for %s profile %s — %s",
+                    signal.symbol, profile.name, reason,
+                )
+                continue
+
+            trade = Trade(
+                signal_id=signal.id,
+                strategy_name=signal.strategy_name,
+                symbol=signal.symbol,
+                expiry_date=signal.expiry_date,
+                strike_price=signal.strike_price,
+                option_type=option_type,
+                side="SELL" if "SELL" in signal.signal_type else "BUY",
+                quantity=quantity,
+                lots=lots,
+                entry_price=live_entry,
+                stop_loss=stop_loss,
+                target_price=target_price,
+                status=TradeStatus.OPEN.value,
+                position_type=position_type,
+                is_paper=cfg.paper_trading,
+                source=TradeSource.YOLO.value,
+                entry_time=now,
+                fyers_option_symbol=trading_symbol,
+                margin_required=margin,
+                is_permanent_watchlist=bool(signal.is_permanent_watchlist),
+                signal_confidence=signal.confidence,
+                signal_ai_action=signal.ai_action,
+                signal_ai_summary=signal.ai_summary,
+                signal_instrument_type=signal.instrument_type,
+                signal_type=signal.signal_type,
+                signal_snapshot=build_signal_snapshot(signal),
+                yolo_profile_id=profile.id,
+            )
+            session.add(trade)
+            await session.flush()
+
+            position = Position(
+                trade_id=trade.id,
+                symbol=signal.symbol,
+                strike_price=signal.strike_price,
+                option_type=option_type or "",
+                expiry_date=signal.expiry_date,
+                lots=lots,
+                quantity=quantity,
+                entry_price=live_entry,
+                stop_loss=stop_loss,
+                target_price=target_price,
+                fyers_option_symbol=trading_symbol,
+                strategy_name=signal.strategy_name,
+                position_type=position_type,
+                is_paper=cfg.paper_trading,
+                opened_at=now,
+                signal_generated_at=signal.generated_at,
+                margin_required=margin,
+                yolo_profile_id=profile.id,
+            )
+            session.add(position)
+            await session.flush()
+
+            log = AgentLog(
+                action_type=AgentActionType.AUTO_EXECUTED.value,
+                trade_id=trade.id,
+                details={
+                    "signal_id": str(signal.id),
+                    "symbol": signal.symbol,
+                    "strategy_name": signal.strategy_name,
+                    "signal_type": signal.signal_type,
+                    "strike_price": float(signal.strike_price),
+                    "entry_price": live_entry,
+                    "stop_loss": stop_loss,
+                    "target_price": target_price,
+                    "lots": lots,
+                    "quantity": quantity,
+                    "mode": "YOLO",
+                    "profile_id": str(profile.id),
+                    "profile_name": profile.name,
+                },
+                requires_confirmation=False,
+            )
+            session.add(log)
+
+            if first_trade_id is None:
+                first_trade_id = trade.id
+
+            ws_payloads.append({
+                "position_id": str(position.id),
+                "trade_id": str(trade.id),
+                "profile_id": str(profile.id),
+                "profile_name": profile.name,
+            })
+
+            actions.append({
+                "action_type": AgentActionType.AUTO_EXECUTED.value,
                 "signal_id": str(signal.id),
+                "trade_id": str(trade.id),
                 "symbol": signal.symbol,
-                "strategy_name": signal.strategy_name,
                 "signal_type": signal.signal_type,
                 "strike_price": float(signal.strike_price),
                 "entry_price": live_entry,
-                "stop_loss": stop_loss,
-                "target_price": target_price,
                 "lots": lots,
-                "quantity": quantity,
-                "mode": "YOLO",
-            },
-            requires_confirmation=False,
-        )
-        session.add(log)
+                "yolo_profile_id": str(profile.id),
+                "yolo_profile_name": profile.name,
+            })
+
+        if not actions:
+            return []
+
+        signal.status = SignalStatus.EXECUTED.value
+        signal.executed_trade_id = first_trade_id
 
         await session.commit()
 
-    # Broadcast trade:open so the position appears in the frontend immediately
-    await ws_manager.broadcast(
-        "trade:open",
-        {
-            "id": str(position.id),
-            "trade_id": str(trade.id),
-            "symbol": signal.symbol,
-            "fyers_option_symbol": trading_symbol,
-            "strike_price": float(signal.strike_price),
-            "option_type": option_type or "",
-            "expiry_date": str(signal.expiry_date),
-            "lots": lots,
-            "quantity": quantity,
-            "entry_price": live_entry,
-            "current_price": live_entry,
-            "unrealized_pnl": 0.0,
-            "stop_loss": stop_loss,
-            "target_price": target_price,
-            "strategy_name": signal.strategy_name,
-            "is_paper": cfg.paper_trading,
-            "position_type": position_type,
-            "opened_at": now.isoformat(),
-            "margin_required": margin,
-            "signal_generated_at": signal.generated_at.isoformat() if signal.generated_at else None,
-        },
-    )
+    # ── WS broadcasts + Telegram (after commit) ─────────────────
 
-    action = {
-        "action_type": AgentActionType.AUTO_EXECUTED.value,
-        "signal_id": str(signal.id),
-        "trade_id": str(trade.id),
-        "symbol": signal.symbol,
-        "signal_type": signal.signal_type,
-        "strike_price": float(signal.strike_price),
-        "entry_price": live_entry,
-        "lots": lots,
-    }
-    await ws_manager.broadcast("agent:auto_executed", action)
+    for wp in ws_payloads:
+        await ws_manager.broadcast(
+            "trade:open",
+            {
+                "id": wp["position_id"],
+                "trade_id": wp["trade_id"],
+                "symbol": signal.symbol,
+                "fyers_option_symbol": trading_symbol,
+                "strike_price": float(signal.strike_price),
+                "option_type": option_type or "",
+                "expiry_date": str(signal.expiry_date),
+                "lots": lots,
+                "quantity": quantity,
+                "entry_price": live_entry,
+                "current_price": live_entry,
+                "unrealized_pnl": 0.0,
+                "stop_loss": stop_loss,
+                "target_price": target_price,
+                "strategy_name": signal.strategy_name,
+                "is_paper": cfg.paper_trading,
+                "position_type": position_type,
+                "opened_at": now.isoformat(),
+                "margin_required": margin,
+                "signal_generated_at": signal.generated_at.isoformat() if signal.generated_at else None,
+                "yolo_profile_id": wp["profile_id"],
+                "yolo_profile_name": wp["profile_name"],
+            },
+        )
 
+    for action in actions:
+        await ws_manager.broadcast("agent:auto_executed", action)
+
+    profile_names = [wp["profile_name"] for wp in ws_payloads]
     await notify_auto_executed(
         symbol=signal.symbol,
         signal_type=signal.signal_type,
@@ -344,32 +362,33 @@ async def auto_execute_signal(signal_id) -> dict | None:
     )
 
     logger.info(
-        "YOLO auto-executed: %s %s %s @ %.2f (%d lots)",
+        "YOLO auto-executed: %s %s %s @ %.2f (%d lots) for %d profiles [%s]",
         signal.signal_type,
         signal.symbol,
         signal.strike_price,
         live_entry,
         lots,
+        len(actions),
+        ", ".join(profile_names),
     )
-    return action
+    return actions
 
 
-async def _final_risk_check(session: AsyncSession, symbol: str) -> tuple[bool, str | None]:
-    """One final risk validation before auto-execution.
-
-    Returns (is_safe, reason_if_not_safe).
-    """
+async def _final_risk_check(
+    session: AsyncSession, symbol: str, profile_id, profile_cap: float,
+) -> tuple[bool, str | None]:
+    """One final risk validation before auto-execution, scoped to a YOLO profile."""
     today = now_ist().date()
     today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
 
-    # Check max trades for the day — POSITIONAL and SHADOW trades are excluded.
+    # Max trades per day for this symbol and profile
     trade_count_result = await session.execute(
         select(func.count(Trade.id)).where(
             and_(
                 Trade.entry_time >= today_start,
                 Trade.symbol == symbol,
                 Trade.position_type != "POSITIONAL",
-                Trade.source != TradeSource.SHADOW.value,
+                Trade.yolo_profile_id == profile_id,
             )
         )
     )
@@ -378,13 +397,13 @@ async def _final_risk_check(session: AsyncSession, symbol: str) -> tuple[bool, s
     if trade_count >= cfg.max_trades_per_day:
         return False, f"Max trades reached ({cfg.max_trades_per_day}/day)"
 
-    # Check drawdown — shadow P&L must never affect real-money drawdown gate.
+    # Drawdown check scoped to profile
     pnl_result = await session.execute(
         select(func.coalesce(func.sum(Trade.pnl), 0)).where(
             and_(
                 Trade.entry_time >= today_start,
                 Trade.status == TradeStatus.CLOSED.value,
-                Trade.source != TradeSource.SHADOW.value,
+                Trade.yolo_profile_id == profile_id,
             )
         )
     )
@@ -398,28 +417,29 @@ async def _final_risk_check(session: AsyncSession, symbol: str) -> tuple[bool, s
             pass
         return False, "Drawdown limit breached"
 
-    # Check profit cap — realized + unrealized vs daily target
-    if cfg.max_daily_profit > 0:
+    # Profit cap — compare against profile's cap
+    if profile_cap > 0:
         unrealized_result = await session.execute(
             select(func.coalesce(func.sum(Position.unrealized_pnl), 0)).where(
-                Position.is_shadow == False,  # noqa: E712
+                Position.yolo_profile_id == profile_id,
             )
         )
         unrealized_pnl = float(unrealized_result.scalar_one())
         total_pnl = realized_pnl + unrealized_pnl
-        if total_pnl >= cfg.max_daily_profit:
+        if total_pnl >= profile_cap:
             logger.info(
-                "Profit cap blocking new trade: total PnL ₹%.0f >= target ₹%.0f",
-                total_pnl, cfg.max_daily_profit,
+                "Profit cap blocking new trade: total PnL ₹%.0f >= profile cap ₹%.0f",
+                total_pnl, profile_cap,
             )
             log = AgentLog(
                 action_type=AgentActionType.PROFIT_CAP_CLOSE.value,
                 details={
                     "event": "profit_cap_block",
                     "daily_pnl": round(total_pnl, 0),
-                    "target": round(cfg.max_daily_profit, 0),
+                    "target": round(profile_cap, 0),
                     "realized": round(realized_pnl, 0),
                     "unrealized": round(unrealized_pnl, 0),
+                    "profile_id": str(profile_id),
                 },
                 requires_confirmation=False,
             )
@@ -427,5 +447,3 @@ async def _final_risk_check(session: AsyncSession, symbol: str) -> tuple[bool, s
             return False, "Daily profit cap reached"
 
     return True, None
-
-

@@ -11,6 +11,7 @@ import type {
   RiskDashboard,
   Signal,
   Trade,
+  YoloProfile,
 } from "@/lib/types";
 import type { Timeframe } from "@/lib/constants";
 
@@ -40,11 +41,15 @@ interface AppState {
   setClosedToday: (trades: Trade[]) => void;
   prependClosedTrade: (trade: Trade) => void;
 
-  // Position view mode (Real vs Shadow/Signal Test) — independent per page
-  dashboardViewMode: "REAL" | "SHADOW";
-  setDashboardViewMode: (mode: "REAL" | "SHADOW") => void;
-  tradesViewMode: "REAL" | "SHADOW";
-  setTradesViewMode: (mode: "REAL" | "SHADOW") => void;
+  // YOLO profiles
+  yoloProfiles: YoloProfile[];
+  setYoloProfiles: (profiles: YoloProfile[]) => void;
+
+  // View mode — "MANUAL" | profile UUID | "SHADOW" (independent per page)
+  dashboardViewMode: string;
+  setDashboardViewMode: (mode: string) => void;
+  tradesViewMode: string;
+  setTradesViewMode: (mode: string) => void;
   shadowPositions: Position[];
   setShadowPositions: (positions: Position[]) => void;
   shadowClosedToday: Trade[];
@@ -240,10 +245,14 @@ export const useStore = create<AppState>()(
           closedToday: [trade, ...state.closedToday.filter((t) => t.id !== trade.id)],
         })),
 
-      // Position view mode — independent per page
-      dashboardViewMode: "REAL",
+      // YOLO profiles
+      yoloProfiles: [],
+      setYoloProfiles: (yoloProfiles) => set({ yoloProfiles }),
+
+      // View mode — "MANUAL" | profile UUID | "SHADOW"
+      dashboardViewMode: "MANUAL",
       setDashboardViewMode: (mode) => set({ dashboardViewMode: mode }),
-      tradesViewMode: "REAL",
+      tradesViewMode: "MANUAL",
       setTradesViewMode: (mode) => set({ tradesViewMode: mode }),
       shadowPositions: [],
       setShadowPositions: (shadowPositions) => set({ shadowPositions }),

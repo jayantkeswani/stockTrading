@@ -182,16 +182,14 @@ export function AgentPopup() {
                     <span className="text-text-secondary">{formatUptime(agentStatus.uptime_seconds)}</span>
                   </div>
                 )}
-                {risk && risk.max_daily_profit > 0 && (
-                  <div className="flex justify-between text-[9px] font-mono">
-                    <span className="text-text-muted">profit cap</span>
-                    <span className={risk.is_profit_capped ? "text-profit font-bold" : "text-text-secondary"}>
-                      {risk.is_profit_capped
-                        ? "HIT"
-                        : `${formatINR(risk.daily_pnl)} / ${formatINR(risk.max_daily_profit)}`}
+                {risk?.profiles && risk.profiles.length > 0 && risk.profiles.map((p) => (
+                  <div key={p.id} className="flex justify-between text-[9px] font-mono">
+                    <span className="text-text-muted">{p.name}</span>
+                    <span className={p.is_capped ? "text-profit font-bold" : "text-text-secondary"}>
+                      {p.is_capped ? "HIT" : `${formatINR(p.current_pnl)} / ${formatINR(p.profit_cap)}`}
                     </span>
                   </div>
-                )}
+                ))}
               </div>
             )}
           </div>

@@ -118,8 +118,8 @@ class AgentRunner:
             return
 
         try:
-            action = await auto_execute_signal(signal_id)
-            if action:
+            actions = await auto_execute_signal(signal_id)
+            for action in actions:
                 await ws_manager.broadcast("agent:action", action)
         except Exception:
             logger.exception("Error auto-executing signal %s", signal_id)

@@ -15,7 +15,6 @@ async def get_trading_settings():
     return TradingConfigResponse(
         capital=cfg.capital,
         max_daily_drawdown_pct=cfg.max_daily_drawdown_pct,
-        max_daily_profit=cfg.max_daily_profit,
         max_risk_per_trade_pct=cfg.max_risk_per_trade_pct,
         max_trades_per_day=cfg.max_trades_per_day,
         paper_trading=cfg.paper_trading,
@@ -43,7 +42,6 @@ async def patch_trading_settings(body: TradingConfigUpdate):
     return TradingConfigResponse(
         capital=cfg.capital,
         max_daily_drawdown_pct=cfg.max_daily_drawdown_pct,
-        max_daily_profit=cfg.max_daily_profit,
         max_risk_per_trade_pct=cfg.max_risk_per_trade_pct,
         max_trades_per_day=cfg.max_trades_per_day,
         paper_trading=cfg.paper_trading,

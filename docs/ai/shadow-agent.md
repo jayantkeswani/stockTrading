@@ -35,14 +35,16 @@ Shadow trades and positions are completely isolated from all real-trading data p
 
 ## How to view shadow data
 
-**Dashboard — Active Positions widget:** click the **Real | Shadow** toggle in the widget header. Shadow mode shows open shadow positions with live P&L (polls every 30s) and "Shadow Closed Today" below. The P&L bar above also switches to shadow P&L — closed shadow trades + live unrealized from shadow positions. The drawdown bar is hidden in shadow mode (it's not meaningful for simulated trades).
+**Dashboard — Active Positions widget:** use the source pills in the widget header (Manual / profile names / Shadow) to switch views. Selecting Shadow shows open shadow positions with live P&L (polls every 30s) and "Shadow Closed Today" below. The P&L bar above also switches to shadow P&L — closed shadow trades + live unrealized from shadow positions. The drawdown bar is hidden in shadow mode (it's not meaningful for simulated trades).
 
-**Trades page:** click the **"Signal Test"** toggle (next to the period filter). The table, summary strip, and heatmap recompute from `GET /trades?source=SHADOW` for the selected period.
+**Trades page:** use the source pills in the page header, which include a Shadow pill, to filter the view. The table, summary strip, and heatmap recompute from `GET /trades?source=SHADOW` for the selected period.
 
 ## DB schema
 
 - `trades.source` — `VARCHAR(20)`, values: `MANUAL | YOLO | SHADOW` (default `MANUAL`, index on column)
+- `trades.yolo_profile_id` — `UUID`, FK → `yolo_profiles.id` ON DELETE SET NULL, nullable. YOLO trades carry the profile that triggered them; shadow trades always have `NULL` here (shadow execution is profile-agnostic)
 - `positions.is_shadow` — `BOOLEAN` (default `false`, index on column)
+- `positions.yolo_profile_id` — `UUID`, FK → `yolo_profiles.id` ON DELETE SET NULL, nullable. Same semantics as `trades.yolo_profile_id` — `NULL` for shadow positions, set for YOLO positions
 
 ## Month-end accuracy report (manual)
 

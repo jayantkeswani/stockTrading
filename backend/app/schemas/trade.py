@@ -41,6 +41,7 @@ class TradeResponse(BaseModel):
     signal_type: str | None = None
     signal_snapshot: dict | None = None
     signal_is_permanent_watchlist: bool | None = None
+    yolo_profile_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}
 

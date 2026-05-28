@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, Index, Numeric, String
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, generate_uuid
@@ -35,8 +35,12 @@ class Position(Base, TimestampMixin):
     is_shadow: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     high_since_entry: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     margin_required: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    yolo_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("yolo_profiles.id", ondelete="SET NULL"), nullable=True
+    )
 
     __table_args__ = (
         Index("idx_positions_symbol", "symbol"),
         Index("idx_positions_is_shadow", "is_shadow"),
+        Index("idx_positions_yolo_profile_id", "yolo_profile_id"),
     )

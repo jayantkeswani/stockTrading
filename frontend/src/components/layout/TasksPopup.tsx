@@ -49,7 +49,7 @@ export function TasksPopup() {
   const fetchTasks = useCallback(async () => {
     try {
       const { tasks: t } = await api.getTasks();
-      setTasks(t);
+      setTasks(t ?? []);
     } catch {
       // backend not available
     }

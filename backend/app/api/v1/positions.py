@@ -28,6 +28,7 @@ def _to_response(pos: Position, trade: Trade | None) -> PositionResponse:
 @router.get("", response_model=list[PositionResponse])
 async def list_positions(
     include_shadow: bool = False,
+    yolo_profile_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     query = (
@@ -37,6 +38,8 @@ async def list_positions(
     )
     if not include_shadow:
         query = query.where(Position.is_shadow == False)  # noqa: E712
+    if yolo_profile_id is not None:
+        query = query.where(Position.yolo_profile_id == yolo_profile_id)
     result = await db.execute(query)
     rows = result.all()
 

@@ -1,0 +1,218 @@
+"""YOLO profile service — CRUD + in-memory cache for profit cap tiers.
+
+Each profile defines a profit_cap. During live trading, each signal creates
+one Trade+Position per active uncapped profile. Trade monitor checks caps
+per profile independently.
+
+Cache pattern mirrors trading_config.py: in-memory list, refreshed via
+Redis pubsub on any write.
+"""
+
+import asyncio
+import logging
+import uuid
+from dataclasses import dataclass
+from datetime import date
+
+from sqlalchemy import select, func, and_
+
+from app.core.database import async_session_factory
+from app.models.yolo_profile import YoloProfile
+from app.models.trade import Trade
+from app.core.enums import TradeSource, ExitReason
+
+logger = logging.getLogger(__name__)
+
+_PUBSUB_CHANNEL = "config:yolo_profiles:updated"
+
+
+@dataclass(frozen=True)
+class YoloProfileDTO:
+    id: uuid.UUID
+    name: str
+    profit_cap: float
+    is_active: bool
+    sort_order: int
+
+
+_cache: list[YoloProfileDTO] | None = None
+
+
+def _row_to_dto(row: YoloProfile) -> YoloProfileDTO:
+    return YoloProfileDTO(
+        id=row.id,
+        name=str(row.name),
+        profit_cap=float(row.profit_cap),
+        is_active=bool(row.is_active),
+        sort_order=int(row.sort_order),
+    )
+
+
+async def _load_from_db() -> list[YoloProfileDTO]:
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(YoloProfile).order_by(YoloProfile.profit_cap.asc(), YoloProfile.sort_order.asc())
+        )
+        return [_row_to_dto(r) for r in result.scalars().all()]
+
+
+async def get_active_profiles() -> list[YoloProfileDTO]:
+    """Return active profiles sorted by profit_cap ASC. Cached after first load."""
+    global _cache
+    if _cache is None:
+        _cache = await _load_from_db()
+    return [p for p in _cache if p.is_active]
+
+
+def get_active_profiles_sync() -> list[YoloProfileDTO]:
+    """Return cached active profiles or empty list (no DB call)."""
+    if _cache is None:
+        return []
+    return [p for p in _cache if p.is_active]
+
+
+async def get_all_profiles() -> list[YoloProfileDTO]:
+    """Return all profiles (active + inactive) sorted by profit_cap ASC."""
+    global _cache
+    if _cache is None:
+        _cache = await _load_from_db()
+    return list(_cache)
+
+
+async def get_uncapped_profile_ids(today: date) -> set[uuid.UUID]:
+    """Return IDs of active profiles that haven't been profit-capped today."""
+    active = await get_active_profiles()
+    if not active:
+        return set()
+
+    async with async_session_factory() as session:
+        # A profile is "capped" if it has any trade closed with PROFIT_CAP today
+        result = await session.execute(
+            select(Trade.yolo_profile_id)
+            .where(
+                and_(
+                    Trade.source == TradeSource.YOLO.value,
+                    Trade.exit_reason == ExitReason.PROFIT_CAP.value,
+                    func.date(Trade.exit_time) == today,
+                    Trade.yolo_profile_id.isnot(None),
+                )
+            )
+            .distinct()
+        )
+        capped_ids = {row[0] for row in result.all()}
+
+    return {p.id for p in active} - capped_ids
+
+
+async def get_profile_by_id(profile_id: uuid.UUID) -> YoloProfileDTO | None:
+    """Return a single profile by ID from cache."""
+    profiles = await get_all_profiles()
+    for p in profiles:
+        if p.id == profile_id:
+            return p
+    return None
+
+
+async def create_profile(name: str, profit_cap: float) -> YoloProfileDTO:
+    """Create a new YOLO profile."""
+    async with async_session_factory() as session:
+        # Auto-assign sort_order as max+1
+        result = await session.execute(
+            select(func.coalesce(func.max(YoloProfile.sort_order), -1))
+        )
+        max_order = result.scalar()
+        row = YoloProfile(
+            name=name,
+            profit_cap=profit_cap,
+            is_active=True,
+            sort_order=max_order + 1,
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+        dto = _row_to_dto(row)
+
+    await _invalidate_cache()
+    return dto
+
+
+async def update_profile(profile_id: uuid.UUID, **fields) -> YoloProfileDTO:
+    """Partially update a YOLO profile."""
+    allowed = {"name", "profit_cap", "is_active", "sort_order"}
+    invalid = set(fields) - allowed
+    if invalid:
+        raise ValueError(f"Unknown profile fields: {invalid}")
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(YoloProfile).order_by(YoloProfile.sort_order.asc())
+        )
+        rows = result.scalars().all()
+        row = next((r for r in rows if r.id == profile_id), None)
+        if row is None:
+            raise ValueError(f"Profile {profile_id} not found")
+        if len(rows) > 0 and rows[0].id == profile_id and fields.get("is_active") is False:
+            raise ValueError("Cannot deactivate the default profile")
+        for key, value in fields.items():
+            setattr(row, key, value)
+        await session.commit()
+        await session.refresh(row)
+        dto = _row_to_dto(row)
+
+    await _invalidate_cache()
+    return dto
+
+
+async def delete_profile(profile_id: uuid.UUID) -> None:
+    """Delete a YOLO profile. The lowest sort_order profile cannot be deleted."""
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(YoloProfile).order_by(YoloProfile.sort_order.asc())
+        )
+        rows = result.scalars().all()
+        target = next((r for r in rows if r.id == profile_id), None)
+        if target is None:
+            raise ValueError(f"Profile {profile_id} not found")
+        if len(rows) > 0 and rows[0].id == profile_id:
+            raise ValueError("Cannot delete the default profile")
+        await session.delete(target)
+        await session.commit()
+
+    await _invalidate_cache()
+
+
+async def _invalidate_cache() -> None:
+    """Reload cache and publish pubsub event."""
+    global _cache
+    _cache = await _load_from_db()
+
+    try:
+        from app.core.redis import get_redis
+        r = get_redis()
+        await r.publish(_PUBSUB_CHANNEL, "updated")
+    except Exception:
+        logger.warning("Could not publish %s — listeners may lag", _PUBSUB_CHANNEL)
+
+
+async def start_profile_listener() -> None:
+    """Subscribe to profile pubsub channel. Reloads cache on any write."""
+    global _cache
+    from app.core.redis import get_redis
+
+    r = get_redis()
+    pubsub = r.pubsub()
+    await pubsub.subscribe(_PUBSUB_CHANNEL)
+    logger.info("YOLO profile listener subscribed to %s", _PUBSUB_CHANNEL)
+
+    try:
+        async for message in pubsub.listen():
+            if message.get("type") != "message":
+                continue
+            try:
+                _cache = await _load_from_db()
+                logger.info("YOLO profiles reloaded: %d profiles", len(_cache))
+            except Exception:
+                logger.exception("Failed to reload YOLO profiles from DB")
+    except asyncio.CancelledError:
+        await pubsub.unsubscribe(_PUBSUB_CHANNEL)
+        logger.info("YOLO profile listener stopped")

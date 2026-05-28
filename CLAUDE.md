@@ -41,6 +41,7 @@ This is an AI-first project. Documentation ships WITH every code change — not 
 - When a function's callers change, update its `Used by:` list
 - When you read `backend/CLAUDE.md` or `frontend/CLAUDE.md` and notice function entries missing `Used by:`, backfill them by grepping for callers — even if those functions aren't part of your current task
 - Prefer editing existing sections over adding new ones — restructure if needed
+- Documentation must describe the current state of the system — never write "previously X, now Y", "replaced X with Y", or "deprecated in favor of Z". Just describe what IS
 
 ### Code Style
 
@@ -153,6 +154,7 @@ See `backend/CLAUDE.md` for execution architecture details (shadow/YOLO isolatio
 - Max daily drawdown: Set in DB
 - Risk per trade: Set in DB
 - Max trades/day: Set in DB
+- **YOLO Profit Caps**: Configurable via `yolo_profiles` table (Settings page). Multiple profiles run simultaneously (e.g. 5K, 10K, 15K) — each signal creates one Trade+Position per active uncapped profile. Trade monitor checks caps per profile independently, closing only that profile's positions when its cap is hit. Trades carry `yolo_profile_id` FK; `source` stays `"YOLO"` for all profile trades, `"MANUAL"` for user-executed trades.
 - Strike selection: ATM or 1-strike ITM (Delta 0.45-0.60), resolved by `option_resolver.py`
 - Strike gaps: NIFTY=50, BANKNIFTY=100, FINNIFTY=50, SENSEX=100, MIDCPNIFTY=25
 - Preferred premium range: Rs 150-400
@@ -400,7 +402,7 @@ curl -s http://localhost:8080/api/v1/market/prices | python3 -m json.tool
 
 **Futures contract symbols** change monthly — update `NIFTY26MAYFUT` etc. to the current near-month contract. Check `NSE_FO.csv` symbol master or the backend startup logs for resolved futures symbols.
 
-**What changes in simulated mode:** WS connects to simulator (not Fyers), REST data calls route to simulator, `is_market_open()` always returns True, `is_trading_day()` always returns True, Fyers TOTP login is skipped entirely, symbol master CSVs fetched from simulator.
+**What changes in simulated mode:** WS connects to simulator (not Fyers), REST data calls route to simulator, `is_market_open()` always returns True, `is_trading_day()` always returns True, `is_past_close_deadline()` always returns False, all trading window checks (`is_in_trading_window`, `is_in_custom_trading_window`, `get_window_state`, `get_custom_window_state`) always return in-window, `is_in_dead_zone()` always returns False, Fyers TOTP login is skipped entirely, symbol master CSVs fetched from simulator.
 
 **What stays the same:** PostgreSQL, Redis, strategy evaluation, signal pipeline, agent runner, trade monitor — all real code paths exercised.
 

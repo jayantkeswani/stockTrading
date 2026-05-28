@@ -142,17 +142,16 @@ Called by `agent_runner.on_new_signal()` only when YOLO mode is active.
 2. Confidence >= `min_confidence_for_execution` (from `trading_config`)
 3. Per-strategy `yolo_enabled=True` (from `strategy_configs`)
 4. Not a permanent watchlist signal (if `yolo_skip_permanent_watchlist=True`)
-5. No existing open non-shadow position for this symbol + direction
-6. Final risk check: drawdown limit, max trades/day, daily profit cap
+5. No existing open YOLO trade for this signal_id
 
-**Execution:**
+**Per-profile execution** — after signal-level gates pass, shared computation runs once (VIX, lot sizing, live price, SL/target recomputation, margin). Then for each active uncapped YOLO profile:
 
-1. **Fresh LTP** — `get_live_price(trading_symbol)` fetches current price (Redis → Fyers REST fallback). This is NOT the signal's stale premium from resolution.
-2. **Lot sizing** — `compute_lots_for_yolo()` using capital, risk %, VIX multiplier.
-3. **SL/target recomputation** — `recompute_sl_target()` preserves original SL%/target% ratios applied to the fresh LTP.
-4. **Create Trade + Position** — `Trade(source="YOLO")`, `Position(is_shadow=False)`.
-5. **Broadcast** `trade:open` + `agent:auto_executed` via WebSocket.
-6. **Telegram notification**.
+1. Position dedup scoped to `yolo_profile_id` — no existing open position for this symbol+direction in this profile
+2. `_final_risk_check(session, symbol, profile_id, profile_cap)` — drawdown, max trades, profit cap all scoped by profile
+3. **Create Trade + Position** — `Trade(source="YOLO", yolo_profile_id=profile.id)`, `Position(yolo_profile_id=profile.id)`.
+4. **Broadcast** `trade:open` (with `yolo_profile_id`) + `agent:auto_executed` per trade.
+
+Single DB commit for all profiles. Telegram notification sent once (not per profile).
 
 ### 4.2 Shadow executor (`shadow_executor.py`)
 
@@ -207,7 +206,7 @@ If both Redis and REST return no price (or `ltp=0`), the monitor checks the posi
 
 Once a valid price is obtained:
 
-1. **Daily profit cap** (`_check_profit_cap`) — if enabled and realized + unrealized PnL >= cap, close ALL open non-shadow positions with `ExitReason.PROFIT_CAP`. Short-circuits the entire monitoring loop.
+1. **Per-profile profit cap** (`_check_profit_cap`) — iterates each active YOLO profile. For each, computes realized + unrealized net PnL scoped to that profile. If PnL >= profile's `profit_cap`, closes only that profile's open positions with `ExitReason.PROFIT_CAP` and sends a per-profile Telegram notification. Other profiles continue trading.
 2. **SL hit** — direction-aware. Uses `ExitReason.TRAILING_SL` if stop_loss was trailed (differs from original), else `ExitReason.AGENT_SL`. Auto-closes in all modes (MANUAL, SEMI, YOLO).
 3. **Target hit** — YOLO/shadow: auto-close with `ExitReason.AGENT_PROFIT`. SEMI: request user confirmation via Telegram.
 4. **Time exit** — past 3:15 PM for INTRADAY positions: close with `ExitReason.TIME_EXIT`.

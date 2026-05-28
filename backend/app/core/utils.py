@@ -47,12 +47,18 @@ def is_in_trading_window(as_of: datetime | None = None) -> bool:
 
     Pass as_of for backtest replay; omit to use the current IST time.
     """
+    from app.config import settings
+    if settings.market_mode == "simulated":
+        return True
     t = (as_of or now_ist()).time()
     return _in_window_1(t) or _in_window_2(t)
 
 
 def get_window_state(as_of: datetime | None = None) -> str:
     """Return 'IN_WINDOW', 'DEAD_ZONE', or 'OUT_OF_WINDOW' for the given time."""
+    from app.config import settings
+    if settings.market_mode == "simulated":
+        return "IN_WINDOW"
     t = (as_of or now_ist()).time()
     if _in_window_1(t) or _in_window_2(t):
         return "IN_WINDOW"
@@ -63,6 +69,9 @@ def get_window_state(as_of: datetime | None = None) -> str:
 
 def is_in_dead_zone(as_of: datetime | None = None) -> bool:
     """Check if current time is in the dead zone (11:30 AM - 1:30 PM)."""
+    from app.config import settings
+    if settings.market_mode == "simulated":
+        return False
     t = (as_of or now_ist()).time()
     return DEAD_ZONE_START <= t <= DEAD_ZONE_END
 
@@ -99,6 +108,9 @@ def is_in_custom_trading_window(
     """
     if not windows:
         return True
+    from app.config import settings
+    if settings.market_mode == "simulated":
+        return True
     t = (as_of or now_ist()).time()
     return any(start <= t <= end for start, end in windows)
 
@@ -110,6 +122,9 @@ def get_custom_window_state(
 ) -> str:
     """Return 'IN_WINDOW', 'DEAD_ZONE', or 'OUT_OF_WINDOW' for custom windows."""
     if not windows:
+        return "IN_WINDOW"
+    from app.config import settings
+    if settings.market_mode == "simulated":
         return "IN_WINDOW"
     t = (as_of or now_ist()).time()
     if any(start <= t <= end for start, end in windows):

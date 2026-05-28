@@ -65,9 +65,30 @@ export const api = {
   stopDataFeed: () => request(`/api/v1/market/feed/stop`, { method: "POST" }),
   getFyersStatus: () => request(`/api/v1/auth/fyers/status`),
 
+  // YOLO Profiles
+  getYoloProfiles: () =>
+    request<import("./types").YoloProfile[]>(`/api/v1/yolo-profiles`),
+  createYoloProfile: (data: { name: string; profit_cap: number }) =>
+    request<import("./types").YoloProfile>(`/api/v1/yolo-profiles`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateYoloProfile: (id: string, data: { name?: string; profit_cap?: number; is_active?: boolean; sort_order?: number }) =>
+    request<import("./types").YoloProfile>(`/api/v1/yolo-profiles/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteYoloProfile: (id: string) =>
+    request(`/api/v1/yolo-profiles/${id}`, { method: "DELETE" }),
+
   // Positions
-  getPositions: (includeShadow = false) =>
-    request(`/api/v1/positions${includeShadow ? "?include_shadow=true" : ""}`),
+  getPositions: (opts?: { includeShadow?: boolean; yolo_profile_id?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.includeShadow) params.set("include_shadow", "true");
+    if (opts?.yolo_profile_id) params.set("yolo_profile_id", opts.yolo_profile_id);
+    const qs = params.toString();
+    return request(`/api/v1/positions${qs ? `?${qs}` : ""}`);
+  },
   closePosition: (id: string, reason = "MANUAL") =>
     request(`/api/v1/positions/${id}/close`, {
       method: "POST",
@@ -83,6 +104,7 @@ export const api = {
   getTrades: (params?: {
     status?: string;
     source?: string;
+    yolo_profile_id?: string;
     strategy?: string;
     limit?: number;
     entry_since?: string;
@@ -101,6 +123,7 @@ export const api = {
     const query = new URLSearchParams();
     if (params?.status) query.set("status", params.status);
     if (params?.source) query.set("source", params.source);
+    if (params?.yolo_profile_id) query.set("yolo_profile_id", params.yolo_profile_id);
     if (params?.strategy) query.set("strategy", params.strategy);
     if (params?.limit) query.set("limit", params.limit.toString());
     if (params?.entry_since) query.set("entry_since", params.entry_since);
@@ -129,10 +152,11 @@ export const api = {
     if (source) query.set("source", source);
     return request<import("./types").Trade[]>(`/api/v1/trades?${query}`);
   },
-  getTradeSummary: (source?: string, exclude_permanent?: boolean) => {
+  getTradeSummary: (opts?: { source?: string; yolo_profile_id?: string; exclude_permanent?: boolean }) => {
     const query = new URLSearchParams();
-    if (source) query.set("source", source);
-    if (exclude_permanent) query.set("exclude_permanent", "true");
+    if (opts?.source) query.set("source", opts.source);
+    if (opts?.yolo_profile_id) query.set("yolo_profile_id", opts.yolo_profile_id);
+    if (opts?.exclude_permanent) query.set("exclude_permanent", "true");
     const qs = query.toString();
     return request(`/api/v1/trades/summary${qs ? `?${qs}` : ""}`);
   },
@@ -160,7 +184,10 @@ export const api = {
     request<import("./types").SignalHistory[]>(`/api/v1/signals/${id}/history`),
 
   // Risk
-  getRiskDashboard: () => request(`/api/v1/risk/dashboard`),
+  getRiskDashboard: (yolo_profile_id?: string) => {
+    const qs = yolo_profile_id ? `?yolo_profile_id=${encodeURIComponent(yolo_profile_id)}` : "";
+    return request(`/api/v1/risk/dashboard${qs}`);
+  },
 
   // Agent
   getAgentStatus: () => request(`/api/v1/agent/status`),
@@ -253,7 +280,6 @@ export const api = {
     request<{
       capital: number;
       max_daily_drawdown_pct: number;
-      max_daily_profit: number;
       max_risk_per_trade_pct: number;
       max_trades_per_day: number;
       paper_trading: boolean;
@@ -267,7 +293,6 @@ export const api = {
   updateTradingSettings: (patch: {
     capital?: number;
     max_daily_drawdown_pct?: number;
-    max_daily_profit?: number;
     max_risk_per_trade_pct?: number;
     max_trades_per_day?: number;
     paper_trading?: boolean;
@@ -281,7 +306,6 @@ export const api = {
     request<{
       capital: number;
       max_daily_drawdown_pct: number;
-      max_daily_profit: number;
       max_risk_per_trade_pct: number;
       max_trades_per_day: number;
       paper_trading: boolean;

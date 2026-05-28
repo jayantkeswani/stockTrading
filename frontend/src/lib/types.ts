@@ -18,6 +18,15 @@ export interface Candle {
   volume: number;
 }
 
+export interface YoloProfile {
+  id: string;
+  name: string;
+  profit_cap: number;
+  is_active: boolean;
+  sort_order: number;
+  is_capped_today?: boolean;
+}
+
 export interface Position {
   id: string;
   trade_id: string;
@@ -42,6 +51,7 @@ export interface Position {
   signal_confidence: number | null;
   margin_required: number | null;
   is_permanent_watchlist: boolean;
+  yolo_profile_id: string | null;
 }
 
 export interface Trade {
@@ -107,6 +117,7 @@ export interface Trade {
     quantity?: number;
   } | null;
   signal_is_permanent_watchlist: boolean | null;
+  yolo_profile_id: string | null;
 }
 
 export interface Signal {
@@ -187,9 +198,15 @@ export interface RiskDashboard {
   risk: number;
   margin_utilized: number;
   is_halted: boolean;
-  max_daily_profit: number;
   is_profit_capped: boolean;
   positions_open: number;
+  profiles: Array<{
+    id: string;
+    name: string;
+    profit_cap: number;
+    current_pnl: number;
+    is_capped: boolean;
+  }>;
 }
 
 export interface MarketStatus {

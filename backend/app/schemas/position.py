@@ -29,6 +29,7 @@ class PositionResponse(BaseModel):
     signal_confidence: Decimal | None = None
     margin_required: Decimal | None = None
     is_permanent_watchlist: bool = False
+    yolo_profile_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}
 

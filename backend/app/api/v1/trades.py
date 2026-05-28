@@ -39,6 +39,7 @@ async def list_trades(
     status: str | None = None,
     strategy: str | None = None,
     source: str | None = None,
+    yolo_profile_id: uuid.UUID | None = None,
     closed_since: datetime | None = None,
     entry_since: datetime | None = None,
     entry_until: datetime | None = None,
@@ -60,6 +61,8 @@ async def list_trades(
         query = query.where(Trade.source == source)
     else:
         query = query.where(Trade.source != TradeSource.SHADOW.value)
+    if yolo_profile_id is not None:
+        query = query.where(Trade.yolo_profile_id == yolo_profile_id)
     if status:
         query = query.where(Trade.status == status)
     if strategy:
@@ -98,6 +101,7 @@ async def list_trades(
 @router.get("/summary", response_model=TradeSummaryResponse)
 async def trade_summary(
     source: str | None = None,
+    yolo_profile_id: uuid.UUID | None = None,
     exclude_permanent: bool | None = None,
     db: AsyncSession = Depends(get_db),
 ):
@@ -106,6 +110,8 @@ async def trade_summary(
         query = query.where(Trade.source == source)
     else:
         query = query.where(Trade.source != TradeSource.SHADOW.value)
+    if yolo_profile_id is not None:
+        query = query.where(Trade.yolo_profile_id == yolo_profile_id)
     if exclude_permanent:
         query = query.where(Trade.is_permanent_watchlist == False)  # noqa: E712
     closed = await db.execute(query)

@@ -68,7 +68,7 @@ export default function AgentPage() {
           since: period.start.toISOString(),
           until: period.end.toISOString(),
         });
-        if (!cancelled) setLogs(agentLogs as AgentLog[]);
+        if (!cancelled) setLogs(Array.isArray(agentLogs) ? agentLogs : []);
       } catch {
         if (!cancelled) setLogs([]);
       } finally {
@@ -117,15 +117,21 @@ export default function AgentPage() {
     });
   }, [logs, actionFilter, strategyFilter, symbolQuery, pendingOnly, shadowFilter]);
 
+  const refreshAgentStatus = async () => {
+    try {
+      const status = await api.getAgentStatus();
+      useStore.getState().setAgentStatus(status as never);
+    } catch { /* ignore */ }
+  };
+
   const handleToggle = async () => {
     try {
       if (agentStatus?.running) {
         await api.stopAgent();
-        useStore.getState().setAgentStatus({ ...agentStatus, running: false } as never);
       } else {
         await api.startAgent();
-        useStore.getState().setAgentStatus({ ...(agentStatus || {}), running: true } as never);
       }
+      await refreshAgentStatus();
     } catch (err) {
       console.error("Failed to toggle agent:", err);
     }
@@ -135,11 +141,7 @@ export default function AgentPage() {
     try {
       const newState = !agentStatus?.yolo_mode;
       await api.toggleYolo(newState);
-      useStore.getState().setAgentStatus({
-        ...(agentStatus || {}),
-        yolo_mode: newState,
-        autonomy_level: newState ? "yolo" : "semi",
-      } as never);
+      await refreshAgentStatus();
     } catch (err) {
       console.error("Failed to toggle YOLO mode:", err);
     }
@@ -173,19 +175,22 @@ export default function AgentPage() {
           <button
             onClick={handleToggleYolo}
             className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-mono font-medium transition-colors border ${
-              agentStatus?.yolo_mode
-                ? "border-warning/40 bg-warning/10 text-warning"
-                : "border-border bg-bg-secondary text-text-muted hover:text-text-secondary"
+              !agentStatus?.running
+                ? "border-border bg-bg-secondary text-text-muted opacity-50 cursor-not-allowed"
+                : agentStatus?.yolo_mode
+                  ? "border-warning/40 bg-warning/10 text-warning"
+                  : "border-border bg-bg-secondary text-text-muted hover:text-text-secondary"
             }`}
+            disabled={!agentStatus?.running}
           >
             <div
               className={`w-6 h-3 rounded-full relative transition-colors ${
-                agentStatus?.yolo_mode ? "bg-warning/30" : "bg-bg-tertiary"
+                agentStatus?.running && agentStatus?.yolo_mode ? "bg-warning/30" : "bg-bg-tertiary"
               }`}
             >
               <div
                 className={`absolute top-0.5 w-2 h-2 rounded-full transition-all ${
-                  agentStatus?.yolo_mode
+                  agentStatus?.running && agentStatus?.yolo_mode
                     ? "left-3.5 bg-warning"
                     : "left-0.5 bg-text-muted"
                 }`}
@@ -193,17 +198,6 @@ export default function AgentPage() {
             </div>
             YOLO
           </button>
-
-          {/* Autonomy level badge */}
-          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded uppercase ${
-            agentStatus?.autonomy_level?.toLowerCase() === "yolo"
-              ? "bg-warning/15 text-warning"
-              : agentStatus?.autonomy_level?.toLowerCase() === "semi"
-                ? "bg-accent/15 text-accent"
-                : "bg-bg-tertiary text-text-muted"
-          }`}>
-            {agentStatus?.autonomy_level ?? "semi"}
-          </span>
 
           {/* Start/Stop button */}
           <button
@@ -235,13 +229,17 @@ export default function AgentPage() {
           </div>
         </div>
         <div className={`rounded border px-3 py-2 ${
-          agentStatus?.yolo_mode ? "border-warning/30 bg-warning/5" : "border-border bg-bg-secondary"
+          !agentStatus?.running ? "border-border bg-bg-secondary"
+            : agentStatus?.yolo_mode ? "border-warning/30 bg-warning/5"
+              : "border-border bg-bg-secondary"
         }`}>
           <div className="text-[10px] text-text-muted font-mono uppercase mb-1">Mode</div>
           <div className={`text-sm font-mono font-bold ${
-            agentStatus?.yolo_mode ? "text-warning" : "text-accent"
+            !agentStatus?.running ? "text-text-muted"
+              : agentStatus?.yolo_mode ? "text-warning"
+                : "text-accent"
           }`}>
-            {agentStatus?.yolo_mode ? "YOLO" : "SEMI"}
+            {!agentStatus?.running ? "OFF" : agentStatus?.yolo_mode ? "YOLO" : "SEMI"}
           </div>
         </div>
         <div className="rounded border border-border bg-bg-secondary px-3 py-2">
@@ -267,16 +265,21 @@ export default function AgentPage() {
         <div className={`rounded border px-3 py-2 ${
           risk?.is_profit_capped ? "border-profit/30 bg-profit/5" : "border-border bg-bg-secondary"
         }`}>
-          <div className="text-[10px] text-text-muted font-mono uppercase mb-1">Profit Cap</div>
-          <div className={`text-sm font-mono font-bold ${
-            risk?.is_profit_capped ? "text-profit" : risk && risk.max_daily_profit > 0 ? "text-text-secondary" : "text-text-muted"
-          }`}>
-            {risk?.is_profit_capped
-              ? "HIT"
-              : risk && risk.max_daily_profit > 0
-                ? formatINR(risk.max_daily_profit)
-                : "OFF"}
-          </div>
+          <div className="text-[10px] text-text-muted font-mono uppercase mb-1">Profit Caps</div>
+          {risk?.profiles && risk.profiles.length > 0 ? (
+            <div className="space-y-0.5">
+              {risk.profiles.map((p) => (
+                <div key={p.id} className="flex items-center justify-between text-[10px] font-mono">
+                  <span className="text-text-muted">{p.name}</span>
+                  <span className={p.is_capped ? "text-profit font-bold" : "text-text-secondary"}>
+                    {p.is_capped ? "HIT" : `${formatINR(p.current_pnl)} / ${formatINR(p.profit_cap)}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-sm font-mono font-bold text-text-muted">OFF</div>
+          )}
         </div>
       </div>
 

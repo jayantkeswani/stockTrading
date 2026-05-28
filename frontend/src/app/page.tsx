@@ -13,7 +13,7 @@ import { ChartModal } from "@/components/charts/ChartModal";
 import { useStore } from "@/store";
 import { api } from "@/lib/api";
 import { startOfDayIST, endOfDayIST } from "@/lib/formatters";
-import type { AgentLog, Position, Signal, RiskDashboard } from "@/lib/types";
+import type { AgentLog, Position, Signal, RiskDashboard, YoloProfile } from "@/lib/types";
 
 export default function DashboardPage() {
   const [chartOpen, setChartOpen] = useState(false);
@@ -34,11 +34,12 @@ export default function DashboardPage() {
             api.getSignals({ status: "EXECUTED", ...dateRange, limit: 50 }) as Promise<Signal[]>,
           );
         }
-        const [pendingSignals, positions, risk, agentLogs, ...extraSignals] = await Promise.all([
+        const [pendingSignals, positions, risk, agentLogs, yoloProfiles, ...extraSignals] = await Promise.all([
           signalFetches[0],
-          api.getPositions() as Promise<Position[]>,
+          api.getPositions({}) as Promise<Position[]>,
           api.getRiskDashboard() as Promise<RiskDashboard>,
           api.getAgentLogs({ since: startOfDayIST(now).toISOString() }) as Promise<AgentLog[]>,
+          api.getYoloProfiles() as Promise<YoloProfile[]>,
           ...(signalFetches.length > 1 ? [signalFetches[1]] : []),
         ]);
         const allSignals = extraSignals.length > 0
@@ -49,6 +50,7 @@ export default function DashboardPage() {
         s.setPositions(positions);
         s.setRisk(risk);
         s.setAgentLogs(agentLogs);
+        s.setYoloProfiles(yoloProfiles);
       } catch {
         // API may not be running yet
       }

@@ -7,17 +7,32 @@ import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 
 export function PnLCard() {
   const prices = useStore((s) => s.prices);
-  const { risk, positions, dashboardViewMode, shadowPositions, shadowClosedToday, positionsMinConfidence } = useStore(useShallow((s) => ({
+  const { risk, positions, dashboardViewMode, shadowPositions, shadowClosedToday, positionsMinConfidence, yoloProfiles, closedToday } = useStore(useShallow((s) => ({
     risk: s.risk,
     positions: s.positions,
     dashboardViewMode: s.dashboardViewMode,
     shadowPositions: s.shadowPositions,
     shadowClosedToday: s.shadowClosedToday,
     positionsMinConfidence: s.positionsMinConfidence,
+    yoloProfiles: s.yoloProfiles,
+    closedToday: s.closedToday,
   })));
 
-  const isShadow = dashboardViewMode === "SHADOW";
-  const rawPositions = isShadow ? shadowPositions : positions;
+  const effectiveMode = useMemo(() => {
+    if (dashboardViewMode === "SHADOW") return "SHADOW";
+    if (dashboardViewMode === "MANUAL") return "MANUAL";
+    if ((Array.isArray(yoloProfiles) ? yoloProfiles : []).some((p) => p.id === dashboardViewMode)) return dashboardViewMode;
+    const first = (Array.isArray(yoloProfiles) ? [...yoloProfiles] : []).sort((a, b) => a.sort_order - b.sort_order).find((p) => p.is_active);
+    return first ? first.id : "MANUAL";
+  }, [dashboardViewMode, yoloProfiles]);
+
+  const isShadow = effectiveMode === "SHADOW";
+  const isManual = effectiveMode === "MANUAL";
+  const rawPositions = isShadow
+    ? shadowPositions
+    : isManual
+      ? positions.filter((p) => !p.yolo_profile_id)
+      : positions.filter((p) => p.yolo_profile_id === effectiveMode);
   const activePositions = positionsMinConfidence > 0
     ? rawPositions.filter((p) => p.signal_confidence != null && Number(p.signal_confidence) >= positionsMinConfidence)
     : rawPositions;
@@ -37,15 +52,23 @@ export function PnLCard() {
     }, 0);
   }, [activePositions, prices]);
 
-  // In shadow mode: closed P&L from shadow trades today (computed client-side)
-  const filteredShadowClosed = positionsMinConfidence > 0
-    ? shadowClosedToday.filter((t) => t.signal_confidence != null && Number(t.signal_confidence) >= positionsMinConfidence)
-    : shadowClosedToday;
-  const shadowClosedPnl = useMemo(() => {
-    return filteredShadowClosed.reduce((sum, t) => sum + Number(t.pnl ?? 0), 0);
-  }, [filteredShadowClosed]);
+  const filteredClosed = useMemo(() => {
+    const raw = isShadow
+      ? shadowClosedToday
+      : isManual
+        ? closedToday.filter((t) => t.source === "MANUAL")
+        : closedToday.filter((t) => t.yolo_profile_id === effectiveMode);
+    return positionsMinConfidence > 0
+      ? raw.filter((t) => t.signal_confidence != null && Number(t.signal_confidence) >= positionsMinConfidence)
+      : raw;
+  }, [isShadow, isManual, effectiveMode, shadowClosedToday, closedToday, positionsMinConfidence]);
 
-  const closedPnl = isShadow ? shadowClosedPnl : Number(risk?.closed_pnl ?? 0);
+  const closedPnl = useMemo(() => {
+    if (!isShadow && !isManual && !(Array.isArray(yoloProfiles) ? yoloProfiles : []).some((p) => p.id === effectiveMode)) {
+      return Number(risk?.closed_pnl ?? 0);
+    }
+    return filteredClosed.reduce((sum, t) => sum + Number(t.pnl ?? 0), 0);
+  }, [isShadow, isManual, effectiveMode, yoloProfiles, risk, filteredClosed]);
   const pnl = closedPnl + liveUnrealizedPnl;
 
   const capital = Number(risk?.capital ?? 1000000);
@@ -64,8 +87,8 @@ export function PnLCard() {
     return activePositions.reduce((total, pos) => total + Number(pos.margin_required ?? 0), 0);
   }, [activePositions]);
 
-  const tradesCount = isShadow
-    ? filteredShadowClosed.length
+  const tradesCount = isShadow || isManual || (Array.isArray(yoloProfiles) ? yoloProfiles : []).some((p) => p.id === effectiveMode)
+    ? filteredClosed.length
     : (risk?.trades_today ?? 0);
 
   return (

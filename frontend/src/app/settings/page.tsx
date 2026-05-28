@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api } from "@/lib/api";
 import { STRATEGY_LABELS } from "@/lib/constants";
+import { useStore } from "@/store";
+import type { YoloProfile } from "@/lib/types";
 
 interface StrategyConfig {
   id: string;
@@ -50,7 +52,6 @@ const INDEX_SYMBOLS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"]
 interface TradingSettings {
   capital: number;
   max_daily_drawdown_pct: number;
-  max_daily_profit: number;
   max_risk_per_trade_pct: number;
   max_trades_per_day: number;
   paper_trading: boolean;
@@ -72,16 +73,26 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
+  const [yoloProfiles, setYoloProfiles] = useState<YoloProfile[]>([]);
+  const [newProfileName, setNewProfileName] = useState("");
+  const [newProfileCap, setNewProfileCap] = useState("");
+  const committedProfilesRef = useRef<Map<string, { name: string; profit_cap: number }>>(new Map());
+
   useEffect(() => {
     async function load() {
       try {
-        const [strats, cfg] = await Promise.all([
+        const [strats, cfg, profiles] = await Promise.all([
           api.getStrategies(),
           api.getTradingSettings(),
+          api.getYoloProfiles() as Promise<YoloProfile[]>,
         ]);
-        setStrategies(strats);
+        setStrategies(strats ?? []);
         setTradingSettings(cfg);
         setTradingDraft({});
+        setYoloProfiles(profiles ?? []);
+        const map = new Map<string, { name: string; profit_cap: number }>();
+        for (const p of profiles ?? []) map.set(p.id, { name: p.name, profit_cap: p.profit_cap });
+        committedProfilesRef.current = map;
       } catch {
         // API not ready
       }
@@ -139,7 +150,7 @@ export default function SettingsPage() {
     try {
       const result = await api.toggleStrategy(name);
       setStrategies((prev) =>
-        prev.map((s) =>
+        (Array.isArray(prev) ? prev : []).map((s) =>
           s.strategy_name === name ? { ...s, is_active: result.is_active } : s
         )
       );
@@ -152,7 +163,7 @@ export default function SettingsPage() {
     try {
       const result = await api.toggleAutoMode(name);
       setStrategies((prev) =>
-        prev.map((s) =>
+        (Array.isArray(prev) ? prev : []).map((s) =>
           s.strategy_name === name ? { ...s, auto_mode: result.auto_mode } : s
         )
       );
@@ -165,7 +176,7 @@ export default function SettingsPage() {
     try {
       await api.updateStrategy(name, { shadow_enabled: !current });
       setStrategies((prev) =>
-        prev.map((s) =>
+        (Array.isArray(prev) ? prev : []).map((s) =>
           s.strategy_name === name ? { ...s, shadow_enabled: !current } : s
         )
       );
@@ -178,7 +189,7 @@ export default function SettingsPage() {
     try {
       await api.updateStrategy(name, { yolo_enabled: !current });
       setStrategies((prev) =>
-        prev.map((s) =>
+        (Array.isArray(prev) ? prev : []).map((s) =>
           s.strategy_name === name ? { ...s, yolo_enabled: !current } : s
         )
       );
@@ -191,7 +202,7 @@ export default function SettingsPage() {
     try {
       const updated = await api.updateStrategy(name, { parameters: params }) as StrategyConfig;
       setStrategies((prev) =>
-        prev.map((s) => (s.strategy_name === name ? { ...s, parameters: updated.parameters } : s))
+        (Array.isArray(prev) ? prev : []).map((s) => (s.strategy_name === name ? { ...s, parameters: updated.parameters } : s))
       );
     } catch {
       // Error
@@ -206,7 +217,7 @@ export default function SettingsPage() {
     try {
       await api.updateStrategy(name, { symbols, symbol_map: symbolMap });
       setStrategies((prev) =>
-        prev.map((s) =>
+        (Array.isArray(prev) ? prev : []).map((s) =>
           s.strategy_name === name ? { ...s, symbols, symbol_map: { ...(s.symbol_map || {}), ...symbolMap } } : s
         )
       );
@@ -312,17 +323,6 @@ export default function SettingsPage() {
                 />
               </div>
               <div>
-                <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">Daily Profit Target (INR)</label>
-                <input
-                  type="number"
-                  step="1000"
-                  min="0"
-                  value={currentSettings.max_daily_profit ?? 0}
-                  onChange={(e) => setTradingDraft((d) => ({ ...d, max_daily_profit: Number(e.target.value) }))}
-                  className="w-full bg-bg-tertiary border border-border rounded px-2 py-1.5 text-xs font-mono focus:border-accent/50 focus:outline-none"
-                />
-              </div>
-              <div>
                 <label className="text-[10px] font-mono text-text-muted uppercase block mb-1">Risk Per Trade (%)</label>
                 <input
                   type="number"
@@ -382,6 +382,138 @@ export default function SettingsPage() {
         )}
       </div>
 
+      {/* YOLO Profiles */}
+      <div className="rounded border border-border bg-bg-secondary px-4 py-3">
+        <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
+          YOLO Profiles (Profit Caps)
+        </h2>
+        <div className="space-y-2">
+          {(Array.isArray(yoloProfiles) ? [...yoloProfiles] : []).sort((a, b) => a.sort_order - b.sort_order).map((p, idx) => (
+            <div key={p.id} className="flex items-center gap-3 px-2 py-1.5 rounded border border-border/50 bg-bg-tertiary/30">
+              <input
+                type="text"
+                value={p.name}
+                onChange={async (e) => {
+                  const name = e.target.value;
+                  setYoloProfiles((prev) => (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, name } : x));
+                }}
+                onBlur={async (e) => {
+                  const committed = committedProfilesRef.current.get(p.id);
+                  if (e.target.value !== committed?.name) {
+                    try {
+                      await api.updateYoloProfile(p.id, { name: e.target.value });
+                      committedProfilesRef.current.set(p.id, { name: e.target.value, profit_cap: committed?.profit_cap ?? p.profit_cap });
+                      setYoloProfiles((prev) => { useStore.getState().setYoloProfiles(prev); return prev; });
+                    } catch { /* ignore */ }
+                  }
+                }}
+                className="w-24 bg-bg-tertiary border border-border rounded px-2 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+              />
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] font-mono text-text-muted">Cap</span>
+                <input
+                  type="number"
+                  step="1000"
+                  min="0"
+                  value={p.profit_cap}
+                  onChange={(e) => {
+                    const profit_cap = Number(e.target.value);
+                    setYoloProfiles((prev) => (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, profit_cap } : x));
+                  }}
+                  onBlur={async (e) => {
+                    const val = Number(e.target.value);
+                    const committed = committedProfilesRef.current.get(p.id);
+                    if (val !== committed?.profit_cap) {
+                      try {
+                        await api.updateYoloProfile(p.id, { profit_cap: val });
+                        committedProfilesRef.current.set(p.id, { name: committed?.name ?? p.name, profit_cap: val });
+                        setYoloProfiles((prev) => { useStore.getState().setYoloProfiles(prev); return prev; });
+                      } catch { /* ignore */ }
+                    }
+                  }}
+                  className="w-24 bg-bg-tertiary border border-border rounded px-2 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+              {idx > 0 ? (
+                <button
+                  onClick={async () => {
+                    const next = !p.is_active;
+                    setYoloProfiles((prev) => {
+                      const updated = (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, is_active: next } : x);
+                      useStore.getState().setYoloProfiles(updated);
+                      return updated;
+                    });
+                    try { await api.updateYoloProfile(p.id, { is_active: next }); } catch { /* ignore */ }
+                  }}
+                  className={`w-8 h-4 rounded-full relative transition-colors ${p.is_active ? "bg-accent/40" : "bg-border"}`}
+                >
+                  <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${p.is_active ? "left-4 bg-accent" : "left-0.5 bg-text-muted"}`} />
+                </button>
+              ) : (
+                <span className="text-[9px] font-mono text-text-muted w-8 text-center">DEFAULT</span>
+              )}
+              {idx > 0 && (
+                <button
+                  onClick={async () => {
+                    if (!confirm(`Delete profile "${p.name}"?`)) return;
+                    try {
+                      await api.deleteYoloProfile(p.id);
+                      setYoloProfiles((prev) => {
+                        const updated = (Array.isArray(prev) ? prev : []).filter((x) => x.id !== p.id);
+                        useStore.getState().setYoloProfiles(updated);
+                        committedProfilesRef.current.delete(p.id);
+                        return updated;
+                      });
+                    } catch { /* ignore */ }
+                  }}
+                  className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-loss/10 text-loss hover:bg-loss/20 transition-colors"
+                >
+                  DEL
+                </button>
+              )}
+            </div>
+          ))}
+          <div className="flex items-center gap-2 pt-1">
+            <input
+              type="text"
+              placeholder="Name"
+              value={newProfileName}
+              onChange={(e) => setNewProfileName(e.target.value)}
+              className="w-24 bg-bg-tertiary border border-border rounded px-2 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+            />
+            <input
+              type="number"
+              placeholder="Cap (INR)"
+              step="1000"
+              min="0"
+              value={newProfileCap}
+              onChange={(e) => setNewProfileCap(e.target.value)}
+              className="w-24 bg-bg-tertiary border border-border rounded px-2 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+            />
+            <button
+              disabled={!newProfileName.trim() || !newProfileCap}
+              onClick={async () => {
+                try {
+                  const created = await api.createYoloProfile({ name: newProfileName.trim(), profit_cap: Number(newProfileCap) }) as YoloProfile;
+                  setYoloProfiles((prev) => {
+                    const arr = Array.isArray(prev) ? prev : [];
+                    const updated = arr.some((x) => x.id === created.id) ? arr : [...arr, created];
+                    useStore.getState().setYoloProfiles(updated);
+                    committedProfilesRef.current.set(created.id, { name: created.name, profit_cap: created.profit_cap });
+                    return updated;
+                  });
+                  setNewProfileName("");
+                  setNewProfileCap("");
+                } catch { /* ignore */ }
+              }}
+              className="text-[10px] font-mono px-2 py-1 rounded border border-accent/40 text-accent hover:bg-accent/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              Add Profile
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Strategy Config */}
       <div className="rounded border border-border bg-bg-secondary px-4 py-3">
         <h2 className="text-xs font-mono font-medium text-text-secondary uppercase tracking-wider mb-3">
@@ -389,7 +521,7 @@ export default function SettingsPage() {
         </h2>
         {loading ? (
           <div className="text-xs font-mono text-text-muted">loading...</div>
-        ) : strategies.length === 0 ? (
+        ) : !Array.isArray(strategies) || strategies.length === 0 ? (
           <div className="text-xs font-mono text-text-muted">no strategies configured</div>
         ) : (
           <div className="space-y-1">

@@ -62,6 +62,7 @@ from app.tasks.signal_expiry_task import start_signal_expiry_scheduler, stop_sig
 from app.agent.agent_runner import agent_runner
 from app.agent.telegram_bot import start_telegram_bot, stop_telegram_bot
 from app.services import trading_config as _trading_config_svc
+from app.services import yolo_profile_service as _yolo_profile_svc
 from app.websocket.manager import ws_manager
 
 
@@ -297,6 +298,9 @@ async def lifespan(app: FastAPI):
     await _trading_config_svc.ensure_seeded()
     t_cfg = asyncio.create_task(_trading_config_svc.start_config_listener(), name="trading_config_listener")
     task_registry.track_asyncio_task("trading_config_listener", t_cfg, metadata={"description": "Trading config pubsub reload"})
+
+    t_profiles = asyncio.create_task(_yolo_profile_svc.start_profile_listener(), name="yolo_profile_listener")
+    task_registry.track_asyncio_task("yolo_profile_listener", t_profiles, metadata={"description": "YOLO profiles pubsub reload"})
 
     # --- Schedulers (periodic jobs) ---
     await start_fyers_login_scheduler()

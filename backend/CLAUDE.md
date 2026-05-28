@@ -74,8 +74,8 @@ All three paths fill at the live LTP (not the stale signal premium). SL/target a
 ### Risk Gate Responsibilities
 
 - `_check_regulatory_limits` (`strategy_runner.py`) — F&O ban list only; all execution paths
-- Drawdown / max-trades / **daily profit cap** — YOLO executor only (`_final_risk_check` in `auto_executor.py`). Profit cap block writes an `AgentLog` (no Telegram) — trade_monitor sends the one Telegram notification when it closes positions
-- **Daily profit cap** (`max_daily_profit`, INR, 0 = disabled): when **net** P&L (after brokerage, STT, exchange, GST, SEBI, stamp duty) ≥ cap, monitor closes all open non-shadow positions (`ExitReason.PROFIT_CAP`) and blocks further YOLO executions. Closed trades use stored `net_pnl`; open positions estimate charges via `compute_charges()` with LTP as exit price
+- Drawdown / max-trades / **daily profit cap** — YOLO executor only (`_final_risk_check` in `auto_executor.py`). Profit cap block writes an `AgentLog` (no Telegram) — trade_monitor sends the Telegram notification when it closes positions
+- **Daily profit cap (per-profile)**: caps are set per `YoloProfile` (not via `max_daily_profit` in `trading_config`). When a profile's **net** P&L (after brokerage, STT, exchange, GST, SEBI, stamp duty) ≥ that profile's cap, trade_monitor closes only that profile's open positions (`ExitReason.PROFIT_CAP`) and blocks further YOLO executions for that profile. Each profile is checked and capped independently. Closed trades use stored `net_pnl`; open positions estimate charges via `compute_charges()` with LTP as exit price
 - Shadow executor — zero capital gates
 - Manual executor — no blocking gates; warnings computed but not enforced
 
@@ -116,7 +116,7 @@ Pydantic Settings loading from `.env`. Key groups:
 *Before yield (blocking — fast, config + schedulers only):*
 
 1. `ensure_seeded()` — insert singleton `trading_config` row if absent
-2. Start config listener pubsub (`start_config_listener()`)
+2. Start config listener pubsub (`start_config_listener()`) + start profile listener pubsub (`start_profile_listener()`)
 3. Start all schedulers: Fyers login, symbol master, OI snapshot, fundamental data, daily summary, global market, morning workflow, bhav copy, F&O ban list, signal expiry, sector update
 4. Start Telegram bot polling (`start_telegram_bot()`)
 5. Launch `_background_startup()` as fire-and-forget asyncio task
@@ -191,13 +191,13 @@ All window/deadline helpers accept optional `as_of: datetime | None` (defaults t
 - `now_ist() -> datetime` — current time in IST. Used by: everywhere
 - `is_trading_day(d: date) -> bool` — weekday + NSE_HOLIDAYS check; always True in simulated mode. Used by: candle_backfill, signal_expiry_task
 - `is_market_open(as_of=None) -> bool` — 9:15–15:30 IST check; always True in simulated mode. Used by: feed_manager, trade_monitor, tasks
-- `is_in_trading_window(as_of=None) -> bool` — within standard trade window (9:15-15:00). Used by: strategy_runner
-- `get_window_state(as_of=None) -> str` — returns `"IN_WINDOW"` / `"DEAD_ZONE"` / `"OUT_OF_WINDOW"`. Used by: strategy_runner (default), confidence.py
-- `is_in_dead_zone(as_of=None) -> bool` — 11:30-12:30 check. Used by: strategy_runner
+- `is_in_trading_window(as_of=None) -> bool` — within standard trade window (9:15-15:00); always True in simulated mode. Used by: market_data API
+- `get_window_state(as_of=None) -> str` — returns `"IN_WINDOW"` / `"DEAD_ZONE"` / `"OUT_OF_WINDOW"`; always `"IN_WINDOW"` in simulated mode. Used by: confidence.py
+- `is_in_dead_zone(as_of=None) -> bool` — 11:30-12:30 check; always False in simulated mode. Used by: market_data API
 - `is_past_close_deadline(as_of=None) -> bool` — after 3:15 PM; always False in simulated mode. Used by: shadow_executor, trade_monitor
 - `time_to_market_close_minutes(as_of=None) -> int` — minutes until 3:30 PM. Used by: confidence.py (time_of_day factor)
-- `is_in_custom_trading_window(as_of, windows) -> bool` — per-strategy window check. Used by: strategy_runner
-- `get_custom_window_state(as_of, windows, dead_zone) -> str` — per-strategy window state. Used by: strategy_runner, options API
+- `is_in_custom_trading_window(as_of, windows) -> bool` — per-strategy window check; always True in simulated mode. Used by: strategy_runner
+- `get_custom_window_state(as_of, windows, dead_zone) -> str` — per-strategy window state; always `"IN_WINDOW"` in simulated mode. Used by: strategy_runner, options API, telegram_commands
 
 #### `retry.py`
 
@@ -206,22 +206,22 @@ All window/deadline helpers accept optional `as_of: datetime | None` (defaults t
 
 ---
 
-### `app/models/` — SQLAlchemy ORM (16 tables)
+### `app/models/` — SQLAlchemy ORM (17 tables)
 
 All models extend `BaseModel` (UUID PK, `created_at`/`updated_at` TIMESTAMPTZ).
 
 
 | Model                  | Table                     | Key Columns                                                                                                                                                                                                                                                                                                                                                   |
 | ---------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Trade`                | `trades`                  | `entry_price`, `exit_price`, `pnl`, `net_pnl` (pnl minus charges), `charges_json` (JSONB breakdown), `source` (MANUAL/YOLO/SHADOW), `is_permanent_watchlist`, `margin_required`, `signal_confidence`, `signal_ai_action`, `signal_ai_summary`, `signal_instrument_type`, `signal_type`, `signal_snapshot` (JSONB full snapshot at execution)                  |
-| `Position`             | `positions`               | `entry_price`, `stop_loss`, `target_price`, `is_shadow`, `high_since_entry` (HWM for trailing SL), `margin_required`, `signal_generated_at` (from Signal at execution, for fill latency)                                                                                                                                                                       |
+| `Trade`                | `trades`                  | `entry_price`, `exit_price`, `pnl`, `net_pnl` (pnl minus charges), `charges_json` (JSONB breakdown), `source` (MANUAL/YOLO/SHADOW), `yolo_profile_id` (FK to `yolo_profiles`, ON DELETE SET NULL, NULL for MANUAL), `is_permanent_watchlist`, `margin_required`, `signal_confidence`, `signal_ai_action`, `signal_ai_summary`, `signal_instrument_type`, `signal_type`, `signal_snapshot` (JSONB full snapshot at execution) |
+| `Position`             | `positions`               | `entry_price`, `stop_loss`, `target_price`, `is_shadow`, `yolo_profile_id` (FK to `yolo_profiles`, ON DELETE SET NULL, NULL for MANUAL), `high_since_entry` (HWM for trailing SL), `margin_required`, `signal_generated_at` (from Signal at execution, for fill latency) |
 | `Signal`               | `signals`                 | `entry_price`, `stop_loss`, `target_price`, `confidence`, `executable`, `blocked_reason`, `is_permanent_watchlist`, `ai_summary`, `ai_rationale`, `ai_adjustment`, `ai_action`, `indicators` (JSONB: includes `confidence_factors`, `intraday_bias`, `nifty_spot`, `nifty_day_change_pct`, `trigger_candle`, `minutes_since_open`, `_is_permanent_watchlist`) |
 | `SignalHistory`        | `signal_history`          | Immutable snapshot before Case-2 dedup update. `version` (1-based), all volatile signal fields, `captured_at`                                                                                                                                                                                                                                                 |
 | `MarketData1m`         | `market_data_1m`          | 1-minute OHLCV for intraday candles (9:15–15:30 IST)                                                                                                                                                                                                                                                                                                          |
 | `MarketDataDaily`      | `market_data_daily`       | One OHLCV + `delivery_pct` per symbol per trading date. Unique on `(symbol, date)`. Populated by `nse_bhav_copy_task`. Used by morning screener for all 8 quant scoring factors.                                                                                                                                                                              |
 | `OISnapshot`           | `oi_snapshots`            | `option_type` (`"CE"`, `"PE"`, or `"FUT"` for stock futures with `strike_price=0`)                                                                                                                                                                                                                                                                            |
 | `StrategyConfig`       | `strategy_configs`        | `is_active`, `auto_mode`, `shadow_enabled`, `yolo_enabled`, `parameters` (JSONB), `symbols` (JSONB list), `symbol_map` (JSONB: short_name → fyers_symbol, stored at insertion time)                                                                                                                                                                           |
-| `TradingConfig`        | `trading_config`          | Singleton row: `capital`, `max_daily_drawdown_pct`, `max_daily_profit` (INR, 0=disabled), `max_risk_per_trade_pct`, `max_trades_per_day`, `autonomy_level`, `min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`, `shadow_skip_permanent_watchlist`, `yolo_skip_permanent_watchlist`                                      |
+| `TradingConfig`        | `trading_config`          | Singleton row: `capital`, `max_daily_drawdown_pct`, `max_daily_profit` (INR, kept at 0 — profit caps managed via `yolo_profiles` table), `max_risk_per_trade_pct`, `max_trades_per_day`, `autonomy_level`, `min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`, `shadow_skip_permanent_watchlist`, `yolo_skip_permanent_watchlist` |
 | `StockFundamental`     | `stock_fundamentals`      | CAN SLIM scores + raw fundamentals per stock. `sector` and `industry` (auto-populated from yfinance by `sector_update_task` + `fundamental_data_task`)                                                                                                                                                                                                        |
 | `FundamentalHistory`   | `fundamental_history`     | Quarterly snapshots for trend analysis                                                                                                                                                                                                                                                                                                                        |
 | `GlobalMarketSnapshot` | `global_market_snapshots` | 15-min world indices + FX + commodities snapshot; unique on `timestamp`                                                                                                                                                                                                                                                                                       |
@@ -229,6 +229,7 @@ All models extend `BaseModel` (UUID PK, `created_at`/`updated_at` TIMESTAMPTZ).
 | `DailySummary`         | `daily_summaries`         | Daily P&L, win/loss counts, drawdown                                                                                                                                                                                                                                                                                                                          |
 | `ResearchReport`       | `research_reports`        | AI research report: recommendation, confidence, report_json/markdown                                                                                                                                                                                                                                                                                          |
 | `ResearchAgentRun`     | `research_agent_runs`     | Per-agent run findings, summary, duration, data sources. FK cascade delete                                                                                                                                                                                                                                                                                    |
+| `YoloProfile`          | `yolo_profiles`           | `name`, `profit_cap` (INR), `is_active`, `sort_order`. Multiple profiles run simultaneously — each signal creates one Trade+Position per active uncapped profile. Trade monitor checks caps per profile independently                                                                                                                                          |
 
 
 **Helper function** (module-level, `models/trade.py`):
@@ -243,23 +244,25 @@ Convention: `{Entity}Create`, `{Entity}Response`, `{Entity}Update`.
 
 Key additions (other schemas are standard CRUD):
 
-- `trade.py`: `MarginAnalysisRequest(trade_ids: list[UUID])`, `MarginAnalysisResponse(peak_margin, peak_time, total_margin, trade_count)`, `HoldAnalysisRequest`, `PerTradeHoldResult(data_found, max_high, min_low, hold_pnl, hold_net_pnl, hold_charges_json, hold_exit_time)`, `HoldAnalysisResponse`, `TradeResponse` includes `margin_required`, `signal_*` snapshot columns
+- `trade.py`: `MarginAnalysisRequest(trade_ids: list[UUID])`, `MarginAnalysisResponse(peak_margin, peak_time, total_margin, trade_count)`, `HoldAnalysisRequest`, `PerTradeHoldResult(data_found, max_high, min_low, hold_pnl, hold_net_pnl, hold_charges_json, hold_exit_time)`, `HoldAnalysisResponse`, `TradeResponse` includes `margin_required`, `signal_*` snapshot columns, `yolo_profile_id: UUID | None`
 - `signal.py`: `SignalPreviewResponse(risk, notional, margin_required, sizing_meta, warnings, entry_price, stop_loss, target_price, lots)`
-- `risk.py`: `RiskDashboardResponse(notional, risk, margin_utilized, max_daily_profit, is_profit_capped, closed_pnl, total_pnl, drawdown_pct)`
-- `position.py`: `PositionResponse` includes `margin_required`, `signal_confidence`, `signal_generated_at`, `unrealized_pnl`, `current_price`, `is_permanent_watchlist`
+- `risk.py`: `RiskDashboardResponse(notional, risk, margin_utilized, is_profit_capped, closed_pnl, total_pnl, drawdown_pct, profiles: list[ProfileRiskSummary])`. `ProfileRiskSummary(id, name, profit_cap, current_pnl, is_capped)`. `is_profit_capped` = True when all active profiles are capped
+- `position.py`: `PositionResponse` includes `margin_required`, `signal_confidence`, `signal_generated_at`, `unrealized_pnl`, `current_price`, `is_permanent_watchlist`, `yolo_profile_id: UUID | None`
+- `yolo_profile.py`: `YoloProfileCreate(name, profit_cap)`, `YoloProfileUpdate(name?, profit_cap?, is_active?, sort_order?)`, `YoloProfileResponse(id, name, profit_cap, is_active, sort_order, is_capped_today: bool)`
 
 ---
 
-### `app/api/v1/` — REST API (14 routers, all under `/api/v1/`)
+### `app/api/v1/` — REST API (16 routers, all under `/api/v1/`)
 
 
 | Router           | File                                     | Key Endpoints                                                                                                                                                                                                                                                                                                               |
 | ---------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Trades           | `trades.py`                              | `GET /trades` (sim filters on signal_* cols), `GET /trades/{id}`, `GET /trades/summary`, `POST /{id}/close`, `POST /close-all`, `POST /margin-analysis`, `POST /hold-analysis`                                                                                                                                              |
+| Trades           | `trades.py`                              | `GET /trades` (sim filters on signal_* cols, `yolo_profile_id` filter), `GET /trades/{id}`, `GET /trades/summary` (`yolo_profile_id` filter), `POST /{id}/close`, `POST /close-all`, `POST /margin-analysis`, `POST /hold-analysis`                                                                                         |
 | Signals          | `signals.py`                             | `GET /signals`, `GET /{id}/preview` (live LTP + SL recompute), `POST /{id}/execute` (live LTP fill + SL recompute), `POST /{id}/reject`, `GET /{id}/history`                                                                                                                                                                |
-| Positions        | `positions.py`                           | `GET /positions` (LEFT JOIN trades, enriched with live prices), `POST /{id}/close`, `PATCH /{id}/sl-target`                                                                                                                                                                                                                 |
+| Positions        | `positions.py`                           | `GET /positions` (LEFT JOIN trades, enriched with live prices, `yolo_profile_id` filter), `POST /{id}/close`, `PATCH /{id}/sl-target`                                                                                                                                                                                       |
 | Agent            | `agent.py`                               | `POST /start`, `POST /stop`, `GET /status`, `PATCH /confirm/{log_id}`, `PATCH /yolo`, `GET /logs`                                                                                                                                                                                                                           |
-| Risk             | `risk.py`                                | `GET /risk` (daily P&L, drawdown, notional, margin, profit cap state)                                                                                                                                                                                                                                                       |
+| Risk             | `risk.py`                                | `GET /risk/dashboard?yolo_profile_id=` (daily P&L, drawdown, notional, margin, profit cap state; includes per-profile P&L summaries in `profiles[]`; optional `yolo_profile_id` query param scopes all top-level metrics to that profile — `profiles[]` always covers all active profiles)                                  |
+| YOLO Profiles    | `yolo_profiles.py`                       | `GET /yolo-profiles` (all profiles with `is_capped_today`), `POST /yolo-profiles`, `PATCH /yolo-profiles/{id}`, `DELETE /yolo-profiles/{id}`                                                                                                                                                                                |
 | Market Data      | *collect*dynamic_symbols`market_data.py` | `GET /prices`, `POST /prices/batch`, `GET /ohlcv/{symbol}`, `POST /feed/start|stop|refresh`, `GET /symbols/search`                                                                                                                                                                                                          |
 | Watchlist        | `watchlist.py`                           | `GET /watchlist`, `POST /watchlist`, `DELETE /watchlist/{symbol}` — Redis-backed, sorted by insertion time                                                                                                                                                                                                                  |
 | Strategies       | `strategies.py`                          | `GET /strategies`, `PUT /strategies/{name}`, `POST /evaluate` (manual single), `POST /evaluate/batch` (all configured symbols), `GET /{name}/parameter-defaults`                                                                                                                                                            |
@@ -273,7 +276,8 @@ Key additions (other schemas are standard CRUD):
 
 **Key router behaviors**:
 
-- `GET /trades` supports `source=SHADOW` to see shadow-only trades, `exclude_permanent=true` to hide permanent-watchlist trades, `min_lots`/`max_lots` filters
+- `GET /trades` supports `source=SHADOW` to see shadow-only trades, `exclude_permanent=true` to hide permanent-watchlist trades, `min_lots`/`max_lots` filters, `yolo_profile_id: UUID | None` to scope to a specific profile
+- `GET /trades/summary` and `GET /positions` also accept `yolo_profile_id: UUID | None` query param for profile-scoped views
 - `POST /close-all` registered BEFORE `{trade_id}` paths to avoid path conflict
 - `POST /hold-analysis` — accepts `{trade_ids, scenario}` where scenario is `"best"` (max high for BUY, min low for SELL), `"worst"` (min low for BUY, max high for SELL), `"eod"` (last candle close), or `"sl_tgt"` (first SL or TGT hit, fallback to EOD close). For each closed trade queries `market_data_1m` between `entry_time` and hold cutoff. **Hold cutoff** = `min(next re-entry time, 15:30 IST same day)` — re-entry matched on same `fyers_option_symbol` + `side`. `_build_reentry_map()` queries the trades table (not just the request batch) for next entry_time per `(md_symbol, side, day)`. Symbol lookup: `_resolve_md_symbol(trade)` returns `trade.fyers_option_symbol` (works for both futures and options), falls back to `trade.symbol`. Returns `hold_exit_price` (scenario-dependent hypothetical exit), `hold_pnl` (gross), `hold_net_pnl` (after charges via `compute_charges()`), `hold_charges_json` (full breakdown), `hold_exit_time` (timestamp of the candle), and `hold_outcome` (`"SL"`, `"TGT"`, or null — only populated for `sl_tgt` scenario; walks candles chronologically to find first SL/TGT hit using trade's `stop_loss`/`target_price`; SL wins on same-candle tie; when neither hits, falls back to EOD close with `hold_outcome=null`). Returns `data_found=false` for open trades, missing symbols, or no data in window
 - `GET /signals/{id}/preview` calls `compute_lots_for_manual` + `recompute_sl_target` + `compute_margin` so confirm modal shows correct risk
@@ -313,7 +317,19 @@ Single `/ws` endpoint (handler in `app/api/router.py`). Uses `receive_text()` + 
 - `ensure_seeded() -> None` — inserts singleton row from `.env` on first boot. Used by: main.py
 - `start_config_listener() -> None` — subscribes to pubsub, reloads cache on updates. Used by: main.py
 
-`TradingConfigDTO` fields: `capital`, `max_daily_drawdown_pct`, `max_daily_profit` (INR, 0=disabled), `max_risk_per_trade_pct`, `max_trades_per_day`, `paper_trading`, `autonomy_level`, `min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`, `shadow_skip_permanent_watchlist`, `yolo_skip_permanent_watchlist`.
+`TradingConfigDTO` fields: `capital`, `max_daily_drawdown_pct`, `max_risk_per_trade_pct`, `max_trades_per_day`, `paper_trading`, `autonomy_level`, `min_confidence_to_persist`, `min_confidence_for_shadow`, `min_confidence_for_execution`, `shadow_skip_permanent_watchlist`, `yolo_skip_permanent_watchlist`.
+
+#### `yolo_profile_service.py`
+
+- `get_active_profiles() -> list[YoloProfileDTO]` — async; returns in-memory cached list sorted by `profit_cap ASC`. Used by: auto_executor, trade_monitor
+- `get_active_profiles_sync() -> list[YoloProfileDTO] | None` — sync; returns cache or None (no DB call). Used by: (no current callers — reserved for strategy code)
+- `get_uncapped_profile_ids(today: date) -> set[UUID]` — active profiles not yet capped today (checks trades with `exit_reason=PROFIT_CAP`). Used by: auto_executor, yolo_profiles API
+- `get_all_profiles() -> list[YoloProfileDTO]` — async; returns all profiles (active + inactive) sorted by profit_cap ASC. Used by: yolo_profiles API
+- `get_profile_by_id(profile_id) -> YoloProfileDTO | None` — async; returns single profile from cache. Used by: (no current callers)
+- `create_profile(name, profit_cap) -> YoloProfileDTO` — creates profile + invalidates cache. Used by: yolo_profiles API
+- `update_profile(id, **fields) -> YoloProfileDTO` — updates profile + invalidates cache. Rejects deactivating the default profile (lowest sort_order). Used by: yolo_profiles API
+- `delete_profile(id) -> None` — deletes profile + invalidates cache. Rejects deletion of the default profile (lowest sort_order). Used by: yolo_profiles API
+- `start_profile_listener() -> None` — subscribes to pubsub, reloads cache on profile updates. Used by: main.py
 
 #### `position_sizing.py`
 
@@ -791,7 +807,7 @@ All extend `BaseResearchAgent` (`agents/base.py`), return `AgentResult(findings:
 - `start()` — starts 500ms trade monitor loop. Used by: main.py, agent API
 - `stop()`. Used by: agent API
 - `on_new_signal(signal_id)` — fire-and-forget (called via `create_task`); gates Telegram notification on confidence floor (`signal.confidence >= min_confidence_for_execution`; None confidence still notifies); auto-executes if YOLO + running + executable. Top-level try/except prevents silent exception loss. Used by: strategy_runner._handle_signal()
-- `_handle_new_signal(signal_id)` — internal impl of on_new_signal; Telegram + YOLO auto-execution logic. Used by: on_new_signal()
+- `_handle_new_signal(signal_id)` — internal impl of on_new_signal; Telegram + YOLO auto-execution logic; iterates over the list returned by `auto_execute_signal` and broadcasts each per-profile action. Used by: on_new_signal()
 
 #### `trade_monitor.py`
 
@@ -799,12 +815,12 @@ All extend `BaseResearchAgent` (`agents/base.py`), return `AgentResult(findings:
 
 Internal flow per position check:
 
-1. `_check_profit_cap(db)` — if cap enabled and net PnL (after charges) ≥ cap: close all non-shadow positions (`ExitReason.PROFIT_CAP`), send Telegram, short-circuit loop. Uses `_unrealized_net_pnl()` for open position charge estimation
-2. `_unrealized_net_pnl(db)` — sums unrealized P&L minus estimated charges (via `compute_charges` with LTP) for all open non-shadow positions. Used by: _check_profit_cap
+1. `_check_profit_cap(db)` — fetches uncapped profile IDs first via `get_uncapped_profile_ids()`, then iterates only those profiles (skipping already-capped ones to avoid redundant DB work); for each profile computes per-profile realized+unrealized net P&L; when P&L ≥ profile's cap, closes only that profile's open non-shadow positions (`ExitReason.PROFIT_CAP`), sends a separate Telegram per capped profile. Uses `_unrealized_net_pnl(db, profile_id)` for open position charge estimation
+2. `_unrealized_net_pnl(db, profile_id=None)` — sums unrealized P&L minus estimated charges (via `compute_charges` with LTP) for open non-shadow positions, optionally scoped to `profile_id`. Used by: _check_profit_cap
 3. `_check_position(db, pos, yolo_mode)` — SL hit? Target hit? Time exit? Trailing SL update?
 4. `_close_position(db, pos, exit_price, exit_reason, ...)` — closes trade, computes `brokerage_calculator.compute_charges()`, stores in `Trade.charges_json`, broadcasts `trade:close` + `agent:action`
 5. `_request_profit_confirmation(db, pos)` — for SEMI mode target hits; guards against duplicate confirmation requests
-6. `_roll_futures_position(db, pos)` — 3 days before expiry: close old + open next month via `futures_resolver`; preserves `source=SHADOW` and `is_shadow=True`
+6. `_roll_futures_position(db, pos)` — 3 days before expiry: close old + open next month via `futures_resolver`; preserves `source=SHADOW`, `is_shadow=True`, and `yolo_profile_id`
 
 **Direction detection**: uses `target_price < entry_price` (target below entry = SHORT). **SHORT position support**: direction-aware SL hit, target hit, unrealized PnL, HWM (lowest price for shorts), trailing SL direction.
 
@@ -816,7 +832,8 @@ Internal flow per position check:
 
 #### `auto_executor.py`
 
-- `auto_execute_signal(signal_id) -> dict | None` — YOLO gate order: (1) PENDING + executable; (2) confidence gate (`min_confidence_for_execution`); (3) per-strategy `yolo_enabled` gate (from `strategy_configs`); (4) permanent watchlist gate (`yolo_skip_permanent_watchlist`); (5) open YOLO trade dedup per signal_id (prevents re-executing same signal); (6) open position dedup per symbol+direction (non-shadow only); (7) `_final_risk_check` (drawdown, max-trades, daily profit cap). Sets `Trade.source = "YOLO"`. Used by: agent_runner.on_new_signal()
+- `auto_execute_signal(signal_id) -> list[dict]` — returns a list of actions, one per active uncapped YOLO profile. Signal-level gates run once: (1) PENDING + executable; (2) confidence gate (`min_confidence_for_execution`); (3) per-strategy `yolo_enabled` gate; (4) permanent watchlist gate (`yolo_skip_permanent_watchlist`). Shared computation done once: VIX, lots, live price, SL/target, margin. Per-profile loop: position dedup scoped to `yolo_profile_id`, `_final_risk_check` scoped to profile, Trade+Position created with `yolo_profile_id`. Single DB commit, one WS broadcast per trade, Telegram sent once. Sets `Trade.source = "YOLO"`. Used by: agent_runner.on_new_signal()
+- `_final_risk_check(session, symbol, profile_id, profile_cap)` — all risk queries (max trades, drawdown, profit cap) scoped by `yolo_profile_id`.
 
 Lot sizing via `compute_lots_for_yolo()`. SL/target recomputed from live LTP via `recompute_sl_target()`. Sets `margin_required` on Trade + Position. Broadcasts `trade:open` (includes `margin_required`) + `agent:auto_executed`.
 
@@ -840,7 +857,7 @@ All outbound Telegram messages. No ORM imports — callers pass plain scalars.
 - `notify_confirmation_request(log)` — SEMI mode profit confirmation
 - `notify_expiry_roll(old_trade, new_trade)` / `notify_expiry_roll_failed(symbol, expiry)` — futures roll
 - `notify_drawdown_halt(daily_pnl, limit)` — drawdown gate triggered
-- `notify_profit_cap_halt(daily_pnl, limit, positions_closed)` — daily profit cap hit. Only called by trade_monitor (not auto_executor)
+- `notify_profit_cap_halt(daily_pnl, limit, positions_closed, profile_name=None)` — daily profit cap hit; when `profile_name` is provided the title reads "Profit Cap HIT — {name}" so the user knows which YOLO profile capped. Only called by trade_monitor (not auto_executor)
 - `notify_daily_summary(trades, market_data, global_cues, briefing)` — 3:35 PM EOD report (excludes shadow, uses `net_pnl` when available, LLM-drafted market wrap with Pro model)
 - `notify_morning_premarket(briefing, global_cues)` — 8:00 AM pre-market report with Nifty + BankNifty previous close, LLM-drafted global cues, sector bias, F&O build-up, OI levels. BankNifty sourced from `price:BANKNIFTY` Redis cache (24h TTL)
 - `notify_morning_preopen(watchlist, global_cues)` — 9:08 AM pre-open update with watchlist + gap commentary; pure formatting, no LLM
@@ -874,7 +891,7 @@ Phone-friendly card format (no monospace blocks). Futures show LONG/SHORT via `_
 | `oi_snapshot_task.py`      | Every 3 min market hours (CE/PE); 3:25 PM daily (stock futures); Every 10 min 9:20-15:30 (S5 watchlist OI) | Fyers option chain OI → `oi_snapshots` table. `fetch_stock_futures_oi()` fetches ~180 F&O stocks' FUT OI at EOD. `fetch_s5_watchlist_oi()` fetches targeted 10-15 S5 watchlist symbols' live OI every 10 min. **Skips symbols with zero OI** (Fyers returns 0 for illiquid contracts). **Fyers field**: use `"oi"` not `"open_interest"` in the `v` dict. Rate-limited: semaphore(2) + 0.3s delay. Gap-fill on startup via `_fill_stock_futures_oi_gaps()` from NSE FO bhav copy archives. |
 | `nse_bhav_copy_task.py`    | 7:30 AM IST daily                                                                                          | Downloads NSE CM bhav copy CSV → (1) Redis `nse:bhav_copy:{date}` (90-day TTL, slim payload for delivery % scoring), (2) `market_data_daily` table (full OHLCV upsert). Gap-fills last 7 trading days on startup. Cookie session required (preflight GET to nseindia.com).                                                                                                                                        |
 | `global_market_task.py`    | Every 15 min; once on startup                                                                              | yfinance 8 tickers (Dow, S&P500, Nasdaq, Nifty, Crude, USDINR, DXY, VIX); 0.5s inter-ticker. Writes `indicator:global:{field}` Redis keys (20-min TTL) + `GlobalMarketSnapshot` DB row. **NIFTY override**: after yfinance, reads `price:NIFTY` from Redis (Fyers live) to override — yfinance `^NSEI` has 1-day lag.                                                                                             |
-| `fundamental_data_task.py` | 06:00, 12:00, 18:00 IST; once on startup                                                                   | Fetches CAN SLIM fundamentals (yfinance + NSE) for all CAN SLIM symbols; 5s inter-symbol. Staleness guard: skips symbols with `last_refreshed_at` < 6h old (`STALENESS_THRESHOLD_HOURS`). `_fetch_and_store_symbol(symbol, lot_sizes)` — also called on demand by morning screener for S5 watchlist symbols. Now also stores `sector` and `industry` from yfinance into `stock_fundamentals`.                       |
+| `fundamental_data_task.py` | 06:00, 12:00, 18:00 IST; once on startup                                                                   | Fetches CAN SLIM fundamentals (yfinance + NSE) for all CAN SLIM symbols; 5s inter-symbol. Staleness guard: skips symbols with `last_refreshed_at` < 6h old (`STALENESS_THRESHOLD_HOURS`). `_fetch_and_store_symbol(symbol, lot_sizes)` — also called on demand by morning screener for S5 watchlist symbols. Stores `sector` and `industry` from yfinance into `stock_fundamentals`.                       |
 | `sector_update_task.py`    | 07:00 AM IST daily                                                                                         | Fetches sector/industry from yfinance for F&O stocks missing classification in `stock_fundamentals`. Checks S5 permanent watchlist for symbols not yet in the table. 1s inter-symbol rate limit. After update, reloads `_db_sectors` cache via `load_db_sectors()`. `update_sectors()` can be called manually. |
 | `daily_summary_task.py`    | 3:35 PM IST daily                                                                                          | EOD Telegram report (excludes shadow); LLM-drafted market wrap + trading assessment (Pro model, default max_tokens). Uses `net_pnl` when available. Nifty/BN change sourced from `change`/`change_pct` in Redis price cache (not computed from prev_close). Skips non-trading days. Auto-splits into multiple Telegram sends if message exceeds 4096-char limit.                                                    |
 | `morning_workflow_task.py` | 8:00 AM, 8:30 AM, 9:08 AM, 9:31 AM, 3:15 PM IST                                                            | Strategy 5 daily workflow: briefing → screener → pre-open reassessment → ORB level logging → EOD summary. All trade queries exclude shadow trades. Telegram hooks wrapped in try/except. All idempotent per day, skip non-trading days.                                                                                                                                                                            |

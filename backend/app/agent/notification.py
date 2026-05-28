@@ -321,10 +321,20 @@ async def notify_drawdown_halt(daily_pnl: float, limit: float) -> None:
     await send_telegram(msg)
 
 
-async def notify_profit_cap_halt(daily_pnl: float, limit: float, positions_closed: int) -> None:
-    """Send a daily-profit-cap-hit halt notification via Telegram."""
+async def notify_profit_cap_halt(
+    daily_pnl: float,
+    limit: float,
+    positions_closed: int,
+    profile_name: str | None = None,
+) -> None:
+    """Send a daily-profit-cap-hit halt notification via Telegram.
+
+    When profile_name is provided, the title includes the profile name so the
+    user knows which YOLO profile hit its cap.
+    """
+    title = f"Profit Cap HIT — {profile_name}" if profile_name else "Daily Profit Target Hit"
     msg = (
-        f"🎯 <b>Trading Halted — Daily Profit Target Hit</b>\n"
+        f"🔒 <b>Trading Halted — {title}</b>\n"
         f"Daily PnL  +₹{daily_pnl:,.0f}\n"
         f"Target  ₹{limit:,.0f}\n"
         f"Closed {positions_closed} position(s). No new trades today."
