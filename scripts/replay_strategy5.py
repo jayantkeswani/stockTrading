@@ -78,14 +78,14 @@ async def fetch_candles_1m(session, symbol: str, from_ts: datetime, to_ts: datet
 async def fetch_daily_candles(session, symbol: str, days: int = 30) -> list[Candle]:
     from sqlalchemy import text
 
+    # Daily bars live in market_data_daily (since the 2026-05-01 migration).
+    # This previously read midnight-UTC rows co-mingled in market_data_1m.
     result = await session.execute(
         text("""
             SELECT open, high, low, close, volume
-            FROM market_data_1m
+            FROM market_data_daily
             WHERE symbol = :symbol
-              AND extract(hour from timestamp) = 0
-              AND extract(minute from timestamp) = 0
-            ORDER BY timestamp DESC
+            ORDER BY date DESC
             LIMIT :days
         """),
         {"symbol": symbol, "days": days},

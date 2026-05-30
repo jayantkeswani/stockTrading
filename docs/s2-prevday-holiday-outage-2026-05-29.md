@@ -61,9 +61,20 @@ Note: this is **distinct** from the documented "9,600 midnight-UTC rows" cleanup
   a May 28 17:44 row) and running the real `_query_previous_day(today=2026-05-29)`
   returns the correct May 27 levels (PDH/PDL/PDC) instead of `None`.
 
-## Follow-up
+## Cleanup (done 2026-05-30)
 
-- Purge the existing stray rows on prod (read-only from the dev workflow — run on
-  the VM). `SELECT` to review first, then:
-  `DELETE FROM market_data_1m WHERE (timestamp AT TIME ZONE 'Asia/Kolkata')::time NOT BETWEEN '09:15' AND '15:30';`
-  (also clears the 9,600 midnight-UTC daily-bar rows).
+- Purged all **70,980 off-session rows** from prod `market_data_1m` (IST time
+  outside 09:15–15:30): 38,526 post-close quote-snapshot rows, 13,323 pre-open
+  rows, 9,475 stale 00:00-IST daily-proxy rows, and the 9,656 midnight-UTC
+  daily-hack rows. In-session rows (2,377,857) untouched. A CSV backup of the
+  deleted rows is retained on the VM under `/tmp`.
+- Migrated `scripts/replay_strategy5.py::fetch_daily_candles` to read daily bars
+  from `market_data_daily` — it still read the midnight-UTC rows in
+  `market_data_1m`, orphaned by the 2026-05-01 daily-table migration, so the
+  purge would otherwise have starved it of daily context.
+
+## Remaining (optional hardening)
+
+- `candle_backfill._persist_candles` (deep-history + WS-reconnect gap backfill)
+  clamps to 09:15–15:30 IST but has no explicit `is_trading_day()` guard — add
+  one so non-trading-day rows are impossible from that writer too.
