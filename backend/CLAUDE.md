@@ -396,7 +396,7 @@ Default dicts: `VWAP_DEFAULTS`, `CANSLIM_DEFAULTS`, `INTRADAY_FUTURES_DEFAULTS`.
 - `backfill_today() -> None` — today's elapsed candles (skips weekends + NSE holidays; per-symbol freshness check: skips if latest candle < 2 min ago). Used by: main.py startup
 - `backfill_deep_history(days=120) -> None` — 120-day deep backfill for CAN SLIM symbols with < 50 days. Used by: main.py startup
 
-All three backfill from Fyers historical API + persist via `ON CONFLICT DO NOTHING`. Rate-limited: 0.3s between symbols, 1.0s every 5th. In simulated mode: uses `_fetch_history_simulated()` (httpx GET to simulator's `/data/history`) instead of Fyers SDK; token set to None.
+All three backfill from Fyers historical API + persist via `ON CONFLICT DO NOTHING`. The shared `_persist_candles` writer (deep-history + WS-reconnect gap backfill) drops any candle outside a real session — gated on `is_trading_day(ts.date())` and 09:15–15:30 IST — so no backfill path can persist off-session/holiday rows that would poison `_query_previous_day`. Rate-limited: 0.3s between symbols, 1.0s every 5th. In simulated mode: uses `_fetch_history_simulated()` (httpx GET to simulator's `/data/history`) instead of Fyers SDK; token set to None.
 
 #### `morning_screener.py`
 

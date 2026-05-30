@@ -410,4 +410,4 @@ curl -s http://localhost:8080/api/v1/market/prices | python3 -m json.tool
 
 ## Known Cleanup Tasks
 
-- **Add an `is_trading_day()` guard to `candle_backfill._persist_candles`**: the deep-history + WS-reconnect gap-backfill paths clamp candles to 09:15–15:30 IST but have no explicit trading-day check — they rely on Fyers returning nothing on holidays/weekends. Cheap defense-in-depth so off-session / non-trading-day rows are impossible from every writer (`feed_manager._emit_candle` is already guarded). See `docs/s2-prevday-holiday-outage-2026-05-29.md`.
+- _None currently._

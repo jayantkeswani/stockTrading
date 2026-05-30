@@ -72,9 +72,7 @@ Note: this is **distinct** from the documented "9,600 midnight-UTC rows" cleanup
   from `market_data_daily` — it still read the midnight-UTC rows in
   `market_data_1m`, orphaned by the 2026-05-01 daily-table migration, so the
   purge would otherwise have starved it of daily context.
-
-## Remaining (optional hardening)
-
-- `candle_backfill._persist_candles` (deep-history + WS-reconnect gap backfill)
-  clamps to 09:15–15:30 IST but has no explicit `is_trading_day()` guard — add
-  one so non-trading-day rows are impossible from that writer too.
+- Added an explicit `is_trading_day()` guard to `candle_backfill._persist_candles`
+  (deep-history + WS-reconnect gap backfill) so non-trading-day rows are
+  impossible from that writer too — every `market_data_1m` writer is now
+  session-guarded.

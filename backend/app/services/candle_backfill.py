@@ -538,11 +538,20 @@ async def _persist_candles(symbol: str, candles: list[dict]) -> int:
 
     Inserts via ON CONFLICT DO NOTHING. Returns the number of rows inserted.
     """
+    from app.core.utils import is_trading_day
+
     rows = []
     for c in candles:
         ts = datetime.fromtimestamp(c["timestamp"], tz=IST)
-        # Filter to market hours
-        if ts.time() < MARKET_OPEN or ts.time() > MARKET_CLOSE:
+        # Persist only real in-session candles: skip non-trading days
+        # (holidays/weekends) and any tick outside 09:15–15:30 IST. Fyers
+        # normally returns nothing off-hours, but the explicit guard means no
+        # backfill path can write a row that would poison _query_previous_day.
+        if (
+            not is_trading_day(ts.date())
+            or ts.time() < MARKET_OPEN
+            or ts.time() > MARKET_CLOSE
+        ):
             continue
         rows.append({
             "symbol": symbol,
