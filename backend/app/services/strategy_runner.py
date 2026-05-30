@@ -16,13 +16,14 @@ import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import Time, and_, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
     INDEX_SYMBOLS,
     IST,
     LOT_SIZES,
+    MARKET_CLOSE,
     MARKET_OPEN,
 )
 from app.services.position_sizing import calculate_lots, vix_to_multiplier
@@ -1016,16 +1017,22 @@ class StrategyRunner:
         # have timestamps before 09:15 and trick this query into returning today.
         yesterday_cutoff = datetime.combine(today, time.min, tzinfo=IST)
 
+        # Restrict to in-session candles (09:15–15:30 IST). A stray off-hours row
+        # — e.g. a holiday tick wrongly persisted at 17:44 IST — would otherwise
+        # make last_ts land on a non-session date that has no 09:15–15:30
+        # candles, so the OHLC query below returns nothing, we return None, and
+        # the strategy is silently blocked for the whole next trading day.
+        ist_time = cast(func.timezone("Asia/Kolkata", MarketData1m.timestamp), Time)
+
         result = await session.execute(
             select(
-                func.min(MarketData1m.open).label("day_open"),
-                func.max(MarketData1m.high).label("day_high"),
-                func.min(MarketData1m.low).label("day_low"),
                 func.max(MarketData1m.timestamp).label("last_ts"),
             ).where(
                 and_(
                     MarketData1m.symbol == symbol,
                     MarketData1m.timestamp < yesterday_cutoff,
+                    ist_time >= MARKET_OPEN,
+                    ist_time <= MARKET_CLOSE,
                 )
             )
         )

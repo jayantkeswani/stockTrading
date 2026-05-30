@@ -427,7 +427,7 @@ Core evaluation engine. Two trigger paths: (1) auto-mode on candle close, (2) ma
 Key private methods (documented because they're central to flow):
 
 - `_build_market_context(symbol, candle_data)` — builds full `MarketContext` from in-memory buffers + Redis. `today_open` is the open of the first candle with timestamp >= MARKET_OPEN (skips pre-market candles)
-- `_query_previous_day(session, symbol, today)` — queries last trading day's 1m candles; `yesterday_cutoff` is midnight IST (`time.min`), not MARKET_OPEN, so pre-open candles (08:42–09:07) don't bleed into today's query
+- `_query_previous_day(session, symbol, today)` — queries last trading day's 1m candles; `yesterday_cutoff` is midnight IST (`time.min`), not MARKET_OPEN, so pre-open candles (08:42–09:07) don't bleed into today's query. The "previous trading day" is the date of the most recent **in-session** candle (09:15–15:30 IST, filtered via `cast(func.timezone('Asia/Kolkata', timestamp), Time)`), so a stray off-hours/holiday row can't make it latch onto a non-session date and return None — which silently blocked Strategy 2 for the whole day on 2026-05-29
 - `_enrich_signal_snapshot(signal, ...)` — injects `nifty_spot`, `nifty_day_change_pct`, `trigger_candle`, `minutes_since_open` into every signal's indicators JSONB
 - `_enrich_strategy5_params(symbol, params, india_vix=None)` — loads RVOL profiles, cross-position counts, Nifty bias, ORB levels, briefing, global cues shift, per-stock gap/trend data, FUT OI direction into strategy params; throttled to once per 5 min per symbol for global cues check; only caches result in `_s5_session_cache` when `watchlist_loaded` is True (prevents empty defaults from being locked in before the 8:30 AM morning screener runs). OI query filters out zero-OI rows (`open_interest > 0`)
 - `_dedup_signal(existing, new, ai_fields)` — Case-1 (noise: skip), Case-2 (meaningful: archive to `signal_history` → update all fields including `ai_*` → re-fire shadow), Case-3 (acted on: return None → create new signal)
@@ -731,7 +731,7 @@ Class: `FeedManager`
 
 **Volume delta tracking**: Fyers sends `vol_traded_today` (cumulative). `_aggregate_candle` computes `max(0, current − last)` delta per tick. First-tick seeding produces zero delta on restart (prevents entire morning's volume dumping into one candle — the RVOL spike bug).
 
-**Market hours guard**: `_run_auto_strategy_evaluation` returns early when `is_market_open()` is False — prevents GATE log spam from REST quote fetches outside market hours. `_emit_candle` also guards DB persistence: pre-market candles (before 09:15 IST, from the pre-open auction) are published to Redis/WS for display but not written to `market_data_1m`, preventing them from polluting `_query_previous_day`.
+**Market hours guard**: `_run_auto_strategy_evaluation` returns early when `is_market_open()` is False — prevents GATE log spam from REST quote fetches outside market hours. `_emit_candle` also guards DB persistence via `is_market_open(ts)`: only in-session candles (trading day, 09:15–15:30 IST) are written to `market_data_1m`; pre-open auction, post-close, and holiday/weekend ticks are still published to Redis/WS for display but never persisted. This stops stray off-hours rows from polluting `_query_previous_day` — a 17:44 IST holiday tick once did, blocking Strategy 2 for a full day (see `docs/s2-prevday-holiday-outage-2026-05-29.md`).
 
 ---
 

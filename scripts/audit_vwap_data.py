@@ -22,6 +22,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
+from app.core.constants import NSE_HOLIDAYS  # single source of truth — avoids stale duplicate
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -33,16 +35,6 @@ DATABASE_URL = os.getenv(
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6380/0")
 
 IST_OFFSET = timedelta(hours=5, minutes=30)
-NSE_HOLIDAYS = {
-    date(2025, 1, 26), date(2025, 2, 26), date(2025, 3, 14),
-    date(2025, 3, 31), date(2025, 4, 14), date(2025, 4, 18),
-    date(2025, 5, 1), date(2025, 8, 15), date(2025, 8, 27),
-    date(2025, 10, 2), date(2025, 10, 24), date(2025, 11, 5),
-    date(2025, 12, 25),
-    date(2026, 1, 26), date(2026, 2, 19), date(2026, 3, 20),
-    date(2026, 4, 2), date(2026, 4, 3), date(2026, 4, 10),
-    date(2026, 4, 14), date(2026, 4, 17), date(2026, 5, 1),
-}
 
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
