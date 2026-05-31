@@ -96,7 +96,7 @@ async def _do_shadow_execute(signal_id) -> None:
             )
             return
 
-        # Hard deadline — past 3:15 PM IST, markets are closed
+        # Hard deadline — past 3:25 PM IST, markets are closed
         if is_past_close_deadline():
             logger.debug("Shadow skip: past close deadline for signal %s", signal_id)
             return

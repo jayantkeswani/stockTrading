@@ -372,7 +372,7 @@ async def _check_position(
                 # SEMI: request confirmation before rolling
                 return await _request_profit_confirmation(db, pos, current_price)
 
-    # 5. Check time — AUTO CLOSE at 3:15 PM (INTRADAY only)
+    # 5. Check time — AUTO CLOSE at 3:25 PM (INTRADAY only)
     if getattr(pos, "position_type", "INTRADAY") == "INTRADAY" and is_past_close_deadline():
         return await _close_position(
             db, pos, current_price, ExitReason.TIME_EXIT,

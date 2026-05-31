@@ -279,4 +279,4 @@ These are deliberate simplifications in Phase 1 vs the full spec. Working code, 
 | Position sizing | `services/position_sizing.py` | `vix_to_multiplier()` for VIX-based lot adjustment |
 | Strategy params | `services/strategy_params.py` | Per-strategy defaults + DB override + caching pattern |
 | WebSocket | `websocket/manager.py` | Signal broadcast (unchanged) |
-| Time exit | `core/utils.py` | `is_past_close_deadline()` at 3:15 PM |
+| Time exit | `core/utils.py` | `is_past_close_deadline()` at 3:25 PM |

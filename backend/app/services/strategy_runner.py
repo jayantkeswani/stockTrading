@@ -289,7 +289,7 @@ class StrategyRunner:
     def _check_hard_guardrails(self) -> bool:
         """Return True if strategy evaluation should proceed.
 
-        Hard: past close deadline (3:15 PM) — no point generating any signal.
+        Hard: past close deadline (3:25 PM) — no point generating any signal.
         Soft: outside trade windows → signals still generated but marked non-executable.
               This moved to _check_risk_limits so out-of-window signals are visible in UI.
         """

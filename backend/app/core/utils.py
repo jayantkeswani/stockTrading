@@ -77,7 +77,7 @@ def is_in_dead_zone(as_of: datetime | None = None) -> bool:
 
 
 def is_past_close_deadline(as_of: datetime | None = None) -> bool:
-    """Check if we're past the position close deadline (3:15 PM).
+    """Check if we're past the position close deadline (3:25 PM).
 
     Pass as_of for backtest replay; omit to use the current IST time.
     """

@@ -129,7 +129,7 @@ class TestIsPastCloseDeadline:
 
     @patch("app.core.utils.now_ist")
     def test_past_deadline(self, mock_now):
-        mock_now.return_value = datetime(2026, 4, 13, 15, 20, 0, tzinfo=IST)
+        mock_now.return_value = datetime(2026, 4, 13, 15, 28, 0, tzinfo=IST)
         assert is_past_close_deadline()
 
     @patch("app.core.utils.now_ist")
@@ -139,7 +139,7 @@ class TestIsPastCloseDeadline:
 
     @patch("app.core.utils.now_ist")
     def test_at_deadline(self, mock_now):
-        mock_now.return_value = datetime(2026, 4, 13, 15, 15, 0, tzinfo=IST)
+        mock_now.return_value = datetime(2026, 4, 13, 15, 25, 0, tzinfo=IST)
         assert is_past_close_deadline()
 
 

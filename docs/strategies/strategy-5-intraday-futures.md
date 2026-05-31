@@ -3,7 +3,7 @@
 **Status:** IN DEVELOPMENT  
 **File:** `backend/app/strategies/strategy_5_intraday_futures.py`  
 **Instruments:** NSE F&O stock futures — BUY_FUT / SELL_FUT  
-**Holding type:** INTRADAY (square off by 3:15 PM)
+**Holding type:** INTRADAY (square off by 3:25 PM)
 
 ---
 
@@ -37,8 +37,8 @@ The strategy's `evaluate()` method checks the current phase before deciding whic
 | `MORNING_ACTIVE` | 9:30 – 11:30 AM | ORB, Gap Continuation, PDH/PDL, VWAP Bounce | Prime trading window |
 | `CAUTION_ZONE` | 11:30 AM – 1:00 PM | PDH/PDL, VWAP Bounce | RVOL >= 2.5, breakout confirmation required |
 | `AFTERNOON` | 1:00 – 2:45 PM | PDH/PDL, VWAP Bounce | ORB + Gap expired |
-| `CLOSING` | 2:45 – 3:15 PM | None | Manage existing positions, force-close at 3:15 PM |
-| `DONE` | after 3:15 PM | None | Log day summary, halt |
+| `CLOSING` | 2:45 – 3:15 PM | None | Manage existing positions |
+| `DONE` | after 3:15 PM | None | Force-close remaining positions at 3:25 PM, log day summary, halt |
 
 **Caution Zone:** Instead of a hard block on signals, the CAUTION_ZONE raises the bar — RVOL threshold increases from 1.5 to 2.5, breakout confirmation required (the breakout candle must close beyond the level AND the next candle must hold), and confidence is reduced. Signals generated during caution zone are flagged with `caution_zone: true`.
 
@@ -98,7 +98,7 @@ Phase-dependent evaluation on each 1-minute candle close: hard filters → sub-s
 
 ### 2:45 PM — Closing Phase
 
-No new signals. Existing positions managed (trailing SL, target). Force-close at 3:15 PM via existing `is_past_close_deadline()`.
+No new signals. Existing positions managed (trailing SL, target). Force-close at 3:25 PM via existing `is_past_close_deadline()`.
 
 ### 3:15 PM — Day Complete
 
@@ -307,7 +307,7 @@ Price comparison uses the candle buffer (~10 minutes of recent 1m candles).
 |---|---|---|---|
 | 1 | Hard Stop Loss | Price hits current SL (original or trailed) | Close immediately |
 | 2 | Target hit | Price reaches target | Close full position |
-| 3 | Time exit | 3:15 PM IST (`is_past_close_deadline()`) | Close ALL Strategy 5 positions |
+| 3 | Time exit | 3:25 PM IST (`is_past_close_deadline()`) | Close ALL Strategy 5 positions |
 
 ### Trailing Stop Loss — Three Stages
 
@@ -572,4 +572,4 @@ No T1/T2 partial booking. Close full position on target hit. Partial exits may b
 A time-based stop (e.g., "exit after 30 min if position hasn't moved 0.5%") is not yet implemented. Needs real trade data to calibrate the right threshold.
 
 ### Force-close time
-3:15 PM via existing `is_past_close_deadline()`. No custom exit time in V1.
+3:25 PM via existing `is_past_close_deadline()`. No custom exit time in V1.

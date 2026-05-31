@@ -10,7 +10,7 @@ IST = ZoneInfo("Asia/Kolkata")
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
 PRE_MARKET_OPEN = time(9, 0)
-POSITION_CLOSE_DEADLINE = time(15, 15)  # Close all positions by this time
+POSITION_CLOSE_DEADLINE = time(15, 25)  # Close all positions by this time
 
 # Trading windows for Strategy 2
 WINDOW_1_START = time(9, 45)

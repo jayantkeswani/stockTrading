@@ -194,7 +194,7 @@ All window/deadline helpers accept optional `as_of: datetime | None` (defaults t
 - `is_in_trading_window(as_of=None) -> bool` — within standard trade window (9:15-15:00); always True in simulated mode. Used by: market_data API
 - `get_window_state(as_of=None) -> str` — returns `"IN_WINDOW"` / `"DEAD_ZONE"` / `"OUT_OF_WINDOW"`; always `"IN_WINDOW"` in simulated mode. Used by: confidence.py
 - `is_in_dead_zone(as_of=None) -> bool` — 11:30-12:30 check; always False in simulated mode. Used by: market_data API
-- `is_past_close_deadline(as_of=None) -> bool` — after 3:15 PM; always False in simulated mode. Used by: shadow_executor, trade_monitor
+- `is_past_close_deadline(as_of=None) -> bool` — after 3:25 PM; always False in simulated mode. Used by: shadow_executor, trade_monitor
 - `time_to_market_close_minutes(as_of=None) -> int` — minutes until 3:30 PM. Used by: confidence.py (time_of_day factor)
 - `is_in_custom_trading_window(as_of, windows) -> bool` — per-strategy window check; always True in simulated mode. Used by: strategy_runner
 - `get_custom_window_state(as_of, windows, dead_zone) -> str` — per-strategy window state; always `"IN_WINDOW"` in simulated mode. Used by: strategy_runner, options API, telegram_commands
@@ -500,7 +500,7 @@ Sets `instrument_type=FUTURE`, `holding_type=POSITIONAL`. Entry: BUY_FUT. SL at 
 #### `strategy_5_intraday_futures.py` — Intraday Stock Futures (IN DEVELOPMENT)
 
 - `evaluate(ctx) -> StrategySignal | None` — phase-based dispatch to 4 sub-setups
-- `should_exit(position, current_price, params) -> bool` — 3:15 PM time exit; trailing SL handled by trade_monitor
+- `should_exit(position, current_price, params) -> bool` — 3:25 PM time exit; trailing SL handled by trade_monitor
 - `get_symbols() -> list[str]` — reads Redis watchlist `strat5:watchlist:{today}` (60s cache); populated by morning screener
 - `drain_pending_logs() -> list[tuple[str, str]]` — GATE/SIGNAL logs to `strat5:agent_log:{date}`
 - `drain_pending_orb_writes() -> dict[str, dict]` — ORB levels to write to Redis after candle close
@@ -856,7 +856,7 @@ All outbound Telegram messages. No ORM imports — callers pass plain scalars.
 - `notify_manual_executed(trade, signal)` — ✋ Manual Exec notification; called from signals.py
 - `notify_sl_hit(position, pnl, is_trailing=False)` — 🟡 "Trailing Stop Hit" when `is_trailing=True`
 - `notify_profit_booked(position, pnl)` — target hit notification
-- `notify_time_exit(position, pnl)` — 3:15 PM time exit
+- `notify_time_exit(position, pnl)` — 3:25 PM time exit
 - `notify_confirmation_request(log)` — SEMI mode profit confirmation
 - `notify_expiry_roll(old_trade, new_trade)` / `notify_expiry_roll_failed(symbol, expiry)` — futures roll
 - `notify_drawdown_halt(daily_pnl, limit)` — drawdown gate triggered

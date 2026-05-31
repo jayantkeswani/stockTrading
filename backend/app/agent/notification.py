@@ -247,7 +247,7 @@ async def notify_time_exit(
     pnl: float,
     lots: int,
 ) -> None:
-    """Send a 3:15 PM time-exit notification via Telegram."""
+    """Send a 3:25 PM time-exit notification via Telegram."""
     msg = (
         f"{_paper()}🕐 <b>EOD Exit</b>\n"
         f"{symbol}  ·  {_strategy_label(strategy_name)}\n"

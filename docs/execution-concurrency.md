@@ -159,7 +159,7 @@ Each iteration:
 |-------|-------------|------------|
 | Price <= SL (long) / >= SL (short) | `AGENT_SL` or `TRAILING_SL` | All |
 | Price >= target (long) / <= target (short) | `AGENT_PROFIT` | YOLO + shadow auto-close; SEMI requests confirmation |
-| Past 3:15 PM (intraday) | `TIME_EXIT` | All intraday |
+| Past 3:25 PM (intraday) | `TIME_EXIT` | All intraday |
 | Realized + unrealized >= profit cap | `PROFIT_CAP` | Non-shadow only |
 | No price for 5+ minutes (shadow) | `STALE_DATA` | Shadow only |
 | 3 days before futures expiry | Roll to next month | Positional futures |

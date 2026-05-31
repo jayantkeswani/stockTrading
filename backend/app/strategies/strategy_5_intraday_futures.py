@@ -1075,5 +1075,5 @@ class IntradayFuturesStrategy(BaseStrategy):
         stop_loss: float,
         target_price: float | None,
     ) -> ExitSignal | None:
-        """Exits handled by trade_monitor (SL, target, trailing, 3:15 PM time exit)."""
+        """Exits handled by trade_monitor (SL, target, trailing, 3:25 PM time exit)."""
         return None

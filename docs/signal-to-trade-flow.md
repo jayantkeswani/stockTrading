@@ -17,7 +17,7 @@ Two entry points, both converge on the same downstream flow:
 
 Before any strategy runs, two checks set the initial `executable` flag:
 
-1. **Hard guardrail** — past 3:15 PM IST? If yes, abort entirely (no signal generated).
+1. **Hard guardrail** — past 3:25 PM IST? If yes, abort entirely (no signal generated).
 2. **Regulatory check** (`_check_regulatory_limits`) — is the symbol on the NSE F&O ban list? If yes, `executable=False`, `blocked_reason="F&O ban list"`.
 
 ### 1.3 Per-strategy evaluation
@@ -161,7 +161,7 @@ Called via `asyncio.create_task()` — fire-and-forget, never blocks the caller.
 
 1. Signal is PENDING or EXECUTED (allows shadow mirroring of YOLO-executed signals)
 2. No OPEN shadow trade for this signal (closed shadows don't block — allows fresh shadow on Case-2 re-fire)
-3. Not past 3:15 PM close deadline
+3. Not past 3:25 PM close deadline
 4. Not on F&O ban list
 5. Contract resolved (has `fyers_option_symbol` or `fyers_futures_symbol`)
 6. Per-strategy `shadow_enabled=True` (from `strategy_configs`)
@@ -209,7 +209,7 @@ Once a valid price is obtained:
 1. **Per-profile profit cap** (`_check_profit_cap`) — iterates each active YOLO profile. For each, computes realized + unrealized net PnL scoped to that profile. If PnL >= profile's `profit_cap`, closes only that profile's open positions with `ExitReason.PROFIT_CAP` and sends a per-profile Telegram notification. Other profiles continue trading.
 2. **SL hit** — direction-aware. Uses `ExitReason.TRAILING_SL` if stop_loss was trailed (differs from original), else `ExitReason.AGENT_SL`. Auto-closes in all modes (MANUAL, SEMI, YOLO).
 3. **Target hit** — YOLO/shadow: auto-close with `ExitReason.AGENT_PROFIT`. SEMI: request user confirmation via Telegram.
-4. **Time exit** — past 3:15 PM for INTRADAY positions: close with `ExitReason.TIME_EXIT`.
+4. **Time exit** — past 3:25 PM for INTRADAY positions: close with `ExitReason.TIME_EXIT`.
 5. **Trailing SL update** — POSITIONAL always trails; INTRADAY trails when `trailing_sl_enabled=True`. Breakeven at `trailing_sl_breakeven_pct`, progressive trail when `trailing_sl_trail_pct` is set. SL only moves favorably.
 6. **Futures expiry roll** — 3 days before expiry: close old contract, open next month.
 

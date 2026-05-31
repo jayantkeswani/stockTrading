@@ -184,7 +184,7 @@ Level must be ≥ 0.10% from entry. R:R must be ≥ 1:1; if not, the signal is d
 | Premium ≤ `premium_sl` | SL hit → close |
 | Premium ≥ `premium_target` | Target hit → close |
 | Price crosses below VWAP × 0.998 (for calls) | Invalidation → close |
-| 3:15 PM IST | Time exit → close all intraday positions |
+| 3:25 PM IST | Time exit → close all intraday positions |
 
 ---
 
@@ -211,7 +211,7 @@ The strategy runner blocks execution when:
 - VIX ≥ 22 (`blocked_reason = "VIX extreme"`, signal still persisted)
 - Daily drawdown limit breached (`blocked_reason = "Drawdown limit breached"`)
 - Max trades per day reached (`blocked_reason = "Max trades reached (N/day)"`)
-- Past 3:15 PM IST (signal not generated at all)
+- Past 3:25 PM IST (signal not generated at all)
 - Open position in same symbol + direction already exists (signal skipped)
 
 ---

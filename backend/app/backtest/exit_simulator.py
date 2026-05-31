@@ -10,7 +10,7 @@ Both modes simulate:
   - SL hit (wick-based: low < premium_sl for PE, or high > premium_sl for CE)
   - Target hit
   - Strategy.should_exit() invalidation check on spot
-  - Time exit at POSITION_CLOSE_DEADLINE (3:15 PM)
+  - Time exit at POSITION_CLOSE_DEADLINE (3:25 PM)
 """
 
 from __future__ import annotations

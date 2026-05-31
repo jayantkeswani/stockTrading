@@ -224,7 +224,7 @@ class TestTimeExit:
     @patch("app.agent.trade_monitor.notify_time_exit", new_callable=AsyncMock)
     @patch("app.agent.trade_monitor.get_cached_price", new_callable=AsyncMock)
     async def test_intraday_time_exit(self, mock_price, mock_notify, mock_ws, mock_deadline):
-        """INTRADAY positions close after 3:15 PM."""
+        """INTRADAY positions close after 3:25 PM."""
         pos = _make_position(position_type="INTRADAY")
         trade = _make_trade(pos)
         mock_price.return_value = {"ltp": 210.0}
@@ -244,7 +244,7 @@ class TestTimeExit:
     @patch("app.agent.trade_monitor.ws_manager")
     @patch("app.agent.trade_monitor.get_cached_price", new_callable=AsyncMock)
     async def test_positional_no_time_exit(self, mock_price, mock_ws, mock_deadline):
-        """POSITIONAL positions do NOT get time-exited at 3:15 PM."""
+        """POSITIONAL positions do NOT get time-exited at 3:25 PM."""
         pos = _make_position(position_type="POSITIONAL", expiry_date=date.today() + timedelta(days=30))
         mock_price.return_value = {"ltp": 210.0}
         mock_ws.broadcast = AsyncMock()
