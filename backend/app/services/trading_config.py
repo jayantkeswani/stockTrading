@@ -203,9 +203,16 @@ async def start_config_listener() -> None:
     await pubsub.subscribe(_PUBSUB_CHANNEL)
     logger.info("Trading config listener subscribed to %s", _PUBSUB_CHANNEL)
 
+    # Poll with a finite timeout rather than `pubsub.listen()`. listen() reads with
+    # block=True, which redis-py maps to the connection's socket_timeout (5s in
+    # redis-py 8.x) and raises TimeoutError on an idle channel — killing this task.
+    # get_message(timeout=...) returns None on idle instead, so the loop survives.
     try:
-        async for message in pubsub.listen():
-            if message.get("type") != "message":
+        while True:
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=True, timeout=1.0
+            )
+            if message is None or message.get("type") != "message":
                 continue
             try:
                 _cache = await _load_from_db()
