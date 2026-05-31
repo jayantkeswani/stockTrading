@@ -148,7 +148,19 @@ async def _run_eod_summary() -> None:
         from app.core.database import async_session_factory
         from app.core.enums import TradeSource
         from app.models.trade import Trade
+        from app.services.yolo_profile_service import default_profile_trade_filter
         from sqlalchemy import select, and_, func
+
+        # Scope to the default YOLO profile (+ MANUAL) so multi-profile tiers don't
+        # multiply the day's S5 performance stats.
+        conditions = [
+            Trade.strategy_name == "intraday_futures",
+            func.date(Trade.entry_time) == today,
+            Trade.source != TradeSource.SHADOW.value,
+        ]
+        profile_filter = default_profile_trade_filter()
+        if profile_filter is not None:
+            conditions.append(profile_filter)
 
         async with async_session_factory() as session:
             result = await session.execute(
@@ -158,13 +170,7 @@ async def _run_eod_summary() -> None:
                     func.sum(Trade.pnl).filter(Trade.status == "CLOSED").label("net_pnl"),
                     func.count().filter(and_(Trade.status == "CLOSED", Trade.pnl > 0)).label("wins"),
                     func.count().filter(and_(Trade.status == "CLOSED", Trade.pnl <= 0)).label("losses"),
-                ).where(
-                    and_(
-                        Trade.strategy_name == "intraday_futures",
-                        func.date(Trade.entry_time) == today,
-                        Trade.source != TradeSource.SHADOW.value,
-                    )
-                )
+                ).where(and_(*conditions))
             )
             row = result.one()
 

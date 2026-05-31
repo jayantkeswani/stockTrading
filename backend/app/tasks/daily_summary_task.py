@@ -54,6 +54,7 @@ async def send_daily_summary() -> None:
     from app.core.redis import get_redis
     from app.data.sectors import get_sector
     from app.models.trade import Trade
+    from app.services.yolo_profile_service import default_profile_trade_filter
     from sqlalchemy import and_, select
 
     today = now_ist().date()
@@ -65,14 +66,18 @@ async def send_daily_summary() -> None:
 
     try:
         async with async_session_factory() as session:
+            # Scope to the default YOLO profile (+ MANUAL trades) so multi-profile
+            # tiers don't multiply the day's P&L and trade counts.
+            conditions = [
+                Trade.entry_time >= today_start,
+                Trade.status == "CLOSED",
+                Trade.source != TradeSource.SHADOW.value,
+            ]
+            profile_filter = default_profile_trade_filter()
+            if profile_filter is not None:
+                conditions.append(profile_filter)
             result = await session.execute(
-                select(Trade).where(
-                    and_(
-                        Trade.entry_time >= today_start,
-                        Trade.status == "CLOSED",
-                        Trade.source != TradeSource.SHADOW.value,
-                    )
-                )
+                select(Trade).where(and_(*conditions))
             )
             trades = result.scalars().all()
 

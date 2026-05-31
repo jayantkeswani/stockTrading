@@ -79,6 +79,8 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
     if not profiles:
         return None
 
+    default_profile_id = min(profiles, key=lambda p: p.sort_order).id
+
     today = now_ist().date()
     today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
 
@@ -146,6 +148,7 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
             "total_pnl": total_pnl,
             "cap": float(profile.profit_cap),
             "positions_closed": len(open_positions),
+            "is_default": profile.id == default_profile_id,
         })
 
     if not all_actions:
@@ -154,15 +157,18 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
     await db.commit()
 
     for cp in capped_profiles:
-        try:
-            await notify_profit_cap_halt(
-                daily_pnl=cp["total_pnl"],
-                limit=cp["cap"],
-                positions_closed=cp["positions_closed"],
-                profile_name=cp["name"],
-            )
-        except Exception:
-            logger.warning("Failed to send profit cap notification for profile %s", cp["name"])
+        # Only the default profile sends a Telegram notification (other tiers still
+        # close their positions and log, just silently).
+        if cp["is_default"]:
+            try:
+                await notify_profit_cap_halt(
+                    daily_pnl=cp["total_pnl"],
+                    limit=cp["cap"],
+                    positions_closed=cp["positions_closed"],
+                    profile_name=cp["name"],
+                )
+            except Exception:
+                logger.warning("Failed to send profit cap notification for profile %s", cp["name"])
 
         logger.info(
             "Profit cap hit for profile %s: net PnL ₹%.0f >= cap ₹%.0f, closed %d positions",
@@ -440,22 +446,34 @@ async def _close_position(
         "exit_reason": exit_reason.value,
     })
 
-    # Telegram alert — skip for shadow positions to avoid noise
+    # Telegram alert — skip for shadow positions to avoid noise. Each YOLO signal
+    # opens one position per profile; notify only for the default profile (or MANUAL
+    # trades, which carry no profile) so one exit event sends one message, not N.
     if not pos.is_shadow:
-        entry = float(pos.entry_price)
-        exit_f = float(exit_price)
-        lots = pos.lots
-        sym = pos.symbol
-        strat = pos.strategy_name or ""
-        inst = getattr(pos, "instrument_type", "OPTION") or "OPTION"
+        from app.services.yolo_profile_service import get_default_profile_sync
+        default = get_default_profile_sync()
+        # Suppress only the redundant non-default profile copies. When no default is
+        # known (no profiles configured / cold cache) or the position is MANUAL, notify.
+        is_notifying = (
+            default is None
+            or pos.yolo_profile_id is None
+            or pos.yolo_profile_id == default.id
+        )
+        if is_notifying:
+            entry = float(pos.entry_price)
+            exit_f = float(exit_price)
+            lots = pos.lots
+            sym = pos.symbol
+            strat = pos.strategy_name or ""
+            inst = getattr(pos, "instrument_type", "OPTION") or "OPTION"
 
-        if action_type == AgentActionType.SL_TRIGGERED:
-            await notify_sl_hit(sym, strat, entry, exit_f, pnl_val, lots, inst, is_trailing=exit_reason == ExitReason.TRAILING_SL)
-        elif action_type in (AgentActionType.AUTO_PROFIT_BOOKED, AgentActionType.PROFIT_BOOKED):
-            await notify_profit_booked(sym, strat, entry, exit_f, pnl_val, lots)
-        elif action_type == AgentActionType.TIME_EXIT:
-            await notify_time_exit(sym, strat, entry, exit_f, pnl_val, lots)
-        # EXPIRY_ROLL close notification is handled by _roll_futures_position
+            if action_type == AgentActionType.SL_TRIGGERED:
+                await notify_sl_hit(sym, strat, entry, exit_f, pnl_val, lots, inst, is_trailing=exit_reason == ExitReason.TRAILING_SL)
+            elif action_type in (AgentActionType.AUTO_PROFIT_BOOKED, AgentActionType.PROFIT_BOOKED):
+                await notify_profit_booked(sym, strat, entry, exit_f, pnl_val, lots)
+            elif action_type == AgentActionType.TIME_EXIT:
+                await notify_time_exit(sym, strat, entry, exit_f, pnl_val, lots)
+            # EXPIRY_ROLL close notification is handled by _roll_futures_position
 
     action = {
         "id": str(log.id),

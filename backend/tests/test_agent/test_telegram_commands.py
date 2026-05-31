@@ -180,6 +180,19 @@ class TestHandleShadow:
 
 class TestHandleYolo:
 
+    @pytest.fixture(autouse=True)
+    def _seed_default_profile(self):
+        """handle_yolo scopes to the default profile; seed the cache with one so the
+        handler doesn't fall back to a DB load / 'no profiles' reply."""
+        import uuid as _uuid
+        import app.services.yolo_profile_service as yps
+        original = yps._cache
+        yps._cache = [yps.YoloProfileDTO(
+            id=_uuid.uuid4(), name="5K", profit_cap=5000.0, is_active=True, sort_order=0,
+        )]
+        yield
+        yps._cache = original
+
     @pytest.mark.asyncio
     @patch(SEND, new_callable=AsyncMock)
     @patch(SESSION)

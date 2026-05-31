@@ -7,7 +7,7 @@ Commands:
   /status  — system snapshot (market, agent, feed, trades)
   /market  — market overview (indices, VIX, global cues)
   /shadow  — shadow trade P&L
-  /yolo    — YOLO trade P&L
+  /yolo    — YOLO trade P&L (default profile, or /yolo <name> for a specific tier)
   /signals — today's actionable signals
   /help    — list all commands
 """
@@ -179,7 +179,7 @@ async def _send_trade_report(
 
 # ── Command handlers ───────────────────────────────────────────────────────────
 
-async def handle_shadow(chat_id: str) -> None:
+async def handle_shadow(chat_id: str, args: str = "") -> None:
     """Today's shadow P&L report."""
     from app.core.database import async_session_factory
     from app.models.position import Position
@@ -211,24 +211,42 @@ async def handle_shadow(chat_id: str) -> None:
     await _send_trade_report("Shadow PnL", open_positions, closed_trades)
 
 
-async def handle_yolo(chat_id: str) -> None:
-    """Today's YOLO trade P&L report."""
+async def handle_yolo(chat_id: str, args: str = "") -> None:
+    """Today's YOLO trade P&L report, scoped to a single profile.
+
+    With no arg, uses the default profile (lowest profit cap). `/yolo 10k` selects
+    the active profile whose name matches case-insensitively; an unknown name replies
+    with the list of available profiles.
+    """
     from app.core.database import async_session_factory
+    from app.agent.notification import send_telegram
     from app.models.position import Position
     from app.models.trade import Trade
+    from app.services.yolo_profile_service import get_active_profiles, get_default_profile
     from sqlalchemy import select, and_
+
+    profiles = await get_active_profiles()
+    if not profiles:
+        await send_telegram("No active YOLO profiles configured.")
+        return
+
+    if args:
+        target = next((p for p in profiles if p.name.lower() == args.lower()), None)
+        if target is None:
+            names = ", ".join(p.name for p in profiles)
+            await send_telegram(f"⚠️ Unknown YOLO profile '{args}'. Available: {names}")
+            return
+    else:
+        target = await get_default_profile()
 
     today_start, today_end = _ist_today_range()
 
     async with async_session_factory() as session:
-        yolo_trade_ids = (
-            select(Trade.id).where(Trade.source == "YOLO").correlate(None)
-        )
         open_result = await session.execute(
             select(Position)
             .where(and_(
                 Position.is_shadow == False,  # noqa: E712
-                Position.trade_id.in_(yolo_trade_ids),
+                Position.yolo_profile_id == target.id,
                 Position.opened_at >= today_start,
             ))
             .order_by(Position.opened_at)
@@ -239,6 +257,7 @@ async def handle_yolo(chat_id: str) -> None:
             select(Trade)
             .where(and_(
                 Trade.source == "YOLO",
+                Trade.yolo_profile_id == target.id,
                 Trade.status == "CLOSED",
                 Trade.exit_time >= today_start,
                 Trade.exit_time < today_end,
@@ -247,10 +266,10 @@ async def handle_yolo(chat_id: str) -> None:
         )
         closed_trades = closed_result.scalars().all()
 
-    await _send_trade_report("YOLO PnL", open_positions, closed_trades)
+    await _send_trade_report(f"YOLO PnL · {target.name}", open_positions, closed_trades)
 
 
-async def handle_status(chat_id: str) -> None:
+async def handle_status(chat_id: str, args: str = "") -> None:
     """System snapshot: market, agent, feed, trades."""
     from app.agent.notification import send_telegram
     from app.core.utils import now_ist, is_market_open
@@ -380,7 +399,7 @@ async def handle_status(chat_id: str) -> None:
     await send_telegram(msg)
 
 
-async def handle_market(chat_id: str) -> None:
+async def handle_market(chat_id: str, args: str = "") -> None:
     """Market overview: indices, VIX, global cues."""
     import json
     from app.agent.notification import send_telegram
@@ -463,7 +482,7 @@ async def handle_market(chat_id: str) -> None:
     await send_telegram("\n".join(parts))
 
 
-async def handle_signals(chat_id: str) -> None:
+async def handle_signals(chat_id: str, args: str = "") -> None:
     """Today's actionable signals (above YOLO confidence threshold)."""
     from app.core.database import async_session_factory
     from app.agent.notification import send_telegram
@@ -538,7 +557,7 @@ async def handle_signals(chat_id: str) -> None:
     await send_telegram("\n".join(parts))
 
 
-async def handle_help(chat_id: str) -> None:
+async def handle_help(chat_id: str, args: str = "") -> None:
     """List all available commands."""
     from app.agent.notification import send_telegram
 
@@ -548,7 +567,7 @@ async def handle_help(chat_id: str) -> None:
         "/status — System snapshot\n"
         "/market — Market overview\n"
         "/shadow — Shadow trade PnL\n"
-        "/yolo — YOLO trade PnL\n"
+        "/yolo [profile] — YOLO trade PnL (default profile, or e.g. /yolo 10k)\n"
         "/signals — Today's signals\n"
         "/help — This message"
     )
@@ -567,13 +586,16 @@ _HANDLERS = {
 }
 
 
-async def handle_command(cmd: str, chat_id: str) -> None:
-    """Dispatch a Telegram command string to its handler. Silently ignores unknown commands."""
+async def handle_command(cmd: str, chat_id: str, args: str = "") -> None:
+    """Dispatch a Telegram command string to its handler. Silently ignores unknown commands.
+
+    `args` is the free-text remainder after the command token (e.g. "10k" for "/yolo 10k").
+    """
     handler = _HANDLERS.get(cmd)
     if handler is None:
         return
     try:
-        await handler(chat_id)
+        await handler(chat_id, args)
     except Exception as e:
         logger.error("Command /%s failed: %s", cmd, e, exc_info=True)
         from app.agent.notification import send_telegram

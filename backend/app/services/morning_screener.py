@@ -139,34 +139,41 @@ async def _gather_briefing_data(today: date) -> dict:
     from app.data.sectors import get_sector
     from app.models.global_market_snapshot import GlobalMarketSnapshot
     from app.models.trade import Trade
+    from app.services.yolo_profile_service import default_profile_trade_filter
 
     yesterday = today - timedelta(days=1)
     five_days_ago = today - timedelta(days=7)
 
+    # Scope to the default YOLO profile (+ MANUAL) so multi-profile tiers don't
+    # inflate the stats fed to the briefing LLM.
+    profile_filter = default_profile_trade_filter()
+
     async with async_session_factory() as session:
         # Yesterday's trades (full detail, excludes shadow)
+        yesterday_conditions = [
+            Trade.strategy_name == "intraday_futures",
+            func.date(Trade.entry_time) >= yesterday,
+            func.date(Trade.entry_time) <= yesterday,
+            Trade.source != TradeSource.SHADOW.value,
+        ]
+        if profile_filter is not None:
+            yesterday_conditions.append(profile_filter)
         result = await session.execute(
-            select(Trade).where(
-                and_(
-                    Trade.strategy_name == "intraday_futures",
-                    func.date(Trade.entry_time) >= yesterday,
-                    func.date(Trade.entry_time) <= yesterday,
-                    Trade.source != TradeSource.SHADOW.value,
-                )
-            )
+            select(Trade).where(and_(*yesterday_conditions))
         )
         yesterday_trades = result.scalars().all()
 
         # Last 5 trading days (closed only, excludes shadow)
+        recent_conditions = [
+            Trade.strategy_name == "intraday_futures",
+            func.date(Trade.entry_time) >= five_days_ago,
+            Trade.status == "CLOSED",
+            Trade.source != TradeSource.SHADOW.value,
+        ]
+        if profile_filter is not None:
+            recent_conditions.append(profile_filter)
         result = await session.execute(
-            select(Trade).where(
-                and_(
-                    Trade.strategy_name == "intraday_futures",
-                    func.date(Trade.entry_time) >= five_days_ago,
-                    Trade.status == "CLOSED",
-                    Trade.source != TradeSource.SHADOW.value,
-                )
-            )
+            select(Trade).where(and_(*recent_conditions))
         )
         recent_trades = result.scalars().all()
 

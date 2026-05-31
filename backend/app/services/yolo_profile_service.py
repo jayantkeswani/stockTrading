@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 
 from app.core.database import async_session_factory
 from app.models.yolo_profile import YoloProfile
@@ -111,6 +111,47 @@ async def get_profile_by_id(profile_id: uuid.UUID) -> YoloProfileDTO | None:
         if p.id == profile_id:
             return p
     return None
+
+
+async def get_default_profile() -> YoloProfileDTO | None:
+    """Return the default YOLO profile, or None if no active profiles exist.
+
+    The default is the lowest-`sort_order` active profile — the same definition
+    `update_profile`/`delete_profile` use to protect the un-deletable profile.
+    Reports and per-trade notifications scope to this single profile so multi-profile
+    fan-out doesn't multiply output. Async; loads the cache from DB on first use.
+    """
+    active = await get_active_profiles()
+    return min(active, key=lambda p: p.sort_order) if active else None
+
+
+def get_default_profile_sync() -> YoloProfileDTO | None:
+    """Sync variant of `get_default_profile` — reads the in-memory cache only.
+
+    Returns None when the cache is empty/unpopulated (no DB I/O). Safe to call from
+    hot paths (trade_monitor close) and report tasks; the cache is kept warm by the
+    500ms trade-monitor loop. Used by: trade_monitor (`_close_position`),
+    default_profile_trade_filter.
+    """
+    active = get_active_profiles_sync()
+    return min(active, key=lambda p: p.sort_order) if active else None
+
+
+def default_profile_trade_filter():
+    """Return a SQLAlchemy condition selecting trades for the default YOLO profile
+    plus all MANUAL trades (which carry no profile), or None if the cache is empty.
+
+    Sync (reads cache only, no DB I/O). Used by EOD/morning reports to avoid summing
+    the same signal across every profile tier. Callers append the result to their
+    WHERE clause only when non-None; None means "no scoping" (graceful degradation).
+    """
+    default = get_default_profile_sync()
+    if default is None:
+        return None
+    return or_(
+        Trade.yolo_profile_id == default.id,
+        Trade.source == TradeSource.MANUAL.value,
+    )
 
 
 async def create_profile(name: str, profit_cap: float) -> YoloProfileDTO:

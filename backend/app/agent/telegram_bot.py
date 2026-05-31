@@ -8,7 +8,7 @@ Commands supported:
   /status  — system snapshot (market, agent, feed, trades)
   /market  — market overview (indices, VIX, global cues)
   /shadow  — shadow trade P&L
-  /yolo    — YOLO trade P&L
+  /yolo    — YOLO trade P&L (default profile, or /yolo <name> for a specific tier)
   /signals — today's actionable signals
   /help    — list all commands
 """
@@ -109,8 +109,11 @@ async def _poll_loop() -> None:
                 if not text.startswith("/"):
                     continue
                 cmd = text.split()[0].split("@")[0].lstrip("/").lower()
+                # Everything after the command token is forwarded as args (e.g. "/yolo 10k")
+                parts = text.split(maxsplit=1)
+                args = parts[1].strip() if len(parts) > 1 else ""
                 logger.info("Telegram command: /%s", cmd)
-                asyncio.create_task(handle_command(cmd, chat_id))
+                asyncio.create_task(handle_command(cmd, chat_id, args))
         except asyncio.CancelledError:
             break
         except Exception as e:
