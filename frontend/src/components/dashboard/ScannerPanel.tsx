@@ -46,7 +46,7 @@ function formatSignalTime(isoString: string): string {
 }
 
 export function ScannerPanel() {
-  const { signals, updateSignal, removeSignal, scannerMinConfidence, setScannerMinConfidence, scannerShowExecuted, setScannerShowExecuted } = useStore(useShallow((s) => ({
+  const { signals, updateSignal, removeSignal, scannerMinConfidence, setScannerMinConfidence, scannerShowExecuted, setScannerShowExecuted, scannerShowExpired, setScannerShowExpired } = useStore(useShallow((s) => ({
     signals: s.signals,
     updateSignal: s.updateSignal,
     removeSignal: s.removeSignal,
@@ -54,10 +54,16 @@ export function ScannerPanel() {
     setScannerMinConfidence: s.setScannerMinConfidence,
     scannerShowExecuted: s.scannerShowExecuted,
     setScannerShowExecuted: s.setScannerShowExecuted,
+    scannerShowExpired: s.scannerShowExpired,
+    setScannerShowExpired: s.setScannerShowExpired,
   })));
   const [searchQuery, setSearchQuery] = useState("");
   const today = isoDateIST(new Date());
-  const allowedStatuses = scannerShowExecuted ? ["PENDING", "EXECUTED"] : ["PENDING"];
+  const allowedStatuses = [
+    "PENDING",
+    ...(scannerShowExecuted ? ["EXECUTED"] : []),
+    ...(scannerShowExpired ? ["EXPIRED"] : []),
+  ];
   const allMatching = signals.filter(
     (s) => allowedStatuses.includes(s.status) && isoDateIST(new Date(s.generated_at)) === today
   );
@@ -127,6 +133,16 @@ export function ScannerPanel() {
             }`}
           >
             + Executed
+          </button>
+          <button
+            onClick={() => setScannerShowExpired(!scannerShowExpired)}
+            className={`px-2 py-0.5 rounded border text-[10px] font-mono transition-colors ${
+              scannerShowExpired
+                ? "border-accent/50 bg-accent/10 text-accent"
+                : "border-border text-text-muted hover:text-text-secondary"
+            }`}
+          >
+            + Expired
           </button>
           <div className="w-px h-3 bg-border" />
           <label className="flex items-center gap-1.5 text-[9px] font-mono text-text-muted">

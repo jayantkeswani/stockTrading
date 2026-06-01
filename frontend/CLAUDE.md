@@ -42,7 +42,7 @@ All pages use `'use client'` directive.
 - `PnLCard.tsx` — Single-line strip: Day P&L with inline U/R breakdown, drawdown bar, trades count, NOTIONAL/RISK/MARGIN metrics. Filters by `positionsMinConfidence` from store. Profile-aware: filters positions and closed trades by active profile/manual mode based on `dashboardViewMode`. Shadow mode: computes from `shadowPositions` + `shadowClosedToday`. Prices via `(s) => s.prices` selector; non-price fields via `useShallow`.
 - `Watchlist.tsx` — Uniform symbol list (indices + custom items). Search via `<SymbolSearchInput>`. Custom items stored via `/api/v1/watchlist`. Max-height 300px with scroll.
 - `ScannerHeader.tsx` — Ultra-compact strategy pill bar. Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end to ScanFeed. Uses `(s) => s.addScanLog` selector (no price-tick re-renders).
-- `ScannerPanel.tsx` — Structured signal cards with strategy-aware rendering. "+ Executed" toggle, symbol search, confidence filter. Uses `useShallow` for signal state (no price-tick re-renders). Three card sections: header (direction, symbol, `P` badge, timestamp, WindowBadge, confidence, strategy badge), prices (entry/SL/target/R:R + strategy context), actions (EXEC, Watch, Details expander, AI panel, dismiss). Details and AI panels mutually exclusive. AI button shows `✦ AI` when `ai_summary` present.
+- `ScannerPanel.tsx` — Structured signal cards with strategy-aware rendering. "+ Executed" and "+ Expired" toggles (each adds that status to the always-shown PENDING set), symbol search, confidence filter. Uses `useShallow` for signal state (no price-tick re-renders). Three card sections: header (direction, symbol, `P` badge, timestamp, WindowBadge, confidence, strategy badge), prices (entry/SL/target/R:R + strategy context), actions (EXEC, Watch, Details expander, AI panel, dismiss). Details and AI panels mutually exclusive. AI button shows `✦ AI` when `ai_summary` present.
 - `ExecuteSignalModal.tsx` — Pre-trade confirm modal. Fetches `GET /signals/{id}/preview` for live entry price + computed lots. Shows lot stepper, quantity, Notional, Margin, `preview.warnings`. Submits `POST /signals/{id}/execute` with optional lots override.
 - `QuickStats.tsx` — Compact stats card: Trades Today (vs max), Open Positions count, Notional. Reads `risk` + `positions` via `useShallow` (no price-tick re-renders). Shows HALTED banner when `risk.is_halted`.
 - `SymbolSelector.tsx` — Tab row for selecting the active index symbol. One button per SYMBOL (5 indices). Shows LTP + change % from store `prices`. Prices via `(s) => s.prices` selector; selection state via `useShallow`. Active button styled with amber accent.
@@ -291,7 +291,7 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 **Persisted keys** (via `partialize`):
 - `scanLogs`, `activeTimeframe`, `dashboardViewMode` (string — `"MANUAL"` | UUID | `"SHADOW"`), `tradesViewMode` (same values), `showNetPnL`
 - `tradesShowOpen`, `tradesExcludePinned`, `tradesPeriodLabel`, `tradesPeriodStart`, `tradesPeriodEnd`, `tradesStrategy`, `tradesSimOpen`, `tradesSim`, `tradesHoldOpen`, `tradesHold: { scenario: "best"|"worst"|"eod"|"sl_tgt" }`
-- `scannerShowExecuted`, `scannerMinConfidence`
+- `scannerShowExecuted`, `scannerShowExpired`, `scannerMinConfidence`
 - `signalsMinConfidence`, `signalsPeriodLabel`, `signalsPeriodStart`, `signalsPeriodEnd`, `signalsStrategy`, `signalsHideInformational`
 - `positionsMinConfidence`
 
@@ -300,7 +300,8 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 - `setTradesSim(partialUpdates)` / `resetTradesSim()` — sim filter state
 - `setTradesHoldOpen(open)` / `setTradesHold(updates)` / `resetTradesHold()` — hold analysis panel state
 - `setTradesExcludePinned(v)` — "− Pinned" toggle on trades page (sends `exclude_permanent=true` to API)
-- `setScannerShowExecuted(v)` — when true, dashboard fetches EXECUTED signals alongside PENDING
+- `setScannerShowExecuted(v)` — when true, dashboard fetches EXECUTED signals alongside PENDING (re-fetch keyed on this flag)
+- `setScannerShowExpired(v)` — when true, dashboard fetches EXPIRED signals alongside PENDING (re-fetch keyed on this flag)
 - `setPositionsMinConfidence(v)` — shared by ActivePositions slider and PnLCard
 
 ---

@@ -159,6 +159,8 @@ interface AppState {
   // Scanner filters (persisted)
   scannerShowExecuted: boolean;
   setScannerShowExecuted: (v: boolean) => void;
+  scannerShowExpired: boolean;
+  setScannerShowExpired: (v: boolean) => void;
   scannerMinConfidence: number;
   setScannerMinConfidence: (v: number) => void;
 
@@ -404,6 +406,8 @@ export const useStore = create<AppState>()(
       // Scanner filters
       scannerShowExecuted: false,
       setScannerShowExecuted: (v) => set({ scannerShowExecuted: v }),
+      scannerShowExpired: false,
+      setScannerShowExpired: (v) => set({ scannerShowExpired: v }),
       scannerMinConfidence: 0,
       setScannerMinConfidence: (v) => set({ scannerMinConfidence: v }),
 
@@ -450,6 +454,7 @@ export const useStore = create<AppState>()(
         tradesHoldOpen: state.tradesHoldOpen,
         tradesHold: state.tradesHold,
         scannerShowExecuted: state.scannerShowExecuted,
+        scannerShowExpired: state.scannerShowExpired,
         scannerMinConfidence: state.scannerMinConfidence,
         signalsMinConfidence: state.signalsMinConfidence,
         signalsPeriodLabel: state.signalsPeriodLabel,

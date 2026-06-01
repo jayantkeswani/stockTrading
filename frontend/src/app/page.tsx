@@ -19,6 +19,7 @@ export default function DashboardPage() {
   const [chartOpen, setChartOpen] = useState(false);
   const [chartSymbol, setChartSymbol] = useState<string | undefined>(undefined);
   const scannerShowExecuted = useStore((s) => s.scannerShowExecuted);
+  const scannerShowExpired = useStore((s) => s.scannerShowExpired);
 
   // Load signals, open positions, risk dashboard, and agent logs on mount
   useEffect(() => {
@@ -34,17 +35,19 @@ export default function DashboardPage() {
             api.getSignals({ status: "EXECUTED", ...dateRange, limit: 50 }) as Promise<Signal[]>,
           );
         }
-        const [pendingSignals, positions, risk, agentLogs, yoloProfiles, ...extraSignals] = await Promise.all([
-          signalFetches[0],
+        if (scannerShowExpired) {
+          signalFetches.push(
+            api.getSignals({ status: "EXPIRED", ...dateRange, limit: 50 }) as Promise<Signal[]>,
+          );
+        }
+        const [signalBatches, positions, risk, agentLogs, yoloProfiles] = await Promise.all([
+          Promise.all(signalFetches),
           api.getPositions({}) as Promise<Position[]>,
           api.getRiskDashboard() as Promise<RiskDashboard>,
           api.getAgentLogs({ since: startOfDayIST(now).toISOString() }) as Promise<AgentLog[]>,
           api.getYoloProfiles() as Promise<YoloProfile[]>,
-          ...(signalFetches.length > 1 ? [signalFetches[1]] : []),
         ]);
-        const allSignals = extraSignals.length > 0
-          ? [...pendingSignals, ...extraSignals[0]]
-          : pendingSignals;
+        const allSignals = signalBatches.flat();
         const s = useStore.getState();
         s.setSignals(allSignals);
         s.setPositions(positions);
@@ -67,7 +70,7 @@ export default function DashboardPage() {
       }
     }, 30_000);
     return () => clearInterval(interval);
-  }, [scannerShowExecuted]);
+  }, [scannerShowExecuted, scannerShowExpired]);
 
   const handleOpenChart = useCallback(
     (symbol?: string) => {
