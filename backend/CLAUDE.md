@@ -174,7 +174,7 @@ Key constants (not functions):
 
 #### `enums.py`
 
-Key enums: `OptionType`, `OrderSide`, `TradeStatus`, `ExitReason` (incl. `TRAILING_SL`, `PROFIT_CAP`, `STALE_DATA`), `SignalStatus`, `SignalType`, `StrategyName` (incl. `CAN_SLIM`, `INTRADAY_FUTURES`), `IndexSymbol`, `InstrumentType`, `PositionType`, `AgentAutonomyLevel`, `AgentActionType` (incl. `SHADOW_EXECUTED`, `PROFIT_CAP_CLOSE`), `TradeSource` (`MANUAL`/`YOLO`/`SHADOW`)
+Key enums: `OptionType`, `OrderSide`, `TradeStatus`, `ExitReason` (incl. `TRAILING_SL`, `PROFIT_CAP`, `STALE_DATA`, `INVALIDATION`), `SignalStatus`, `SignalType`, `StrategyName` (incl. `CAN_SLIM`, `INTRADAY_FUTURES`), `IndexSymbol`, `InstrumentType`, `PositionType`, `AgentAutonomyLevel`, `AgentActionType` (incl. `SHADOW_EXECUTED`, `PROFIT_CAP_CLOSE`, `INVALIDATION_CLOSE`), `TradeSource` (`MANUAL`/`YOLO`/`SHADOW`)
 
 #### `task_registry.py`
 
@@ -229,7 +229,7 @@ All models extend `BaseModel` (UUID PK, `created_at`/`updated_at` TIMESTAMPTZ).
 | `DailySummary`         | `daily_summaries`         | Daily P&L, win/loss counts, drawdown                                                                                                                                                                                                                                                                                                                          |
 | `ResearchReport`       | `research_reports`        | AI research report: recommendation, confidence, report_json/markdown                                                                                                                                                                                                                                                                                          |
 | `ResearchAgentRun`     | `research_agent_runs`     | Per-agent run findings, summary, duration, data sources. FK cascade delete                                                                                                                                                                                                                                                                                    |
-| `YoloProfile`          | `yolo_profiles`           | `name`, `profit_cap` (INR), `is_active`, `sort_order`. Multiple profiles run simultaneously — each signal creates one Trade+Position per active uncapped profile. Trade monitor checks caps per profile independently                                                                                                                                          |
+| `YoloProfile`          | `yolo_profiles`           | `name`, `profit_cap` (INR), `is_active`, `sort_order`, `invalidation_persist` (INT, NULL/0 = thesis-invalidation exit disabled), `invalidation_quorum` (BOOL), `invalidation_strong_only` (BOOL, default true). Multiple profiles run simultaneously — each signal creates one Trade+Position per active uncapped profile. Trade monitor checks caps per profile independently and, when `invalidation_persist > 0`, runs the S5 thesis-invalidation exit per profile                                                                                                                                          |
 
 
 **Helper function** (module-level, `models/trade.py`):
@@ -248,7 +248,7 @@ Key additions (other schemas are standard CRUD):
 - `signal.py`: `SignalPreviewResponse(risk, notional, margin_required, sizing_meta, warnings, entry_price, stop_loss, target_price, lots)`
 - `risk.py`: `RiskDashboardResponse(notional, risk, margin_utilized, is_profit_capped, closed_pnl, total_pnl, drawdown_pct, profiles: list[ProfileRiskSummary])`. `ProfileRiskSummary(id, name, profit_cap, current_pnl, is_capped)`. `is_profit_capped` = True when all active profiles are capped
 - `position.py`: `PositionResponse` includes `margin_required`, `signal_confidence`, `signal_generated_at`, `unrealized_pnl`, `current_price`, `is_permanent_watchlist`, `yolo_profile_id: UUID | None`
-- `yolo_profile.py`: `YoloProfileCreate(name, profit_cap)`, `YoloProfileUpdate(name?, profit_cap?, is_active?, sort_order?)`, `YoloProfileResponse(id, name, profit_cap, is_active, sort_order, is_capped_today: bool)`
+- `yolo_profile.py`: `YoloProfileCreate(name, profit_cap)`, `YoloProfileUpdate(name?, profit_cap?, is_active?, sort_order?, invalidation_persist?, invalidation_quorum?, invalidation_strong_only?)`, `YoloProfileResponse(id, name, profit_cap, is_active, sort_order, is_capped_today: bool, invalidation_persist: int|None, invalidation_quorum: bool, invalidation_strong_only: bool)`. NOTE: the PATCH endpoint drops `None` via `exclude_none`, so the client sends `invalidation_persist=0` (not null) to disable
 
 ---
 
@@ -262,7 +262,7 @@ Key additions (other schemas are standard CRUD):
 | Positions        | `positions.py`                           | `GET /positions` (LEFT JOIN trades, enriched with live prices, `yolo_profile_id` filter), `POST /{id}/close`, `PATCH /{id}/sl-target`                                                                                                                                                                                       |
 | Agent            | `agent.py`                               | `POST /start`, `POST /stop`, `GET /status`, `PATCH /confirm/{log_id}`, `PATCH /yolo`, `GET /logs`                                                                                                                                                                                                                           |
 | Risk             | `risk.py`                                | `GET /risk/dashboard?yolo_profile_id=` (daily P&L, drawdown, notional, margin, profit cap state; includes per-profile P&L summaries in `profiles[]`; optional `yolo_profile_id` query param scopes all top-level metrics to that profile — `profiles[]` always covers all active profiles)                                  |
-| YOLO Profiles    | `yolo_profiles.py`                       | `GET /yolo-profiles` (all profiles with `is_capped_today`), `POST /yolo-profiles`, `PATCH /yolo-profiles/{id}`, `DELETE /yolo-profiles/{id}`                                                                                                                                                                                |
+| YOLO Profiles    | `yolo_profiles.py`                       | `GET /yolo-profiles` (all profiles with `is_capped_today` + `invalidation_*`), `POST /yolo-profiles`, `PATCH /yolo-profiles/{id}` (also patches `invalidation_persist`/`invalidation_quorum`/`invalidation_strong_only`), `DELETE /yolo-profiles/{id}`                                                                                                                                                                                |
 | Market Data      | *collect*dynamic_symbols`market_data.py` | `GET /prices`, `POST /prices/batch`, `GET /ohlcv/{symbol}`, `POST /feed/start|stop|refresh`, `GET /symbols/search`                                                                                                                                                                                                          |
 | Watchlist        | `watchlist.py`                           | `GET /watchlist`, `POST /watchlist`, `DELETE /watchlist/{symbol}` — Redis-backed, sorted by insertion time                                                                                                                                                                                                                  |
 | Strategies       | `strategies.py`                          | `GET /strategies`, `PUT /strategies/{name}`, `POST /evaluate` (manual single), `POST /evaluate/batch` (all configured symbols), `GET /{name}/parameter-defaults`                                                                                                                                                            |
@@ -321,8 +321,10 @@ Single `/ws` endpoint (handler in `app/api/router.py`). Uses `receive_text()` + 
 
 #### `yolo_profile_service.py`
 
+`YoloProfileDTO` fields: `id`, `name`, `profit_cap`, `is_active`, `sort_order`, `invalidation_persist` (int|None), `invalidation_quorum` (bool), `invalidation_strong_only` (bool).
+
 - `get_active_profiles() -> list[YoloProfileDTO]` — async; returns in-memory cached list sorted by `profit_cap ASC`. Used by: auto_executor, trade_monitor
-- `get_active_profiles_sync() -> list[YoloProfileDTO] | None` — sync; returns cache or None (no DB call). Used by: (no current callers — reserved for strategy code)
+- `get_active_profiles_sync() -> list[YoloProfileDTO] | None` — sync; returns cache or None (no DB call). Used by: trade_monitor (`_check_invalidation` profile lookup)
 - `get_uncapped_profile_ids(today: date) -> set[UUID]` — active profiles not yet capped today (checks trades with `exit_reason=PROFIT_CAP`). Used by: auto_executor, yolo_profiles API
 - `get_all_profiles() -> list[YoloProfileDTO]` — async; returns all profiles (active + inactive) sorted by profit_cap ASC. Used by: yolo_profiles API
 - `get_profile_by_id(profile_id) -> YoloProfileDTO | None` — async; returns single profile from cache. Used by: (no current callers)
@@ -455,6 +457,7 @@ Key private methods (documented because they're central to flow):
 - `_oi_analysis_cache` — OI analysis for index symbols only, TTL = 180s
 - `_canslim_symbol_cache` — CAN SLIM membership, TTL = trading day
 - `_last_nifty_bias_score` — float | None, updated every NIFTY candle close
+- `_last_nifty_bias` / `_last_nifty_bias_at` — full NIFTY `IntradayBias` + its candle timestamp (ISO), updated every NIFTY candle close. Exposed via `nifty_bias_snapshot() -> (IntradayBias|None, str|None)` for the trade monitor's S5 thesis-invalidation exit (candle-aligned counter). Used by: trade_monitor (`_check_invalidation`)
 
 ---
 
@@ -820,10 +823,11 @@ Internal flow per position check:
 
 1. `_check_profit_cap(db)` — fetches uncapped profile IDs first via `get_uncapped_profile_ids()`, then iterates only those profiles (skipping already-capped ones to avoid redundant DB work); for each profile computes per-profile realized+unrealized net P&L; when P&L ≥ profile's cap, closes only that profile's open non-shadow positions (`ExitReason.PROFIT_CAP`). Every capped profile is logged, but only the **default profile** sends a `notify_profit_cap_halt` Telegram (other tiers close silently) so the user gets one cap notification. Uses `_unrealized_net_pnl(db, profile_id)` for open position charge estimation
 2. `_unrealized_net_pnl(db, profile_id=None)` — sums unrealized P&L minus estimated charges (via `compute_charges` with LTP) for open non-shadow positions, optionally scoped to `profile_id`. Used by: _check_profit_cap
-3. `_check_position(db, pos, yolo_mode)` — SL hit? Target hit? Time exit? Trailing SL update?
+3. `_check_position(db, pos, yolo_mode)` — SL hit? Target hit? Thesis-invalidation exit? Trailing SL update? Time exit? (SL/target are checked first so they always take precedence; invalidation only ever exits earlier.)
 4. `_close_position(db, pos, exit_price, exit_reason, ...)` — closes trade, computes `brokerage_calculator.compute_charges()`, stores in `Trade.charges_json`, broadcasts `trade:close` + `agent:action`. WS broadcast always fires per position; the user-facing exit Telegram (`notify_sl_hit`/`notify_profit_booked`/`notify_time_exit`) is sent only when the position is MANUAL (no profile) or belongs to the **default profile** — so one signal's per-profile positions produce one exit message, not N
 5. `_request_profit_confirmation(db, pos)` — for SEMI mode target hits; guards against duplicate confirmation requests
 6. `_roll_futures_position(db, pos)` — 3 days before expiry: close old + open next month via `futures_resolver`; preserves `source=SHADOW`, `is_shadow=True`, and `yolo_profile_id`
+7. `_check_invalidation(db, pos, current_price, is_short_pos)` — **thesis-invalidation exit** (S5 only, per-YOLO-profile policy). For non-shadow INTRADAY `intraday_futures` positions whose `yolo_profile_id` profile has `invalidation_persist > 0`: reads the live NIFTY `IntradayBias` via `strategy_runner.nifty_bias_snapshot()` and advances a **per-position, candle-aligned** opposing counter (`_invalidation_state: dict[position_id → (last_candle_ts, count)]`, module-level, in-memory). The counter increments at most once per NIFTY 1m candle (keyed on the bias candle timestamp — the 500ms poll can't inflate it); the first candle seen per position is a baseline only (the pre-entry candle is never counted). A long is opposed by STRONG BEARISH bias, a short by STRONG BULLISH (`_bias_opposes`; `invalidation_strong_only=False` widens to MODERATE+). Optional `invalidation_quorum` (`_quorum_satisfied`) also requires the stock to lose/reclaim its OWN VWAP (`strategy_runner._calculate_vwap_from_buffer`; fails closed if VWAP missing). At `count >= invalidation_persist` the profile's position closes with `ExitReason.INVALIDATION` / `AgentActionType.INVALIDATION_CLOSE` → `notify_invalidation_exit`. Counters are pruned for vanished positions in `monitor_positions` and popped on every `_close_position`. **Why S5-only**: the backtest shows this regime-flip cut helps momentum (S5) but hurts mean-reversion (S2) — see `docs/backtest/s5-invalidation-exit-study.md`. Operating-point default: persist=3 / quorum off / strong-only. Run an invalidation-enabled profile beside an identical control for live A/B (paper)
 
 **Direction detection**: uses `target_price < entry_price` (target below entry = SHORT). **SHORT position support**: direction-aware SL hit, target hit, unrealized PnL, HWM (lowest price for shorts), trailing SL direction.
 
@@ -857,6 +861,7 @@ All outbound Telegram messages. No ORM imports — callers pass plain scalars.
 - `notify_sl_hit(position, pnl, is_trailing=False)` — 🟡 "Trailing Stop Hit" when `is_trailing=True`
 - `notify_profit_booked(position, pnl)` — target hit notification
 - `notify_time_exit(position, pnl)` — 3:25 PM time exit
+- `notify_invalidation_exit(symbol, strategy, entry, exit, pnl, lots)` — 🧭 thesis-invalidation exit (NIFTY bias flipped STRONG-against the S5 trade). Called by trade_monitor `_close_position` for `AgentActionType.INVALIDATION_CLOSE`
 - `notify_confirmation_request(log)` — SEMI mode profit confirmation
 - `notify_expiry_roll(old_trade, new_trade)` / `notify_expiry_roll_failed(symbol, expiry)` — futures roll
 - `notify_drawdown_halt(daily_pnl, limit)` — drawdown gate triggered

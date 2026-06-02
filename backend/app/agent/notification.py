@@ -257,6 +257,25 @@ async def notify_time_exit(
     await send_telegram(msg)
 
 
+async def notify_invalidation_exit(
+    symbol: str,
+    strategy_name: str,
+    entry: float,
+    exit_price: float,
+    pnl: float,
+    lots: int,
+) -> None:
+    """Send a thesis-invalidation exit notification (NIFTY bias flipped against the trade)."""
+    msg = (
+        f"{_paper()}🧭 <b>Thesis Invalidation Exit</b>\n"
+        f"{symbol}  ·  {_strategy_label(strategy_name)}\n"
+        f"NIFTY bias flipped against the trade\n"
+        f"Entry ₹{entry:.0f}  →  Exit ₹{exit_price:.0f}\n"
+        f"PnL  {_pnl_str(pnl, entry, exit_price)}  ·  {lots} lot{'s' if lots > 1 else ''}"
+    )
+    await send_telegram(msg)
+
+
 async def notify_confirmation_request(
     symbol: str,
     strategy_name: str,

@@ -25,6 +25,9 @@ async def list_profiles():
             is_active=p.is_active,
             sort_order=p.sort_order,
             is_capped_today=p.id not in uncapped_ids and p.is_active,
+            invalidation_persist=p.invalidation_persist,
+            invalidation_quorum=p.invalidation_quorum,
+            invalidation_strong_only=p.invalidation_strong_only,
         )
         for p in profiles
     ]
@@ -41,6 +44,9 @@ async def create_profile(body: YoloProfileCreate):
         is_active=profile.is_active,
         sort_order=profile.sort_order,
         is_capped_today=False,
+        invalidation_persist=profile.invalidation_persist,
+        invalidation_quorum=profile.invalidation_quorum,
+        invalidation_strong_only=profile.invalidation_strong_only,
     )
 
 
@@ -64,6 +70,9 @@ async def update_profile(profile_id: uuid.UUID, body: YoloProfileUpdate):
         is_active=profile.is_active,
         sort_order=profile.sort_order,
         is_capped_today=profile.id not in uncapped_ids and profile.is_active,
+        invalidation_persist=profile.invalidation_persist,
+        invalidation_quorum=profile.invalidation_quorum,
+        invalidation_strong_only=profile.invalidation_strong_only,
     )
 
 

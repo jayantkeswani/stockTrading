@@ -434,6 +434,71 @@ export default function SettingsPage() {
                   className="w-24 bg-bg-tertiary border border-border rounded px-2 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
                 />
               </div>
+              {/* Thesis-invalidation exit (S5): close early when NIFTY bias flips STRONG-against the trade for N candles */}
+              <div className="flex items-center gap-1">
+                <span
+                  className="text-[9px] font-mono text-text-muted"
+                  title="S5 thesis-invalidation exit: close positions early when the NIFTY intraday bias flips STRONG-against the trade for N consecutive candles"
+                >
+                  Inval
+                </span>
+                <button
+                  onClick={async () => {
+                    const next = (p.invalidation_persist ?? 0) > 0 ? 0 : 3;
+                    setYoloProfiles((prev) => {
+                      const updated = (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, invalidation_persist: next } : x);
+                      useStore.getState().setYoloProfiles(updated);
+                      return updated;
+                    });
+                    try { await api.updateYoloProfile(p.id, { invalidation_persist: next }); } catch { /* ignore */ }
+                  }}
+                  title="Toggle thesis-invalidation exit"
+                  className={`w-8 h-4 rounded-full relative transition-colors ${(p.invalidation_persist ?? 0) > 0 ? "bg-warning/40" : "bg-border"}`}
+                >
+                  <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${(p.invalidation_persist ?? 0) > 0 ? "left-4 bg-warning" : "left-0.5 bg-text-muted"}`} />
+                </button>
+                {(p.invalidation_persist ?? 0) > 0 && (
+                  <>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      step="1"
+                      value={p.invalidation_persist ?? 3}
+                      title="Consecutive opposing candles before exit (default 3)"
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setYoloProfiles((prev) => (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, invalidation_persist: v } : x));
+                      }}
+                      onBlur={async (e) => {
+                        const v = Math.max(1, Number(e.target.value) || 3);
+                        setYoloProfiles((prev) => {
+                          const updated = (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, invalidation_persist: v } : x);
+                          useStore.getState().setYoloProfiles(updated);
+                          return updated;
+                        });
+                        try { await api.updateYoloProfile(p.id, { invalidation_persist: v }); } catch { /* ignore */ }
+                      }}
+                      className="w-10 bg-bg-tertiary border border-border rounded px-1 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                    />
+                    <button
+                      onClick={async () => {
+                        const next = !p.invalidation_quorum;
+                        setYoloProfiles((prev) => {
+                          const updated = (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, invalidation_quorum: next } : x);
+                          useStore.getState().setYoloProfiles(updated);
+                          return updated;
+                        });
+                        try { await api.updateYoloProfile(p.id, { invalidation_quorum: next }); } catch { /* ignore */ }
+                      }}
+                      title="Quorum: also require the stock to lose/reclaim its own VWAP (off by default)"
+                      className={`text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors ${p.invalidation_quorum ? "border-warning/50 text-warning bg-warning/10" : "border-border text-text-muted hover:text-text-secondary"}`}
+                    >
+                      Q
+                    </button>
+                  </>
+                )}
+              </div>
               {idx > 0 ? (
                 <button
                   onClick={async () => {

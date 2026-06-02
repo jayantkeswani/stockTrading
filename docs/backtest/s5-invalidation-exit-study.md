@@ -62,6 +62,16 @@ On the identical 125 shadow trades (conf≥70): **candle re-sim baseline = +198,
 
 The "cut when regime flips" exit is **strategy-specific, not universal**:
 
-- **S5 (momentum): promising — validate live, don't trust the offline magnitude.** The direction is robust but the harness can't size the gain (see Engine fidelity). Next step is **required, not optional**: wire a *shadow-only* bias-flip exit into `trade_monitor` (which has no thesis exit today) behind a persist=3 / no-quorum guard, run it on the Shadow book ~2–3 weeks, and compare shadow-with-invalidation vs shadow-as-is on *real* exits. Only then consider YOLO.
+- **S5 (momentum): promising — validate live, don't trust the offline magnitude.** The direction is robust but the harness can't size the gain (see Engine fidelity). This is now **implemented live** as a per-YOLO-profile policy (see "Live implementation" below): run an invalidation-enabled profile beside an identical control over ~2–3 weeks of paper trading and compare on *real* exits — only the live book can size the gain.
 - **S2 (mean-reversion): do not.** A regime-flip cut works against the strategy. If S2 needs a "reason-died" exit, base it on S2's *own* invalidation (price crossing back through VWAP — already written in `Strategy2.should_exit()`, unused live), not the index bias.
 - Re-run both monthly as the sample grows.
+
+## Live implementation (per-YOLO-profile policy)
+
+The exit ships as a **per-`YoloProfile` setting**, so it can run as a normal active profile beside a no-invalidation control for live A/B on the paper book — the only way to size the gain (offline is ~3.6× optimistic).
+
+- **Settings** on `yolo_profiles`: `invalidation_persist` (INT, NULL/0 = disabled, default operating point 3), `invalidation_quorum` (BOOL, default false), `invalidation_strong_only` (BOOL, default true). Edited in Settings → YOLO Profiles → the "Inval" toggle + persist input + "Q" quorum toggle. (The PATCH API drops `null`, so the client sends `invalidation_persist=0` to disable.)
+- **Trigger** (`trade_monitor._check_invalidation`): for non-shadow INTRADAY `intraday_futures` positions whose profile enables it, the monitor reads the live NIFTY `IntradayBias` via `strategy_runner.nifty_bias_snapshot()` and advances a **per-position, candle-aligned** opposing counter — incremented at most once per NIFTY 1m candle (keyed on the bias candle timestamp, so the 500ms poll can't inflate it). The first candle observed per position is a baseline only (the pre-entry candle is never counted). A long is opposed by STRONG BEARISH bias, a short by STRONG BULLISH; `invalidation_strong_only=false` widens to MODERATE+. At `count >= invalidation_persist` the position closes with `ExitReason.INVALIDATION` (`AgentActionType.INVALIDATION_CLOSE` → `notify_invalidation_exit`).
+- **Precedence**: checked after SL/target inside `_check_position`, so structural stops always win within a candle — invalidation only ever exits *earlier* than baseline (matches the backtest rule).
+- **Scope**: S5 only (momentum). The same trigger is deliberately NOT wired for S2 — see above.
+- **Validation plan**: enable on one profile (persist=3, quorum off), leave an identical-cap profile with it off, and compare realized exits over 2–3 weeks. Each signal already fans out one Trade+Position per active profile, so the two arms see the same signals.

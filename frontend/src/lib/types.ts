@@ -25,6 +25,13 @@ export interface YoloProfile {
   is_active: boolean;
   sort_order: number;
   is_capped_today?: boolean;
+  // Thesis-invalidation exit (S5 only). invalidation_persist = null/0 → disabled;
+  // a positive int closes S5 positions early after that many consecutive candles
+  // of STRONG-opposite NIFTY bias. quorum (off by default) also requires the stock
+  // to lose/reclaim its own VWAP.
+  invalidation_persist?: number | null;
+  invalidation_quorum?: boolean;
+  invalidation_strong_only?: boolean;
 }
 
 export interface Position {

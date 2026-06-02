@@ -31,6 +31,7 @@ class ExitReason(StrEnum):
     EXPIRY_ROLL = "EXPIRY_ROLL"
     MARKET_EXIT = "MARKET_EXIT"
     STALE_DATA = "STALE_DATA"
+    INVALIDATION = "INVALIDATION"  # Thesis-invalidation exit: index bias flipped STRONG-against the trade
 
 
 class SignalStatus(StrEnum):
@@ -94,6 +95,7 @@ class AgentActionType(StrEnum):
     EXPIRY_ROLL = "EXPIRY_ROLL"
     SHADOW_EXECUTED = "SHADOW_EXECUTED"
     PROFIT_CAP_CLOSE = "PROFIT_CAP_CLOSE"
+    INVALIDATION_CLOSE = "INVALIDATION_CLOSE"
 
 
 class TradeSource(StrEnum):

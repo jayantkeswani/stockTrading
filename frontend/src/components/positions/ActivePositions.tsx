@@ -390,7 +390,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
                         return lat ? <span className="ml-1.5 text-accent/70">fill {lat}</span> : null;
                       })()}
                     </span>
-                    <span className={`text-[9px] font-mono ${t.exit_reason === "TRAILING_SL" ? "text-warning" : "text-text-muted"}`}>
+                    <span className={`text-[9px] font-mono ${t.exit_reason === "TRAILING_SL" || t.exit_reason === "INVALIDATION" ? "text-warning" : "text-text-muted"}`}>
                       {t.exit_reason?.replace(/_/g, " ") ?? "—"}
                     </span>
                   </div>

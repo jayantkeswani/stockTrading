@@ -21,6 +21,7 @@ const ACTION_COLORS: Record<string, string> = {
   PROFIT_BOOK_REQUEST: "text-warning",
   CONFIRMATION_REQUEST: "text-warning",
   DRAWDOWN_HALT: "text-loss",
+  INVALIDATION_CLOSE: "text-warning",
 };
 
 type FeedFilter = "all" | "real" | "shadow";

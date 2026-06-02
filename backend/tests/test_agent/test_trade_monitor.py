@@ -637,3 +637,250 @@ class TestNoExit:
         action = await _check_position(db, pos, yolo_mode=False)
 
         assert action is None
+
+
+# ---------------------------------------------------------------------------
+# Thesis-invalidation exit (S5 YOLO per-profile policy)
+# ---------------------------------------------------------------------------
+
+from app.core.enums import DayBias, StrategyName  # noqa: E402
+from app.indicators.intraday_bias import IntradayBias  # noqa: E402
+from app.services.yolo_profile_service import YoloProfileDTO  # noqa: E402
+
+
+def _bias(direction: DayBias, strength: str) -> IntradayBias:
+    score = {"STRONG": 0.7, "MODERATE": 0.3, "WEAK": 0.1}[strength]
+    if direction == DayBias.BEARISH:
+        score = -score
+    elif direction == DayBias.NEUTRAL:
+        score = 0.0
+    return IntradayBias(bias=direction, score=score, strength=strength, components={})
+
+
+def _inval_profile(profile_id, *, persist=3, quorum=False, strong_only=True, name="INVAL") -> YoloProfileDTO:
+    return YoloProfileDTO(
+        id=profile_id,
+        name=name,
+        profit_cap=10000.0,
+        is_active=True,
+        sort_order=0,
+        invalidation_persist=persist,
+        invalidation_quorum=quorum,
+        invalidation_strong_only=strong_only,
+    )
+
+
+def _s5_long(profile_id):
+    """Eligible S5 YOLO LONG futures position (target above entry)."""
+    pos = _make_position(
+        entry_price=Decimal("1000"),
+        stop_loss=Decimal("960"),
+        target_price=Decimal("1080"),
+        strategy_name=StrategyName.INTRADAY_FUTURES.value,
+        fyers_option_symbol="NSE:VEDL26JUNFUT",
+        symbol="VEDL",
+    )
+    pos.instrument_type = "FUTURE"
+    pos.option_type = ""
+    pos.yolo_profile_id = profile_id
+    return pos
+
+
+class TestInvalidationExit:
+    """Per-profile S5 thesis-invalidation exit + candle-aligned counter."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_state(self):
+        import app.agent.trade_monitor as tm
+        tm._invalidation_state.clear()
+        yield
+        tm._invalidation_state.clear()
+
+    @pytest.mark.asyncio
+    async def test_counter_closes_long_after_persist_candles(self):
+        pid = uuid.uuid4()
+        pos = _s5_long(pid)
+        profile = _inval_profile(pid, persist=3)
+
+        bearish = _bias(DayBias.BEARISH, "STRONG")
+        runner = MagicMock()
+        runner.nifty_bias_snapshot.side_effect = [
+            (bearish, "c0"), (bearish, "c1"), (bearish, "c2"), (bearish, "c3"),
+        ]
+
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync", return_value=[profile]), \
+             patch("app.services.strategy_runner.strategy_runner", runner), \
+             patch("app.agent.trade_monitor.ws_manager") as mock_ws, \
+             patch("app.agent.trade_monitor.notify_invalidation_exit", new_callable=AsyncMock) as mock_notify, \
+             patch("app.services.yolo_profile_service.get_default_profile_sync", return_value=profile):
+            mock_ws.broadcast = AsyncMock()
+            from app.agent.trade_monitor import _check_invalidation
+            db = _mock_db_for_close(_make_trade(pos))
+
+            # c0 baseline, c1=count1, c2=count2 → no exit yet
+            for _ in range(3):
+                assert await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=False) is None
+            # c3 → count 3 == persist → close
+            action = await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=False)
+
+        assert action is not None
+        assert action["action_type"] == AgentActionType.INVALIDATION_CLOSE.value
+        mock_notify.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_opposing_candle_resets_counter(self):
+        pid = uuid.uuid4()
+        pos = _s5_long(pid)
+        profile = _inval_profile(pid, persist=2)
+
+        bearish = _bias(DayBias.BEARISH, "STRONG")
+        neutral = _bias(DayBias.NEUTRAL, "WEAK")
+        runner = MagicMock()
+        runner.nifty_bias_snapshot.side_effect = [
+            (bearish, "c0"), (bearish, "c1"), (neutral, "c2"), (bearish, "c3"), (bearish, "c4"),
+        ]
+
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync", return_value=[profile]), \
+             patch("app.services.strategy_runner.strategy_runner", runner), \
+             patch("app.agent.trade_monitor.ws_manager") as mock_ws, \
+             patch("app.agent.trade_monitor.notify_invalidation_exit", new_callable=AsyncMock), \
+             patch("app.services.yolo_profile_service.get_default_profile_sync", return_value=profile):
+            mock_ws.broadcast = AsyncMock()
+            from app.agent.trade_monitor import _check_invalidation
+            db = _mock_db_for_close(_make_trade(pos))
+
+            results = [await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=False) for _ in range(5)]
+
+        # baseline, count1, reset0, count1, count2->close
+        assert results[:4] == [None, None, None, None]
+        assert results[4] is not None
+
+    @pytest.mark.asyncio
+    async def test_same_candle_does_not_double_count(self):
+        pid = uuid.uuid4()
+        pos = _s5_long(pid)
+        profile = _inval_profile(pid, persist=2)
+
+        bearish = _bias(DayBias.BEARISH, "STRONG")
+        runner = MagicMock()
+        runner.nifty_bias_snapshot.side_effect = [
+            (bearish, "c0"),  # baseline
+            (bearish, "c1"), (bearish, "c1"), (bearish, "c1"),  # one candle, polled 3x
+        ]
+
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync", return_value=[profile]), \
+             patch("app.services.strategy_runner.strategy_runner", runner), \
+             patch("app.agent.trade_monitor.ws_manager") as mock_ws, \
+             patch("app.agent.trade_monitor.notify_invalidation_exit", new_callable=AsyncMock):
+            mock_ws.broadcast = AsyncMock()
+            from app.agent.trade_monitor import _check_invalidation
+            db = AsyncMock()
+            for _ in range(4):
+                assert await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=False) is None
+
+        import app.agent.trade_monitor as tm
+        assert tm._invalidation_state[pos.id] == ("c1", 1)
+
+    @pytest.mark.asyncio
+    async def test_short_opposed_by_bullish(self):
+        pid = uuid.uuid4()
+        pos = _s5_long(pid)
+        pos.target_price = Decimal("920")   # SHORT: target below entry
+        pos.stop_loss = Decimal("1040")
+        profile = _inval_profile(pid, persist=1)
+
+        bullish = _bias(DayBias.BULLISH, "STRONG")
+        runner = MagicMock()
+        runner.nifty_bias_snapshot.side_effect = [(bullish, "c0"), (bullish, "c1")]
+
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync", return_value=[profile]), \
+             patch("app.services.strategy_runner.strategy_runner", runner), \
+             patch("app.agent.trade_monitor.ws_manager") as mock_ws, \
+             patch("app.agent.trade_monitor.notify_invalidation_exit", new_callable=AsyncMock), \
+             patch("app.services.yolo_profile_service.get_default_profile_sync", return_value=profile):
+            mock_ws.broadcast = AsyncMock()
+            from app.agent.trade_monitor import _check_invalidation
+            db = _mock_db_for_close(_make_trade(pos))
+            assert await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=True) is None  # baseline
+            action = await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=True)
+
+        assert action is not None
+        assert action["details"]["reason"] == ExitReason.INVALIDATION.value
+
+    @pytest.mark.asyncio
+    async def test_strong_only_ignores_moderate_bias(self):
+        pid = uuid.uuid4()
+        pos = _s5_long(pid)
+        profile = _inval_profile(pid, persist=1, strong_only=True)
+
+        moderate = _bias(DayBias.BEARISH, "MODERATE")
+        runner = MagicMock()
+        runner.nifty_bias_snapshot.side_effect = [(moderate, "c0"), (moderate, "c1"), (moderate, "c2")]
+
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync", return_value=[profile]), \
+             patch("app.services.strategy_runner.strategy_runner", runner):
+            from app.agent.trade_monitor import _check_invalidation
+            db = AsyncMock()
+            for _ in range(3):
+                assert await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=False) is None
+
+    @pytest.mark.asyncio
+    async def test_moderate_counts_when_strong_only_false(self):
+        pid = uuid.uuid4()
+        pos = _s5_long(pid)
+        profile = _inval_profile(pid, persist=1, strong_only=False)
+
+        moderate = _bias(DayBias.BEARISH, "MODERATE")
+        runner = MagicMock()
+        runner.nifty_bias_snapshot.side_effect = [(moderate, "c0"), (moderate, "c1")]
+
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync", return_value=[profile]), \
+             patch("app.services.strategy_runner.strategy_runner", runner), \
+             patch("app.agent.trade_monitor.ws_manager") as mock_ws, \
+             patch("app.agent.trade_monitor.notify_invalidation_exit", new_callable=AsyncMock), \
+             patch("app.services.yolo_profile_service.get_default_profile_sync", return_value=profile):
+            mock_ws.broadcast = AsyncMock()
+            from app.agent.trade_monitor import _check_invalidation
+            db = _mock_db_for_close(_make_trade(pos))
+            assert await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=False) is None  # baseline
+            action = await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=False)
+
+        assert action is not None
+
+    @pytest.mark.asyncio
+    async def test_disabled_profile_no_exit(self):
+        pid = uuid.uuid4()
+        pos = _s5_long(pid)
+        profile = _inval_profile(pid, persist=None)  # disabled
+
+        bearish = _bias(DayBias.BEARISH, "STRONG")
+        runner = MagicMock()
+        runner.nifty_bias_snapshot.return_value = (bearish, "c1")
+
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync", return_value=[profile]), \
+             patch("app.services.strategy_runner.strategy_runner", runner):
+            from app.agent.trade_monitor import _check_invalidation
+            db = AsyncMock()
+            for _ in range(5):
+                assert await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=False) is None
+
+    @pytest.mark.asyncio
+    async def test_shadow_and_non_s5_positions_skipped(self):
+        pid = uuid.uuid4()
+        profile = _inval_profile(pid, persist=1)
+        bearish = _bias(DayBias.BEARISH, "STRONG")
+        runner = MagicMock()
+        runner.nifty_bias_snapshot.return_value = (bearish, "c1")
+
+        shadow = _s5_long(pid)
+        shadow.is_shadow = True
+        non_s5 = _s5_long(pid)
+        non_s5.strategy_name = StrategyName.VWAP_PULLBACK.value
+        no_profile = _s5_long(None)
+
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync", return_value=[profile]), \
+             patch("app.services.strategy_runner.strategy_runner", runner):
+            from app.agent.trade_monitor import _check_invalidation
+            db = AsyncMock()
+            for pos in (shadow, non_s5, no_profile):
+                assert await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=False) is None

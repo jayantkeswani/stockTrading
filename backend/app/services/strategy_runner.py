@@ -38,7 +38,7 @@ from app.core.utils import (
     is_past_close_deadline,
     now_ist,
 )
-from app.indicators.intraday_bias import compute_intraday_bias
+from app.indicators.intraday_bias import IntradayBias, compute_intraday_bias
 from app.tasks.global_market_task import _get_global_cues_from_redis
 from app.indicators.candle_patterns import Candle
 from app.indicators.cpr import calculate_cpr
@@ -114,6 +114,13 @@ class StrategyRunner:
         # Updated each time NIFTY's candle closes; passed to non-NIFTY compute_intraday_bias
         # calls so other indices and stocks inherit the benchmark market direction.
         self._last_nifty_bias_score: float | None = None
+
+        # Full NIFTY IntradayBias + the candle timestamp it was computed on.
+        # The trade monitor reads this (via nifty_bias_snapshot) to drive the S5
+        # thesis-invalidation exit, using the candle timestamp to advance its
+        # per-position opposing-candle counter exactly once per 1m candle.
+        self._last_nifty_bias: IntradayBias | None = None
+        self._last_nifty_bias_at: str | None = None
 
         # Per-symbol busy flag: prevents concurrent candle evaluations for the
         # same symbol from racing on signal persist / YOLO execution.
@@ -347,6 +354,17 @@ class StrategyRunner:
 
         return True, None
 
+    def nifty_bias_snapshot(self) -> tuple[IntradayBias | None, str | None]:
+        """Return the last computed NIFTY IntradayBias and its candle timestamp.
+
+        The trade monitor uses this for the S5 thesis-invalidation exit. The
+        timestamp is the closed-candle marker the bias was computed on (ISO
+        string), so the monitor can advance its per-position opposing-candle
+        counter exactly once per 1m candle. Both are None before the first NIFTY
+        candle closes (e.g. fresh process before market open).
+        """
+        return self._last_nifty_bias, self._last_nifty_bias_at
+
     # ------------------------------------------------------------------
     # MarketContext construction
     # ------------------------------------------------------------------
@@ -469,6 +487,10 @@ class StrategyRunner:
         # Cache NIFTY's score so other symbols can use it as a benchmark factor
         if symbol == "NIFTY" and intraday_bias is not None:
             self._last_nifty_bias_score = intraday_bias.score
+            self._last_nifty_bias = intraday_bias
+            # Candle-aligned timestamp drives the invalidation counter (one tick per
+            # closed candle). Falls back to wall-clock for the synthetic manual path.
+            self._last_nifty_bias_at = candle_data.get("timestamp") or now_ist().isoformat()
 
         # Publish bias to Redis + WS for index symbols so the dashboard header can display it
         if symbol in INDEX_SYMBOLS and intraday_bias is not None:

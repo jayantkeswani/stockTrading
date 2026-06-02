@@ -33,6 +33,10 @@ class YoloProfileDTO:
     profit_cap: float
     is_active: bool
     sort_order: int
+    # Thesis-invalidation exit (S5 only). invalidation_persist=None disables it.
+    invalidation_persist: int | None = None
+    invalidation_quorum: bool = False
+    invalidation_strong_only: bool = True
 
 
 _cache: list[YoloProfileDTO] | None = None
@@ -45,6 +49,11 @@ def _row_to_dto(row: YoloProfile) -> YoloProfileDTO:
         profit_cap=float(row.profit_cap),
         is_active=bool(row.is_active),
         sort_order=int(row.sort_order),
+        invalidation_persist=(
+            int(row.invalidation_persist) if row.invalidation_persist is not None else None
+        ),
+        invalidation_quorum=bool(row.invalidation_quorum),
+        invalidation_strong_only=bool(row.invalidation_strong_only),
     )
 
 
@@ -179,7 +188,10 @@ async def create_profile(name: str, profit_cap: float) -> YoloProfileDTO:
 
 async def update_profile(profile_id: uuid.UUID, **fields) -> YoloProfileDTO:
     """Partially update a YOLO profile."""
-    allowed = {"name", "profit_cap", "is_active", "sort_order"}
+    allowed = {
+        "name", "profit_cap", "is_active", "sort_order",
+        "invalidation_persist", "invalidation_quorum", "invalidation_strong_only",
+    }
     invalid = set(fields) - allowed
     if invalid:
         raise ValueError(f"Unknown profile fields: {invalid}")

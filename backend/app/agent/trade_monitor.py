@@ -7,6 +7,7 @@ Supports multiple autonomy levels:
 """
 
 import logging
+import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 
@@ -18,13 +19,23 @@ from app.agent.notification import (
     notify_confirmation_request,
     notify_expiry_roll,
     notify_expiry_roll_failed,
+    notify_invalidation_exit,
     notify_profit_booked,
     notify_profit_cap_halt,
     notify_sl_hit,
     notify_time_exit,
 )
 from app.core.constants import IST, MARKET_OPEN
-from app.core.enums import AgentActionType, ConfirmationStatus, ExitReason, TradeSource, TradeStatus
+from app.core.enums import (
+    AgentActionType,
+    ConfirmationStatus,
+    DayBias,
+    ExitReason,
+    StrategyName,
+    TradeSource,
+    TradeStatus,
+)
+from app.indicators.intraday_bias import IntradayBias
 from app.core.redis import get_cached_price
 from app.core.utils import is_past_close_deadline, now_ist
 from app.models.agent_log import AgentLog
@@ -34,6 +45,13 @@ from app.services.trading_config import get_trading_config
 from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
+
+
+# Per-position thesis-invalidation counter: position_id -> (last_counted_candle_ts, opposing_count).
+# In-memory only (resets on restart, like the strategy_runner per-candle caches). The counter
+# advances at most once per NIFTY 1m candle (keyed on the bias candle timestamp), so the live
+# 500ms poll cannot inflate it. Pruned in monitor_positions when positions close/vanish.
+_invalidation_state: dict[uuid.UUID, tuple[str | None, int]] = {}
 
 
 async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[dict]:
@@ -53,6 +71,11 @@ async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[d
 
     result = await db.execute(select(Position))
     positions = result.scalars().all()
+
+    # Prune invalidation counters for positions that have closed/vanished.
+    open_ids = {pos.id for pos in positions}
+    for pid in [pid for pid in _invalidation_state if pid not in open_ids]:
+        _invalidation_state.pop(pid, None)
 
     for pos in positions:
         action = await _check_position(db, pos, yolo_mode=yolo_mode)
@@ -290,6 +313,14 @@ async def _check_position(
             # SEMI: request confirmation from user
             return await _request_profit_confirmation(db, pos, current_price)
 
+    # 2.5 Thesis-invalidation exit — S5 YOLO positions whose profile enables it.
+    # Closes early when the live NIFTY bias flips STRONG-against the trade for N
+    # consecutive candles. Placed after SL/target so those take precedence within a
+    # candle (invalidation only ever exits earlier than the structural stops).
+    inval_action = await _check_invalidation(db, pos, current_price, is_short_pos)
+    if inval_action:
+        return inval_action
+
     # 3. Trailing stop — POSITIONAL always, INTRADAY when trailing_sl_enabled
     from app.services.strategy_params import get_strategy_params_sync
     position_type = getattr(pos, "position_type", "INTRADAY")
@@ -382,6 +413,109 @@ async def _check_position(
     return None
 
 
+def _bias_opposes(bias: IntradayBias, is_short: bool, strong_only: bool) -> bool:
+    """Return True if the NIFTY bias points STRONG- (or MODERATE-) against the trade.
+
+    A long (CE / BUY_FUT) is opposed by a BEARISH bias; a short by a BULLISH bias.
+    `strong_only` (the profile default) requires STRONG strength; when False,
+    MODERATE+ counts too (matches the backtest's --inval-moderate guard).
+    """
+    if strong_only:
+        if bias.strength != "STRONG":
+            return False
+    elif bias.strength not in ("STRONG", "MODERATE"):
+        return False
+    return bias.bias == DayBias.BULLISH if is_short else bias.bias == DayBias.BEARISH
+
+
+def _quorum_satisfied(pos: Position, current_price: Decimal, is_short: bool) -> bool:
+    """Optional quorum guard: require the stock to lose/reclaim its OWN VWAP.
+
+    A long is confirmed-invalid only when price is below the stock VWAP; a short
+    only when price is above it. If the stock VWAP is unavailable, the guard fails
+    closed (no exit) — conservative, since quorum is opt-in. Off by default.
+    """
+    from app.services.strategy_runner import strategy_runner
+
+    try:
+        vwap = strategy_runner._calculate_vwap_from_buffer(pos.symbol)
+    except Exception:
+        vwap = None
+    vwap_val = getattr(vwap, "vwap", None) if vwap is not None else None
+    if not vwap_val:
+        return False
+    v = Decimal(str(vwap_val))
+    return current_price > v if is_short else current_price < v
+
+
+async def _check_invalidation(
+    db: AsyncSession, pos: Position, current_price: Decimal, is_short_pos: bool
+) -> dict | None:
+    """Thesis-invalidation exit for S5 YOLO positions whose profile enables it.
+
+    Advances a per-position opposing-candle counter once per NIFTY 1m candle (keyed
+    on the bias candle timestamp, so the 500ms poll can't inflate it). Closes the
+    position with ExitReason.INVALIDATION once the count reaches the profile's
+    `invalidation_persist`. Returns the close action, or None to continue monitoring.
+
+    Gating: non-shadow INTRADAY S5 positions with a yolo_profile_id whose profile has
+    invalidation_persist > 0. The first candle observed per position only sets a
+    baseline (the pre-entry candle is never counted).
+    """
+    if (
+        pos.is_shadow
+        or (pos.strategy_name or "") != StrategyName.INTRADAY_FUTURES.value
+        or getattr(pos, "position_type", "INTRADAY") != "INTRADAY"
+        or pos.yolo_profile_id is None
+    ):
+        return None
+
+    from app.services.yolo_profile_service import get_active_profiles_sync
+
+    profile = next(
+        (p for p in get_active_profiles_sync() if p.id == pos.yolo_profile_id), None
+    )
+    if profile is None or not profile.invalidation_persist or profile.invalidation_persist <= 0:
+        _invalidation_state.pop(pos.id, None)
+        return None
+
+    from app.services.strategy_runner import strategy_runner
+
+    bias, candle_ts = strategy_runner.nifty_bias_snapshot()
+    if bias is None or candle_ts is None:
+        return None
+
+    last_ts, count = _invalidation_state.get(pos.id, (None, 0))
+    if candle_ts == last_ts:
+        # Already processed this candle — counter unchanged (poll de-dup).
+        pass
+    elif last_ts is None:
+        # First observation for this position: baseline only. Never count the
+        # in-flight/pre-entry candle.
+        _invalidation_state[pos.id] = (candle_ts, 0)
+        return None
+    else:
+        opposing = _bias_opposes(bias, is_short_pos, profile.invalidation_strong_only)
+        if opposing and profile.invalidation_quorum:
+            opposing = _quorum_satisfied(pos, current_price, is_short_pos)
+        count = count + 1 if opposing else 0
+        _invalidation_state[pos.id] = (candle_ts, count)
+
+    if count >= profile.invalidation_persist:
+        _invalidation_state.pop(pos.id, None)
+        logger.info(
+            "Thesis invalidation exit for %s (profile %s): NIFTY bias %s/%s opposed "
+            "%s position for %d candles",
+            pos.symbol, profile.name, bias.bias.value, bias.strength,
+            "SHORT" if is_short_pos else "LONG", count,
+        )
+        return await _close_position(
+            db, pos, current_price, ExitReason.INVALIDATION,
+            AgentActionType.INVALIDATION_CLOSE, requires_confirmation=False,
+        )
+    return None
+
+
 async def _close_position(
     db: AsyncSession,
     pos: Position,
@@ -435,6 +569,7 @@ async def _close_position(
     # Delete position
     await db.delete(pos)
     await db.flush()
+    _invalidation_state.pop(pos.id, None)
 
     pnl_val = float(trade.net_pnl if trade.net_pnl is not None else trade.pnl) if trade and trade.pnl else 0
 
@@ -473,6 +608,8 @@ async def _close_position(
                 await notify_profit_booked(sym, strat, entry, exit_f, pnl_val, lots)
             elif action_type == AgentActionType.TIME_EXIT:
                 await notify_time_exit(sym, strat, entry, exit_f, pnl_val, lots)
+            elif action_type == AgentActionType.INVALIDATION_CLOSE:
+                await notify_invalidation_exit(sym, strat, entry, exit_f, pnl_val, lots)
             # EXPIRY_ROLL close notification is handled by _roll_futures_position
 
     action = {

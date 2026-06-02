@@ -26,6 +26,7 @@ const ACTION_COLORS: Record<string, string> = {
   MANUAL_EXECUTED: "text-accent",
   SHADOW_EXECUTED: "text-purple-400",
   PROFIT_CAP_CLOSE: "text-profit",
+  INVALIDATION_CLOSE: "text-warning",
 };
 
 export default function AgentPage() {

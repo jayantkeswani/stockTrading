@@ -156,6 +156,7 @@ See `backend/CLAUDE.md` for execution architecture details (shadow/YOLO isolatio
 - Risk per trade: Set in DB
 - Max trades/day: Set in DB
 - **YOLO Profit Caps**: Configurable via `yolo_profiles` table (Settings page). Multiple profiles run simultaneously (e.g. 5K, 10K, 15K) — each signal creates one Trade+Position per active uncapped profile. Trade monitor checks caps per profile independently, closing only that profile's positions when its cap is hit. Trades carry `yolo_profile_id` FK; `source` stays `"YOLO"` for all profile trades, `"MANUAL"` for user-executed trades.
+- **Thesis-Invalidation Exit (per-profile, S5 only)**: each `yolo_profiles` row carries `invalidation_persist`/`invalidation_quorum`/`invalidation_strong_only` (Settings page → YOLO Profiles → "Inval" toggle). When enabled (`invalidation_persist > 0`, default 3), the trade monitor closes that profile's open S5 positions early (`ExitReason.INVALIDATION`) once the live NIFTY intraday bias flips STRONG-against the position direction for N consecutive 1m candles. Run an enabled profile beside an identical control for live A/B (paper). Helps momentum (S5) — do NOT use for S2 (mean-reversion). See `docs/backtest/s5-invalidation-exit-study.md`.
 - Strike selection: ATM or 1-strike ITM (Delta 0.45-0.60), resolved by `option_resolver.py`
 - Strike gaps: NIFTY=50, BANKNIFTY=100, FINNIFTY=50, SENSEX=100, MIDCPNIFTY=25
 - Preferred premium range: Rs 150-400
@@ -274,7 +275,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 - `harness.md` — backtest framework usage and modes
 - `option-data.md` — option data sourcing for backtests
-- `s5-invalidation-exit-study.md` — thesis-invalidation exit study (exit when the index regime flips against the trade), S5 + S2 over 20 days: **+38% for S5** (momentum, zero retracement cost at persist=3) but **net-negative for S2** (mean-reversion). Documents the index-VWAP futures-volume fidelity fix and why the same exit helps momentum yet hurts mean-reversion
+- `s5-invalidation-exit-study.md` — thesis-invalidation exit study (exit when the index regime flips against the trade), S5 + S2 over 20 days: **+38% for S5** (momentum, zero retracement cost at persist=3) but **net-negative for S2** (mean-reversion). Documents the index-VWAP futures-volume fidelity fix, why the same exit helps momentum yet hurts mean-reversion, and the **live per-YOLO-profile implementation** (`trade_monitor._check_invalidation`, `yolo_profiles.invalidation_*`) used to validate the magnitude on the paper book
 
 ### docs/
 
