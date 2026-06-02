@@ -114,7 +114,8 @@ stockTrading/
 - `backfill_for_backtest.py` — seed backtest data
 - `backtest.py` — run backtests
 - `replay_strategy5.py` — offline S5 signal generation from historical candles
-- `backtest_strategy5.py` — S5 signal exit simulator (trailing SL, P&L, sweep mode). Reads trailing SL params from DB via `get_strategy_params`
+- `backtest_strategy5.py` — S5 signal exit simulator (trailing SL, P&L, sweep mode). Reads trailing SL params from DB via `get_strategy_params`. `--invalidation` adds a thesis-invalidation exit (early exit when the NIFTY intraday-bias flips against the trade for N candles) and simulates each trade twice — baseline vs invalidation — reporting reversal savings vs retracement cost; guards: `--inval-persist N`, `--inval-quorum` (require stock to lose/reclaim its own VWAP), `--inval-moderate`. `--inval-sweep` sweeps persistence × quorum. The index bias VWAP is weighted by `{index}_FUT` futures volume (index spot volume is ~zero), matching live. Exposes `build_index_bias_series()` reused by `backtest_strategy2.py`. Signals carry no `lots` (sizing is at execution) — 1-lot baseline, override via `--lots`. `--source shadow` replays the actual deduped SHADOW trades (real fills + entry timestamps) instead of raw signals and prints the re-sim baseline vs the real realized P&L — an **engine-fidelity check**: the 1m-candle engine runs ~3.6× optimistic vs live tick exits, so trust the *direction*, not the absolute magnitude
+- `backtest_strategy2.py` — S2 (index options) thesis-invalidation study, mirroring the S5 script. Replays `vwap_pullback` signals; values exits on the OPTION PREMIUM via delta-approximation from the index move (fast mode — needs only index candles, covers expired contracts); trigger = the traded index's own bias. Reports premium points (size-independent). Same `--invalidation`/`--inval-*`/`--inval-sweep` flags + `--delta`. Finding: invalidation helps S5 (momentum) but hurts S2 (mean-reversion) — see `docs/backtest/s5-invalidation-exit-study.md`
 - `backfill_daily_candles.py` — one-time seed of `market_data_daily` from Fyers
 - `audit_screener_data.py` — read-only freshness check for S5 morning screener data
 - `audit_vwap_data.py` — read-only freshness check for S2 VWAP Pullback data (10 checks)
@@ -201,6 +202,15 @@ python scripts/backfill_daily_candles.py --symbols TCS,RELIANCE
 python scripts/backtest_strategy5.py --confidence 60 --start 2026-05-05
 python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05
 python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05 --lots 1
+
+# Thesis-invalidation exit study (baseline vs invalidation on the same trades)
+python scripts/backtest_strategy5.py --confidence 70 --start 2026-04-29 --end 2026-06-02 --invalidation --inval-persist 3
+python scripts/backtest_strategy5.py --inval-sweep --confidence 70 --start 2026-04-29 --end 2026-06-02
+python scripts/backtest_strategy5.py --source shadow --inval-sweep --confidence 70 --start 2026-04-29 --end 2026-06-02  # replay REAL shadow trades + engine check
+python scripts/backtest_strategy2.py --inval-sweep --confidence 70 --start 2026-04-29 --end 2026-06-02   # S2 (options)
+# Backtest reads signals + index/underlying/futures candles from the configured DB. To replay
+# prod days locally, stage prod's signals + market_data_1m (incl. %FUT for index VWAP volume) +
+# global_market_snapshots into a local DB and set DATABASE_URL.
 ```
 
 ## Deployment (GCP)
@@ -264,6 +274,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 - `harness.md` — backtest framework usage and modes
 - `option-data.md` — option data sourcing for backtests
+- `s5-invalidation-exit-study.md` — thesis-invalidation exit study (exit when the index regime flips against the trade), S5 + S2 over 20 days: **+38% for S5** (momentum, zero retracement cost at persist=3) but **net-negative for S2** (mean-reversion). Documents the index-VWAP futures-volume fidelity fix and why the same exit helps momentum yet hurts mean-reversion
 
 ### docs/
 
