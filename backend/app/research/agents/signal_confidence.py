@@ -25,6 +25,20 @@ from app.strategies.base import MarketContext, StrategySignal
 
 logger = logging.getLogger(__name__)
 
+# Concurrency throttle for LLM overlay calls. Lazily created on first use so the
+# limit reads the live setting and binds to the running event loop. Shared across
+# all concurrent score_signal() callers (one event loop), so a candle-close burst
+# is serialized into waves of at most ai_confidence_max_concurrency in-flight calls.
+_llm_semaphore: "asyncio.Semaphore | None" = None
+
+
+def _get_llm_semaphore() -> "asyncio.Semaphore":
+    """Return the shared overlay-call semaphore, creating it on first use."""
+    global _llm_semaphore
+    if _llm_semaphore is None:
+        _llm_semaphore = asyncio.Semaphore(max(1, settings.ai_confidence_max_concurrency))
+    return _llm_semaphore
+
 _SYSTEM_PROMPT_VWAP_PULLBACK = """You are a senior Indian derivatives trader reviewing an INDEX OPTIONS signal. You trade NIFTY/BANKNIFTY/FINNIFTY/SENSEX/MIDCPNIFTY CE/PE options on VWAP pullback setups.
 
 ## Strategy mechanics
@@ -257,13 +271,31 @@ async def score_signal(
         logger.debug("google_api_key not set — skipping AI confidence overlay")
         return _FALLBACK
 
+    # Confidence floor — weak signals don't warrant an LLM call. The overlay only
+    # adjusts ±30, so a signal far below the execution threshold can't be rescued;
+    # skipping it cuts call volume (and the candle-close burst that causes timeouts).
+    floor = settings.ai_confidence_min_confidence
+    if signal.confidence is not None and signal.confidence < floor:
+        logger.debug(
+            "AI confidence overlay skipped — confidence %.1f < floor %.1f for %s %s",
+            signal.confidence, floor, signal.symbol, signal.signal_type,
+        )
+        return _FALLBACK
+
     try:
         context_json = _build_context_json(signal, ctx, prior_signals=prior_signals)
         indicators = signal.indicators or {}
         strategy_name = signal.strategy_name if hasattr(signal, "strategy_name") else "unknown"
         setup_type = indicators.get("setup_type", "unknown")
+        # Throttle concurrency: cap simultaneous LLM calls so a candle-close burst
+        # doesn't fan out dozens of requests at once (the cause of the timeout storms).
+        # The timeout budget covers queue wait + the call itself.
+        async def _bounded_call():
+            async with _get_llm_semaphore():
+                return await _call_llm(context_json, strategy_name=strategy_name, setup_type=setup_type)
+
         result = await asyncio.wait_for(
-            _call_llm(context_json, strategy_name=strategy_name, setup_type=setup_type),
+            _bounded_call(),
             timeout=settings.ai_confidence_timeout_seconds,
         )
         return result

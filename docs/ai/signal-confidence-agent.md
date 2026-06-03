@@ -6,11 +6,13 @@
 LLM overlay that reviews every VWAP Pullback signal after all deterministic gates have passed. Adjusts confidence ±15 and produces a structured rationale (summary, key supports/risks) so traders know exactly *why* a signal fired.
 
 ## When it runs
-1. All deterministic gates pass (VWAP proximity, candle pattern, volume filter, intraday bias soft gate, confidence ≥ threshold)
-2. Option/futures resolution completes (strike, expiry, fyers symbol known)
-3. LLM call fires → confidence updated → signal persisted with `ai_*` fields
+1. All deterministic gates pass (VWAP proximity, candle pattern, volume filter, intraday bias soft gate, confidence ≥ persist threshold) — so the overlay only ever fires for a *persisted* signal (raw confidence ≥ `min_confidence_to_persist`, default 30), never on every candle close
+2. **Confidence floor** — raw confidence ≥ `settings.ai_confidence_min_confidence` (default 50). Below the floor, the overlay is skipped entirely (no prior-signals query, no LLM call) and the deterministic score is kept as-is. Rationale: the overlay only adjusts ±30, so a signal far below the execution threshold can't be rescued, and skipping it removes most of the call volume.
+3. Option/futures resolution completes (strike, expiry, fyers symbol known)
+4. **Concurrency throttle** — the call acquires a slot from a module-level `asyncio.Semaphore` capped at `settings.ai_confidence_max_concurrency` (default 6). A candle-close burst is serialized into waves rather than fanning out all at once. `gemini-3.5-flash` on Vertex `global` uses **Dynamic Shared Quota** (no fixed RPM), so the morning storms were latency saturation (98 timeouts / 0 exceptions on 2026-06-02), not quota 429s; prod bursts peaked at ~11 concurrent calls with 14% timing out, so the cap sits below that.
+5. LLM call fires → confidence updated → signal persisted with `ai_*` fields
 
-**Never blocks a signal.** 8-second timeout; on failure the deterministic score is used as-is.
+**Never blocks a signal.** 25-second timeout (covers queue-wait + the call); on timeout or failure the deterministic score is used as-is.
 
 ## Input context sent to the LLM
 
@@ -87,8 +89,10 @@ Instructs the LLM to:
 
 | Scenario | Behaviour |
 |---|---|
-| LLM timeout (> 8s) | `Asyncio.TimeoutError` caught → deterministic score used, `ai_*` fields = null |
+| LLM timeout (> 25s, incl. queue-wait) | `Asyncio.TimeoutError` caught → deterministic score used, `ai_*` fields = null |
 | Invalid JSON response | Logs warning → fallback SignalConfidence with adj=0 |
+| Raw confidence < `ai_confidence_min_confidence` (50) | Overlay skipped — no LLM call; deterministic score kept, `ai_*` fields = null |
+| Burst of concurrent signals | Throttled to `ai_confidence_max_concurrency` (5) in-flight; excess queue within the 25s budget |
 | `google_api_key` not set | Skips overlay entirely — no warning spam |
 | `ai_confidence_enabled = False` | Skips overlay entirely |
 | LLM returns adj that pushes below threshold | Signal still persisted (for study); `executable=False`, `blocked_reason="LLM downgrade"` |

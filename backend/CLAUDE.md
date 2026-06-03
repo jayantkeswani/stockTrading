@@ -99,7 +99,7 @@ Pydantic Settings loading from `.env`. Key groups:
 - **DB/Redis**: `DATABASE_URL`, `DATABASE_URL_SYNC`, `REDIS_URL`
 - **Fyers**: `FYERS_APP_ID`, `FYERS_SECRET_KEY`, `FYERS_REDIRECT_URI`, `FYERS_USERNAME`, `FYERS_PIN`, `FYERS_TOTP_SECRET`
 - **Trading**: `CAPITAL`, `MAX_DAILY_DRAWDOWN_PCT`, `MAX_RISK_PER_TRADE_PCT`, `MAX_TRADES_PER_DAY`
-- **AI**: `GOOGLE_API_KEY` (AI Studio), `GCP_PROJECT_ID` (Vertex AI, takes precedence), `VERTEX_AI_LOCATION` (default "global"), `RESEARCH_LLM_MODEL` (flash), `RESEARCH_LLM_MODEL_PRO` (pro — for briefing, Stage 3, synthesis), `AI_CONFIDENCE_ENABLED`, `AI_CONFIDENCE_TIMEOUT_SECONDS` (25)
+- **AI**: `GOOGLE_API_KEY` (AI Studio), `GCP_PROJECT_ID` (Vertex AI, takes precedence), `VERTEX_AI_LOCATION` (default "global"), `RESEARCH_LLM_MODEL` (flash), `RESEARCH_LLM_MODEL_PRO` (pro — for briefing, Stage 3, synthesis), `AI_CONFIDENCE_ENABLED`, `AI_CONFIDENCE_TIMEOUT_SECONDS` (25), `AI_CONFIDENCE_MIN_CONFIDENCE` (50 — skip the overlay below this raw confidence), `AI_CONFIDENCE_MAX_CONCURRENCY` (6 — cap simultaneous overlay LLM calls; sized below the observed ~11-concurrent Vertex DSQ saturation point)
 - **Telegram**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_IDS` (comma-separated), `TELEGRAM_ENABLED` (set False to disable all Telegram I/O — single kill switch for local dev alongside production). `settings.telegram_chat_id_set` property parses into a `set[str]`
 - **Market Simulator**: `MARKET_MODE` (`"live"` default, `"simulated"` for offline testing), `SIMULATOR_URL` (`http://localhost:8787`)
 - **Version**: `APP_VERSION` (semver tag set by deploy pipeline), `DEPLOYED_AT`
@@ -801,7 +801,8 @@ All extend `BaseResearchAgent` (`agents/base.py`), return `AgentResult(findings:
 - Per-strategy prompts (`_SYSTEM_PROMPTS` / `_USER_PROMPT_TEMPLATES` keyed by strategy name)
 - Sends full indicator JSON context + up to 5 prior signals today for same symbol+strategy
 - 25s timeout; never blocks signal on failure; controlled by `settings.ai_confidence_enabled`
-- Per-symbol 5-min cooldown in strategy_runner prevents rate-limit storms
+- **Confidence floor** (`settings.ai_confidence_min_confidence`, default 50): `score_signal` returns `_FALLBACK` without calling the LLM when raw confidence is below the floor (the ±30 overlay can't rescue a far-below-execution signal). `strategy_runner._run_ai_confidence_overlay` enforces the same floor *before* its prior-signals DB query, so weak signals skip all overlay work. Cuts call volume — only signals worth executing get an LLM call.
+- **Concurrency throttle** (`settings.ai_confidence_max_concurrency`, default 6): a lazily-created module-level `asyncio.Semaphore` (`_get_llm_semaphore`) caps simultaneous overlay LLM calls. A candle-close burst (many symbols firing signals on the same close — peaked at ~11 concurrent calls in prod) is serialized into waves instead of fanning out all at once. `gemini-3.5-flash` on Vertex `global` uses **Dynamic Shared Quota** (no fixed RPM to provision), so the morning storms were latency saturation, not 429s (98 timeouts / 0 exceptions on 2026-06-02) — the cap is sized below the ~11-concurrent saturation point. The 25s budget covers queue-wait + the call.
 - Adjustment scale: -30 to -20 = fundamental flaw; -10 to +10 = normal; +20 to +30 = exceptional
 - SKIP suggested when adjustment ≤ -20
 - Uses `response_schema=_SIGNAL_CONFIDENCE_SCHEMA` for structured output
