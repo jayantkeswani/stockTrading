@@ -86,10 +86,10 @@ export function MobilePnlPill() {
     <>
       <button
         onClick={() => setDrawerOpen(true)}
-        className={`text-[13px] font-mono px-2 py-1 rounded border border-border bg-bg-tertiary flex items-center gap-1 ${pnlColor(pnl)}`}
+        className={`text-[13px] font-mono px-2 py-1 rounded border border-border bg-bg-tertiary flex items-center gap-1 shrink-0 whitespace-nowrap ${pnlColor(pnl)}`}
       >
         {label && <span className="text-text-muted">{label}</span>}
-        <span>{pnl >= 0 ? "+" : ""}{formatINR(pnl)}</span>
+        <span className="whitespace-nowrap">{pnl >= 0 ? "+" : ""}{formatINR(pnl)}</span>
         <span className="text-text-muted text-[10px]">▾</span>
       </button>
 

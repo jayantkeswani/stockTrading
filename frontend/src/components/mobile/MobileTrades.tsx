@@ -170,9 +170,13 @@ export function MobileTrades({ refreshKey }: { refreshKey?: number }) {
   }, [range, effectiveMode, isShadow, isManual, refreshKey]);
 
   const summary = useMemo(() => {
-    const total = trades.reduce((s, t) => s + (showNetPnL && t.net_pnl != null ? Number(t.net_pnl) : (t.pnl ?? 0)), 0);
-    const wins = trades.filter((t) => (t.pnl ?? 0) > 0).length;
-    const losses = trades.filter((t) => (t.pnl ?? 0) < 0).length;
+    // Coerce with Number(): the backend may serialize pnl/net_pnl as strings
+    // (Decimal), and `0 + "2125.00"` string-concatenates → the summed total
+    // renders as ₹0.00 even though per-trade cards (which Number-coerce via
+    // formatINR) look correct.
+    const total = trades.reduce((s, t) => s + (showNetPnL && t.net_pnl != null ? Number(t.net_pnl) : Number(t.pnl ?? 0)), 0);
+    const wins = trades.filter((t) => Number(t.pnl ?? 0) > 0).length;
+    const losses = trades.filter((t) => Number(t.pnl ?? 0) < 0).length;
     const rate = wins + losses > 0 ? Math.round((wins / (wins + losses)) * 100) : 0;
     return { total, wins, losses, rate, count: trades.length };
   }, [trades, showNetPnL]);

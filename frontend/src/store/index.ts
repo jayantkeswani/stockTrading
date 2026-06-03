@@ -163,6 +163,8 @@ interface AppState {
   setScannerShowExpired: (v: boolean) => void;
   scannerMinConfidence: number;
   setScannerMinConfidence: (v: number) => void;
+  scannerStrategy: string;
+  setScannerStrategy: (v: string) => void;
 
   // Signals page filters (persisted)
   signalsMinConfidence: number;
@@ -183,6 +185,10 @@ interface AppState {
   // Mobile-only theme (persisted) — desktop is always dark
   mobileTheme: "dark" | "light";
   setMobileTheme: (t: "dark" | "light") => void;
+
+  // Mobile active tab (persisted) — restored on refresh
+  mobileTab: "signals" | "positions" | "watchlist" | "trades";
+  setMobileTab: (t: "signals" | "positions" | "watchlist" | "trades") => void;
 
   // UI
   selectedSymbol: string;
@@ -414,6 +420,8 @@ export const useStore = create<AppState>()(
       setScannerShowExpired: (v) => set({ scannerShowExpired: v }),
       scannerMinConfidence: 0,
       setScannerMinConfidence: (v) => set({ scannerMinConfidence: v }),
+      scannerStrategy: "",
+      setScannerStrategy: (v) => set({ scannerStrategy: v }),
 
       // Signals page filters
       signalsMinConfidence: 0,
@@ -433,6 +441,9 @@ export const useStore = create<AppState>()(
 
       mobileTheme: "dark",
       setMobileTheme: (t) => set({ mobileTheme: t }),
+
+      mobileTab: "signals",
+      setMobileTab: (t) => set({ mobileTab: t }),
 
       selectedSymbol: "NIFTY",
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
@@ -463,6 +474,7 @@ export const useStore = create<AppState>()(
         scannerShowExecuted: state.scannerShowExecuted,
         scannerShowExpired: state.scannerShowExpired,
         scannerMinConfidence: state.scannerMinConfidence,
+        scannerStrategy: state.scannerStrategy,
         signalsMinConfidence: state.signalsMinConfidence,
         signalsPeriodLabel: state.signalsPeriodLabel,
         signalsPeriodStart: state.signalsPeriodStart,
@@ -471,6 +483,7 @@ export const useStore = create<AppState>()(
         signalsHideInformational: state.signalsHideInformational,
         positionsMinConfidence: state.positionsMinConfidence,
         mobileTheme: state.mobileTheme,
+        mobileTab: state.mobileTab,
       }),
     }
   )

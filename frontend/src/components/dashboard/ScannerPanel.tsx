@@ -46,7 +46,7 @@ function formatSignalTime(isoString: string): string {
 }
 
 export function ScannerPanel() {
-  const { signals, updateSignal, removeSignal, scannerMinConfidence, setScannerMinConfidence, scannerShowExecuted, setScannerShowExecuted, scannerShowExpired, setScannerShowExpired } = useStore(useShallow((s) => ({
+  const { signals, updateSignal, removeSignal, scannerMinConfidence, setScannerMinConfidence, scannerShowExecuted, setScannerShowExecuted, scannerShowExpired, setScannerShowExpired, scannerStrategy, setScannerStrategy } = useStore(useShallow((s) => ({
     signals: s.signals,
     updateSignal: s.updateSignal,
     removeSignal: s.removeSignal,
@@ -56,6 +56,8 @@ export function ScannerPanel() {
     setScannerShowExecuted: s.setScannerShowExecuted,
     scannerShowExpired: s.scannerShowExpired,
     setScannerShowExpired: s.setScannerShowExpired,
+    scannerStrategy: s.scannerStrategy,
+    setScannerStrategy: s.setScannerStrategy,
   })));
   const [searchQuery, setSearchQuery] = useState("");
   const today = isoDateIST(new Date());
@@ -70,9 +72,13 @@ export function ScannerPanel() {
   const confFiltered = scannerMinConfidence > 0
     ? allMatching.filter((s) => s.confidence != null && Number(s.confidence) >= scannerMinConfidence)
     : allMatching;
-  const pendingSignals = searchQuery
-    ? confFiltered.filter((s) => s.symbol.toLowerCase().includes(searchQuery.toLowerCase()))
+  const strategies = Array.from(new Set(allMatching.map((s) => s.strategy_name))).sort();
+  const stratFiltered = scannerStrategy
+    ? confFiltered.filter((s) => s.strategy_name === scannerStrategy)
     : confFiltered;
+  const pendingSignals = searchQuery
+    ? stratFiltered.filter((s) => s.symbol.toLowerCase().includes(searchQuery.toLowerCase()))
+    : stratFiltered;
 
   const [execSignal, setExecSignal] = useState<Signal | null>(null);
   const [execError, setExecError] = useState<string | null>(null);
@@ -123,6 +129,18 @@ export function ScannerPanel() {
               </button>
             )}
           </div>
+          <div className="w-px h-3 bg-border" />
+          <select
+            value={scannerStrategy}
+            onChange={(e) => setScannerStrategy(e.target.value)}
+            aria-label="Filter by strategy"
+            className="text-[10px] font-mono bg-bg-tertiary border border-border/60 rounded px-1.5 py-0.5 text-text-primary focus:outline-none focus:border-accent/40"
+          >
+            <option value="">All strategies</option>
+            {strategies.map((s) => (
+              <option key={s} value={s}>{STRATEGY_LABELS[s] ?? s}</option>
+            ))}
+          </select>
           <div className="w-px h-3 bg-border" />
           <button
             onClick={() => setScannerShowExecuted(!scannerShowExecuted)}

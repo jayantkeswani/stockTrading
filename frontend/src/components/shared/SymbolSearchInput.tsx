@@ -19,9 +19,12 @@ interface Props {
   onSelect: (result: SymbolResult) => void;
   placeholder?: string;
   segmentFilter?: string;
+  /** Where the suggestions popup opens. "up" (default) suits a bottom-placed
+   *  input; "down" suits an input placed at the top of a panel/list. */
+  direction?: "up" | "down";
 }
 
-export function SymbolSearchInput({ onSelect, placeholder = "search symbols...", segmentFilter }: Props) {
+export function SymbolSearchInput({ onSelect, placeholder = "search symbols...", segmentFilter, direction = "up" }: Props) {
   const [inputValue, setInputValue] = useState("");
   const [suggestions, setSuggestions] = useState<SymbolResult[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -65,8 +68,10 @@ export function SymbolSearchInput({ onSelect, placeholder = "search symbols...",
     setShowSuggestions(false);
   };
 
+  const popPos = direction === "down" ? "top-full mt-1" : "bottom-full mb-1";
+
   return (
-    <div className="px-2 py-1.5 border-t border-border relative">
+    <div className={`px-2 py-1.5 relative ${direction === "down" ? "border-b" : "border-t"} border-border`}>
       <input
         type="text"
         value={inputValue}
@@ -82,11 +87,11 @@ export function SymbolSearchInput({ onSelect, placeholder = "search symbols...",
       )}
 
       {showSuggestions && (filteredOut ? (
-        <div className="absolute left-2 right-2 bottom-full mb-1 bg-bg-secondary border border-border rounded shadow-lg z-50 px-2 py-1.5">
+        <div className={`absolute left-2 right-2 ${popPos} bg-bg-secondary border border-border rounded shadow-lg z-50 px-2 py-1.5`}>
           <span className="text-[10px] font-mono text-loss">Only equity stocks can be added here</span>
         </div>
       ) : suggestions.length > 0 && (
-        <div className="absolute left-2 right-2 bottom-full mb-1 bg-bg-secondary border border-border rounded shadow-lg max-h-[200px] overflow-y-auto z-50">
+        <div className={`absolute left-2 right-2 ${popPos} bg-bg-secondary border border-border rounded shadow-lg max-h-[200px] overflow-y-auto z-50`}>
           {suggestions.map((s) => (
             <button
               key={s.symbol}

@@ -6,6 +6,7 @@ import { formatINR, formatTime, startOfDayIST } from "@/lib/formatters";
 import { STRATEGY_LABELS, STATUS_COLORS } from "@/lib/constants";
 import type { Signal } from "@/lib/types";
 import { SignalHistoryPanel } from "@/components/signals/SignalHistoryPanel";
+import { addToPersonalWatchlist } from "@/lib/watchlistAdd";
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
 
@@ -76,7 +77,24 @@ function GlanceCell({ k, v, cls }: { k: string; v: string; cls?: string }) {
 function SignalCard({ signal }: { signal: Signal }) {
   const [open, setOpen] = useState(false);
   const toggle = () => setOpen((o) => !o);
+  const [watchStatus, setWatchStatus] = useState<"idle" | "adding" | "done" | "error">("idle");
   const isUpdated = (signal.update_count ?? 0) > 0;
+
+  const handleWatch = async () => {
+    if (watchStatus !== "idle") return;
+    setWatchStatus("adding");
+    const isFuture = signal.instrument_type === "FUTURE";
+    const optionType = signal.signal_type === "BUY_CE" ? "CE" : isFuture ? null : "PE";
+    const ok = await addToPersonalWatchlist({
+      fyersSymbol: signal.fyers_futures_symbol || signal.fyers_option_symbol || null,
+      symbol: signal.symbol,
+      optionType,
+      strikePrice: signal.strike_price,
+      expiryDate: signal.expiry_date ?? null,
+    }).catch(() => false);
+    setWatchStatus(ok ? "done" : "error");
+    setTimeout(() => setWatchStatus("idle"), ok ? 2000 : 2500);
+  };
   const ind = (signal.indicators ?? {}) as Record<string, unknown>;
   const confFactors = ind.confidence_factors as Record<string, number> | undefined;
   const supports = ind.ai_key_supports as string[] | undefined;
@@ -97,9 +115,6 @@ function SignalCard({ signal }: { signal: Signal }) {
             {signal.is_permanent_watchlist && (
               <span className="text-[9px] font-mono px-1 py-px rounded border border-accent/40 text-accent/70">P</span>
             )}
-            <span className={`text-[9px] font-mono px-1 py-px rounded ${STATUS_COLORS[signal.status] || ""}`}>
-              {signal.status}
-            </span>
           </div>
           <div className="text-[11px] font-mono text-text-muted mt-0.5 truncate">
             {signal.instrument_type === "OPTION" && signal.strike_price > 0 ? `${signal.strike_price} · ` : "FUT · "}
@@ -107,9 +122,12 @@ function SignalCard({ signal }: { signal: Signal }) {
           </div>
         </div>
         {isUpdated && (
-          <span className="text-[10px] font-mono px-1.5 py-px rounded bg-accent/15 text-accent border border-accent/30 shrink-0">↻ Updated</span>
+          <span title="Updated (deduped/revised)" className="text-[11px] font-mono px-1 py-px rounded bg-accent/15 text-accent border border-accent/30 shrink-0 leading-none">↻</span>
         )}
-        <span className={`text-text-muted text-[13px] transition-transform ${open ? "rotate-180" : ""}`}>▼</span>
+        <span className={`text-[9px] font-mono px-1 py-px rounded shrink-0 ${STATUS_COLORS[signal.status] || ""}`}>
+          {signal.status}
+        </span>
+        <span className={`text-text-muted text-[13px] transition-transform shrink-0 ${open ? "rotate-180" : ""}`}>▼</span>
       </button>
 
       {/* Glance metrics */}
@@ -126,6 +144,16 @@ function SignalCard({ signal }: { signal: Signal }) {
 
       {open && (
         <div className="px-3 py-2.5 border-t border-border bg-bg-primary animate-fade-in">
+          <button
+            onClick={handleWatch}
+            className={`w-full mb-3 text-[12px] font-mono py-1.5 rounded border ${
+              watchStatus === "done" ? "border-profit/30 text-profit bg-profit/10"
+                : watchStatus === "error" ? "border-loss/30 text-loss bg-loss/10"
+                : "border-border bg-bg-tertiary text-text-secondary"
+            }`}
+          >
+            {watchStatus === "adding" ? "Adding…" : watchStatus === "done" ? "✓ Added to watchlist" : watchStatus === "error" ? "Failed" : "+ Watch"}
+          </button>
           {signal.ai_action && signal.ai_action !== "PROCEED" && (
             <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
               signal.ai_action === "RECONSIDER" ? "bg-loss/10 text-loss border-loss/30" : "bg-warning/10 text-warning border-warning/30"
@@ -195,10 +223,12 @@ export function MobileSignals({ refreshKey }: { refreshKey?: number }) {
     scannerShowExecuted, setScannerShowExecuted,
     scannerShowExpired, setScannerShowExpired,
     scannerMinConfidence, setScannerMinConfidence,
+    scannerStrategy, setScannerStrategy,
   } = useStore(useShallow((s) => ({
     scannerShowExecuted: s.scannerShowExecuted, setScannerShowExecuted: s.setScannerShowExecuted,
     scannerShowExpired: s.scannerShowExpired, setScannerShowExpired: s.setScannerShowExpired,
     scannerMinConfidence: s.scannerMinConfidence, setScannerMinConfidence: s.setScannerMinConfidence,
+    scannerStrategy: s.scannerStrategy, setScannerStrategy: s.setScannerStrategy,
   })));
   const liveSignals = useStore((s) => s.signals); // WebSocket-fed (signal:new / signal:updated)
 
@@ -240,11 +270,14 @@ export function MobileSignals({ refreshKey }: { refreshKey?: number }) {
     );
   }, [fetched, liveSignals]);
 
+  const strategies = Array.from(new Set(merged.map((s) => s.strategy_name))).sort();
+
   const displayed = merged.filter((s) => {
     if (s.status === "PENDING") { /* always shown */ }
     else if (s.status === "EXECUTED") { if (!scannerShowExecuted) return false; }
     else if (s.status === "EXPIRED") { if (!scannerShowExpired) return false; }
     else return false; // REJECTED etc. hidden
+    if (scannerStrategy && s.strategy_name !== scannerStrategy) return false;
     if (scannerMinConfidence > 0 && (s.confidence == null || Number(s.confidence) < scannerMinConfidence)) return false;
     return true;
   });
@@ -264,7 +297,18 @@ export function MobileSignals({ refreshKey }: { refreshKey?: number }) {
             {scannerMinConfidence > 0 ? `${scannerMinConfidence}%` : "any"}
           </span>
         </label>
-        <div className="flex gap-1.5">
+        <div className="flex gap-1.5 items-center">
+          <select
+            value={scannerStrategy}
+            onChange={(e) => setScannerStrategy(e.target.value)}
+            aria-label="Filter by strategy"
+            className="text-[12px] font-mono px-2 py-1 rounded border bg-bg-tertiary text-text-secondary border-border focus:outline-none focus:border-accent/50"
+          >
+            <option value="">All strategies</option>
+            {strategies.map((s) => (
+              <option key={s} value={s}>{STRATEGY_LABELS[s] ?? s}</option>
+            ))}
+          </select>
           <button
             onClick={() => setScannerShowExecuted(!scannerShowExecuted)}
             className={`text-[12px] font-mono px-2.5 py-1 rounded border ${

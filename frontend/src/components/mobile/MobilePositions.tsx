@@ -7,6 +7,7 @@ import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
 import { livePositionPnl } from "@/lib/positionPnl";
+import { addToPersonalWatchlist } from "@/lib/watchlistAdd";
 import type { Position, Trade } from "@/lib/types";
 
 function formatISTTime(iso: string | null): string {
@@ -51,9 +52,24 @@ function OpenPositionCard({ pos, prices, isShadow, onClose }: {
   onClose: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [watchStatus, setWatchStatus] = useState<"idle" | "adding" | "done" | "error">("idle");
   const isFutures = !pos.option_type;
   const { currentPrice, pnl, pnlPct, slDistance: slDist, isShort } = livePositionPnl(pos, prices);
   const lat = formatLatency(pos.opened_at, pos.signal_generated_at);
+
+  const handleWatch = async () => {
+    if (watchStatus !== "idle") return;
+    setWatchStatus("adding");
+    const ok = await addToPersonalWatchlist({
+      fyersSymbol: pos.fyers_option_symbol || null,
+      symbol: pos.symbol,
+      optionType: pos.option_type || null,
+      strikePrice: pos.strike_price,
+      expiryDate: pos.expiry_date ?? null,
+    }).catch(() => false);
+    setWatchStatus(ok ? "done" : "error");
+    setTimeout(() => setWatchStatus("idle"), ok ? 2000 : 2500);
+  };
 
   return (
     <div className="rounded-lg border border-border bg-bg-secondary mb-1.5 overflow-hidden">
@@ -101,14 +117,26 @@ function OpenPositionCard({ pos, prices, isShadow, onClose }: {
             <KV label="Margin" value={pos.margin_required ? formatINR(Number(pos.margin_required)) : "—"} />
             <KV label="Conf" value={pos.signal_confidence != null ? String(pos.signal_confidence) : "—"} cls="text-accent" />
           </div>
-          {!isShadow && (
+          <div className="flex gap-2 mt-3">
             <button
-              onClick={() => onClose(pos.id)}
-              className="w-full mt-3 text-[12px] font-mono py-1.5 rounded bg-loss/10 text-loss border border-loss/25"
+              onClick={handleWatch}
+              className={`flex-1 text-[12px] font-mono py-1.5 rounded border ${
+                watchStatus === "done" ? "border-profit/30 text-profit bg-profit/10"
+                  : watchStatus === "error" ? "border-loss/30 text-loss bg-loss/10"
+                  : "border-border bg-bg-tertiary text-text-secondary"
+              }`}
             >
-              Close Position
+              {watchStatus === "adding" ? "Adding…" : watchStatus === "done" ? "✓ Added" : watchStatus === "error" ? "Failed" : "+ Watch"}
             </button>
-          )}
+            {!isShadow && (
+              <button
+                onClick={() => onClose(pos.id)}
+                className="flex-1 text-[12px] font-mono py-1.5 rounded bg-loss/10 text-loss border border-loss/25"
+              >
+                Close Position
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -117,9 +145,24 @@ function OpenPositionCard({ pos, prices, isShadow, onClose }: {
 
 function ClosedTradeCard({ t }: { t: Trade }) {
   const [open, setOpen] = useState(false);
+  const [watchStatus, setWatchStatus] = useState<"idle" | "adding" | "done" | "error">("idle");
   const isFutures = !t.option_type;
   const long = t.side === "BUY";
   const lat = formatLatency(t.entry_time, t.signal_snapshot?.generated_at ?? null);
+
+  const handleWatch = async () => {
+    if (watchStatus !== "idle") return;
+    setWatchStatus("adding");
+    const ok = await addToPersonalWatchlist({
+      fyersSymbol: null,
+      symbol: t.symbol,
+      optionType: t.option_type || null,
+      strikePrice: t.strike_price,
+      expiryDate: t.expiry_date ?? null,
+    }).catch(() => false);
+    setWatchStatus(ok ? "done" : "error");
+    setTimeout(() => setWatchStatus("idle"), ok ? 2000 : 2500);
+  };
   return (
     <div className="rounded-lg border border-border bg-bg-secondary mb-1.5 overflow-hidden">
       <button onClick={() => setOpen((o) => !o)} className="w-full px-3 py-2.5 text-left">
@@ -144,16 +187,28 @@ function ClosedTradeCard({ t }: { t: Trade }) {
         </div>
       </button>
       {open && (
-        <div className="px-3 py-2.5 border-t border-border bg-bg-primary animate-fade-in grid grid-cols-3 gap-y-2.5 gap-x-3">
-          <KV label="Side" value={t.side} />
-          <KV label="Lots / Qty" value={`${t.lots}L (${t.quantity})`} />
-          <KV label="Net P&L" value={t.net_pnl != null ? formatINR(Number(t.net_pnl)) : "—"} cls={pnlColor(t.net_pnl ?? 0)} />
-          <KV label="Entry → Exit" value={`${formatISTTime(t.entry_time)} – ${formatISTTime(t.exit_time)}`} />
-          <KV label="Fill lat" value={lat ?? "—"} cls="text-accent" />
-          <KV label="Margin" value={t.margin_required ? formatINR(Number(t.margin_required)) : "—"} />
-          <KV label="Strategy" value={STRATEGY_LABELS[t.strategy_name] || t.strategy_name} />
-          <KV label="Conf" value={t.signal_confidence != null ? String(t.signal_confidence) : "—"} cls="text-accent" />
-          <KV label="P&L %" value={t.pnl_percent != null ? formatPercent(t.pnl_percent) : "—"} cls={pnlColor(t.pnl ?? 0)} />
+        <div className="px-3 py-2.5 border-t border-border bg-bg-primary animate-fade-in">
+          <div className="grid grid-cols-3 gap-y-2.5 gap-x-3">
+            <KV label="Side" value={t.side} />
+            <KV label="Lots / Qty" value={`${t.lots}L (${t.quantity})`} />
+            <KV label="Net P&L" value={t.net_pnl != null ? formatINR(Number(t.net_pnl)) : "—"} cls={pnlColor(t.net_pnl ?? 0)} />
+            <KV label="Entry → Exit" value={`${formatISTTime(t.entry_time)} – ${formatISTTime(t.exit_time)}`} />
+            <KV label="Fill lat" value={lat ?? "—"} cls="text-accent" />
+            <KV label="Margin" value={t.margin_required ? formatINR(Number(t.margin_required)) : "—"} />
+            <KV label="Strategy" value={STRATEGY_LABELS[t.strategy_name] || t.strategy_name} />
+            <KV label="Conf" value={t.signal_confidence != null ? String(t.signal_confidence) : "—"} cls="text-accent" />
+            <KV label="P&L %" value={t.pnl_percent != null ? formatPercent(t.pnl_percent) : "—"} cls={pnlColor(t.pnl ?? 0)} />
+          </div>
+          <button
+            onClick={handleWatch}
+            className={`w-full mt-3 text-[12px] font-mono py-1.5 rounded border ${
+              watchStatus === "done" ? "border-profit/30 text-profit bg-profit/10"
+                : watchStatus === "error" ? "border-loss/30 text-loss bg-loss/10"
+                : "border-border bg-bg-tertiary text-text-secondary"
+            }`}
+          >
+            {watchStatus === "adding" ? "Adding…" : watchStatus === "done" ? "✓ Added" : watchStatus === "error" ? "Failed" : "+ Watch"}
+          </button>
         </div>
       )}
     </div>
@@ -253,7 +308,9 @@ export function MobilePositions({ refreshKey }: { refreshKey?: number }) {
     ? rawClosed.filter((t) => t.signal_confidence != null && Number(t.signal_confidence) >= positionsMinConfidence)
     : rawClosed;
 
-  const closedPnl = closedTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+  // Number(): backend may serialize pnl as a string (Decimal); a bare `+` would
+  // string-concatenate and render ₹0.00. Same reason as MobileTrades' summary.
+  const closedPnl = closedTrades.reduce((s, t) => s + Number(t.pnl ?? 0), 0);
 
   return (
     <div className="p-3">

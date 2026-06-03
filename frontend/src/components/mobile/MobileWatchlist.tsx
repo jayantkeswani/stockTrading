@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useStore } from "@/store";
-import { pnlColor } from "@/lib/formatters";
+import { useShallow } from "zustand/react/shallow";
+import { pnlColor, formatINR } from "@/lib/formatters";
+import { SYMBOLS } from "@/lib/constants";
+import { SymbolSearchInput } from "@/components/shared/SymbolSearchInput";
+import type { SymbolResult } from "@/components/shared/SymbolSearchInput";
+import { addToPersonalWatchlist } from "@/lib/watchlistAdd";
 import type { S5WatchlistItem } from "@/lib/types";
+
+type FilterKey = "personal" | "screened" | "pinned";
 
 function biasCls(bias: string) {
   return bias === "BULLISH" ? "bg-profit/15 text-profit"
@@ -29,21 +36,78 @@ function KV({ label, value, cls }: { label: string; value: string; cls?: string 
   );
 }
 
-function WatchlistCard({ item, prices }: { item: S5WatchlistItem; prices: Record<string, { ltp?: number; change_pct?: number | null }> }) {
+/** Personal-watchlist row (indices + custom items): tap the row to open the
+ *  chart, tap × to remove a custom item. Mirrors the desktop dashboard Watchlist. */
+function PersonalRow({ symbol, display, segment, price, removable, onOpenChart, onRemove }: {
+  symbol: string;
+  display: string;
+  segment?: string;
+  price?: { ltp?: number; change_pct?: number | null; change?: number | null };
+  removable?: boolean;
+  onOpenChart: (symbol: string, display?: string) => void;
+  onRemove?: (symbol: string) => void;
+}) {
+  const changePct = price?.change_pct ?? null;
+  return (
+    <div className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-border last:border-b-0">
+      <button onClick={() => onOpenChart(symbol, display)} className="flex items-center gap-1.5 text-left flex-1 min-w-0">
+        <span className="text-[14px] font-mono font-bold text-text-primary truncate">{display}</span>
+        {segment && segment !== "EQ" && segment !== "INDEX" && (
+          <span className={`text-[10px] font-mono font-semibold ${segment === "FUT" ? "text-warning" : "text-profit"}`}>{segment}</span>
+        )}
+      </button>
+      <div className="flex items-center gap-2 shrink-0">
+        <div className="text-right">
+          <div className="text-[13px] font-mono text-text-primary">{price?.ltp != null ? formatINR(price.ltp) : "—"}</div>
+          {changePct != null && (
+            <div className={`text-[10px] font-mono ${pnlColor(changePct)}`}>{changePct > 0 ? "+" : ""}{changePct.toFixed(2)}%</div>
+          )}
+        </div>
+        {removable && onRemove && (
+          <button onClick={() => onRemove(symbol)} aria-label={`Remove ${display}`} className="text-text-muted hover:text-loss text-[13px] leading-none px-1">×</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WatchlistCard({ item, prices, onOpenChart }: {
+  item: S5WatchlistItem;
+  prices: Record<string, { ltp?: number; change_pct?: number | null }>;
+  onOpenChart: (symbol: string, display?: string) => void;
+}) {
   const [open, setOpen] = useState(false);
+  const [watchStatus, setWatchStatus] = useState<"idle" | "adding" | "done" | "error">("idle");
   const p = prices[`NSE:${item.symbol}-EQ`] || prices[item.symbol];
   const ltp = p?.ltp ?? item.price;
   const changePct = p?.change_pct ?? null;
   const f = item.factors;
   const news = item.news;
 
+  const handleWatch = async () => {
+    if (watchStatus !== "idle") return;
+    setWatchStatus("adding");
+    // Screener rows are stock futures (S5) — add the futures contract (resolved
+    // by search since the screener item carries no Fyers symbol).
+    const ok = await addToPersonalWatchlist({
+      fyersSymbol: null, symbol: item.symbol, optionType: null, strikePrice: 0, expiryDate: null,
+    }).catch(() => false);
+    setWatchStatus(ok ? "done" : "error");
+    setTimeout(() => setWatchStatus("idle"), ok ? 2000 : 2500);
+  };
+
   return (
     <div className="rounded-lg border border-border bg-bg-secondary mb-1.5 overflow-hidden">
-      <button onClick={() => setOpen((o) => !o)} className="w-full px-3 py-2.5 text-left">
+      <div onClick={() => setOpen((o) => !o)} className="w-full px-3 py-2.5 text-left cursor-pointer">
         <div className="flex items-start gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[15px] font-mono font-bold text-text-primary">{item.symbol}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); onOpenChart(item.symbol); }}
+                className="text-[15px] font-mono font-bold text-text-primary hover:text-accent transition-colors"
+              >
+                {item.symbol}
+              </button>
               {item.manual && (
                 <span className="text-[9px] font-mono px-1 py-px rounded border border-accent/40 text-accent/70">P</span>
               )}
@@ -84,7 +148,7 @@ function WatchlistCard({ item, prices }: { item: S5WatchlistItem; prices: Record
           {news && <span>News <b className={news.score > 0.3 ? "text-profit" : news.score < -0.3 ? "text-loss" : "text-text-primary"}>
             {news.score > 0 ? "+" : ""}{news.score.toFixed(1)}</b></span>}
         </div>
-      </button>
+      </div>
 
       {open && (
         <div className="px-3 py-2.5 border-t border-border bg-bg-primary animate-fade-in">
@@ -121,6 +185,16 @@ function WatchlistCard({ item, prices }: { item: S5WatchlistItem; prices: Record
               )}
             </>
           )}
+          <button
+            onClick={handleWatch}
+            className={`w-full mt-3 text-[12px] font-mono py-1.5 rounded border ${
+              watchStatus === "done" ? "border-profit/30 text-profit bg-profit/10"
+                : watchStatus === "error" ? "border-loss/30 text-loss bg-loss/10"
+                : "border-border bg-bg-tertiary text-text-secondary"
+            }`}
+          >
+            {watchStatus === "adding" ? "Adding…" : watchStatus === "done" ? "✓ Added to watchlist" : watchStatus === "error" ? "Failed" : "+ Watch"}
+          </button>
         </div>
       )}
     </div>
@@ -128,19 +202,59 @@ function WatchlistCard({ item, prices }: { item: S5WatchlistItem; prices: Record
 }
 
 /**
- * Mobile Watchlist tab: the Strategy 5 intraday screener as expandable cards.
- * Collapsed: symbol, bias, LLM confidence, price/change, score + RS/ADR/ORB/
- * Gap/News strip. Expand: LLM reason, full factor grid, news headlines.
- * Fetches on mount + polls every 30s (with batch prices). Used by: MobileShell.
+ * Mobile Watchlist tab with three views (pills): **Personal · Screened · Pinned**.
+ * - Personal: the dashboard `/api/v1/watchlist` (5 indices + custom items) as
+ *   price rows, with a `SymbolSearchInput` to add any symbol and × to remove —
+ *   shares the `watchlistItems` store slice with the desktop dashboard.
+ * - Screened / Pinned: the Strategy-5 screener cards (`getIntradayFuturesWatchlist`),
+ *   split by `item.manual` (Pinned = permanently-pinned, Screened = the rest).
+ * Every view opens the chart overlay: tap a Personal row, or a screener card's
+ * symbol name, → `onOpenChart`. Polls screener (30s) + personal prices (15s).
+ * Used by: MobileShell.
  */
-export function MobileWatchlist({ refreshKey }: { refreshKey?: number }) {
+export function MobileWatchlist({ refreshKey, onOpenChart }: { refreshKey?: number; onOpenChart: (symbol: string, display?: string) => void }) {
   const [items, setItems] = useState<S5WatchlistItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterKey, setFilterKey] = useState<"all" | "screened" | "pinned">("all");
+  const [filterKey, setFilterKey] = useState<FilterKey>("personal");
   const [sortKey, setSortKey] = useState<"composite_score" | "rs_percentile">("composite_score");
   const prices = useStore((s) => s.prices);
   const updatePrice = useStore((s) => s.updatePrice);
+  const { watchlistItems, setWatchlistItems, addWatchlistItem, removeWatchlistItem } = useStore(useShallow((s) => ({
+    watchlistItems: s.watchlistItems,
+    setWatchlistItems: s.setWatchlistItems,
+    addWatchlistItem: s.addWatchlistItem,
+    removeWatchlistItem: s.removeWatchlistItem,
+  })));
 
+  const fetchPersonalPrices = useCallback(async (symbols: string[]) => {
+    if (symbols.length === 0) return;
+    try {
+      const data = await api.fetchBatchPrices(symbols);
+      for (const [sym, pd] of Object.entries(data)) updatePrice(sym, pd as never);
+    } catch { /* silent */ }
+  }, [updatePrice]);
+
+  // Personal watchlist (shared store slice) + its prices.
+  useEffect(() => {
+    let cancelled = false;
+    api.getWatchlist()
+      .then((data) => {
+        if (cancelled) return;
+        const list = data.items.map((i) => ({ symbol: i.symbol, display: i.display, segment: i.segment || "EQ" }));
+        setWatchlistItems(list);
+        fetchPersonalPrices(list.map((i) => i.symbol));
+      })
+      .catch(() => { /* silent */ });
+    return () => { cancelled = true; };
+  }, [setWatchlistItems, fetchPersonalPrices, refreshKey]);
+
+  useEffect(() => {
+    if (watchlistItems.length === 0) return;
+    const id = setInterval(() => fetchPersonalPrices(watchlistItems.map((i) => i.symbol)), 15_000);
+    return () => clearInterval(id);
+  }, [watchlistItems, fetchPersonalPrices]);
+
+  // S5 screener (Screened / Pinned).
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -148,50 +262,82 @@ export function MobileWatchlist({ refreshKey }: { refreshKey?: number }) {
         const data = await api.getIntradayFuturesWatchlist();
         if (cancelled) return;
         setItems(data);
-        if (data.length > 0) {
-          const fyers = data.map((d) => `NSE:${d.symbol}-EQ`);
-          const priceData = await api.fetchBatchPrices(fyers);
-          for (const [sym, pd] of Object.entries(priceData)) updatePrice(sym, pd as never);
-        }
+        if (data.length > 0) fetchPersonalPrices(data.map((d) => `NSE:${d.symbol}-EQ`));
       } catch { /* silent */ }
       finally { if (!cancelled) setLoading(false); }
     }
     load();
     const id = setInterval(load, 30_000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [updatePrice, refreshKey]);
+  }, [fetchPersonalPrices, refreshKey]);
 
-  const filtered = filterKey === "pinned" ? items.filter((i) => i.manual)
-    : filterKey === "screened" ? items.filter((i) => !i.manual)
-    : items;
-  const sorted = [...filtered].sort((a, b) =>
+  const handleAdd = useCallback(async (result: SymbolResult) => {
+    if (watchlistItems.some((c) => c.symbol === result.symbol)) return;
+    const item = { symbol: result.symbol, display: result.display, segment: result.segment };
+    addWatchlistItem(item);
+    fetchPersonalPrices([result.symbol]);
+    try {
+      await api.addToWatchlist({
+        symbol: result.symbol, display: result.display, segment: result.segment,
+        strike: result.strike || null, option_type: result.type || null, expiry: result.expiry,
+      });
+    } catch { /* optimistic add stands */ }
+  }, [watchlistItems, addWatchlistItem, fetchPersonalPrices]);
+
+  const handleRemove = useCallback(async (symbol: string) => {
+    removeWatchlistItem(symbol);
+    try { await api.removeFromWatchlist(symbol); } catch { /* ignore */ }
+  }, [removeWatchlistItem]);
+
+  const screenerItems = items.filter((i) => filterKey === "pinned" ? i.manual : !i.manual);
+  const sorted = [...screenerItems].sort((a, b) =>
     sortKey === "rs_percentile" ? b.factors.rs_percentile - a.factors.rs_percentile : b.composite_score - a.composite_score
   );
+
+  const PILLS: { key: FilterKey; label: string }[] = [
+    { key: "personal", label: "Personal" },
+    { key: "screened", label: "Screened" },
+    { key: "pinned", label: "Pinned" },
+  ];
 
   return (
     <div className="p-3">
       <div className="sticky top-0 z-10 -mx-3 px-3 pb-2 mb-2 bg-bg-primary border-b border-border flex items-center gap-1.5">
-        {(["all", "screened", "pinned"] as const).map((k) => (
+        {PILLS.map((p) => (
           <button
-            key={k}
-            onClick={() => setFilterKey(k)}
-            className={`text-[12px] font-mono px-2.5 py-1 rounded border capitalize ${
-              filterKey === k ? "bg-accent/10 text-accent border-accent/30" : "bg-bg-tertiary text-text-secondary border-border"
+            key={p.key}
+            onClick={() => setFilterKey(p.key)}
+            className={`text-[12px] font-mono px-2.5 py-1 rounded border ${
+              filterKey === p.key ? "bg-accent/10 text-accent border-accent/30" : "bg-bg-tertiary text-text-secondary border-border"
             }`}
-          >{k}</button>
+          >{p.label}</button>
         ))}
-        <button
-          onClick={() => setSortKey((s) => (s === "composite_score" ? "rs_percentile" : "composite_score"))}
-          className="ml-auto text-[12px] font-mono px-2.5 py-1 rounded border bg-bg-tertiary text-text-secondary border-border"
-        >Sort: {sortKey === "composite_score" ? "Score" : "RS"}</button>
+        {filterKey !== "personal" && (
+          <button
+            onClick={() => setSortKey((s) => (s === "composite_score" ? "rs_percentile" : "composite_score"))}
+            className="ml-auto text-[12px] font-mono px-2.5 py-1 rounded border bg-bg-tertiary text-text-secondary border-border"
+          >Sort: {sortKey === "composite_score" ? "Score" : "RS"}</button>
+        )}
       </div>
 
-      {loading ? (
+      {filterKey === "personal" ? (
+        <div className="rounded-lg border border-border bg-bg-secondary">
+          <SymbolSearchInput onSelect={handleAdd} placeholder="search symbols to add..." direction="down" />
+          {SYMBOLS.map((sym) => (
+            <PersonalRow key={sym} symbol={sym} display={sym} price={prices[sym]} onOpenChart={onOpenChart} />
+          ))}
+          {watchlistItems.map((it) => (
+            <PersonalRow key={it.symbol} symbol={it.symbol} display={it.display} segment={it.segment} price={prices[it.symbol]} removable onRemove={handleRemove} onOpenChart={onOpenChart} />
+          ))}
+        </div>
+      ) : loading ? (
         <div className="py-8 text-center text-text-muted text-[13px] font-mono">loading…</div>
       ) : sorted.length === 0 ? (
-        <div className="py-8 text-center text-text-muted text-[13px] font-mono">{items.length === 0 ? "no watchlist — run screener" : "no results"}</div>
+        <div className="py-8 text-center text-text-muted text-[13px] font-mono">
+          {filterKey === "pinned" ? "no pinned stocks" : items.length === 0 ? "no watchlist — run screener" : "no screened results"}
+        </div>
       ) : (
-        sorted.map((item) => <WatchlistCard key={item.symbol} item={item} prices={prices} />)
+        sorted.map((item) => <WatchlistCard key={item.symbol} item={item} prices={prices} onOpenChart={onOpenChart} />)
       )}
     </div>
   );
