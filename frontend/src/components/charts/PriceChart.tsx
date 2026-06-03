@@ -138,6 +138,18 @@ export function PriceChart({ fullHeight }: PriceChartProps) {
         timeVisible: tf !== "1D",
         secondsVisible: false,
         rightOffset: 5, // always show last candle with space to the right
+        // Axis tick labels render in IST. Without this, lightweight-charts'
+        // default formatter prints the UTC unix seconds as-is (the bottom-axis
+        // ticks showed UTC while the crosshair label showed IST).
+        tickMarkFormatter: (time: number, tickMarkType: number) => {
+          const d = new Date((time + IST_OFFSET) * 1000);
+          const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          // tickMarkType <= 2 (Year/Month/DayOfMonth) → date label; else time-of-day.
+          if (tf === "1D" || tickMarkType <= 2) {
+            return `${d.getUTCDate().toString().padStart(2,"0")} ${MONTHS[d.getUTCMonth()]}`;
+          }
+          return `${d.getUTCHours().toString().padStart(2,"0")}:${d.getUTCMinutes().toString().padStart(2,"0")}`;
+        },
       },
       handleScroll: { vertTouchDrag: false },
     });

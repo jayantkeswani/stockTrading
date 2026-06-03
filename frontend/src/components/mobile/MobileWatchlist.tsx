@@ -235,7 +235,10 @@ export function MobileWatchlist({ refreshKey, onOpenChart }: { refreshKey?: numb
     } catch { /* silent */ }
   }, [updatePrice]);
 
-  // Personal watchlist (shared store slice) + its prices.
+  // Personal watchlist (shared store slice) + its prices. The 5 indices are
+  // always shown, so they're fetched alongside the custom items — without this
+  // the indices have no price source after market close (WS is silent and the
+  // mobile shell has no getAllPrices poll like the desktop Header).
   useEffect(() => {
     let cancelled = false;
     api.getWatchlist()
@@ -243,15 +246,19 @@ export function MobileWatchlist({ refreshKey, onOpenChart }: { refreshKey?: numb
         if (cancelled) return;
         const list = data.items.map((i) => ({ symbol: i.symbol, display: i.display, segment: i.segment || "EQ" }));
         setWatchlistItems(list);
-        fetchPersonalPrices(list.map((i) => i.symbol));
+        fetchPersonalPrices([...SYMBOLS, ...list.map((i) => i.symbol)]);
       })
       .catch(() => { /* silent */ });
     return () => { cancelled = true; };
   }, [setWatchlistItems, fetchPersonalPrices, refreshKey]);
 
+  // Refresh personal prices every 15s (indices + custom items). Always runs —
+  // the indices need refreshing even when there are no custom items.
   useEffect(() => {
-    if (watchlistItems.length === 0) return;
-    const id = setInterval(() => fetchPersonalPrices(watchlistItems.map((i) => i.symbol)), 15_000);
+    const id = setInterval(
+      () => fetchPersonalPrices([...SYMBOLS, ...watchlistItems.map((i) => i.symbol)]),
+      15_000,
+    );
     return () => clearInterval(id);
   }, [watchlistItems, fetchPersonalPrices]);
 
