@@ -502,6 +502,7 @@ export const useStore = create<AppState>()(
         signalsStrategy: state.signalsStrategy,
         signalsHideInformational: state.signalsHideInformational,
         positionsMinConfidence: state.positionsMinConfidence,
+        intradayBias: state.intradayBias,
         mobileTheme: state.mobileTheme,
         mobileTab: state.mobileTab,
         watchlistFilter: state.watchlistFilter,

@@ -33,12 +33,13 @@ function BiasIndicator() {
 }
 
 export function Header() {
-  const { wsConnected, marketStatus, setMarketStatus, setAgentStatus, updatePrice } = useStore(useShallow((s) => ({
+  const { wsConnected, marketStatus, setMarketStatus, setAgentStatus, updatePrice, setIntradayBias } = useStore(useShallow((s) => ({
     wsConnected: s.wsConnected,
     marketStatus: s.marketStatus,
     setMarketStatus: s.setMarketStatus,
     setAgentStatus: s.setAgentStatus,
     updatePrice: s.updatePrice,
+    setIntradayBias: s.setIntradayBias,
   })));
   const [time, setTime] = useState("");
   const [deployedVersion, setDeployedVersion] = useState("");
@@ -103,6 +104,17 @@ export function Header() {
     const interval = setInterval(fetchStatus, 10000);
     return () => clearInterval(interval);
   }, [setMarketStatus, setAgentStatus, updatePrice]);
+
+  // Hydrate the NIFTY intraday bias from the cache once on mount (the persisted
+  // value covers refreshes; this covers a cold load and keeps it shown after
+  // close). The WebSocket `market:bias_update` keeps it live during the session.
+  useEffect(() => {
+    let stopped = false;
+    api.getIntradayBias().then((b) => {
+      if (!stopped && b) setIntradayBias(b);
+    }).catch(() => { /* API not running */ });
+    return () => { stopped = true; };
+  }, [setIntradayBias]);
 
   const handleStartFeed = useCallback(async () => {
     try {

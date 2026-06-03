@@ -1,4 +1,4 @@
-import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance } from "./types";
+import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance, IntradayBias } from "./types";
 
 function getApiBase(): string {
   if (typeof window === "undefined") return "http://localhost:8080";
@@ -52,6 +52,10 @@ export const api = {
     );
   },
   getMarketStatus: () => request(`/api/v1/market/status`),
+  getIntradayBias: (symbol = "NIFTY") =>
+    request<IntradayBias | null>(
+      `/api/v1/market/intraday-bias?symbol=${encodeURIComponent(symbol)}`
+    ),
   searchSymbols: (query: string) =>
     request<{ results: Array<{ symbol: string; display: string; short_name: string; segment: string; strike: number; type: string; ltp: number; expiry: string; lot_size: number }> }>(
       `/api/v1/market/symbols/search?q=${encodeURIComponent(query)}`

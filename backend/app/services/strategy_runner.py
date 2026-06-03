@@ -497,9 +497,11 @@ class StrategyRunner:
             try:
                 r = get_redis()
                 updated_at = now_ist().isoformat()
+                # 24h TTL so the last bias of the session stays fetchable after market
+                # close (the dashboard shows it, dimmed as stale via `updated_at`).
                 await r.setex(
                     f"indicator:intraday_bias:{symbol}",
-                    600,
+                    86400,
                     f"{intraday_bias.bias.value}|{intraday_bias.strength}|{intraday_bias.score:.4f}|{updated_at}",
                 )
                 await ws_manager.broadcast("market:bias_update", {

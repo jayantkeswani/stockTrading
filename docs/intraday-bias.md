@@ -55,13 +55,18 @@ By close: yesterday 0.10 → 0.04, gap 0.15 → 0.06. Dynamic factors grow propo
   → strategy_runner._build_market_context()
     → compute_intraday_bias(prev_day, candles_1m, vwap, current_price, global_cues, as_of, nifty_bias_score)
   → result stored in MarketContext.intraday_bias
-  → if INDEX: cached in Redis (indicator:intraday_bias:{symbol}, 600s TTL)
+  → if INDEX: cached in Redis (indicator:intraday_bias:{symbol}, 24h TTL)
              + broadcast via WS (market:bias_update)
   → if NIFTY: score cached as _last_nifty_bias_score for non-NIFTY symbols
 
-Frontend: useWebSocket.ts listens for market:bias_update (NIFTY only)
-        → Header.tsx displays "{bias} {strength}" (e.g. "BULLISH MODERATE")
+Frontend: useWebSocket.ts listens for market:bias_update (NIFTY only) → setIntradayBias
+        → Header.tsx / MobileStatusBar.tsx display "{bias} {strength}" (e.g. "BULLISH MODERATE")
+        → hydrated on cold load via GET /api/v1/market/intraday-bias (reads the Redis key)
+        → persisted in the Zustand store → survives refresh + stays shown after market close
+          (Header dims it at opacity-40 with a `~` when >5min stale, e.g. after close)
 ```
+
+The 24h Redis TTL (vs the candle cadence) is deliberate: the last bias of the session stays fetchable after market close so the dashboard keeps showing it (dimmed as stale via `updated_at`) instead of blanking.
 
 ### S5 Nifty Bias (single source of truth)
 

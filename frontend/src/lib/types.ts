@@ -228,6 +228,14 @@ export interface MarketStatus {
   fyers_connected: boolean;
 }
 
+export interface IntradayBias {
+  symbol: string;
+  bias: string;
+  strength: string;
+  score: number;
+  updated_at: string;
+}
+
 export interface AgentStatus {
   running: boolean;
   yolo_mode: boolean;

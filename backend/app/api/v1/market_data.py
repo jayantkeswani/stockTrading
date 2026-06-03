@@ -263,6 +263,41 @@ async def market_status():
     )
 
 
+class IntradayBiasResponse(BaseModel):
+    """Cached intraday bias for an index (matches the `market:bias_update` WS payload)."""
+
+    symbol: str
+    bias: str
+    strength: str
+    score: float
+    updated_at: str
+
+
+@router.get("/intraday-bias", response_model=IntradayBiasResponse | None)
+async def get_intraday_bias(symbol: str = Query("NIFTY")):
+    """Current cached intraday bias for an index (NIFTY by default).
+
+    Reads the `indicator:intraday_bias:{symbol}` Redis key (pipe-delimited
+    `bias|strength|score|updated_at`) that strategy_runner writes on each index
+    candle close (24h TTL). Lets the dashboard header / mobile status bar hydrate
+    the bias on a fresh load (before the first WS push) and keep showing the last
+    value after market close. Returns null when no bias has been computed.
+    """
+    from app.core.redis import get_redis
+
+    r = get_redis()
+    raw = await r.get(f"indicator:intraday_bias:{symbol}")
+    if not raw:
+        return None
+    try:
+        bias, strength, score, updated_at = raw.split("|")
+        return IntradayBiasResponse(
+            symbol=symbol, bias=bias, strength=strength, score=float(score), updated_at=updated_at
+        )
+    except (ValueError, AttributeError):
+        return None
+
+
 @router.post("/feed/start")
 async def start_data_feed():
     """Start the Fyers live data feed.

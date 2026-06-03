@@ -10,15 +10,18 @@ import type { MarketStatus } from "@/lib/types";
  * Thin status strip under the mobile header: market open/closed (+ DEAD ZONE),
  * the live NIFTY intraday bias, and India VIX — the phone equivalent of the
  * desktop `Header` top bar. The desktop Header polls `getMarketStatus` (and
- * isn't rendered on mobile), so this component owns that poll for the phone;
- * `intradayBias` arrives via the WebSocket (`market:bias_update`). Isolated so
- * its 15s poll + bias ticks re-render only this strip. Used by: MobileShell.
+ * isn't rendered on mobile), so this component owns that poll for the phone.
+ * `intradayBias` is hydrated from the cache once on mount (persisted across
+ * refreshes, stays shown after close) and kept live via the WebSocket
+ * (`market:bias_update`). Isolated so its 15s poll + bias ticks re-render only
+ * this strip. Used by: MobileShell.
  */
 export function MobileStatusBar() {
-  const { marketStatus, setMarketStatus, intradayBias } = useStore(useShallow((s) => ({
+  const { marketStatus, setMarketStatus, intradayBias, setIntradayBias } = useStore(useShallow((s) => ({
     marketStatus: s.marketStatus,
     setMarketStatus: s.setMarketStatus,
     intradayBias: s.intradayBias,
+    setIntradayBias: s.setIntradayBias,
   })));
 
   useEffect(() => {
@@ -33,6 +36,15 @@ export function MobileStatusBar() {
     const id = setInterval(fetchStatus, 15_000);
     return () => { stopped = true; clearInterval(id); };
   }, [setMarketStatus]);
+
+  // Hydrate the NIFTY bias from the cache once on mount; WS keeps it live.
+  useEffect(() => {
+    let stopped = false;
+    api.getIntradayBias().then((b) => {
+      if (!stopped && b) setIntradayBias(b);
+    }).catch(() => { /* API not running */ });
+    return () => { stopped = true; };
+  }, [setIntradayBias]);
 
   const biasColor = intradayBias?.bias === "BULLISH" ? "text-profit"
     : intradayBias?.bias === "BEARISH" ? "text-loss" : "text-text-muted";
