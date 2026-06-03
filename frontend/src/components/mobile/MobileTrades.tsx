@@ -118,14 +118,14 @@ function TradeCard({ t }: { t: Trade }) {
  * CLOSED trades only. Used by: MobileShell.
  */
 export function MobileTrades({ refreshKey }: { refreshKey?: number }) {
-  const { tradesViewMode, setTradesViewMode, showNetPnL, yoloProfiles } = useStore(useShallow((s) => ({
+  const { tradesViewMode, setTradesViewMode, showNetPnL, yoloProfiles, periodKey, setPeriodKey, customStart, customEnd, setMobileTradesCustom } = useStore(useShallow((s) => ({
     tradesViewMode: s.tradesViewMode, setTradesViewMode: s.setTradesViewMode,
     showNetPnL: s.showNetPnL, yoloProfiles: s.yoloProfiles,
+    periodKey: s.mobileTradesPeriod, setPeriodKey: s.setMobileTradesPeriod,
+    customStart: s.mobileTradesCustomStart, customEnd: s.mobileTradesCustomEnd,
+    setMobileTradesCustom: s.setMobileTradesCustom,
   })));
 
-  const [periodKey, setPeriodKey] = useState<PeriodKey>("today");
-  const [customStart, setCustomStart] = useState("");
-  const [customEnd, setCustomEnd] = useState("");
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -198,10 +198,10 @@ export function MobileTrades({ refreshKey }: { refreshKey?: number }) {
         </div>
         {periodKey === "custom" && (
           <div className="flex items-center gap-2">
-            <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)}
+            <input type="date" value={customStart} onChange={(e) => setMobileTradesCustom(e.target.value, customEnd)}
               className="text-[11px] font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary" />
             <span className="text-text-muted text-[11px]">→</span>
-            <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)}
+            <input type="date" value={customEnd} onChange={(e) => setMobileTradesCustom(customStart, e.target.value)}
               className="text-[11px] font-mono bg-bg-tertiary border border-border rounded px-2 py-1 text-text-primary" />
           </div>
         )}

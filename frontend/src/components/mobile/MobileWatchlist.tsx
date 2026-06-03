@@ -215,7 +215,8 @@ function WatchlistCard({ item, prices, onOpenChart }: {
 export function MobileWatchlist({ refreshKey, onOpenChart }: { refreshKey?: number; onOpenChart: (symbol: string, display?: string) => void }) {
   const [items, setItems] = useState<S5WatchlistItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterKey, setFilterKey] = useState<FilterKey>("personal");
+  const filterKey = useStore((s) => s.watchlistFilter);
+  const setFilterKey = useStore((s) => s.setWatchlistFilter);
   const [sortKey, setSortKey] = useState<"composite_score" | "rs_percentile">("composite_score");
   const prices = useStore((s) => s.prices);
   const updatePrice = useStore((s) => s.updatePrice);

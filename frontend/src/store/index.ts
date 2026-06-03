@@ -190,6 +190,17 @@ interface AppState {
   mobileTab: "signals" | "positions" | "watchlist" | "trades";
   setMobileTab: (t: "signals" | "positions" | "watchlist" | "trades") => void;
 
+  // Mobile Watchlist active pill (persisted)
+  watchlistFilter: "personal" | "screened" | "pinned";
+  setWatchlistFilter: (v: "personal" | "screened" | "pinned") => void;
+
+  // Mobile Trades period selector (persisted)
+  mobileTradesPeriod: "today" | "yesterday" | "week" | "30d" | "custom";
+  mobileTradesCustomStart: string;
+  mobileTradesCustomEnd: string;
+  setMobileTradesPeriod: (v: "today" | "yesterday" | "week" | "30d" | "custom") => void;
+  setMobileTradesCustom: (start: string, end: string) => void;
+
   // UI
   selectedSymbol: string;
   setSelectedSymbol: (symbol: string) => void;
@@ -445,6 +456,15 @@ export const useStore = create<AppState>()(
       mobileTab: "signals",
       setMobileTab: (t) => set({ mobileTab: t }),
 
+      watchlistFilter: "personal",
+      setWatchlistFilter: (v) => set({ watchlistFilter: v }),
+
+      mobileTradesPeriod: "today",
+      mobileTradesCustomStart: "",
+      mobileTradesCustomEnd: "",
+      setMobileTradesPeriod: (v) => set({ mobileTradesPeriod: v }),
+      setMobileTradesCustom: (start, end) => set({ mobileTradesCustomStart: start, mobileTradesCustomEnd: end }),
+
       selectedSymbol: "NIFTY",
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
       activeTimeframe: "5m",
@@ -484,6 +504,10 @@ export const useStore = create<AppState>()(
         positionsMinConfidence: state.positionsMinConfidence,
         mobileTheme: state.mobileTheme,
         mobileTab: state.mobileTab,
+        watchlistFilter: state.watchlistFilter,
+        mobileTradesPeriod: state.mobileTradesPeriod,
+        mobileTradesCustomStart: state.mobileTradesCustomStart,
+        mobileTradesCustomEnd: state.mobileTradesCustomEnd,
       }),
     }
   )
