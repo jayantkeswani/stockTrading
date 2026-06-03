@@ -190,6 +190,8 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
         </h2>
       </div>
 
+      <SymbolSearchInput onSelect={handleSelectSuggestion} placeholder="search symbols..." direction="down" />
+
       <div className="max-h-[300px] overflow-y-auto divide-y divide-border/30">
         {/* Default indices */}
         {SYMBOLS.map((symbol) => renderRow(symbol, symbol))}
@@ -199,8 +201,6 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
           renderRow(item.symbol, item.display, item.segment, true)
         )}
       </div>
-
-      <SymbolSearchInput onSelect={handleSelectSuggestion} placeholder="search symbols..." />
     </div>
   );
 }
