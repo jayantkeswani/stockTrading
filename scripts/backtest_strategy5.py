@@ -423,6 +423,12 @@ async def build_stock_vwap_series(
 
 # ── Exit simulator ──────────────────────────────────────────────────────
 
+# Optional numeric override for the invalidation trigger: when > 0, fire on an
+# opposing NIFTY bias whose |score| >= this value (instead of the STRONG/MODERATE
+# strength label). Lets the backtest test recalibrated band edges directly.
+_INVAL_SCORE_MIN = 0.0
+
+
 def simulate_exit(
     entry_price: float,
     stop_loss: float,
@@ -504,7 +510,11 @@ def simulate_exit(
                     (is_long and nb.bias == DayBias.BEARISH)
                     or (not is_long and nb.bias == DayBias.BULLISH)
                 )
-                if opposing and (not inval_strong_only or nb.strength == "STRONG"):
+                if _INVAL_SCORE_MIN > 0:
+                    trig = opposing and abs(nb.score) >= _INVAL_SCORE_MIN
+                else:
+                    trig = opposing and (not inval_strong_only or nb.strength == "STRONG")
+                if trig:
                     inval_count += 1
                 else:
                     inval_count = 0
@@ -1043,6 +1053,10 @@ def main():
                              "invalidation fires (quorum guard against retracements)")
     parser.add_argument("--inval-moderate", action="store_true",
                         help="Trigger on MODERATE+ opposing bias (default: STRONG only)")
+    parser.add_argument("--inval-score", type=float, default=0.0,
+                        help="Override the invalidation trigger: fire on opposing NIFTY bias "
+                             "with |score| >= this value (e.g. 0.25 = recalibrated MODERATE band). "
+                             "0 = use the STRONG/--inval-moderate strength label (default)")
     parser.add_argument("--inval-sweep", action="store_true",
                         help="Sweep invalidation persistence x quorum at --confidence")
     parser.add_argument("--source", choices=["signals", "shadow"], default="signals",
@@ -1052,6 +1066,7 @@ def main():
     args = parser.parse_args()
     end_date = args.end or args.start
     symbol_filter = args.symbols.split(",") if args.symbols else None
+    globals()["_INVAL_SCORE_MIN"] = args.inval_score
 
     async def _run():
         if args.inval_sweep:

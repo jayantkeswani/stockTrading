@@ -75,3 +75,42 @@ The exit ships as a **per-`YoloProfile` setting**, so it can run as a normal act
 - **Precedence**: checked after SL/target inside `_check_position`, so structural stops always win within a candle — invalidation only ever exits *earlier* than baseline (matches the backtest rule).
 - **Scope**: S5 only (momentum). The same trigger is deliberately NOT wired for S2 — see above.
 - **Validation plan**: enable on one profile (persist=3, quorum off), leave an identical-cap profile with it off, and compare realized exits over 2–3 weeks. Each signal already fans out one Trade+Position per active profile, so the two arms see the same signals.
+
+## Bias band recalibration & why the exit trigger stays strict
+
+Open question that prompted this: a ~−1% NIFTY day displays as only "MODERATE BEARISH" — should the trigger fire there? Pulled the real distribution to settle it on data, not feel.
+
+**NIFTY bias-score distribution** (20 trading days 2026-05-05→06-02, ~7,500 minutes recomputed via `build_index_bias_series`):
+
+| \|score\| | percentile | | current band | occupancy |
+|---|---|---|---|---|
+| 0.22 | p50 | | STRONG (≥0.50) | 8.8% |
+| 0.36 | p75 | | MODERATE (0.20–0.50) | 45.7% |
+| 0.49 | p90 | | NEUTRAL (<0.20) | 45.5% |
+| 0.55 | p95 | | | |
+
+STRONG (0.50) is *not* unreachable (8.8% of minutes; 17/20 days hit it). The real flaw is the two middle bands each swallowing ~46%. A −0.27 reading is ~p55 of \|score\| — a genuinely median-magnitude lean, so "MODERATE" is the honest label.
+
+**Proposed display bands** (Option A — finer granularity, anchored to percentiles; symmetric on \|score\|). **DISPLAY ONLY — not yet implemented:**
+
+| Band | \|score\| | ≈ occupancy |
+|---|---|---|
+| EXTREME | ≥ 0.55 | ~5% |
+| STRONG | 0.40–0.55 | ~14% |
+| MODERATE | 0.25–0.40 | ~24% |
+| MILD | 0.12–0.25 | ~20% |
+| NEUTRAL | < 0.12 | ~37% |
+
+**Critical finding — the invalidation TRIGGER must NOT follow the band relabel.** Backtested the exit at three trigger thresholds (`--inval-score`, persist=3, no quorum, conf≥70, 2026-04-29→06-02; baseline +156,310 / hit 53.5%):
+
+| trigger \|score\| ≥ | trades cut | savings | cost | **net Δ** | hit% |
+|---|---|---|---|---|---|
+| 0.25 (MODERATE) | 54 | +107,758 | −179,492 | **−71,734** | 45.1% |
+| 0.40 (STRONG-new) | 29 | +84,266 | −55,377 | **+28,890** | 50.7% |
+| 0.50 (STRONG-old) | 11 | +59,793 | 0 | **+59,793** | 53.5% |
+
+The edge is monotonic in strictness: looser trigger → cuts ~5× more trades → retracement cost dominates → net-negative at MODERATE. **Decision: the exit fires on a fixed numeric ≈0.50, decoupled from whatever the UI labels "STRONG".** Relabel the bands for humans freely; the trigger is a number. (Live confirmation: on the 06-03 whipsaw day the strict trigger correctly fired 0× — the only STRONG-bearish window was a 4-candle burst at 09:24–09:30 IST, before any S5 long was open.)
+
+**Coupled decisions if the bands are ever implemented** (see the bias-consumer impact map): (a) direction boundary 0.12 vs 0.20 — only affects soft confidence factors, hard gates need STRONG; (b) entry gates (S2 `is_blocked_by_bias`, S5's own `strength=="STRONG"` checks) — decide STRONG vs STRONG+EXTREME. Sites: `indicators/intraday_bias.py` (source), `strategy_2`/`strategy_5` gates, `trade_monitor._bias_opposes`, `strategy_runner` publish, `market_data.py` bias endpoint, frontend `Header`/`MobileStatusBar`/`signals page` (has its own hardcoded ±0.20), and both backtest scripts.
+
+Tooling: `scripts/backtest_strategy5.py --inval-score <t>` overrides the trigger to fire on opposing NIFTY bias with \|score\| ≥ t (0 = use the STRONG/`--inval-moderate` label).
