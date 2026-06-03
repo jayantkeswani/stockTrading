@@ -32,6 +32,12 @@ export interface YoloProfile {
   invalidation_persist?: number | null;
   invalidation_quorum?: boolean;
   invalidation_strong_only?: boolean;
+  // Execution-side filters (empty/absent = act on all signals). A profile only
+  // executes a signal whose strategy_name is in `strategies` (if non-empty) AND whose
+  // setup_type is in `setups` (if non-empty). Lets a full and a subset profile run
+  // side-by-side off one signal stream.
+  strategies?: string[];
+  setups?: string[];
 }
 
 export interface Position {

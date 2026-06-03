@@ -28,6 +28,8 @@ async def list_profiles():
             invalidation_persist=p.invalidation_persist,
             invalidation_quorum=p.invalidation_quorum,
             invalidation_strong_only=p.invalidation_strong_only,
+            strategies=list(p.strategies),
+            setups=list(p.setups),
         )
         for p in profiles
     ]
@@ -36,7 +38,10 @@ async def list_profiles():
 @router.post("", response_model=YoloProfileResponse, status_code=201)
 async def create_profile(body: YoloProfileCreate):
     """Create a new YOLO profile."""
-    profile = await svc.create_profile(name=body.name, profit_cap=body.profit_cap)
+    profile = await svc.create_profile(
+        name=body.name, profit_cap=body.profit_cap,
+        strategies=body.strategies, setups=body.setups,
+    )
     return YoloProfileResponse(
         id=profile.id,
         name=profile.name,
@@ -47,6 +52,8 @@ async def create_profile(body: YoloProfileCreate):
         invalidation_persist=profile.invalidation_persist,
         invalidation_quorum=profile.invalidation_quorum,
         invalidation_strong_only=profile.invalidation_strong_only,
+        strategies=list(profile.strategies),
+        setups=list(profile.setups),
     )
 
 
@@ -73,6 +80,8 @@ async def update_profile(profile_id: uuid.UUID, body: YoloProfileUpdate):
         invalidation_persist=profile.invalidation_persist,
         invalidation_quorum=profile.invalidation_quorum,
         invalidation_strong_only=profile.invalidation_strong_only,
+        strategies=list(profile.strategies),
+        setups=list(profile.setups),
     )
 
 

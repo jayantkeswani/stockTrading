@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api } from "@/lib/api";
-import { STRATEGY_LABELS } from "@/lib/constants";
+import { STRATEGY_LABELS, STRATEGY_SETUPS, FILTERABLE_STRATEGIES } from "@/lib/constants";
 import { useStore } from "@/store";
 import type { YoloProfile } from "@/lib/types";
 
@@ -198,6 +198,32 @@ export default function SettingsPage() {
     }
   };
 
+  // Optimistic local + store update for a YOLO profile, then PATCH.
+  const patchProfileLocal = (id: string, patch: Partial<YoloProfile>) => {
+    setYoloProfiles((prev) => {
+      const updated = (Array.isArray(prev) ? prev : []).map((x) => (x.id === id ? { ...x, ...patch } : x));
+      useStore.getState().setYoloProfiles(updated);
+      return updated;
+    });
+  };
+
+  const toggleProfileStrategy = async (p: YoloProfile, strat: string) => {
+    const cur = p.strategies ?? [];
+    const next = cur.includes(strat) ? cur.filter((s) => s !== strat) : [...cur, strat];
+    // Prune setups that no longer belong to any selected strategy.
+    const allowed = (next.length ? next : FILTERABLE_STRATEGIES).flatMap((s) => STRATEGY_SETUPS[s] ?? []);
+    const nextSetups = (p.setups ?? []).filter((s) => allowed.includes(s));
+    patchProfileLocal(p.id, { strategies: next, setups: nextSetups });
+    try { await api.updateYoloProfile(p.id, { strategies: next, setups: nextSetups }); } catch { /* ignore */ }
+  };
+
+  const toggleProfileSetup = async (p: YoloProfile, setup: string) => {
+    const cur = p.setups ?? [];
+    const next = cur.includes(setup) ? cur.filter((s) => s !== setup) : [...cur, setup];
+    patchProfileLocal(p.id, { setups: next });
+    try { await api.updateYoloProfile(p.id, { setups: next }); } catch { /* ignore */ }
+  };
+
   const handleUpdateParams = async (name: string, params: Record<string, unknown>) => {
     try {
       const updated = await api.updateStrategy(name, { parameters: params }) as StrategyConfig;
@@ -389,7 +415,7 @@ export default function SettingsPage() {
         </h2>
         <div className="space-y-2">
           {(Array.isArray(yoloProfiles) ? [...yoloProfiles] : []).sort((a, b) => a.sort_order - b.sort_order).map((p, idx) => (
-            <div key={p.id} className="flex items-center gap-3 px-2 py-1.5 rounded border border-border/50 bg-bg-tertiary/30">
+            <div key={p.id} className="flex items-center gap-3 flex-wrap px-2 py-1.5 rounded border border-border/50 bg-bg-tertiary/30">
               <input
                 type="text"
                 value={p.name}
@@ -536,6 +562,54 @@ export default function SettingsPage() {
                   DEL
                 </button>
               )}
+              {/* Strategy + setup execution filter — none selected = act on all signals */}
+              <div className="basis-full flex items-center gap-1 flex-wrap pt-1.5 mt-1 border-t border-border/30">
+                <span
+                  className="text-[9px] font-mono text-text-muted"
+                  title="Which strategies this profile executes. None selected = all."
+                >
+                  Strat
+                </span>
+                {FILTERABLE_STRATEGIES.map((strat) => {
+                  const on = (p.strategies ?? []).includes(strat);
+                  return (
+                    <button
+                      key={strat}
+                      onClick={() => toggleProfileStrategy(p, strat)}
+                      className={`text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors ${on ? "border-accent/50 text-accent bg-accent/10" : "border-border text-text-muted hover:text-text-secondary"}`}
+                    >
+                      {STRATEGY_LABELS[strat] ?? strat}
+                    </button>
+                  );
+                })}
+                {(() => {
+                  const availableSetups = (p.strategies?.length ? p.strategies : FILTERABLE_STRATEGIES)
+                    .flatMap((s) => STRATEGY_SETUPS[s] ?? []);
+                  if (availableSetups.length === 0) return null;
+                  return (
+                    <>
+                      <span
+                        className="text-[9px] font-mono text-text-muted ml-1"
+                        title="Which setups this profile executes. None selected = all."
+                      >
+                        Setup
+                      </span>
+                      {availableSetups.map((setup) => {
+                        const on = (p.setups ?? []).includes(setup);
+                        return (
+                          <button
+                            key={setup}
+                            onClick={() => toggleProfileSetup(p, setup)}
+                            className={`text-[9px] font-mono px-1.5 py-0.5 rounded border transition-colors ${on ? "border-accent/50 text-accent bg-accent/10" : "border-border text-text-muted hover:text-text-secondary"}`}
+                          >
+                            {setup}
+                          </button>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
+              </div>
             </div>
           ))}
           <div className="flex items-center gap-2 pt-1">

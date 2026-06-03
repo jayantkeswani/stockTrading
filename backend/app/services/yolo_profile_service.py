@@ -33,10 +33,13 @@ class YoloProfileDTO:
     profit_cap: float
     is_active: bool
     sort_order: int
-    # Thesis-invalidation exit (S5 only). invalidation_persist=None disables it.
+    # Thesis-invalidation exit (S5/S6 momentum). invalidation_persist=None disables it.
     invalidation_persist: int | None = None
     invalidation_quorum: bool = False
     invalidation_strong_only: bool = True
+    # Execution-side filters (tuples so the frozen DTO stays hashable). Empty = all.
+    strategies: tuple[str, ...] = ()
+    setups: tuple[str, ...] = ()
 
 
 _cache: list[YoloProfileDTO] | None = None
@@ -54,7 +57,26 @@ def _row_to_dto(row: YoloProfile) -> YoloProfileDTO:
         ),
         invalidation_quorum=bool(row.invalidation_quorum),
         invalidation_strong_only=bool(row.invalidation_strong_only),
+        strategies=tuple(row.strategies or []),
+        setups=tuple(row.setups or []),
     )
+
+
+def profile_accepts_signal(
+    profile: YoloProfileDTO, strategy_name: str, setup_type: str | None
+) -> bool:
+    """True if the profile's strategy/setup filters admit this signal.
+
+    Empty filter list = accept all (backward compatible). The two filters are
+    independent AND conditions: a profile with `setups=["ORB_RETEST"]` only executes
+    that setup; a signal with no setup_type is rejected by a non-empty setups filter.
+    Used by: auto_executor (per-profile fan-out gate).
+    """
+    if profile.strategies and strategy_name not in profile.strategies:
+        return False
+    if profile.setups and (setup_type is None or setup_type not in profile.setups):
+        return False
+    return True
 
 
 async def _load_from_db() -> list[YoloProfileDTO]:
@@ -163,8 +185,13 @@ def default_profile_trade_filter():
     )
 
 
-async def create_profile(name: str, profit_cap: float) -> YoloProfileDTO:
-    """Create a new YOLO profile."""
+async def create_profile(
+    name: str,
+    profit_cap: float,
+    strategies: list[str] | None = None,
+    setups: list[str] | None = None,
+) -> YoloProfileDTO:
+    """Create a new YOLO profile (optionally with strategy/setup execution filters)."""
     async with async_session_factory() as session:
         # Auto-assign sort_order as max+1
         result = await session.execute(
@@ -176,6 +203,8 @@ async def create_profile(name: str, profit_cap: float) -> YoloProfileDTO:
             profit_cap=profit_cap,
             is_active=True,
             sort_order=max_order + 1,
+            strategies=strategies or [],
+            setups=setups or [],
         )
         session.add(row)
         await session.commit()
@@ -191,6 +220,7 @@ async def update_profile(profile_id: uuid.UUID, **fields) -> YoloProfileDTO:
     allowed = {
         "name", "profit_cap", "is_active", "sort_order",
         "invalidation_persist", "invalidation_quorum", "invalidation_strong_only",
+        "strategies", "setups",
     }
     invalid = set(fields) - allowed
     if invalid:

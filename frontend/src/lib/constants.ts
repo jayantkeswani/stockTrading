@@ -29,6 +29,18 @@ export const STRATEGY_LABELS: Record<string, string> = {
   breakout_retest: "Breakout Retest",
 };
 
+// Strategies a YOLO profile can be scoped to, and the setup_types each emits.
+// Drives the per-profile strategy/setup execution filter in Settings. Stub
+// strategies (orb, gamma_scalping) are omitted; option strategies have no setups.
+export const STRATEGY_SETUPS: Record<string, string[]> = {
+  vwap_pullback: [],
+  can_slim: [],
+  intraday_futures: ["ORB", "PDH_PDL", "GAP_CONTINUATION", "VWAP_BOUNCE"],
+  breakout_retest: ["ORB_RETEST", "PDH_PDL_RETEST", "SWING_RETEST"],
+};
+
+export const FILTERABLE_STRATEGIES: string[] = Object.keys(STRATEGY_SETUPS);
+
 export const STATUS_COLORS: Record<string, string> = {
   OPEN: "bg-accent/20 text-accent",
   CLOSED: "bg-text-muted/20 text-text-secondary",

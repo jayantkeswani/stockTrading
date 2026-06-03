@@ -88,7 +88,9 @@ DATABASE_URL=postgresql+asyncpg://trader:trader_dev_123@localhost:5433/stocktrad
 
 The two trustworthy, engine-independent reads both moved decisively: **target-first doubled** (the R:R lever) and **forward-direction crossed the coin-flip line** (the "entered at the extreme" pathology is gone). Binary-hit is flat only because it credits S5's 299 OPEN trades by EOD coin-flip; S6's tight band resolves fast (17 OPEN of 258). ORB_RETEST is the strongest setup (39% target-first).
 
-**Caveats / next step.** One concentrated 25-day window. Replay fidelity is approximate (intraday_bias computed with `global_cues=None`/`nifty_bias_score=None`; FUT-OI/screener enrichment omitted; NIFTY day-change index-aligned), and the engine-fidelity ceiling means absolute P&L doesn't transfer — only the *direction* does. **Ship dark, then run an S6 shadow + a YOLO profile beside S5 for a live paper A/B (2–3 weeks) before trusting it.**
+**Caveats / next step.** One concentrated 25-day window. Replay fidelity is approximate (intraday_bias computed with `global_cues=None`/`nifty_bias_score=None`; FUT-OI/screener enrichment omitted; NIFTY day-change index-aligned), and the engine-fidelity ceiling means absolute P&L doesn't transfer — only the *direction* does. Per-setup, ORB_RETEST (+0.10R resolved expectancy) is the strongest cohort, but on 82 signals that is not statistically separable from the blended +0.02R — don't drop the other setups off in-sample data.
+
+**Ship dark, then A/B on the paper book before trusting it.** The strategy generates all setups (`enabled_levels` full); two **YOLO profiles** then split the stream via their `strategies`/`setups` execution filters — e.g. Profile A = `strategies:[breakout_retest]` (full) and Profile B = `strategies:[breakout_retest], setups:[ORB_RETEST]` (ORB-only) — running side-by-side for 2–3 weeks. Out-of-sample live fills, *after costs*, decide whether ORB-only or the full set wins. Signals carry `setup_type`, so per-setup attribution is available live even from a single full profile.
 
 ## Parameters (`strategy_configs.parameters`)
 

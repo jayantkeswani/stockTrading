@@ -1,7 +1,8 @@
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Index, Integer, Numeric, String
+from sqlalchemy import Boolean, Index, Integer, Numeric, String, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, generate_uuid
@@ -25,6 +26,18 @@ class YoloProfile(Base, TimestampMixin):
     invalidation_persist: Mapped[int | None] = mapped_column(Integer, nullable=True)
     invalidation_quorum: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     invalidation_strong_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Execution-side filters. A profile only executes a signal when
+    # (strategies empty OR signal.strategy_name in strategies) AND
+    # (setups empty OR signal.indicators.setup_type in setups). Empty list = all
+    # (backward compatible). Lets one paper book run a full-vs-subset A/B from a
+    # single signal stream (e.g. an S6 full profile beside an S6 ORB_RETEST-only one).
+    strategies: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    setups: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
 
     __table_args__ = (
         Index("idx_yolo_profiles_is_active", "is_active"),

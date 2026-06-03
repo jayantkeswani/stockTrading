@@ -166,6 +166,46 @@ class TestYoloFullExecution:
         assert profile_ids == {p1_id, p2_id}
 
     @pytest.mark.asyncio
+    @patch("app.agent.auto_executor.notify_auto_executed", new_callable=AsyncMock)
+    @patch("app.agent.auto_executor._final_risk_check", return_value=(True, None))
+    @patch("app.agent.auto_executor.get_uncapped_profile_ids")
+    @patch("app.agent.auto_executor.get_active_profiles")
+    @patch("app.agent.auto_executor.ws_manager")
+    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_trading_config")
+    @patch("app.agent.auto_executor.async_session_factory")
+    async def test_yolo_profile_filter_skips_nonmatching_strategy(
+        self, mock_session_factory, mock_cfg, mock_price, mock_ws,
+        mock_profiles, mock_uncapped, mock_risk, mock_notify
+    ):
+        """A profile scoped to other strategies is skipped; only matching profiles execute."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id)  # strategy_name="intraday_futures"
+
+        full_id, orb_id = uuid.uuid4(), uuid.uuid4()
+        mock_profiles.return_value = [
+            _make_profile(full_id, name="full"),  # empty filters → accepts all
+            _make_profile(orb_id, name="s6-orb",
+                          strategies=["breakout_retest"], setups=["ORB_RETEST"]),
+        ]
+        mock_uncapped.return_value = {full_id, orb_id}
+
+        session, added_objects = _mock_session(mock_session_factory, signal, num_profiles=2)
+        mock_cfg.return_value = _make_cfg()
+        mock_price.return_value = 420.0
+        mock_ws.broadcast = AsyncMock()
+
+        from app.agent.auto_executor import auto_execute_signal
+        result = await auto_execute_signal(signal_id)
+
+        # Only the unfiltered "full" profile trades the intraday_futures signal.
+        assert len(result) == 1
+        assert result[0]["yolo_profile_name"] == "full"
+        trades = [o for o in added_objects if type(o).__name__ == "Trade"]
+        assert len(trades) == 1
+        assert trades[0].yolo_profile_id == full_id
+
+    @pytest.mark.asyncio
     @patch("app.agent.auto_executor.get_uncapped_profile_ids")
     @patch("app.agent.auto_executor.get_active_profiles")
     @patch("app.agent.auto_executor.ws_manager")
@@ -230,13 +270,17 @@ def _make_cfg():
     return cfg
 
 
-def _make_profile(profile_id, name="5K", cap=5000):
+def _make_profile(profile_id, name="5K", cap=5000, strategies=None, setups=None):
     p = MagicMock()
     p.id = profile_id
     p.name = name
     p.profit_cap = cap
     p.is_active = True
     p.sort_order = 0
+    # Empty filters = act on all signals (a default profile). Set explicitly so the
+    # auto_executor's profile_accepts_signal filter sees real lists, not truthy Mocks.
+    p.strategies = strategies if strategies is not None else []
+    p.setups = setups if setups is not None else []
     return p
 
 

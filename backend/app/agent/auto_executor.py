@@ -25,7 +25,11 @@ from app.services.live_price import get_live_price
 from app.services.lot_sizing import compute_lots_for_yolo
 from app.services.margin_calculator import compute_margin
 from app.services.trading_config import get_trading_config
-from app.services.yolo_profile_service import get_active_profiles, get_uncapped_profile_ids
+from app.services.yolo_profile_service import (
+    get_active_profiles,
+    get_uncapped_profile_ids,
+    profile_accepts_signal,
+)
 from app.core.database import async_session_factory
 from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
 from app.core.utils import now_ist
@@ -176,8 +180,19 @@ async def auto_execute_signal(signal_id) -> list[dict]:
         actions = []
         ws_payloads = []
         first_trade_id = None
+        setup_type = (signal.indicators or {}).get("setup_type")
 
         for profile in profiles:
+            # Strategy/setup execution filter — a profile only acts on signals it
+            # subscribes to (empty filters = all). Lets a full and a subset profile
+            # run side-by-side off one signal stream.
+            if not profile_accepts_signal(profile, signal.strategy_name, setup_type):
+                logger.debug(
+                    "Auto-execute: profile %s does not subscribe to %s/%s, skipping",
+                    profile.name, signal.strategy_name, setup_type,
+                )
+                continue
+
             # Position dedup scoped to this profile
             pos_query = select(Position).where(
                 Position.symbol == signal.symbol,

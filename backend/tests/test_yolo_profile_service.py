@@ -10,16 +10,21 @@ import uuid
 import pytest
 
 import app.services.yolo_profile_service as svc
-from app.services.yolo_profile_service import YoloProfileDTO
+from app.services.yolo_profile_service import YoloProfileDTO, profile_accepts_signal
 
 
-def _dto(name: str, cap: float, active: bool = True, sort_order: int = 0) -> YoloProfileDTO:
+def _dto(
+    name: str, cap: float, active: bool = True, sort_order: int = 0,
+    strategies: tuple = (), setups: tuple = (),
+) -> YoloProfileDTO:
     return YoloProfileDTO(
         id=uuid.uuid4(),
         name=name,
         profit_cap=cap,
         is_active=active,
         sort_order=sort_order,
+        strategies=strategies,
+        setups=setups,
     )
 
 
@@ -59,6 +64,31 @@ async def test_get_default_profile_skips_inactive():
 async def test_get_default_profile_none_when_no_active():
     svc._cache = [_dto("5K", 5000, active=False)]
     assert await svc.get_default_profile() is None
+
+
+def test_profile_accepts_signal_empty_filters_accept_all():
+    """Empty strategies/setups = act on everything (backward compatible)."""
+    p = _dto("full", 0)
+    assert profile_accepts_signal(p, "breakout_retest", "ORB_RETEST")
+    assert profile_accepts_signal(p, "intraday_futures", "PDH_PDL")
+    assert profile_accepts_signal(p, "vwap_pullback", None)
+
+
+def test_profile_accepts_signal_strategy_filter():
+    p = _dto("s6-only", 0, strategies=("breakout_retest",))
+    assert profile_accepts_signal(p, "breakout_retest", "SWING_RETEST")
+    assert not profile_accepts_signal(p, "intraday_futures", "ORB")
+    assert not profile_accepts_signal(p, "vwap_pullback", None)
+
+
+def test_profile_accepts_signal_setup_filter():
+    """Setup filter is independent; a non-empty setups rejects signals lacking the tag."""
+    p = _dto("orb-only", 0, strategies=("breakout_retest",), setups=("ORB_RETEST",))
+    assert profile_accepts_signal(p, "breakout_retest", "ORB_RETEST")
+    assert not profile_accepts_signal(p, "breakout_retest", "SWING_RETEST")
+    assert not profile_accepts_signal(p, "breakout_retest", None)
+    # right setup but wrong strategy still rejected (AND of both filters)
+    assert not profile_accepts_signal(p, "intraday_futures", "ORB_RETEST")
 
 
 def test_default_profile_trade_filter_none_when_no_active():
