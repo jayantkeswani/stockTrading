@@ -313,7 +313,7 @@ async def _check_position(
             # SEMI: request confirmation from user
             return await _request_profit_confirmation(db, pos, current_price)
 
-    # 2.5 Thesis-invalidation exit — S5 YOLO positions whose profile enables it.
+    # 2.5 Thesis-invalidation exit — S5/S6 momentum YOLO positions whose profile enables it.
     # Closes early when the live NIFTY bias flips STRONG-against the trade for N
     # consecutive candles. Placed after SL/target so those take precedence within a
     # candle (invalidation only ever exits earlier than the structural stops).
@@ -451,20 +451,23 @@ def _quorum_satisfied(pos: Position, current_price: Decimal, is_short: bool) -> 
 async def _check_invalidation(
     db: AsyncSession, pos: Position, current_price: Decimal, is_short_pos: bool
 ) -> dict | None:
-    """Thesis-invalidation exit for S5 YOLO positions whose profile enables it.
+    """Thesis-invalidation exit for S5/S6 momentum YOLO positions whose profile enables it.
 
     Advances a per-position opposing-candle counter once per NIFTY 1m candle (keyed
     on the bias candle timestamp, so the 500ms poll can't inflate it). Closes the
     position with ExitReason.INVALIDATION once the count reaches the profile's
     `invalidation_persist`. Returns the close action, or None to continue monitoring.
 
-    Gating: non-shadow INTRADAY S5 positions with a yolo_profile_id whose profile has
-    invalidation_persist > 0. The first candle observed per position only sets a
-    baseline (the pre-entry candle is never counted).
+    Gating: non-shadow INTRADAY momentum positions (S5 intraday_futures + S6
+    breakout_retest) with a yolo_profile_id whose profile has invalidation_persist > 0.
+    The first candle observed per position only sets a baseline (the pre-entry candle
+    is never counted).
     """
     if (
         pos.is_shadow
-        or (pos.strategy_name or "") != StrategyName.INTRADAY_FUTURES.value
+        or (pos.strategy_name or "") not in (
+            StrategyName.INTRADAY_FUTURES.value, StrategyName.BREAKOUT_RETEST.value
+        )
         or getattr(pos, "position_type", "INTRADAY") != "INTRADAY"
         or pos.yolo_profile_id is None
     ):

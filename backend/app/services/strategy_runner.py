@@ -231,7 +231,7 @@ class StrategyRunner:
 
         # Load per-strategy params
         params = await get_strategy_params(strategy_name.value)
-        if strategy_name == StrategyName.INTRADAY_FUTURES:
+        if strategy_name in (StrategyName.INTRADAY_FUTURES, StrategyName.BREAKOUT_RETEST):
             await self._enrich_strategy5_params(symbol, params, india_vix=ctx.india_vix)
         ctx.strategy_params = params
 
@@ -250,7 +250,7 @@ class StrategyRunner:
         await self._flush_strategy_logs(strategy)
         if signal is not None:
             signal.indicators["window_state"] = window_state
-            if strategy.name == StrategyName.INTRADAY_FUTURES:
+            if strategy.name in (StrategyName.INTRADAY_FUTURES, StrategyName.BREAKOUT_RETEST):
                 signal.indicators["is_permanent_watchlist"] = params.get("_is_permanent_watchlist", False)
             await self._enrich_signal_snapshot(signal)
             if signal.instrument_type == InstrumentType.OPTION:
@@ -514,6 +514,20 @@ class StrategyRunner:
             except Exception:
                 pass
 
+        # In-session 1m candles (>= 09:15) for Strategy 6 retest precision. Filtered
+        # so 5m blocks align to the 09:15 boundary; pre-open ticks are excluded.
+        candles_1m_session: list[Candle] = []
+        for c in buffer:
+            ts = c.get("timestamp", "")
+            try:
+                ct = (datetime.fromisoformat(ts) if isinstance(ts, str) else ts).time()
+            except (ValueError, TypeError):
+                continue
+            if ct >= MARKET_OPEN:
+                candles_1m_session.append(
+                    Candle(open=c["o"], high=c["h"], low=c["l"], close=c["c"], volume=c.get("v", 0))
+                )
+
         return MarketContext(
             symbol=symbol,
             current_price=current_price,
@@ -530,6 +544,7 @@ class StrategyRunner:
             canslim_data=canslim_data,
             global_cues=global_cues,
             candles_5m_futures_volume=candles_5m_futures_volume,
+            candles_1m=candles_1m_session,
             intraday_bias=intraday_bias,
             atr_5m=atr_5m,
             today_open=today_open,
@@ -758,6 +773,21 @@ class StrategyRunner:
                 logger.debug("Could not compute Nifty bias for Strategy 5")
         if nifty_bias is not None:
             params["_nifty_bias"] = nifty_bias
+
+        # NIFTY intraday change vs today's open — the "with-trend" gate signal for
+        # Strategy 6 (matches the signal-accuracy study's nifty_day_change_pct cohort;
+        # same value _enrich_signal_snapshot injects post-evaluate). Available pre-fire.
+        try:
+            nifty_buffer = self._candle_buffers.get("NIFTY", [])
+            if nifty_buffer:
+                nifty_open = nifty_buffer[0].get("o")
+                nifty_ltp = nifty_buffer[-1].get("c")
+                if nifty_open:
+                    params["_nifty_day_change_pct"] = round(
+                        (nifty_ltp - nifty_open) / nifty_open * 100, 2
+                    )
+        except Exception:
+            logger.debug("Could not compute nifty_day_change_pct for enrichment")
 
         # ORB levels from Redis (restore after restart)
         try:
@@ -989,6 +1019,10 @@ class StrategyRunner:
                         from app.services.agent_log import append_agent_log
                         for category, message in logs:
                             await append_agent_log("strat2", today, category, message)
+                    elif strategy.name == StrategyName.BREAKOUT_RETEST:
+                        from app.services.agent_log import append_agent_log
+                        for category, message in logs:
+                            await append_agent_log("strat6", today, category, message)
                     else:
                         from app.services.morning_screener import _append_agent_log
                         for category, message in logs:
@@ -1485,7 +1519,7 @@ class StrategyRunner:
             try:
                 # Load per-strategy params and set on context
                 params = await get_strategy_params(strategy.name.value)
-                if strategy.name == StrategyName.INTRADAY_FUTURES:
+                if strategy.name in (StrategyName.INTRADAY_FUTURES, StrategyName.BREAKOUT_RETEST):
                     await self._enrich_strategy5_params(symbol, params, india_vix=ctx.india_vix)
                 ctx.strategy_params = params
 
@@ -1506,7 +1540,7 @@ class StrategyRunner:
                 signal = strategy.evaluate(ctx)
                 if signal is not None:
                     signal.indicators["window_state"] = window_state
-                    if strategy.name == StrategyName.INTRADAY_FUTURES:
+                    if strategy.name in (StrategyName.INTRADAY_FUTURES, StrategyName.BREAKOUT_RETEST):
                         signal.indicators["is_permanent_watchlist"] = params.get("_is_permanent_watchlist", False)
                 await self._flush_strategy_logs(strategy)
                 if signal is not None:

@@ -35,6 +35,46 @@ def find_swing_high(candles: list[Candle], lookback: int = 10) -> float | None:
     return max(c.high for c in window)
 
 
+def find_pivot_high(candles: list[Candle], left: int = 2, right: int = 2) -> float | None:
+    """Return the most recent confirmed pivot-high price, or None.
+
+    A pivot high at index i is a candle whose high is strictly greater than the
+    highs of the `left` candles before it and >= the highs of the `right` candles
+    after it (the `right` trailing bars confirm the pivot — it cannot be the very
+    last candle). Walks backwards and returns the first (most recent) pivot found.
+    Used by Strategy 6 to arm fresh intraday swing breakouts.
+    """
+    n = len(candles)
+    if n < left + right + 1:
+        return None
+    for i in range(n - 1 - right, left - 1, -1):
+        h = candles[i].high
+        if all(candles[i - k].high < h for k in range(1, left + 1)) and all(
+            candles[i + k].high <= h for k in range(1, right + 1)
+        ):
+            return h
+    return None
+
+
+def find_pivot_low(candles: list[Candle], left: int = 2, right: int = 2) -> float | None:
+    """Return the most recent confirmed pivot-low price, or None.
+
+    Mirror of `find_pivot_high`: a pivot low is strictly lower than the `left`
+    preceding lows and <= the `right` following lows. Used by Strategy 6 to arm
+    fresh intraday swing breakdowns.
+    """
+    n = len(candles)
+    if n < left + right + 1:
+        return None
+    for i in range(n - 1 - right, left - 1, -1):
+        lo = candles[i].low
+        if all(candles[i - k].low > lo for k in range(1, left + 1)) and all(
+            candles[i + k].low >= lo for k in range(1, right + 1)
+        ):
+            return lo
+    return None
+
+
 def select_index_sl_target(
     entry_price: float,
     signal_type: SignalType,

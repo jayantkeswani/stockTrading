@@ -174,7 +174,7 @@ Key constants (not functions):
 
 #### `enums.py`
 
-Key enums: `OptionType`, `OrderSide`, `TradeStatus`, `ExitReason` (incl. `TRAILING_SL`, `PROFIT_CAP`, `STALE_DATA`, `INVALIDATION`), `SignalStatus`, `SignalType`, `StrategyName` (incl. `CAN_SLIM`, `INTRADAY_FUTURES`), `IndexSymbol`, `InstrumentType`, `PositionType`, `AgentAutonomyLevel`, `AgentActionType` (incl. `SHADOW_EXECUTED`, `PROFIT_CAP_CLOSE`, `INVALIDATION_CLOSE`), `TradeSource` (`MANUAL`/`YOLO`/`SHADOW`)
+Key enums: `OptionType`, `OrderSide`, `TradeStatus`, `ExitReason` (incl. `TRAILING_SL`, `PROFIT_CAP`, `STALE_DATA`, `INVALIDATION`), `SignalStatus`, `SignalType`, `StrategyName` (incl. `CAN_SLIM`, `INTRADAY_FUTURES`, `BREAKOUT_RETEST`), `IndexSymbol`, `InstrumentType`, `PositionType`, `AgentAutonomyLevel`, `AgentActionType` (incl. `SHADOW_EXECUTED`, `PROFIT_CAP_CLOSE`, `INVALIDATION_CLOSE`), `TradeSource` (`MANUAL`/`YOLO`/`SHADOW`)
 
 #### `task_registry.py`
 
@@ -229,7 +229,7 @@ All models extend `BaseModel` (UUID PK, `created_at`/`updated_at` TIMESTAMPTZ).
 | `DailySummary`         | `daily_summaries`         | Daily P&L, win/loss counts, drawdown                                                                                                                                                                                                                                                                                                                          |
 | `ResearchReport`       | `research_reports`        | AI research report: recommendation, confidence, report_json/markdown                                                                                                                                                                                                                                                                                          |
 | `ResearchAgentRun`     | `research_agent_runs`     | Per-agent run findings, summary, duration, data sources. FK cascade delete                                                                                                                                                                                                                                                                                    |
-| `YoloProfile`          | `yolo_profiles`           | `name`, `profit_cap` (INR), `is_active`, `sort_order`, `invalidation_persist` (INT, NULL/0 = thesis-invalidation exit disabled), `invalidation_quorum` (BOOL), `invalidation_strong_only` (BOOL, default true). Multiple profiles run simultaneously — each signal creates one Trade+Position per active uncapped profile. Trade monitor checks caps per profile independently and, when `invalidation_persist > 0`, runs the S5 thesis-invalidation exit per profile                                                                                                                                          |
+| `YoloProfile`          | `yolo_profiles`           | `name`, `profit_cap` (INR), `is_active`, `sort_order`, `invalidation_persist` (INT, NULL/0 = thesis-invalidation exit disabled), `invalidation_quorum` (BOOL), `invalidation_strong_only` (BOOL, default true). Multiple profiles run simultaneously — each signal creates one Trade+Position per active uncapped profile. Trade monitor checks caps per profile independently and, when `invalidation_persist > 0`, runs the S5/S6 thesis-invalidation exit per profile                                                                                                                                          |
 
 
 **Helper function** (module-level, `models/trade.py`):
@@ -380,7 +380,7 @@ Strategy 2 uses prefix `"strat2"`, Strategy 5 uses `"strat5"`.
 - `parse_trading_windows(params) -> list[tuple[time, time]]` — parses `trading_windows` list from params dict. Used by: strategy_runner, options API
 - `parse_dead_zone(params) -> tuple[time, time] | None` — parses `dead_zone` from params dict. Used by: strategy_runner
 
-Default dicts: `VWAP_DEFAULTS`, `CANSLIM_DEFAULTS`, `INTRADAY_FUTURES_DEFAULTS`.
+Default dicts: `VWAP_DEFAULTS`, `CANSLIM_DEFAULTS`, `INTRADAY_FUTURES_DEFAULTS`, `BREAKOUT_RETEST_DEFAULTS`.
 
 #### `option_resolver.py`
 
@@ -433,10 +433,10 @@ Core evaluation engine. Two trigger paths: (1) auto-mode on candle close, (2) ma
 
 Key private methods (documented because they're central to flow):
 
-- `_build_market_context(symbol, candle_data)` — builds full `MarketContext` from in-memory buffers + Redis. `today_open` is the open of the first candle with timestamp >= MARKET_OPEN (skips pre-market candles)
+- `_build_market_context(symbol, candle_data)` — builds full `MarketContext` from in-memory buffers + Redis. `today_open` is the open of the first candle with timestamp >= MARKET_OPEN (skips pre-market candles). Populates `candles_1m` with the in-session (>= 09:15) 1m candle series (Strategy 6 retest precision; aligned to the 09:15 boundary)
 - `_query_previous_day(session, symbol, today)` — queries last trading day's 1m candles; `yesterday_cutoff` is midnight IST (`time.min`), not MARKET_OPEN, so pre-open candles (08:42–09:07) don't bleed into today's query. The "previous trading day" is the date of the most recent **in-session** candle (09:15–15:30 IST, filtered via `cast(func.timezone('Asia/Kolkata', timestamp), Time)`), so a stray off-hours/holiday row can't make it latch onto a non-session date and return None — which silently blocked Strategy 2 for the whole day on 2026-05-29
 - `_enrich_signal_snapshot(signal, ...)` — injects `nifty_spot`, `nifty_day_change_pct`, `trigger_candle`, `minutes_since_open` into every signal's indicators JSONB
-- `_enrich_strategy5_params(symbol, params, india_vix=None)` — loads RVOL profiles, cross-position counts, Nifty bias (reuses the `_last_nifty_bias` cached on the NIFTY candle close — single source of truth shared with the trade monitor's invalidation exit; recomputes from the NIFTY buffer only when the cache is cold), ORB levels, briefing, global cues shift, per-stock gap/trend data, FUT OI direction into strategy params; throttled to once per 5 min per symbol for global cues check; only caches result in `_s5_session_cache` when `watchlist_loaded` is True (prevents empty defaults from being locked in before the 8:30 AM morning screener runs). OI query filters out zero-OI rows (`open_interest > 0`)
+- `_enrich_strategy5_params(symbol, params, india_vix=None)` — loads RVOL profiles, cross-position counts, Nifty bias (reuses the `_last_nifty_bias` cached on the NIFTY candle close — single source of truth shared with the trade monitor's invalidation exit; recomputes from the NIFTY buffer only when the cache is cold), ORB levels, briefing, global cues shift, per-stock gap/trend data, FUT OI direction, and `_nifty_day_change_pct` (NIFTY % vs today's open — Strategy 6's with-trend gate) into strategy params. Shared by both `intraday_futures` and `breakout_retest` (the runner calls it for either). Throttled to once per 5 min per symbol for global cues check; only caches result in `_s5_session_cache` when `watchlist_loaded` is True (prevents empty defaults from being locked in before the 8:30 AM morning screener runs). OI query filters out zero-OI rows (`open_interest > 0`)
 - `_dedup_signal(existing, new, ai_fields)` — Case-1 (noise: skip), Case-2 (meaningful: archive to `signal_history` → update all fields including `ai_*` → re-fire shadow), Case-3 (acted on: return None → create new signal)
 - `_persist_signal(signal)` — writes signal to DB; copies `_is_permanent_watchlist` from indicators to `Signal.is_permanent_watchlist`
 - `_check_regulatory_limits(symbol)` — F&O ban list check (reads `nse:fo_ban_list:{today}`)
@@ -525,6 +525,15 @@ Sets `instrument_type=FUTURE`, `holding_type=INTRADAY`, `max_lots=2`. Full spec:
 
 `**_compute_lots(signal, ctx, params) -> int**` — 6-condition sizing (RVOL, Nifty bias, screener score, briefing, enhanced ORB, trend STRONG/MODERATE, VIX cap); called by `lot_sizing.compute_lots_for_yolo`/`compute_lots_for_manual` at execution time only (not during evaluate).
 
+#### `strategy_6_breakout_retest.py` — Breakout-Retest Intraday Futures (ACTIVE, ships dark)
+
+- `evaluate(ctx) -> StrategySignal | None` — per-(symbol×level) state machine, evaluated every 1m: arm on a completed-5m close beyond a level → wait for a 1m pullback retest → fire on a volume-confirmed 1m reclaim. Aborts on slice-through / timeout / no-retest.
+- `get_symbols() -> list[str]` — reads the shared S5 watchlist `strat5:watchlist:{today}` (60s cache).
+- `should_exit(...) -> None` — exits are trade_monitor-driven (SL/target/trailing/3:25 + thesis-invalidation).
+- `drain_pending_logs()` — ARM/SKIP/GATE/SIGNAL/ABORT logs → `strat6` agent-log prefix.
+
+Sets `instrument_type=FUTURE`, `holding_type=INTRADAY`, `max_lots=2`. Fixes S5's late-breakout-chasing entry weakness by entering on the retest (entry next to a tight retest-swing SL — the R:R lever). Levels: ORB / PDH-PDL / intraday swing pivots. Hard gates: time-of-day window + late-day size-down, with-NIFTY-trend (`_nifty_day_change_pct` sign), never-opposing-stock-bias (`intraday_bias.score` sign), reclaim-volume. Lean 4-factor confidence (`setup_factor` 0.30, `reclaim_vol_factor` 0.30, `oi_factor` 0.20, `rr_factor` 0.20) — the noisy S5 factors are deliberately dropped. Computes **completed** 5m bars from `ctx.candles_1m` itself (no timestamp dependency; ORB = first three blocks). Arm state is in-memory/ephemeral (re-forms on restart). Full spec + validation (target-first 18%→36%, forward-direction 37/39/42→49/49/52% vs S5 on the same 25-day window): `docs/strategies/strategy-6-breakout-retest.md`.
+
 #### `canslim/scoring.py` — CAN SLIM Factor Scoring (pure functions)
 
 - `score_c(quarterly_eps, ...) -> float` — C factor: quarterly EPS acceleration
@@ -598,6 +607,8 @@ Re-exports `compute_rs_raw_score` and `percentile_rank_rs` from `indicators/rela
 
 - `find_swing_low(candles, lookback=10) -> float | None`. Used by: select_index_sl_target()
 - `find_swing_high(candles, lookback=10) -> float | None`. Used by: select_index_sl_target()
+- `find_pivot_high(candles, left=2, right=2) -> float | None` — most recent confirmed pivot-high (strictly above `left` preceding highs, ≥ `right` following highs; trailing bars confirm it). Used by: strategy_6 (swing-level arming)
+- `find_pivot_low(candles, left=2, right=2) -> float | None` — mirror of `find_pivot_high`. Used by: strategy_6
 - `select_index_sl_target(direction, vwap, candles_1m, prev_day, cpr, oi_analysis, current_price) -> (sl, target) | None` — picks nearest support/resistance from VWAP bands, PDH/PDL, CPR, OI walls, swing levels. Used by: strategy_2
 - `compute_rr_ratio(entry, sl, target) -> float`. Used by: strategy_2, strategy_5 (validation)
 
@@ -798,7 +809,7 @@ All extend `BaseResearchAgent` (`agents/base.py`), return `AgentResult(findings:
 
 `**signal_confidence.py`** (`score_signal(signal, ctx, prior_signals=None) -> SignalConfidence`):
 
-- Per-strategy prompts (`_SYSTEM_PROMPTS` / `_USER_PROMPT_TEMPLATES` keyed by strategy name)
+- Per-strategy prompts (`_SYSTEM_PROMPTS` / `_USER_PROMPT_TEMPLATES` keyed by strategy name: `vwap_pullback`, `intraday_futures`, `breakout_retest`; VWAP prompt is the fallback). `breakout_retest` adds a `breakout_retest_context` block (level, retest swing, breakout extreme, reclaim volume ratio, R:R) to the context JSON.
 - Sends full indicator JSON context + up to 5 prior signals today for same symbol+strategy
 - 25s timeout; never blocks signal on failure; controlled by `settings.ai_confidence_enabled`
 - **Confidence floor** (`settings.ai_confidence_min_confidence`, default 50): `score_signal` returns `_FALLBACK` without calling the LLM when raw confidence is below the floor (the ±30 overlay can't rescue a far-below-execution signal). `strategy_runner._run_ai_confidence_overlay` enforces the same floor *before* its prior-signals DB query, so weak signals skip all overlay work. Cuts call volume — only signals worth executing get an LLM call.
@@ -832,7 +843,7 @@ Internal flow per position check:
 4. `_close_position(db, pos, exit_price, exit_reason, ...)` — closes trade, computes `brokerage_calculator.compute_charges()`, stores in `Trade.charges_json`, broadcasts `trade:close` + `agent:action`. WS broadcast always fires per position; the user-facing exit Telegram (`notify_sl_hit`/`notify_profit_booked`/`notify_time_exit`) is sent only when the position is MANUAL (no profile) or belongs to the **default profile** — so one signal's per-profile positions produce one exit message, not N
 5. `_request_profit_confirmation(db, pos)` — for SEMI mode target hits; guards against duplicate confirmation requests
 6. `_roll_futures_position(db, pos)` — 3 days before expiry: close old + open next month via `futures_resolver`; preserves `source=SHADOW`, `is_shadow=True`, and `yolo_profile_id`
-7. `_check_invalidation(db, pos, current_price, is_short_pos)` — **thesis-invalidation exit** (S5 only, per-YOLO-profile policy). For non-shadow INTRADAY `intraday_futures` positions whose `yolo_profile_id` profile has `invalidation_persist > 0`: reads the live NIFTY `IntradayBias` via `strategy_runner.nifty_bias_snapshot()` and advances a **per-position, candle-aligned** opposing counter (`_invalidation_state: dict[position_id → (last_candle_ts, count)]`, module-level, in-memory). The counter increments at most once per NIFTY 1m candle (keyed on the bias candle timestamp — the 500ms poll can't inflate it); the first candle seen per position is a baseline only (the pre-entry candle is never counted). A long is opposed by STRONG BEARISH bias, a short by STRONG BULLISH (`_bias_opposes`; `invalidation_strong_only=False` widens to MODERATE+). Optional `invalidation_quorum` (`_quorum_satisfied`) also requires the stock to lose/reclaim its OWN VWAP (`strategy_runner._calculate_vwap_from_buffer`; fails closed if VWAP missing). At `count >= invalidation_persist` the profile's position closes with `ExitReason.INVALIDATION` / `AgentActionType.INVALIDATION_CLOSE` → `notify_invalidation_exit`. Counters are pruned for vanished positions in `monitor_positions` and popped on every `_close_position`. **Why S5-only**: the backtest shows this regime-flip cut helps momentum (S5) but hurts mean-reversion (S2) — see `docs/backtest/s5-invalidation-exit-study.md`. Operating-point default: persist=3 / quorum off / strong-only. Run an invalidation-enabled profile beside an identical control for live A/B (paper)
+7. `_check_invalidation(db, pos, current_price, is_short_pos)` — **thesis-invalidation exit** (S5 + S6 momentum, per-YOLO-profile policy). For non-shadow INTRADAY `intraday_futures`/`breakout_retest` positions whose `yolo_profile_id` profile has `invalidation_persist > 0`: reads the live NIFTY `IntradayBias` via `strategy_runner.nifty_bias_snapshot()` and advances a **per-position, candle-aligned** opposing counter (`_invalidation_state: dict[position_id → (last_candle_ts, count)]`, module-level, in-memory). The counter increments at most once per NIFTY 1m candle (keyed on the bias candle timestamp — the 500ms poll can't inflate it); the first candle seen per position is a baseline only (the pre-entry candle is never counted). A long is opposed by STRONG BEARISH bias, a short by STRONG BULLISH (`_bias_opposes`; `invalidation_strong_only=False` widens to MODERATE+). Optional `invalidation_quorum` (`_quorum_satisfied`) also requires the stock to lose/reclaim its OWN VWAP (`strategy_runner._calculate_vwap_from_buffer`; fails closed if VWAP missing). At `count >= invalidation_persist` the profile's position closes with `ExitReason.INVALIDATION` / `AgentActionType.INVALIDATION_CLOSE` → `notify_invalidation_exit`. Counters are pruned for vanished positions in `monitor_positions` and popped on every `_close_position`. **Why momentum-only**: the backtest shows this regime-flip cut helps momentum (S5/S6) but hurts mean-reversion (S2) — see `docs/backtest/s5-invalidation-exit-study.md`. Operating-point default: persist=3 / quorum off / strong-only. Run an invalidation-enabled profile beside an identical control for live A/B (paper)
 
 **Direction detection**: uses `target_price < entry_price` (target below entry = SHORT). **SHORT position support**: direction-aware SL hit, target hit, unrealized PnL, HWM (lowest price for shorts), trailing SL direction.
 

@@ -114,6 +114,7 @@ stockTrading/
 - `backfill_for_backtest.py` — seed backtest data
 - `backtest.py` — run backtests
 - `replay_strategy5.py` — offline S5 signal generation from historical candles
+- `replay_strategy6.py` — offline S6 (Breakout-Retest) signal generation. Drives the **stateful** strategy minute-by-minute over a window (universe = the symbols S5 fired on each day, for a clean head-to-head), persisting `breakout_retest` signals into the DB so `analyze_strategy5_signal_accuracy.py --strategy breakout_retest` measures their first-touch accuracy. Stamps signals with the real reclaim-candle timestamp (basis ~0). `--no-persist` to dry-run. Validation result in `docs/strategies/strategy-6-breakout-retest.md`
 - `backtest_strategy5.py` — S5 signal exit simulator (trailing SL, P&L, sweep mode). Reads trailing SL params from DB via `get_strategy_params`. `--invalidation` adds a thesis-invalidation exit (early exit when the NIFTY intraday-bias flips against the trade for N candles) and simulates each trade twice — baseline vs invalidation — reporting reversal savings vs retracement cost; guards: `--inval-persist N`, `--inval-quorum` (require stock to lose/reclaim its own VWAP), `--inval-moderate`. `--inval-sweep` sweeps persistence × quorum. `--inval-score <t>` overrides the trigger to fire on opposing NIFTY bias with `|score| >= t` (e.g. 0.25 = recalibrated MODERATE band; 0 = use the STRONG label) — for band-edge calibration; finding: looser triggers are net-negative, so the live exit stays decoupled at ~0.50 (study doc "Bias band recalibration"). The index bias VWAP is weighted by `{index}_FUT` futures volume (index spot volume is ~zero), matching live. Exposes `build_index_bias_series()` reused by `backtest_strategy2.py`. Signals carry no `lots` (sizing is at execution) — 1-lot baseline, override via `--lots`. `--source shadow` replays the actual deduped SHADOW trades (real fills + entry timestamps) instead of raw signals and prints the re-sim baseline vs the real realized P&L — an **engine-fidelity check**: the 1m-candle engine runs ~3.6× optimistic vs live tick exits, so trust the *direction*, not the absolute magnitude
 - `backtest_strategy2.py` — S2 (index options) thesis-invalidation study, mirroring the S5 script. Replays `vwap_pullback` signals; values exits on the OPTION PREMIUM via delta-approximation from the index move (fast mode — needs only index candles, covers expired contracts); trigger = the traded index's own bias. Reports premium points (size-independent). Same `--invalidation`/`--inval-*`/`--inval-sweep` flags + `--delta`. Finding: invalidation helps S5 (momentum) but hurts S2 (mean-reversion) — see `docs/backtest/s5-invalidation-exit-study.md`
 - `backfill_daily_candles.py` — one-time seed of `market_data_daily` from Fyers
@@ -131,6 +132,7 @@ stockTrading/
 | 3   | Expiry Day Gamma Scalping    | STUB    | Index Options | `strategy_3_gamma_scalping.py`   | `docs/strategies/strategy-3-gamma-scalping.md`   |
 | 4   | CAN SLIM Growth Breakout     | ACTIVE  | Stock Futures | `strategy_4_canslim.py`          | `docs/strategies/strategy-4-canslim.md`          |
 | 5   | Intraday Stock Futures       | ACTIVE  | Stock Futures | `strategy_5_intraday_futures.py` | `docs/strategies/strategy-5-intraday-futures.md` |
+| 6   | Breakout-Retest              | ACTIVE  | Stock Futures | `strategy_6_breakout_retest.py`  | `docs/strategies/strategy-6-breakout-retest.md`  |
 
 
 All strategy files in `backend/app/strategies/`. See `docs/strategies/` for full trading rules per strategy.
@@ -261,7 +263,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 ### docs/strategies/
 
-- `strategy-1-orb.md` through `strategy-5-intraday-futures.md` — full trading rules per strategy
+- `strategy-1-orb.md` through `strategy-6-breakout-retest.md` — full trading rules per strategy
 - `strategy-5-phase1-reference.md`, `strategy-5-phase2-reference.md` — S5 phase implementation references
 - `arjun-liquide-study.md` — reverse-engineering of "Arjun - Options by Liquide" Telegram channel (630 trades parsed, independently backtested, feature-importance analysis, implied strategy extraction)
 - `intraday-hunter-study.md` — reverse-engineering of @IntradayHunter (30 videos analyzed, gap-down CE setup, position sizing confirmed)

@@ -63,10 +63,49 @@ INTRADAY_FUTURES_DEFAULTS: dict = {
     "max_orb_range_pct": 2.0,
 }
 
+BREAKOUT_RETEST_DEFAULTS: dict = {
+    # Which broken levels to arm on. ORB high/low, prev-day high/low, intraday swings.
+    "enabled_levels": ["ORB", "PDH_PDL", "SWING"],
+    # Breakout / retest geometry (all percentages of price).
+    "min_breakout_ext_pct": 0.05,   # 5m close must clear the level by this to arm
+    "retest_proximity_pct": 0.15,   # 1m pullback must return within this of the level
+    "reclaim_buffer_pct": 0.0,      # reclaim candle must close beyond level by this
+    "slice_buffer_pct": 0.20,       # 1m close this far the wrong side = breakout failed → abort
+    "max_wait_minutes": 30,         # arm expires if no fire within this many 1m candles
+    # Reclaim volume confirmation (reclaim 1m candle vs recent 1m average).
+    "reclaim_vol_mult": 1.5,
+    "reclaim_vol_lookback": 20,
+    # Swing pivot detection (on 5m candles).
+    "swing_pivot_left": 2,
+    "swing_pivot_right": 2,
+    # SL/target. SL just past the retest swing; tight by design.
+    "sl_swing_buffer_pct": 0.15,
+    "sl_atr_mult": 0.3,
+    "min_risk_pct": 0.10,           # whipsaw floor — widen SL if tighter than this
+    "max_risk_pct": 1.5,            # skip if risk wider than this (geometry broke)
+    "rr_multiplier": 1.8,
+    "min_rr": 1.5,
+    # Time-of-day hard gate + late-day size-down.
+    "arm_start": "09:30",
+    "arm_cutoff": "13:30",
+    "size_down_after": "12:30",
+    "size_down_mult": 0.5,
+    # Regime gates (sign checks, with deadbands — never opposing).
+    "require_with_nifty_trend": True,
+    "nifty_flat_deadband_pct": 0.10,
+    "block_opposing_stock_bias": True,
+    "stock_bias_deadband": 0.15,
+    # Base filters.
+    "min_adr": 1.5,
+    "min_price": 100.0,
+    "max_lots": 2,
+}
+
 _STRATEGY_DEFAULTS: dict[str, dict] = {
     "vwap_pullback": VWAP_DEFAULTS,
     "can_slim": CANSLIM_DEFAULTS,
     "intraday_futures": INTRADAY_FUTURES_DEFAULTS,
+    "breakout_retest": BREAKOUT_RETEST_DEFAULTS,
 }
 
 # In-memory cache: strategy_name -> merged params

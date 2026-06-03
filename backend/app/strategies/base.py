@@ -79,6 +79,10 @@ class MarketContext:
     # 5m candles with futures volume for index symbols (reliable volume source).
     # None for non-index symbols where native volume is reliable.
     candles_5m_futures_volume: list[Candle] | None = None
+    # Raw 1-minute candles for today (9:15 → now). Populated for strategies that
+    # need fine-grained retest/swing precision (Strategy 6 Breakout-Retest). None
+    # for strategies that only consume 5m.
+    candles_1m: list[Candle] | None = None
     # ATR from 5-min candles (Strategy 5 sub-setup SL sizing)
     atr_5m: float | None = None
     # Today's opening price (gap analysis)

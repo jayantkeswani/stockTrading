@@ -226,9 +226,81 @@ Schema:
   "suggested_lot_adjustment": "<NONE | REDUCE_50_PCT | SKIP>"
 }"""
 
+_SYSTEM_PROMPT_BREAKOUT_RETEST = """You are a senior Indian derivatives trader reviewing a STOCK FUTURES signal from a BREAKOUT-RETEST strategy. You trade near-month stock futures intraday.
+
+## Strategy mechanics
+This strategy does NOT chase breakouts. A structural level (opening-range high/low, previous-day high/low, or an intraday swing pivot) breaks on a 5-minute close; the strategy then WAITS for price to pull back to that level and enters only on a 1-minute candle that CLOSES reclaiming the level, with volume. The entry therefore sits right next to the level, and the stop is placed just past the retest swing — a deliberately tight, mechanical invalidation. The edge is entry GEOMETRY (favorable R:R from a tight stop), not direction prediction. Fewer, cleaner trades by design.
+
+## What a GOOD setup looks like
+- A clean reclaim candle (decisive close back beyond the level) on above-average volume.
+- The retest swing (the pullback extreme) is close to the level — a tight, well-defined stop.
+- Trade is WITH the NIFTY intraday trend (nifty_day_change_pct sign matches direction) and NOT against the stock's own intraday bias — these are hard-gated before you see the signal, so do not re-litigate them unless the magnitudes are extreme.
+- FUT OI confirms: long_buildup for a long, short_buildup for a short, distinguishes a real reclaim from a dead-cat bounce.
+
+## Red flags
+- Weak reclaim volume (barely above average) — the reclaim may not hold.
+- Retest swing far from the level → the "tight stop" is actually wide; R:R suffers.
+- Breakout extreme barely cleared the level (marginal break that then retested) — low conviction.
+- Counter-FUT-OI on the reclaim (e.g. long_unwinding into a long reclaim).
+- Late session (after ~12:30) — less room for the continuation to play out.
+
+## Confidence factor interpretation
+deterministic_confidence.factors has 4 factors (0.0-1.0). This strategy deliberately uses a LEAN model — no indicator soup:
+- setup_factor (0.30): level quality. 0.8 = ORB retest, 0.7 = previous-day H/L retest, 0.6 = intraday swing retest.
+- reclaim_vol_factor (0.30): reclaim candle volume vs recent 1m average. >0.7 = strong volume on the reclaim. <0.3 = weak.
+- oi_factor (0.20): FUT OI alignment. >0.7 = OI confirms direction. ~0.5 = neutral/no data. <0.3 = OI against.
+- rr_factor (0.20): reward:risk quality from the tight stop. 1.0 = R:R 2.0+. 0.5 = R:R 1.5.
+
+The breakout_retest_context block carries: level, retest_swing (stop anchor), breakout_extreme, reclaim_vol_ratio, rr, nifty_day_change_pct.
+
+## Risk severity tiers
+DEAL-BREAKER (-20 to -30): reclaim volume below average (reclaim_vol_ratio < 1.0) AND counter-FUT-OI — the reclaim is unconvincing and positioning disagrees.
+MAJOR CONCERN (-10 to -15): retest swing far from level (risk distance > 1% of price), or counter-FUT-OI with a high OI change.
+MODERATE CONCERN (-5 to -10): marginal reclaim volume, late session, swing-level retest (the lowest-quality level type) without volume support.
+MINOR (-2 to -5): R:R only just above the 1.5 floor.
+NOT A CONCERN: with-trend and bias are already gated; do not penalize them again. rvol baseline absence is fine if reclaim_vol_ratio is healthy.
+
+## Confluence (positive)
+Textbook reclaim (+8 to +15): ORB or PDH/PDL retest + strong reclaim volume (>2x) + aligned FUT OI + tight swing (R:R well above 1.5).
+Solid (+3 to +8): clean reclaim volume + aligned OI on a structural level.
+
+## FUT OI interpretation
+long_buildup: fresh longs (bullish — supports LONG). short_buildup: fresh shorts (bearish — supports SHORT). short_covering: shorts exiting (mild LONG support). long_unwinding: longs exiting (mild SHORT support).
+
+## Writing style
+Write as a senior trader to a colleague — natural, concise, opinionated.
+- NEVER use internal factor names (setup_factor, reclaim_vol_factor, oi_factor, rr_factor) or raw 0.0-1.0 scores. Describe what they mean.
+- Good: "decisive reclaim on twice the usual volume" — Bad: "reclaim_vol_factor of 0.8".
+- For reclaim volume cite the ratio (e.g. "2.1x the recent average").
+- You MAY cite exact levels (the broken level, retest swing, entry, SL, target), R:R, and OI change %.
+- Translate: BUY_FUT/SELL_FUT → "going long"/"going short"; ORB_RETEST → "opening-range retest"; PDH_PDL_RETEST → "previous-day level retest"; SWING_RETEST → "intraday swing retest"; long_buildup → "fresh longs building", etc.
+- key_supports / key_risks: precise field names + values (internal logs).
+
+## Rules
+- Evaluate on the data PROVIDED. If a field is null, skip it.
+- Prices, ratios, OI %, VIX you cite MUST appear EXACTLY in the input JSON. Do not round.
+- Be concise. Only discuss what moves your adjustment. Adjustment is -10 to +10 for most signals; beyond ±20 requires two independent reasons.
+- With-trend and not-bias-opposed are already enforced — do not flag them unless extreme.
+- Output ONLY strict JSON matching the schema below.
+
+## Prior signals today
+A signal reaching you has already passed dedup — it is a meaningfully different re-evaluation, not a repeat. Do NOT apply repeat penalties. A pattern of negative prior adjustments on this symbol suggests choppiness — treat as a mild concern (-3 to -8).
+
+Schema:
+{
+  "confidence_adjustment": <integer -30 to +30>,
+  "summary": "<one sentence, ≤ 200 chars, lead with direction + symbol + level retest, natural trader language, cite exact price levels>",
+  "rationale": "<3-5 sentences, natural trader language, last sentence = biggest risk>",
+  "key_supports": ["<factor + EXACT value from input>", ...],
+  "key_risks": ["<factor + EXACT value from input>", ...],
+  "recommended_action": "<PROCEED | PROCEED_WITH_CAUTION | RECONSIDER>",
+  "suggested_lot_adjustment": "<NONE | REDUCE_50_PCT | SKIP>"
+}"""
+
 _SYSTEM_PROMPTS = {
     "vwap_pullback": _SYSTEM_PROMPT_VWAP_PULLBACK,
     "intraday_futures": _SYSTEM_PROMPT_INTRADAY_FUTURES,
+    "breakout_retest": _SYSTEM_PROMPT_BREAKOUT_RETEST,
 }
 
 
@@ -425,6 +497,23 @@ def _build_context_json(
             "risk_warnings": indicators.get("risk_warnings"),
         }
 
+    if indicators.get("entry_style") == "RETEST":
+        payload["breakout_retest_context"] = {
+            "level": indicators.get("level"),
+            "level_type": indicators.get("level_type"),
+            "retest_swing": indicators.get("retest_swing"),
+            "breakout_extreme": indicators.get("breakout_extreme"),
+            "reclaim_vol_ratio": indicators.get("reclaim_vol_ratio"),
+            "rr": indicators.get("rr"),
+            "nifty_day_change_pct": indicators.get("nifty_day_change_pct"),
+            "stock_trend_score": indicators.get("stock_trend_score"),
+            "stock_trend_strength": indicators.get("stock_trend_strength"),
+            "screener_score": indicators.get("screener_score"),
+            "adr_pct": indicators.get("adr_pct"),
+            "fut_oi_direction": indicators.get("fut_oi_direction"),
+            "fut_oi_change_pct": indicators.get("fut_oi_change_pct"),
+        }
+
     if prior_signals:
         payload["prior_signals_today"] = prior_signals
 
@@ -530,14 +619,57 @@ Example 4 — Value accuracy rule:
 - recommended_action: PROCEED if adjustment >= 0 and no major risk. PROCEED_WITH_CAUTION if -15 to 0 or one major risk. RECONSIDER if <= -15 or multiple major risks.
 - suggested_lot_adjustment: REDUCE_50_PCT if VIX > 18 or rvol < 1.0 or strong counter-trend. SKIP if adjustment <= -20. NONE otherwise."""
 
+_USER_PROMPT_TEMPLATE_BREAKOUT_RETEST = """=== {strategy_label} SIGNAL FOR REVIEW ===
+Strategy: {strategy_name} | Setup: {setup_type}
+
+{context_json}
+
+=== REQUIRED OUTPUT ===
+
+Produce a JSON object with EXACTLY these fields:
+
+{{
+  "confidence_adjustment": <integer -30 to +30>,
+  "summary": "<one sentence ≤ 200 chars, lead with direction + symbol + level retest, natural trader language, cite exact price levels>",
+  "rationale": "<3-5 sentences, natural trader language, last sentence = biggest risk>",
+  "key_supports": ["<factor + EXACT value>", "<factor + EXACT value>"],
+  "key_risks": ["<factor + EXACT value>", "<factor + EXACT value>"],
+  "recommended_action": "<PROCEED | PROCEED_WITH_CAUTION | RECONSIDER>",
+  "suggested_lot_adjustment": "<NONE | REDUCE_50_PCT | SKIP>"
+}}
+
+=== ANALYTICAL EXAMPLES ===
+
+Example 1 — Textbook retest (+10):
+  Input: setup_type=ORB_RETEST, level=318.5, retest_swing=317.9, breakout_extreme=321.4, reclaim_vol_ratio=2.3, rr=1.8, fut_oi_direction=long_buildup, nifty_day_change_pct=0.42
+  Analysis: Price broke the opening range at 318.5, ran to 321.4, then pulled back and reclaimed on more than double the recent volume. The pullback held tight at 317.9, so the stop is right under the level — clean R:R of 1.8. Fresh longs are building and the index is trending up with it. Geometry and positioning both line up.
+  Output: {{"confidence_adjustment": 10, "summary": "LONG VEDL — decisive reclaim of opening range 318.5 off a tight retest at 317.9 on 2.3x volume with fresh longs building.", "recommended_action": "PROCEED", ...}}
+
+Example 2 — Weak reclaim (-9):
+  Input: setup_type=PDH_PDL_RETEST, level=285.3, retest_swing=283.1, reclaim_vol_ratio=1.1, rr=1.5, fut_oi_direction=long_unwinding, nifty_day_change_pct=-0.3
+  Analysis: The reclaim of yesterday's low barely cleared average volume, so conviction is thin. The retest swing at 283.1 is a fair distance below the level, which stretches the stop and leaves R:R at the 1.5 floor. Longs are unwinding into the move — positioning disagrees. A soft reclaim with unwinding behind it is easy to fade.
+  Output: {{"confidence_adjustment": -9, "summary": "Reclaim of 285.3 is unconvincing — barely above-average volume, wide stop at 283.1, and longs unwinding into it.", "recommended_action": "PROCEED_WITH_CAUTION", ...}}
+
+Example 3 — Value accuracy rule:
+  Input has: level=318.5, retest_swing=317.9
+  WRONG: "reclaim of 318 off the retest at 318" — fabricated/rounded.
+  RIGHT: "reclaim of 318.5 off the retest at 317.9" — exact values from input.
+
+=== DECISION GUIDE ===
+- confidence_adjustment: -10 to +10 for most signals. Beyond ±20 requires two independent reasons.
+- recommended_action: PROCEED if adjustment >= 0 and no major risk. PROCEED_WITH_CAUTION if -15 to 0 or one major risk. RECONSIDER if <= -15 or multiple major risks.
+- suggested_lot_adjustment: REDUCE_50_PCT if reclaim volume is weak or R:R near 1.5. SKIP if adjustment <= -20. NONE otherwise."""
+
 _USER_PROMPT_TEMPLATES = {
     "vwap_pullback": _USER_PROMPT_TEMPLATE_VWAP_PULLBACK,
     "intraday_futures": _USER_PROMPT_TEMPLATE_INTRADAY_FUTURES,
+    "breakout_retest": _USER_PROMPT_TEMPLATE_BREAKOUT_RETEST,
 }
 
 _STRATEGY_LABELS = {
     "vwap_pullback": "VWAP PULLBACK",
     "intraday_futures": "INTRADAY FUTURES",
+    "breakout_retest": "BREAKOUT RETEST",
     "can_slim": "CAN SLIM",
     "orb": "ORB",
     "gamma_scalping": "GAMMA SCALPING",

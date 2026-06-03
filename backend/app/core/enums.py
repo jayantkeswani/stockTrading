@@ -60,6 +60,7 @@ class StrategyName(StrEnum):
     GAMMA_SCALPING = "gamma_scalping"
     CAN_SLIM = "can_slim"
     INTRADAY_FUTURES = "intraday_futures"
+    BREAKOUT_RETEST = "breakout_retest"
 
 
 class PositionType(StrEnum):

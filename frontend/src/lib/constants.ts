@@ -26,6 +26,7 @@ export const STRATEGY_LABELS: Record<string, string> = {
   gamma_scalping: "Gamma Scalp",
   can_slim: "CAN SLIM",
   intraday_futures: "Intraday Futures",
+  breakout_retest: "Breakout Retest",
 };
 
 export const STATUS_COLORS: Record<string, string> = {
