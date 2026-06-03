@@ -116,6 +116,7 @@ stockTrading/
 - `replay_strategy5.py` — offline S5 signal generation from historical candles
 - `replay_strategy6.py` — offline S6 (Breakout-Retest) signal generation. Drives the **stateful** strategy minute-by-minute over a window (universe = the symbols S5 fired on each day, for a clean head-to-head), persisting `breakout_retest` signals into the DB so `analyze_strategy5_signal_accuracy.py --strategy breakout_retest` measures their first-touch accuracy. Stamps signals with the real reclaim-candle timestamp (basis ~0). `--no-persist` to dry-run. Validation result in `docs/strategies/strategy-6-breakout-retest.md`
 - `backtest_strategy5.py` — S5 signal exit simulator (trailing SL, P&L, sweep mode). Reads trailing SL params from DB via `get_strategy_params`. `--invalidation` adds a thesis-invalidation exit (early exit when the NIFTY intraday-bias flips against the trade for N candles) and simulates each trade twice — baseline vs invalidation — reporting reversal savings vs retracement cost; guards: `--inval-persist N`, `--inval-quorum` (require stock to lose/reclaim its own VWAP), `--inval-moderate`. `--inval-sweep` sweeps persistence × quorum. `--inval-score <t>` overrides the trigger to fire on opposing NIFTY bias with `|score| >= t` (e.g. 0.25 = recalibrated MODERATE band; 0 = use the STRONG label) — for band-edge calibration; finding: looser triggers are net-negative, so the live exit stays decoupled at ~0.50 (study doc "Bias band recalibration"). The index bias VWAP is weighted by `{index}_FUT` futures volume (index spot volume is ~zero), matching live. Exposes `build_index_bias_series()` reused by `backtest_strategy2.py`. Signals carry no `lots` (sizing is at execution) — 1-lot baseline, override via `--lots`. `--source shadow` replays the actual deduped SHADOW trades (real fills + entry timestamps) instead of raw signals and prints the re-sim baseline vs the real realized P&L — an **engine-fidelity check**: the 1m-candle engine runs ~3.6× optimistic vs live tick exits, so trust the *direction*, not the absolute magnitude
+- `analyze_strategy5_signal_accuracy.py` — **signal-accuracy** measurement (separate from exits): pure first-touch read (did the underlying reach TARGET before STOP, engine-independent — no ~3.6× exit-engine gap) plus exit-free forward-direction at +15/30/60 min. Reports confidence calibration, per-setup accuracy, 9-factor importance (point-biserial r), regime/direction conditioning, re-fire effect, and filter-lift re-runs. `--strategy intraday_futures|vwap_pullback|breakout_retest`. `--basis-adjust` anchors spot candles to the futures entry (canonical mode); drops wrong-instrument (`--max-basis-pct`, default 3%) and inverted-stop signals. Reuses `fetch_candles_after` from `backtest_strategy5.py`. Findings in `docs/backtest/s5-signal-accuracy-study.md`
 - `backtest_strategy2.py` — S2 (index options) thesis-invalidation study, mirroring the S5 script. Replays `vwap_pullback` signals; values exits on the OPTION PREMIUM via delta-approximation from the index move (fast mode — needs only index candles, covers expired contracts); trigger = the traded index's own bias. Reports premium points (size-independent). Same `--invalidation`/`--inval-*`/`--inval-sweep` flags + `--delta`. Finding: invalidation helps S5 (momentum) but hurts S2 (mean-reversion) — see `docs/backtest/s5-invalidation-exit-study.md`
 - `backfill_daily_candles.py` — one-time seed of `market_data_daily` from Fyers
 - `audit_screener_data.py` — read-only freshness check for S5 morning screener data
@@ -214,6 +215,17 @@ python scripts/backtest_strategy2.py --inval-sweep --confidence 70 --start 2026-
 # Backtest reads signals + index/underlying/futures candles from the configured DB. To replay
 # prod days locally, stage prod's signals + market_data_1m (incl. %FUT for index VWAP volume) +
 # global_market_snapshots into a local DB and set DATABASE_URL.
+
+# Signal-ACCURACY measurement (engine-independent first-touch; faithful, unlike exit P&L)
+# Stage prod signals + underlying 1m candles into a local DB and point DATABASE_URL at it.
+DATABASE_URL=postgresql+asyncpg://trader:trader_dev_123@localhost:5433/stocktrading_bt \
+  python scripts/analyze_strategy5_signal_accuracy.py --start 2026-04-29 --end 2026-06-02 --basis-adjust
+python scripts/analyze_strategy5_signal_accuracy.py --start 2026-04-29 --end 2026-06-02 --min-confidence 70 --trace
+
+# Strategy 6 (Breakout-Retest) replay + head-to-head accuracy vs S5 (same staged DB)
+DATABASE_URL=postgresql+asyncpg://trader:trader_dev_123@localhost:5433/stocktrading_bt \
+  python scripts/replay_strategy6.py --start 2026-04-29 --end 2026-06-02
+python scripts/analyze_strategy5_signal_accuracy.py --strategy breakout_retest --start 2026-04-29 --end 2026-06-02 --basis-adjust
 ```
 
 ## Deployment (GCP)
@@ -278,6 +290,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 - `harness.md` — backtest framework usage and modes
 - `option-data.md` — option data sourcing for backtests
 - `s5-invalidation-exit-study.md` — thesis-invalidation exit study (exit when the index regime flips against the trade), S5 + S2 over 20 days: **+38% for S5** (momentum, zero retracement cost at persist=3) but **net-negative for S2** (mean-reversion). Documents the index-VWAP futures-volume fidelity fix, why the same exit helps momentum yet hurts mean-reversion, and the **live per-YOLO-profile implementation** (`trade_monitor._check_invalidation`, `yolo_profiles.invalidation_*`) used to validate the magnitude on the paper book
+- `s5-signal-accuracy-study.md` — **signal-accuracy** study (engine-independent first-touch + forward-direction over 25 days). Headline: S5 signals are **not directionally predictive** (forward-favorable 37–42%, target-first 18%) and **confidence is uninformative below ~80** (r≈0.04); only conf≥80 (7.6% of volume) shows edge. Bias-opposed (10.7% hit) and counter-trend (29.2%) cohorts are the cleanest negatives; re-fires hit *better*. Factor importance: oi_direction/screener_rank carry weak signal, rvol/nifty_bias/gap are noise. Surfaces a live "BSE"→`BSE:BANKEX..FUT` instrument-resolution bug. Tooling: `scripts/analyze_strategy5_signal_accuracy.py` (the same analyzer validated S6 Breakout-Retest, `--strategy breakout_retest`)
 
 ### docs/
 
