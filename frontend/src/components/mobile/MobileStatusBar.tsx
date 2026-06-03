@@ -57,7 +57,7 @@ export function MobileStatusBar() {
       {marketStatus?.in_dead_zone && <span className="text-warning shrink-0">DEAD ZONE</span>}
       {intradayBias && (
         <span className={`shrink-0 ${biasColor}`}>
-          NIFTY {intradayBias.bias} {intradayBias.strength}
+          {intradayBias.bias} {intradayBias.strength}
         </span>
       )}
       {marketStatus?.india_vix != null && (
