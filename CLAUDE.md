@@ -115,6 +115,7 @@ stockTrading/
 - `backtest.py` — run backtests
 - `replay_strategy5.py` — offline S5 signal generation from historical candles
 - `backtest_strategy5.py` — S5 signal exit simulator (trailing SL, P&L, sweep mode). Reads trailing SL params from DB via `get_strategy_params`
+- `analyze_strategy5_signal_accuracy.py` — S5 **signal-accuracy** measurement (separate from exits): pure first-touch read (did the underlying reach TARGET before STOP, engine-independent — no ~3.6× exit-engine gap) plus exit-free forward-direction at +15/30/60 min. Reports confidence calibration, per-setup accuracy, 9-factor importance (point-biserial r), regime/direction conditioning, re-fire effect, and filter-lift re-runs. `--basis-adjust` anchors spot candles to the futures entry (canonical mode); drops wrong-instrument (`--max-basis-pct`, default 3%) and inverted-stop signals. Reuses `fetch_candles_after` from `backtest_strategy5.py`. Findings in `docs/backtest/s5-signal-accuracy-study.md`
 - `backfill_daily_candles.py` — one-time seed of `market_data_daily` from Fyers
 - `audit_screener_data.py` — read-only freshness check for S5 morning screener data
 - `audit_vwap_data.py` — read-only freshness check for S2 VWAP Pullback data (10 checks)
@@ -201,6 +202,12 @@ python scripts/backfill_daily_candles.py --symbols TCS,RELIANCE
 python scripts/backtest_strategy5.py --confidence 60 --start 2026-05-05
 python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05
 python scripts/backtest_strategy5.py --sweep --start 2026-05-01 --end 2026-05-05 --lots 1
+
+# Strategy 5 signal-ACCURACY measurement (engine-independent first-touch; faithful, unlike exit P&L)
+# Stage prod signals + underlying 1m candles into a local DB and point DATABASE_URL at it.
+DATABASE_URL=postgresql+asyncpg://trader:trader_dev_123@localhost:5433/stocktrading_bt \
+  python scripts/analyze_strategy5_signal_accuracy.py --start 2026-04-29 --end 2026-06-02 --basis-adjust
+python scripts/analyze_strategy5_signal_accuracy.py --start 2026-04-29 --end 2026-06-02 --min-confidence 70 --trace
 ```
 
 ## Deployment (GCP)
@@ -264,6 +271,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 - `harness.md` — backtest framework usage and modes
 - `option-data.md` — option data sourcing for backtests
+- `s5-signal-accuracy-study.md` — S5 **signal-accuracy** study (engine-independent first-touch + forward-direction over 25 days). Headline: signals are **not directionally predictive** (forward-favorable 37–42%, target-first 18%) and **confidence is uninformative below ~80** (r≈0.04); only conf≥80 (7.6% of volume) shows edge. Bias-opposed (10.7% hit) and counter-trend (29.2%) cohorts are the cleanest negatives; re-fires hit *better*. Factor importance: oi_direction/screener_rank carry weak signal, rvol/nifty_bias/gap are noise. Surfaces a live "BSE"→`BSE:BANKEX..FUT` instrument-resolution bug. Tooling: `scripts/analyze_strategy5_signal_accuracy.py`
 
 ### docs/
 
