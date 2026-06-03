@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Mobile Dashboard — Mockup</title>
+<style>
+  :root {
+    --bg-primary: #06060b;
+    --bg-secondary: #0b0b13;
+    --bg-tertiary: #12121c;
+    --bg-elevated: #181825;
+    --border: #1a1a2a;
+    --border-hover: #28283e;
+    --text-primary: #c8c8d4;
+    --text-secondary: #6a6a82;
+    --text-muted: #3c3c54;
+    --profit: #00e68a;
+    --loss: #ff4060;
+    --accent: #d4a843;
+    --accent-hover: #e0bc5f;
+    --warning: #f59e0b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    background: #000;
+    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    color: var(--text-primary);
+    display: flex; justify-content: center; align-items: flex-start;
+    min-height: 100vh; padding: 24px 12px;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .profit { color: var(--profit); }
+  .loss { color: var(--loss); }
+  .accent { color: var(--accent); }
+  .muted { color: var(--text-secondary); }
+  .dim { color: var(--text-muted); }
+
+  /* phone frame */
+  .phone {
+    width: 390px; max-width: 100%;
+    height: 844px; max-height: calc(100vh - 48px);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 38px;
+    box-shadow: 0 0 0 10px #0c0c12, 0 30px 80px rgba(0,0,0,.7);
+    overflow: hidden; position: relative;
+    display: flex; flex-direction: column;
+  }
+  .notch {
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    width: 140px; height: 26px; background: #0c0c12;
+    border-radius: 0 0 16px 16px; z-index: 50;
+  }
+
+  /* header */
+  .statusbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 22px 4px; font-size: 12px; color: var(--text-primary);
+    font-weight: 600;
+  }
+  .apphdr {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 16px 10px; border-bottom: 1px solid var(--border);
+  }
+  .apphdr .title { font-size: 15px; font-weight: 700; letter-spacing: .3px; }
+  .apphdr .title .dot { color: var(--accent); }
+  .pnl-pill {
+    font-size: 11px; padding: 3px 9px; border-radius: 6px;
+    background: rgba(0,230,138,.1); color: var(--profit);
+    border: 1px solid rgba(0,230,138,.2);
+  }
+
+  /* scroll area */
+  .screen { flex: 1; overflow-y: auto; overflow-x: hidden; position: relative; }
+  .screen::-webkit-scrollbar { width: 0; }
+  .page { display: none; padding: 10px 12px 20px; animation: fade .2s ease-out; }
+  .page.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px);} to {opacity:1; transform:none;} }
+
+  /* control bars */
+  .ctrlbar {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--bg-primary);
+    padding: 4px 0 8px; margin-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .pills { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pill {
+    font-size: 11px; padding: 5px 11px; border-radius: 7px;
+    background: var(--bg-tertiary); color: var(--text-secondary);
+    border: 1px solid var(--border); cursor: pointer; white-space: nowrap;
+    transition: all .12s;
+  }
+  .pill.on { background: rgba(212,168,67,.14); color: var(--accent); border-color: rgba(212,168,67,.35); }
+  .pill.green.on { background: rgba(0,230,138,.12); color: var(--profit); border-color: rgba(0,230,138,.3); }
+  .pill.purple.on { background: rgba(168,120,220,.14); color:#b58ce0; border-color: rgba(168,120,220,.35); }
+
+  .slider-row { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+  .slider-row label { font-size: 10px; color: var(--text-muted); letter-spacing: .5px; }
+  .slider-row .val { font-size: 11px; color: var(--accent); min-width: 30px; }
+  input[type=range] {
+    -webkit-appearance: none; flex:1; height: 3px; border-radius: 3px;
+    background: var(--border); outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; box-shadow: 0 0 6px rgba(212,168,67,.5);
+  }
+
+  /* signal card */
+  .card {
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: 10px; margin-bottom: 7px; overflow: hidden;
+  }
+  .card.exec { border-left: 2px solid var(--profit); }
+  .card.expired { opacity: .55; }
+  .card-head { display: flex; align-items: center; gap: 8px; padding: 10px 11px; cursor: pointer; }
+  .dirbadge {
+    font-size: 10px; font-weight: 700; padding: 3px 6px; border-radius: 5px;
+    display: flex; align-items: center; gap: 2px; white-space: nowrap;
+  }
+  .dirbadge.long { background: rgba(0,230,138,.12); color: var(--profit); }
+  .dirbadge.short { background: rgba(255,64,96,.12); color: var(--loss); }
+  .sym-block { flex: 1; min-width: 0; }
+  .sym-line { display: flex; align-items: center; gap: 6px; }
+  .sym { font-size: 14px; font-weight: 700; }
+  .sub { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
+  .pbadge { font-size: 8px; padding: 1px 4px; border-radius: 3px; background: rgba(212,168,67,.15); color: var(--accent); }
+  .statusbadge { font-size: 8px; padding: 2px 5px; border-radius: 4px; letter-spacing: .3px; font-weight: 600; }
+  .st-pending { background: rgba(212,168,67,.12); color: var(--accent); }
+  .st-exec { background: rgba(0,230,138,.12); color: var(--profit); }
+  .st-expired { background: var(--bg-tertiary); color: var(--text-muted); }
+
+  /* glance metrics row */
+  .glance { display: flex; gap: 0; border-top: 1px solid var(--border); }
+  .glance .cell { flex: 1; padding: 6px 4px; text-align: center; border-right: 1px solid var(--border); }
+  .glance .cell:last-child { border-right: none; }
+  .glance .k { font-size: 8px; color: var(--text-muted); letter-spacing: .4px; }
+  .glance .v { font-size: 12px; margin-top: 2px; font-weight: 600; }
+
+  .chev { color: var(--text-muted); font-size: 12px; transition: transform .15s; }
+  .card.open .chev { transform: rotate(180deg); }
+
+  /* expanded body */
+  .card-body { display: none; padding: 10px 11px; border-top: 1px solid var(--border); background: var(--bg-primary); }
+  .card.open .card-body { display: block; animation: fade .15s; }
+  .btn-row { display: flex; gap: 7px; margin-bottom: 10px; }
+  .abtn {
+    flex: 1; font-size: 11px; padding: 8px; border-radius: 7px; text-align: center;
+    border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer;
+  }
+  .abtn.ai { background: rgba(168,120,220,.1); border-color: rgba(168,120,220,.3); color: #b58ce0; }
+  .ai-action { font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 4px; letter-spacing:.4px; display:inline-block; margin-bottom:6px; }
+  .ai-proceed { background: rgba(0,230,138,.12); color: var(--profit); }
+  .lbl { font-size: 8px; color: var(--text-muted); letter-spacing: .6px; margin: 8px 0 3px; }
+  .ai-text { font-size: 11px; color: var(--text-primary); line-height: 1.45; }
+  .sr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+  .sr-grid ul { list-style: none; }
+  .sr-grid li { font-size: 10px; color: var(--text-secondary); padding: 1px 0 1px 9px; position: relative; line-height:1.4; }
+  .sr-grid li::before { content: "·"; position: absolute; left: 2px; }
+  .factors { margin-top: 8px; }
+  .frow { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .frow .fname { font-size: 9px; color: var(--text-secondary); width: 70px; }
+  .fbar { flex: 1; height: 4px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .fbar > span { display: block; height: 100%; background: var(--accent); }
+  .frow .fval { font-size: 9px; color: var(--text-muted); width: 22px; text-align: right; }
+
+  /* position card */
+  .pos { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 7px; }
+  .pos-head { display: flex; align-items: center; padding: 10px 11px; gap: 8px; cursor: pointer; }
+  .pos-pnl { text-align: right; }
+  .pos-pnl .amt { font-size: 14px; font-weight: 700; }
+  .pos-pnl .pct { font-size: 9px; }
+  .pos-grid { display: flex; border-top: 1px solid var(--border); }
+  .pos-grid .c { flex:1; padding: 6px 5px; text-align:center; border-right: 1px solid var(--border); }
+  .pos-grid .c:last-child { border:none; }
+  .pos-grid .k { font-size: 8px; color: var(--text-muted); }
+  .pos-grid .v { font-size: 12px; margin-top: 2px; }
+  .closebtn { font-size: 10px; padding: 4px 9px; border-radius: 6px; background: rgba(255,64,96,.1); color: var(--loss); border: 1px solid rgba(255,64,96,.25); cursor:pointer; }
+  .pos .card-body { display: none; }
+  .pos.open .card-body { display: block; animation: fade .15s; }
+  .pos.open .chev { transform: rotate(180deg); }
+  .kv-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px 10px; }
+  .kv { display: flex; flex-direction: column; }
+  .kv span { font-size: 8px; color: var(--text-muted); letter-spacing: .4px; }
+  .kv b { font-size: 11px; font-weight: 600; margin-top: 2px; font-family: ui-monospace, Menlo, monospace; }
+
+  .section-title { font-size: 10px; color: var(--text-muted); letter-spacing: .6px; margin: 14px 2px 6px; display:flex; justify-content:space-between; }
+
+  /* watchlist card */
+  .wl { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 6px; padding: 9px 11px; cursor: pointer; }
+  .wl .card-body { display: none; padding-top: 9px; margin-top: 9px; border-top: 1px solid var(--border); }
+  .wl.open .card-body { display: block; animation: fade .15s; }
+  .wl.open .chev { transform: rotate(180deg); }
+  .news-pill { font-size: 8px; padding: 2px 6px; border-radius: 4px; }
+  .news-pos { background: rgba(0,230,138,.12); color: var(--profit); }
+  .news-neg { background: rgba(255,64,96,.12); color: var(--loss); }
+  .news-neu { background: var(--bg-tertiary); color: var(--text-secondary); }
+  .headline { font-size: 10px; color: var(--text-secondary); line-height: 1.4; padding: 2px 0 2px 9px; position: relative; }
+  .headline::before { content: "›"; position: absolute; left: 0; color: var(--text-muted); }
+  .wl-top { display: flex; align-items: center; gap: 8px; }
+  .biaspill { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+  .bias-bull { background: rgba(0,230,138,.12); color: var(--profit); }
+  .bias-bear { background: rgba(255,64,96,.12); color: var(--loss); }
+  .bias-neut { background: var(--bg-tertiary); color: var(--text-secondary); }
+  .confchip { font-size: 8px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+  .conf-high { background: rgba(0,230,138,.12); color: var(--profit); }
+  .conf-low { background: rgba(255,64,96,.12); color: var(--loss); }
+  .conf-med { background: rgba(212,168,67,.12); color: var(--accent); }
+  .scorebox { text-align: right; }
+  .scorebox .s { font-size: 16px; font-weight: 700; color: var(--accent); }
+  .scorebox .sl { font-size: 7px; color: var(--text-muted); }
+  .wl-metrics { display: flex; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+  .wl-metrics .m { font-size: 9px; color: var(--text-muted); }
+  .wl-metrics .m b { color: var(--text-primary); font-weight: 600; }
+
+  /* trades */
+  .summary { display: flex; gap: 6px; margin-bottom: 8px; }
+  .scard { flex:1; background: var(--bg-secondary); border:1px solid var(--border); border-radius: 9px; padding: 8px; text-align:center; }
+  .scard .k { font-size: 8px; color: var(--text-muted); letter-spacing:.4px; }
+  .scard .v { font-size: 15px; font-weight: 700; margin-top: 3px; }
+  .scard .v.sm { font-size: 12px; }
+  .trade { background: var(--bg-secondary); border:1px solid var(--border); border-radius: 9px; margin-bottom: 6px; padding: 9px 11px; cursor: pointer; }
+  .trade .card-body { display: none; padding: 10px 0 2px; margin-top: 9px; border-top: 1px solid var(--border); }
+  .trade.open .card-body { display: block; animation: fade .15s; }
+  .trade.open .chev { transform: rotate(180deg); }
+  .trade-top { display:flex; align-items:center; gap:8px; }
+  .trade-mid { display:flex; gap: 14px; margin-top: 7px; }
+  .trade-mid .m { font-size: 9px; color: var(--text-muted); }
+  .trade-mid .m b { font-size: 11px; color: var(--text-primary); font-weight: 600; display:block; margin-top:1px; }
+  .exitreason { font-size: 8px; padding: 2px 6px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); }
+  .customdates { display: none; gap: 6px; margin-top: 8px; align-items: center; }
+  .customdates.show { display: flex; }
+  .customdates input { background: var(--bg-tertiary); border:1px solid var(--border); color: var(--text-primary); font-size:10px; padding: 5px 7px; border-radius:6px; }
+
+  /* bottom tab bar */
+  .tabbar {
+    display: flex; border-top: 1px solid var(--border);
+    background: var(--bg-secondary); padding: 6px 4px 22px;
+  }
+  .tab {
+    flex:1; display:flex; flex-direction:column; align-items:center; gap:3px;
+    padding: 6px 0; cursor: pointer; color: var(--text-muted);
+  }
+  .tab.active { color: var(--accent); }
+  .tab .ic { font-size: 18px; line-height: 1; }
+  .tab .tl { font-size: 9px; letter-spacing: .3px; }
+  .tab .badge { position:absolute; transform: translate(12px,-4px); font-size:7px; background: var(--loss); color:#fff; border-radius:8px; padding:0 4px; }
+  .homebar { position:absolute; bottom: 8px; left: 50%; transform:translateX(-50%); width: 130px; height: 4px; background: var(--text-muted); border-radius: 3px; opacity:.6; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="notch"></div>
+  <div class="statusbar">
+    <span>9:41</span>
+    <span style="letter-spacing:2px;">●●●● 5G ▮</span>
+  </div>
+  <div class="apphdr">
+    <div class="title">stock<span class="dot">·</span>trading</div>
+    <div class="pnl-pill mono">Today +₹8,240</div>
+  </div>
+
+  <div class="screen">
+
+    <!-- ============ SIGNALS ============ -->
+    <div class="page active" id="page-signals">
+      <div class="ctrlbar">
+        <div class="slider-row">
+          <label>CONF</label>
+          <input type="range" min="0" max="100" step="5" value="60" oninput="this.nextElementSibling.textContent=this.value==0?'any':this.value+'%'">
+          <span class="val">60%</span>
+        </div>
+        <div class="pills">
+          <div class="pill green on" onclick="this.classList.toggle('on')">+ Executed</div>
+          <div class="pill on" onclick="this.classList.toggle('on')">+ Expired</div>
+        </div>
+      </div>
+
+      <!-- collapsed card 1 -->
+      <div class="card exec" onclick="toggleCard(this)">
+        <div class="card-head">
+          <div class="dirbadge long">▲ LONG</div>
+          <div class="sym-block">
+            <div class="sym-line"><span class="sym">VEDL</span><span class="pbadge">P</span><span class="statusbadge st-exec">EXEC</span></div>
+            <div class="sub">FUT · S5 Intraday · 10:24 AM</div>
+          </div>
+          <span class="chev">▼</span>
+        </div>
+        <div class="glance mono">
+          <div class="cell"><div class="k">LOTS</div><div class="v">2</div></div>
+          <div class="cell"><div class="k">ENTRY</div><div class="v">442.50</div></div>
+          <div class="cell"><div class="k">TARGET</div><div class="v profit">451.20</div></div>
+          <div class="cell"><div class="k">SL</div><div class="v loss">438.10</div></div>
+          <div class="cell"><div class="k">CONF</div><div class="v accent">78</div></div>
+        </div>
+        <div class="card-body" onclick="event.stopPropagation()">
+          <div class="btn-row">
+            <div class="abtn ai">✦ AI Insight</div>
+            <div class="abtn">⋯ Details</div>
+          </div>
+          <span class="ai-action ai-proceed">PROCEED</span>
+          <div class="ai-text">Strong RS leader breaking ORB high with NIFTY bias firmly bullish. Volume 2.1× avg confirms momentum.</div>
+          <div class="lbl">SUPPORTS / RISKS</div>
+          <div class="sr-grid">
+            <ul><li>RS pct 94</li><li>Above VWAP</li><li>Sector strong</li></ul>
+            <ul><li>ADR 78% used</li><li>News: neutral</li></ul>
+          </div>
+          <div class="factors">
+            <div class="lbl">CONFIDENCE FACTORS</div>
+            <div class="frow"><span class="fname">RS / Momentum</span><div class="fbar"><span style="width:94%"></span></div><span class="fval">94</span></div>
+            <div class="frow"><span class="fname">Index Bias</span><div class="fbar"><span style="width:82%"></span></div><span class="fval">82</span></div>
+            <div class="frow"><span class="fname">Volume</span><div class="fbar"><span style="width:71%"></span></div><span class="fval">71</span></div>
+            <div class="frow"><span class="fname">ORB Break</span><div class="fbar"><span style="width:88%"></span></div><span class="fval">88</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- collapsed card 2 -->
+      <div class="card" onclick="toggleCard(this)">
+        <div class="card-head">
+          <div class="dirbadge short">▼ SHORT</div>
+          <div class="sym-block">
+            <div class="sym-line"><span class="sym">NIFTY</span><span class="statusbadge st-pending">PENDING</span></div>
+            <div class="sub">24500 PE · S2 VWAP · 10:31 AM</div>
+          </div>
+          <span class="chev">▼</span>
+        </div>
+        <div class="glance mono">
+          <div class="cell"><div class="k">LOTS</div><div class="v">1</div></div>
+          <div class="cell"><div class="k">ENTRY</div><div class="v">182.40</div></div>
+          <div class="cell"><div class="k">TARGET</div><div class="v profit">214.00</div></div>
+          <div class="cell"><div class="k">SL</div><div class="v loss">163.00</div></div>
+          <div class="cell"><div class="k">CONF</div><div class="v accent">64</div></div>
+        </div>
+        <div class="card-body" onclick="event.stopPropagation()">
+          <div class="btn-row">
+            <div class="abtn ai">✦ AI Insight</div>
+            <div class="abtn">⋯ Details</div>
+          </div>
+          <span class="ai-action ai-proceed">PROCEED</span>
+          <div class="ai-text">Rejection at VWAP with PDH confluence. OI build-up on the put side supports downside continuation.</div>
+        </div>
+      </div>
+
+      <!-- expired card -->
+      <div class="card expired" onclick="toggleCard(this)">
+        <div class="card-head">
+          <div class="dirbadge long">▲ LONG</div>
+          <div class="sym-block">
+            <div class="sym-line"><span class="sym">SAIL</span><span class="statusbadge st-expired">EXPIRED</span></div>
+            <div class="sub">FUT · S5 Intraday · 9:52 AM</div>
+          </div>
+          <span class="chev">▼</span>
+        </div>
+        <div class="glance mono">
+          <div class="cell"><div class="k">LOTS</div><div class="v">3</div></div>
+          <div class="cell"><div class="k">ENTRY</div><div class="v">128.10</div></div>
+          <div class="cell"><div class="k">TARGET</div><div class="v profit">131.40</div></div>
+          <div class="cell"><div class="k">SL</div><div class="v loss">126.50</div></div>
+          <div class="cell"><div class="k">CONF</div><div class="v accent">58</div></div>
+        </div>
+        <div class="card-body" onclick="event.stopPropagation()">
+          <div class="ai-text dim">Signal expired — grace window elapsed before fill conditions met.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ POSITIONS ============ -->
+    <div class="page" id="page-positions">
+      <!-- profile selector bar -->
+      <div class="ctrlbar">
+        <div class="pills" id="profile-pills">
+          <div class="pill" onclick="selProfile(this,'manual')">Manual</div>
+          <div class="pill on" onclick="selProfile(this,'p5')">YOLO 5K</div>
+          <div class="pill" onclick="selProfile(this,'p10')">YOLO 10K</div>
+          <div class="pill" onclick="selProfile(this,'p15')">YOLO 15K</div>
+          <div class="pill purple" onclick="selProfile(this,'shadow')">Shadow</div>
+        </div>
+      </div>
+
+      <div class="section-title"><span>OPEN · YOLO 5K</span><span class="profit mono">+₹3,180</span></div>
+
+      <div class="pos" onclick="togglePos(this)">
+        <div class="pos-head">
+          <div style="flex:1">
+            <div class="sym-line"><span class="sym">VEDL</span><span class="pbadge">P</span><span class="dirbadge long" style="font-size:8px;padding:2px 5px">▲</span></div>
+            <div class="sub">FUT · 2L (200) · S5 · 10:24</div>
+          </div>
+          <div class="pos-pnl"><div class="amt profit mono">+₹2,040</div><div class="pct profit mono">+2.3%</div></div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="pos-grid mono">
+          <div class="c"><div class="k">ENTRY</div><div class="v">442.50</div></div>
+          <div class="c"><div class="k">LTP</div><div class="v">452.70</div></div>
+          <div class="c"><div class="k">SL DIST</div><div class="v loss">14.6</div></div>
+          <div class="c"><div class="k">TGT</div><div class="v profit">451.20</div></div>
+        </div>
+        <div class="card-body">
+          <div class="kv-grid">
+            <div class="kv"><span>Opened</span><b>10:24 AM</b></div>
+            <div class="kv"><span>Fill latency</span><b class="accent">3m 25s</b></div>
+            <div class="kv"><span>Strategy</span><b>S5 Intraday</b></div>
+            <div class="kv"><span>Expiry</span><b>26 Jun</b></div>
+            <div class="kv"><span>Lots / Qty</span><b>2L (200)</b></div>
+            <div class="kv"><span>Stop loss</span><b class="loss">438.10</b></div>
+            <div class="kv"><span>Target</span><b class="profit">451.20</b></div>
+            <div class="kv"><span>Margin</span><b>₹88,500</b></div>
+            <div class="kv"><span>Signal conf</span><b class="accent">78</b></div>
+          </div>
+          <div class="btn-row" style="margin-top:10px">
+            <div class="closebtn" style="flex:1;text-align:center">Close Position</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pos" onclick="togglePos(this)">
+        <div class="pos-head">
+          <div style="flex:1">
+            <div class="sym-line"><span class="sym">TATASTEEL</span><span class="dirbadge long" style="font-size:8px;padding:2px 5px">▲</span></div>
+            <div class="sub">FUT · 1L (425) · S5 · 11:08</div>
+          </div>
+          <div class="pos-pnl"><div class="amt profit mono">+₹1,140</div><div class="pct profit mono">+1.1%</div></div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="pos-grid mono">
+          <div class="c"><div class="k">ENTRY</div><div class="v">162.30</div></div>
+          <div class="c"><div class="k">LTP</div><div class="v">165.00</div></div>
+          <div class="c"><div class="k">SL DIST</div><div class="v loss">6.2</div></div>
+          <div class="c"><div class="k">TGT</div><div class="v profit">167.10</div></div>
+        </div>
+        <div class="card-body">
+          <div class="kv-grid">
+            <div class="kv"><span>Opened</span><b>11:08 AM</b></div>
+            <div class="kv"><span>Fill latency</span><b class="accent">2m 14s</b></div>
+            <div class="kv"><span>Strategy</span><b>S5 Intraday</b></div>
+            <div class="kv"><span>Expiry</span><b>26 Jun</b></div>
+            <div class="kv"><span>Lots / Qty</span><b>1L (425)</b></div>
+            <div class="kv"><span>Stop loss</span><b class="loss">158.80</b></div>
+            <div class="kv"><span>Target</span><b class="profit">167.10</b></div>
+            <div class="kv"><span>Margin</span><b>₹52,400</b></div>
+            <div class="kv"><span>Signal conf</span><b class="accent">71</b></div>
+          </div>
+          <div class="btn-row" style="margin-top:10px">
+            <div class="closebtn" style="flex:1;text-align:center">Close Position</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-title"><span>CLOSED TODAY · YOLO 5K</span><span class="profit mono">+₹1,140</span></div>
+
+      <div class="trade" onclick="toggleTrade(this)">
+        <div class="trade-top">
+          <div class="dirbadge long" style="font-size:8px;padding:2px 5px">▲</div>
+          <div style="flex:1"><span class="sym" style="font-size:13px">HINDALCO</span> <span class="sub">FUT · S5</span></div>
+          <div class="mono profit" style="font-weight:700">+₹1,140</div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="trade-mid mono">
+          <div class="m">ENTRY<b>642.10</b></div>
+          <div class="m">EXIT<b>649.30</b></div>
+          <div class="m">LOTS<b>1L</b></div>
+          <div class="m" style="margin-left:auto"><span class="exitreason">TARGET</span></div>
+        </div>
+        <div class="card-body">
+          <div class="kv-grid">
+            <div class="kv"><span>Side</span><b>BUY</b></div>
+            <div class="kv"><span>Qty</span><b>350</b></div>
+            <div class="kv"><span>SL / Tgt</span><b><span class="loss">638</span>/<span class="profit">649</span></b></div>
+            <div class="kv"><span>Net P&L</span><b class="profit">+₹1,062</b></div>
+            <div class="kv"><span>Charges</span><b class="muted">₹78</b></div>
+            <div class="kv"><span>Margin</span><b>₹44,900</b></div>
+            <div class="kv"><span>Entry → Exit</span><b>12:10 → 14:30</b></div>
+            <div class="kv"><span>Fill lat</span><b class="accent">1m 50s</b></div>
+            <div class="kv"><span>Source</span><b>YOLO 5K</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ WATCHLIST ============ -->
+    <div class="page" id="page-watchlist">
+      <div class="ctrlbar">
+        <div class="pills">
+          <div class="pill on" onclick="grp(this)">All</div>
+          <div class="pill" onclick="grp(this)">Screened</div>
+          <div class="pill" onclick="grp(this)">Pinned</div>
+          <div class="pill" style="margin-left:auto" onclick="this.classList.toggle('on')">Sort: Score</div>
+        </div>
+      </div>
+
+      <div class="wl" onclick="toggleWl(this)">
+        <div class="wl-top">
+          <div style="flex:1">
+            <div class="sym-line"><span class="sym">VEDL</span><span class="pbadge">P</span><span class="biaspill bias-bull">BULL</span><span class="confchip conf-high">HIGH</span></div>
+            <div class="sub mono">₹452.70 <span class="profit">+2.34%</span></div>
+          </div>
+          <div class="scorebox"><div class="s mono">92</div><div class="sl">SCORE</div></div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="wl-metrics mono">
+          <div class="m">RS <b>94</b></div>
+          <div class="m">ADR <b>5.2%</b></div>
+          <div class="m">ORB <b>3.4</b></div>
+          <div class="m">Gap <b class="profit">+1.1%</b></div>
+          <div class="m">News <b>+0.6</b></div>
+        </div>
+        <div class="card-body">
+          <div class="lbl">LLM CONFIDENCE · <span class="conf-high" style="padding:1px 5px;border-radius:3px">HIGH</span></div>
+          <div class="ai-text">RS leader (pct 94) gapping up with sector tailwind and clean ORB break above VWAP. High-conviction long for the session.</div>
+          <div class="kv-grid" style="margin-top:10px">
+            <div class="kv"><span>Range pos</span><b>0.86</b></div>
+            <div class="kv"><span>Vol trend</span><b class="profit">2.1×</b></div>
+            <div class="kv"><span>OI change</span><b class="profit">+8.4%</b></div>
+            <div class="kv"><span>Delivery</span><b>62%</b></div>
+            <div class="kv"><span>Sector</span><b>Metals</b></div>
+            <div class="kv"><span>52w prox</span><b>0.94</b></div>
+            <div class="kv"><span>PDH</span><b>448.20</b></div>
+            <div class="kv"><span>PDL</span><b>439.10</b></div>
+            <div class="kv"><span>ORB H/L</span><b>451/447</b></div>
+          </div>
+          <div class="lbl">NEWS · <span class="news-pos" style="padding:1px 5px;border-radius:3px">+0.6 POSITIVE</span></div>
+          <div class="headline">Vedanta announces debt reduction ahead of schedule</div>
+          <div class="headline">Aluminium prices firm on supply concerns — metals rally</div>
+        </div>
+      </div>
+
+      <div class="wl" onclick="toggleWl(this)">
+        <div class="wl-top">
+          <div style="flex:1">
+            <div class="sym-line"><span class="sym">SUNPHARMA</span><span class="biaspill bias-bull">BULL</span><span class="confchip conf-med">MED</span></div>
+            <div class="sub mono">₹1,684.20 <span class="profit">+0.82%</span></div>
+          </div>
+          <div class="scorebox"><div class="s mono">81</div><div class="sl">SCORE</div></div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="wl-metrics mono">
+          <div class="m">RS <b>78</b></div>
+          <div class="m">ADR <b>3.1%</b></div>
+          <div class="m">ORB <b>9.2</b></div>
+          <div class="m">Gap <b class="dim">+0.2%</b></div>
+          <div class="m">News <b>+0.3</b></div>
+        </div>
+        <div class="card-body">
+          <div class="lbl">LLM CONFIDENCE · <span class="conf-med" style="padding:1px 5px;border-radius:3px">MEDIUM</span></div>
+          <div class="ai-text">Steady uptrend but wide ORB (9.2 pts) raises entry risk. Bias bullish; wait for a VWAP retest before sizing up.</div>
+          <div class="kv-grid" style="margin-top:10px">
+            <div class="kv"><span>Range pos</span><b>0.71</b></div>
+            <div class="kv"><span>Vol trend</span><b>1.3×</b></div>
+            <div class="kv"><span>OI change</span><b class="profit">+2.1%</b></div>
+            <div class="kv"><span>Delivery</span><b>55%</b></div>
+            <div class="kv"><span>Sector</span><b>Pharma</b></div>
+            <div class="kv"><span>52w prox</span><b>0.88</b></div>
+            <div class="kv"><span>PDH</span><b>1678.0</b></div>
+            <div class="kv"><span>PDL</span><b>1662.5</b></div>
+            <div class="kv"><span>ORB H/L</span><b>1689/1680</b></div>
+          </div>
+          <div class="lbl">NEWS · <span class="news-neu" style="padding:1px 5px;border-radius:3px">+0.3 NEUTRAL</span></div>
+          <div class="headline">Sun Pharma gets USFDA nod for generic formulation</div>
+        </div>
+      </div>
+
+      <div class="wl" onclick="toggleWl(this)">
+        <div class="wl-top">
+          <div style="flex:1">
+            <div class="sym-line"><span class="sym">TATAMOTORS</span><span class="biaspill bias-bear">BEAR</span><span class="confchip conf-low">LOW</span></div>
+            <div class="sub mono">₹912.40 <span class="loss">−1.12%</span></div>
+          </div>
+          <div class="scorebox"><div class="s mono">63</div><div class="sl">SCORE</div></div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="wl-metrics mono">
+          <div class="m">RS <b>41</b></div>
+          <div class="m">ADR <b>4.0%</b></div>
+          <div class="m">ORB <b>6.8</b></div>
+          <div class="m">Gap <b class="loss">−0.9%</b></div>
+          <div class="m">News <b class="loss">−0.4</b></div>
+        </div>
+        <div class="card-body">
+          <div class="lbl">LLM CONFIDENCE · <span class="conf-low" style="padding:1px 5px;border-radius:3px">LOW</span></div>
+          <div class="ai-text">Weak RS (pct 41) gapping down against a soft auto sector. Bearish bias but conviction low — avoid unless it breaks PDL.</div>
+          <div class="kv-grid" style="margin-top:10px">
+            <div class="kv"><span>Range pos</span><b>0.22</b></div>
+            <div class="kv"><span>Vol trend</span><b class="loss">0.8×</b></div>
+            <div class="kv"><span>OI change</span><b class="loss">−3.6%</b></div>
+            <div class="kv"><span>Delivery</span><b>48%</b></div>
+            <div class="kv"><span>Sector</span><b>Auto</b></div>
+            <div class="kv"><span>52w prox</span><b>0.61</b></div>
+            <div class="kv"><span>PDH</span><b>924.0</b></div>
+            <div class="kv"><span>PDL</span><b>908.5</b></div>
+            <div class="kv"><span>ORB H/L</span><b>916/909</b></div>
+          </div>
+          <div class="lbl">NEWS · <span class="news-neg" style="padding:1px 5px;border-radius:3px">−0.4 NEGATIVE</span></div>
+          <div class="headline">JLR monthly sales dip on China demand softness</div>
+          <div class="headline">Auto sector under pressure as input costs rise</div>
+        </div>
+      </div>
+
+      <div class="wl" onclick="toggleWl(this)">
+        <div class="wl-top">
+          <div style="flex:1">
+            <div class="sym-line"><span class="sym">SAIL</span><span class="biaspill bias-neut">NEUT</span><span class="confchip conf-med">MED</span></div>
+            <div class="sub mono">₹128.05 <span class="dim">+0.04%</span></div>
+          </div>
+          <div class="scorebox"><div class="s mono">55</div><div class="sl">SCORE</div></div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="wl-metrics mono">
+          <div class="m">RS <b>52</b></div>
+          <div class="m">ADR <b>3.8%</b></div>
+          <div class="m">ORB <b>1.1</b></div>
+          <div class="m">Gap <b class="dim">0.0%</b></div>
+          <div class="m">News <b>0.0</b></div>
+        </div>
+        <div class="card-body">
+          <div class="lbl">LLM CONFIDENCE · <span class="conf-med" style="padding:1px 5px;border-radius:3px">MEDIUM</span></div>
+          <div class="ai-text">Range-bound open with tight ORB (1.1 pts) and flat bias. No directional edge yet — needs a volume-backed break to qualify.</div>
+          <div class="kv-grid" style="margin-top:10px">
+            <div class="kv"><span>Range pos</span><b>0.50</b></div>
+            <div class="kv"><span>Vol trend</span><b>1.0×</b></div>
+            <div class="kv"><span>OI change</span><b class="dim">+0.2%</b></div>
+            <div class="kv"><span>Delivery</span><b>51%</b></div>
+            <div class="kv"><span>Sector</span><b>Metals</b></div>
+            <div class="kv"><span>52w prox</span><b>0.72</b></div>
+            <div class="kv"><span>PDH</span><b>128.9</b></div>
+            <div class="kv"><span>PDL</span><b>127.2</b></div>
+            <div class="kv"><span>ORB H/L</span><b>128/127</b></div>
+          </div>
+          <div class="lbl">NEWS · <span class="news-neu" style="padding:1px 5px;border-radius:3px">0.0 NEUTRAL</span></div>
+          <div class="headline muted">No material headlines today</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ TRADES ============ -->
+    <div class="page" id="page-trades">
+      <div class="ctrlbar">
+        <div class="pills">
+          <div class="pill on" onclick="period(this)">Today</div>
+          <div class="pill" onclick="period(this)">Yesterday</div>
+          <div class="pill" onclick="period(this)">Week</div>
+          <div class="pill" onclick="period(this)">30 Days</div>
+          <div class="pill" onclick="period(this,true)">Custom</div>
+        </div>
+        <div class="customdates" id="customdates">
+          <input type="date" value="2026-05-20">
+          <span class="dim">→</span>
+          <input type="date" value="2026-06-03">
+          <div class="pill on">Apply</div>
+        </div>
+      </div>
+
+      <div class="summary">
+        <div class="scard"><div class="k">NET P&L</div><div class="v profit mono">+₹8,240</div></div>
+        <div class="scard"><div class="k">WIN RATE</div><div class="v sm mono">5W / 2L · 71%</div></div>
+        <div class="scard"><div class="k">TRADES</div><div class="v mono">7</div></div>
+      </div>
+
+      <div class="trade" onclick="toggleTrade(this)">
+        <div class="trade-top">
+          <div class="dirbadge long" style="font-size:8px;padding:2px 5px">▲</div>
+          <div style="flex:1"><span class="sym" style="font-size:13px">VEDL</span> <span class="pbadge">P</span> <span class="sub">FUT · S5</span></div>
+          <div class="mono profit" style="font-weight:700">+₹3,260</div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="trade-mid mono">
+          <div class="m">ENTRY<b>442.50</b></div>
+          <div class="m">EXIT<b>458.80</b></div>
+          <div class="m">LOTS<b>2L (200)</b></div>
+          <div class="m">10:24→13:02</div>
+          <div class="m" style="margin-left:auto"><span class="exitreason">TARGET</span></div>
+        </div>
+        <div class="card-body">
+          <div class="kv-grid">
+            <div class="kv"><span>Side</span><b>BUY</b></div>
+            <div class="kv"><span>SL / Tgt</span><b><span class="loss">438</span>/<span class="profit">459</span></b></div>
+            <div class="kv"><span>Net P&L</span><b class="profit">+₹3,118</b></div>
+            <div class="kv"><span>Charges</span><b class="muted">₹142</b></div>
+            <div class="kv"><span>Margin</span><b>₹88,500</b></div>
+            <div class="kv"><span>Source</span><b>YOLO 5K</b></div>
+            <div class="kv"><span>Conf</span><b class="accent">78</b></div>
+            <div class="kv"><span>Fill lat</span><b class="accent">3m 25s</b></div>
+            <div class="kv"><span>Exit reason</span><b>TARGET</b></div>
+          </div>
+          <span class="ai-action ai-proceed" style="margin-top:10px">PROCEED · +6</span>
+          <div class="ai-text"><span class="accent">✦</span> RS leader broke ORB high on 2.1× volume with bullish NIFTY bias — high-conviction momentum long.</div>
+          <div class="lbl">SIGNAL REASON</div>
+          <div class="ai-text muted" style="font-size:10px">VWAP reclaim + ORB breakout, RS pct 94, sector strength confirmed.</div>
+          <div class="factors">
+            <div class="lbl">CONFIDENCE FACTORS</div>
+            <div class="frow"><span class="fname">RS / Momentum</span><div class="fbar"><span style="width:94%"></span></div><span class="fval">94</span></div>
+            <div class="frow"><span class="fname">Index Bias</span><div class="fbar"><span style="width:82%"></span></div><span class="fval">82</span></div>
+            <div class="frow"><span class="fname">Volume</span><div class="fbar"><span style="width:71%"></span></div><span class="fval">71</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="trade" onclick="toggleTrade(this)">
+        <div class="trade-top">
+          <div class="dirbadge short" style="font-size:8px;padding:2px 5px">▼</div>
+          <div style="flex:1"><span class="sym" style="font-size:13px">NIFTY</span> <span class="sub">24500 PE · S2</span></div>
+          <div class="mono profit" style="font-weight:700">+₹2,840</div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="trade-mid mono">
+          <div class="m">ENTRY<b>182.40</b></div>
+          <div class="m">EXIT<b>214.10</b></div>
+          <div class="m">LOTS<b>1L (75)</b></div>
+          <div class="m">10:31→12:18</div>
+          <div class="m" style="margin-left:auto"><span class="exitreason">TARGET</span></div>
+        </div>
+        <div class="card-body">
+          <div class="kv-grid">
+            <div class="kv"><span>Side</span><b>BUY</b></div>
+            <div class="kv"><span>Strike</span><b>24500 PE</b></div>
+            <div class="kv"><span>Net P&L</span><b class="profit">+₹2,712</b></div>
+            <div class="kv"><span>Charges</span><b class="muted">₹128</b></div>
+            <div class="kv"><span>Margin</span><b>₹13,680</b></div>
+            <div class="kv"><span>Source</span><b>YOLO 5K</b></div>
+            <div class="kv"><span>Conf</span><b class="accent">64</b></div>
+            <div class="kv"><span>Exit reason</span><b>TARGET</b></div>
+            <div class="kv"><span>Expiry</span><b>05 Jun</b></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="trade" onclick="toggleTrade(this)">
+        <div class="trade-top">
+          <div class="dirbadge long" style="font-size:8px;padding:2px 5px">▲</div>
+          <div style="flex:1"><span class="sym" style="font-size:13px">TATASTEEL</span> <span class="sub">FUT · S5</span></div>
+          <div class="mono loss" style="font-weight:700">−₹1,180</div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="trade-mid mono">
+          <div class="m">ENTRY<b>165.20</b></div>
+          <div class="m">EXIT<b>162.40</b></div>
+          <div class="m">LOTS<b>1L (425)</b></div>
+          <div class="m">11:42→12:55</div>
+          <div class="m" style="margin-left:auto"><span class="exitreason">SL</span></div>
+        </div>
+        <div class="card-body">
+          <div class="kv-grid">
+            <div class="kv"><span>Side</span><b>BUY</b></div>
+            <div class="kv"><span>Qty</span><b>425</b></div>
+            <div class="kv"><span>Net P&L</span><b class="loss">−₹1,258</b></div>
+            <div class="kv"><span>Charges</span><b class="muted">₹78</b></div>
+            <div class="kv"><span>Margin</span><b>₹52,400</b></div>
+            <div class="kv"><span>Source</span><b>YOLO 5K</b></div>
+            <div class="kv"><span>Conf</span><b class="accent">59</b></div>
+            <div class="kv"><span>Exit reason</span><b class="loss">SL</b></div>
+            <div class="kv"><span>Fill lat</span><b class="accent">2m 14s</b></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="trade" onclick="toggleTrade(this)">
+        <div class="trade-top">
+          <div class="dirbadge long" style="font-size:8px;padding:2px 5px">▲</div>
+          <div style="flex:1"><span class="sym" style="font-size:13px">HINDALCO</span> <span class="sub">FUT · S5</span></div>
+          <div class="mono profit" style="font-weight:700">+₹1,140</div>
+          <span class="chev" style="margin-left:8px">▼</span>
+        </div>
+        <div class="trade-mid mono">
+          <div class="m">ENTRY<b>642.10</b></div>
+          <div class="m">EXIT<b>649.30</b></div>
+          <div class="m">LOTS<b>1L (350)</b></div>
+          <div class="m">12:10→14:30</div>
+          <div class="m" style="margin-left:auto"><span class="exitreason">TRAILING_SL</span></div>
+        </div>
+        <div class="card-body">
+          <div class="kv-grid">
+            <div class="kv"><span>Side</span><b>BUY</b></div>
+            <div class="kv"><span>Qty</span><b>350</b></div>
+            <div class="kv"><span>Net P&L</span><b class="profit">+₹1,062</b></div>
+            <div class="kv"><span>Charges</span><b class="muted">₹78</b></div>
+            <div class="kv"><span>Margin</span><b>₹44,900</b></div>
+            <div class="kv"><span>Source</span><b>YOLO 5K</b></div>
+            <div class="kv"><span>Conf</span><b class="accent">66</b></div>
+            <div class="kv"><span>Exit reason</span><b style="color:var(--warning)">TRAILING_SL</b></div>
+            <div class="kv"><span>Fill lat</span><b class="accent">1m 50s</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /screen -->
+
+  <!-- bottom tabs -->
+  <div class="tabbar">
+    <div class="tab active" onclick="go('signals',this)"><span class="ic">⚡</span><span class="tl">Signals</span></div>
+    <div class="tab" onclick="go('positions',this)"><span class="ic">◈</span><span class="tl">Positions</span></div>
+    <div class="tab" onclick="go('watchlist',this)"><span class="ic">👁</span><span class="tl">Watchlist</span></div>
+    <div class="tab" onclick="go('trades',this)"><span class="ic">▤</span><span class="tl">Trades</span></div>
+  </div>
+  <div class="homebar"></div>
+</div>
+
+<script>
+  function go(name, el){
+    document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+    document.getElementById('page-'+name).classList.add('active');
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+    document.querySelector('.screen').scrollTop = 0;
+  }
+  function toggleCard(el){ el.classList.toggle('open'); }
+  function togglePos(el){ el.classList.toggle('open'); }
+  function toggleTrade(el){ el.classList.toggle('open'); }
+  function toggleWl(el){ el.classList.toggle('open'); }
+  function selProfile(el){
+    el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('on'));
+    el.classList.add('on');
+  }
+  function grp(el){
+    el.parentElement.querySelectorAll('.pill').forEach(p=>{ if(!p.textContent.startsWith('Sort')) p.classList.remove('on'); });
+    el.classList.add('on');
+  }
+  function period(el, custom){
+    el.parentElement.querySelectorAll('.pill').forEach(p=>p.classList.remove('on'));
+    el.classList.add('on');
+    document.getElementById('customdates').classList.toggle('show', !!custom);
+  }
+</script>
+</body>
+</html>

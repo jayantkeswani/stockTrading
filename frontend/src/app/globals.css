@@ -1,6 +1,42 @@
 @import "tailwindcss";
 
-:root {
+/* ── Theme tokens ──────────────────────────────────────────────────────────
+   ONE mechanism drives every theme: the `data-theme` attribute on a root
+   element. Light is the semantic default (`:root`) and is *re-asserted* under
+   `[data-theme="light"]` so a light subtree (the mobile light shell) can
+   re-resolve the tokens even when nested inside the dark-default app — `color`
+   and friends inherit as computed values, so the attribute must restate them
+   on the subtree root. Dark lives under `[data-theme="dark"]`.
+
+   Today: `layout.tsx` sets `data-theme="dark"` on <html> (whole app dark by
+   default → desktop unchanged), and MobileShell flips its own root to "light"
+   when the persisted mobileTheme is light. Later: a whole-app toggle just sets
+   `data-theme` on AppShell — no other wiring. Light values are tuned Kite-crisp
+   (light-grey page, white cards, clear page<card<pill elevation, near-black
+   text); profit/loss/accent/warning are darkened for contrast on white. */
+:root,
+[data-theme="light"] {
+  --bg-primary: #f2f3f5;     /* page / sticky toolbars — light grey so white cards lift */
+  --bg-secondary: #ffffff;   /* cards, header, bottom nav, drawer — float above the page */
+  --bg-tertiary: #e5e8ee;    /* inactive pills / chips / subtle fills — clearly grey on white */
+  --bg-elevated: #eef0f4;    /* one notch under a white surface */
+  --border: #d9dce3;         /* crisp edges for cards + chips */
+  --border-hover: #c4c8d1;
+  --text-primary: #14161c;   /* near-black, high contrast */
+  --text-secondary: #3f4655;
+  --text-muted: #667085;     /* readable muted on white */
+  --profit: #07924f;         /* bold green, readable on white */
+  --loss: #d92d20;           /* bold red */
+  --accent: #b07d10;         /* readable bold gold */
+  --accent-hover: #936811;
+  --warning: #c2410c;
+  --shadow: #7c3aed;         /* Shadow-book violet (text/accent) */
+  --shadow-bg: #7c3aed;      /* Shadow-book fill/border base (used at low opacity) */
+  --background: var(--bg-primary);
+  --foreground: var(--text-primary);
+}
+
+[data-theme="dark"] {
   --bg-primary: #06060b;
   --bg-secondary: #0b0b13;
   --bg-tertiary: #12121c;
@@ -15,9 +51,20 @@
   --accent: #d4a843;
   --accent-hover: #e0bc5f;
   --warning: #f59e0b;
+  --shadow: #c084fc;         /* = tailwind purple-400 (byte-for-byte vs prior hardcodes) */
+  --shadow-bg: #a855f7;      /* = tailwind purple-500 */
   --background: var(--bg-primary);
   --foreground: var(--text-primary);
 }
+
+/* Light mode is flat/crisp — drop the dark noise grain so the page stays clean. */
+[data-theme="light"].noise-bg::before { display: none; }
+
+/* Light-only lift for the two app bars so white header/nav separate from the
+   grey content column. Scoped to the light subtree + direct children of the
+   MobileShell root, so dark is untouched. */
+[data-theme="light"] > header { box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06); }
+[data-theme="light"] > nav { box-shadow: 0 -1px 3px rgba(16, 24, 40, 0.06); }
 
 @theme inline {
   --color-background: var(--background);
@@ -36,6 +83,10 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-warning: var(--warning);
+  /* Shadow-book accent — `shadowbook`/`shadowbook-bg` avoid the `text-shadow-*`
+     utility namespace. Use as text-shadowbook, bg-shadowbook-bg/15, etc. */
+  --color-shadowbook: var(--shadow);
+  --color-shadowbook-bg: var(--shadow-bg);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

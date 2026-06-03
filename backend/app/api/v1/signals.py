@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import IST, LOT_SIZES
@@ -37,7 +37,14 @@ async def list_signals(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Signal).order_by(desc(Signal.generated_at))
+    # update_count = number of archived signal_history versions (>0 ⇒ deduped/revised)
+    hist_count = (
+        select(func.count(SignalHistory.id))
+        .where(SignalHistory.signal_id == Signal.id)
+        .correlate(Signal)
+        .scalar_subquery()
+    )
+    query = select(Signal, hist_count.label("update_count")).order_by(desc(Signal.generated_at))
     if status:
         query = query.where(Signal.status == status)
     if strategy:
@@ -48,7 +55,12 @@ async def list_signals(
         query = query.where(Signal.generated_at <= generated_until)
     query = query.offset(offset).limit(limit)
     result = await db.execute(query)
-    return result.scalars().all()
+    responses: list[SignalResponse] = []
+    for signal, update_count in result.all():
+        resp = SignalResponse.model_validate(signal)
+        resp.update_count = int(update_count or 0)
+        responses.append(resp)
+    return responses
 
 
 @router.get("/active", response_model=list[SignalResponse])

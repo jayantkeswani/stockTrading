@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
+import { livePositionPnl } from "@/lib/positionPnl";
 
 export function PnLCard() {
   const prices = useStore((s) => s.prices);
@@ -39,17 +40,7 @@ export function PnLCard() {
 
   // Compute live unrealized P&L from active positions + real-time prices
   const liveUnrealizedPnl = useMemo(() => {
-    return activePositions.reduce((total, pos) => {
-      const priceKey = pos.fyers_option_symbol || pos.symbol;
-      const livePrice = prices[priceKey]?.ltp;
-      const currentPrice = livePrice ?? pos.current_price;
-      if (currentPrice && pos.entry_price > 0) {
-        const isShort = pos.target_price != null && pos.target_price < pos.entry_price;
-        const diff = isShort ? pos.entry_price - currentPrice : currentPrice - pos.entry_price;
-        return total + diff * pos.quantity;
-      }
-      return total + (pos.unrealized_pnl ?? 0);
-    }, 0);
+    return activePositions.reduce((total, pos) => total + livePositionPnl(pos, prices).pnl, 0);
   }, [activePositions, prices]);
 
   const filteredClosed = useMemo(() => {

@@ -34,6 +34,7 @@ class SignalResponse(BaseModel):
     ai_adjustment: Decimal | None = None
     ai_action: str | None = None
     is_permanent_watchlist: bool = False
+    update_count: int = 0  # number of signal_history versions (>0 ⇒ signal was deduped/revised)
 
     model_config = {"from_attributes": True}
 

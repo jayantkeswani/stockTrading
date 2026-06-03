@@ -132,6 +132,14 @@ function SignalCard({ signal }: { signal: Signal }) {
           {signal.is_permanent_watchlist && (
             <span className="text-[9px] font-mono px-1 py-px rounded border border-accent/40 text-accent/70">P</span>
           )}
+          {(signal.update_count ?? 0) > 0 && (
+            <span
+              title={`Revised ${signal.update_count}× (deduped)`}
+              className="text-[9px] font-mono px-1 py-px rounded bg-accent/15 text-accent border border-accent/30"
+            >
+              ↻ Updated
+            </span>
+          )}
           {isInformational && (
             <span className="text-[9px] font-mono text-text-muted italic">informational</span>
           )}

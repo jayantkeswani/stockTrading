@@ -180,6 +180,10 @@ interface AppState {
   positionsMinConfidence: number;
   setPositionsMinConfidence: (v: number) => void;
 
+  // Mobile-only theme (persisted) — desktop is always dark
+  mobileTheme: "dark" | "light";
+  setMobileTheme: (t: "dark" | "light") => void;
+
   // UI
   selectedSymbol: string;
   setSelectedSymbol: (symbol: string) => void;
@@ -427,6 +431,9 @@ export const useStore = create<AppState>()(
       positionsMinConfidence: 0,
       setPositionsMinConfidence: (v) => set({ positionsMinConfidence: v }),
 
+      mobileTheme: "dark",
+      setMobileTheme: (t) => set({ mobileTheme: t }),
+
       selectedSymbol: "NIFTY",
       setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
       activeTimeframe: "5m",
@@ -463,6 +470,7 @@ export const useStore = create<AppState>()(
         signalsStrategy: state.signalsStrategy,
         signalsHideInformational: state.signalsHideInformational,
         positionsMinConfidence: state.positionsMinConfidence,
+        mobileTheme: state.mobileTheme,
       }),
     }
   )

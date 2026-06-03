@@ -3,7 +3,7 @@
 ## Tech Stack
 - Next.js 15 (App Router)
 - TypeScript (strict mode)
-- Tailwind CSS v4 (dark theme only — institutional terminal aesthetic)
+- Tailwind CSS v4 — institutional terminal aesthetic. Desktop is dark-only; the **mobile shell adds a light theme** via the `data-theme` attribute mechanism (see the Theme section)
 - Zustand for state management
 - TradingView lightweight-charts for price charts
 - WebSocket for real-time updates from backend on port 8080
@@ -14,10 +14,10 @@
 ### `src/app/` - Pages (App Router, 10 pages)
 All pages use `'use client'` directive.
 
-- `layout.tsx` — Root layout with AppShell wrapper
+- `layout.tsx` — Root layout with AppShell wrapper. Exports `viewport` (`width=device-width, initialScale=1, maximumScale=1`) so the responsive shell triggers on phones. Sets `data-theme="dark"` on `<html>` — the whole-app default (so desktop + pre-mount render dark with no flash); the mobile light theme overrides it on the MobileShell subtree only.
 - `page.tsx` — Dashboard: sticky PnLStrip at top, 8-col left (ScannerHeader, ScannerPanel, ActivePositions, FuturesWatchlist) + 4-col right (Watchlist, ScanFeed, AgentFeed). ChartModal overlay. Fetches YOLO profiles on mount alongside other dashboard data.
 - `trades/page.tsx` — Kite-style P&L dashboard. Filter state (period, strategy, Shadow/Real, sim panel) lives in Zustand store, persisted via `persist` middleware. SummaryStrip, PnLHeatmap, TradesTable, Margin Analysis section. Source pills `[Manual | <profile1> | … | Shadow]` driven by `yoloProfiles` store — fetched on mount. Active pill drives data fetch: `source: "MANUAL"`, `yolo_profile_id: <uuid>`, or `source: "SHADOW"`. Net P&L toggle, "+ Open" toggle, "− Pinned" toggle. Simulation filter panel: min confidence, AI action, simulate lots, instrument type, signal type — all applied client-side via `applySimLots()` (scales P&L, charges, and `margin_required` by lot ratio). **Hold Analysis panel**: "Hold ▲/▾" toggle (amber when open). Panel has Scenario pills (Best / Worst / EOD / SL/TGT). On open/scenario change, fetches `POST /trades/hold-analysis` for all closed trade IDs; backend returns per-trade `hold_exit_price`, `hold_pnl`, `hold_net_pnl`, `hold_charges_json`, `hold_exit_time`, and `hold_outcome` from `market_data_1m` (window: entry_time → hold cutoff, where cutoff = min(next same-instrument same-side re-entry, 15:30 IST)). Best=max high, Worst=min low, EOD=last candle close, SL/TGT=first SL or TGT hit (fallback to EOD close). `hold_outcome` only populated for `sl_tgt` scenario. Computes `holdDataMap` (keyed by trade ID) for extra table columns. Passes `holdScenario` to TradesTable for conditional Outcome column. Pipeline: `trades → filteredTrades → simTrades → {SummaryStrip, dailyPnL→PnLHeatmap, displayedTrades→TradesTable(+holdDataMap, holdScenario)}`. Second `SummaryStrip` with `label="HOLD"` renders below when hold is active and respects `showNetPnL` toggle via `holdDataMap` directly. TradesTable shows "Hold Exit", "Hold P&L", "Hold Exit Time / Exit Time" columns alongside actual values, plus "Outcome" column only when `sl_tgt` scenario is active.
-- `signals/page.tsx` — Signal history feed. PeriodFilter + strategy pills + min-confidence slider + symbol/reason search bar. All filters persisted. `ConfidenceFactorsBar` uses strategy-aware label maps. `SignalCard` includes `SignalHistoryPanel`.
+- `signals/page.tsx` — Signal history feed. PeriodFilter + strategy pills + min-confidence slider + symbol/reason search bar. All filters persisted. `ConfidenceFactorsBar` uses strategy-aware label maps. `SignalCard` shows an "↻ Updated" badge when `update_count > 0` (signal was deduped/revised) and includes `SignalHistoryPanel`.
 - `settings/page.tsx` — Strategy config (is_active, auto_mode, shadow_enabled, yolo_enabled, symbols with autocomplete + group presets), risk params, StrategyParams collapsible numeric inputs, "Skip Pinned Signals" row with Shadow/YOLO toggles. Save validation includes confidence tier ordering check. **YOLO Profiles section**: CRUD management for profiles (name, profit cap, active toggle, plus an "Inval" thesis-invalidation control — toggle sets `invalidation_persist` 3↔0, a persist number input, and a "Q" quorum toggle). Profile changes call the YOLO profile API directly (no page-level save needed). CRUD operations sync to Zustand store (`setYoloProfiles`) so Dashboard/Trades pills update without page reload. Uses `committedProfilesRef` to track API-known values for onBlur dirty-checking.
 - `research/page.tsx` — AI Research: symbol search, real-time agent progress, full report with expandable cards, past reports history.
 - `agent/page.tsx` — Agent dashboard: YOLO toggle (disabled + grey when agent stopped), 6-card status grid (Mode card shows "OFF" when stopped, "YOLO"/"SEMI" when running; Profit Cap card shows per-profile status from `risk.profiles[]`), activity log. PeriodFilter, action-type pills, strategy pills, All/Real/Shadow filter, symbol text input, "Pending" checkbox. Toggle handlers re-fetch full status from API after mutation (no optimistic spread).
@@ -28,18 +28,18 @@ All pages use `'use client'` directive.
 ### `src/components/` - React Components (by domain)
 
 **layout/**
-- `AppShell.tsx` — Main wrapper: sidebar (48px, fixed) + header (36px, fixed) + content area. `<main>` is `fixed top-9 left-12 right-0 bottom-0` with `overflow-y-auto` — makes it the scroll container so `sticky` elements work. Applies `noise-bg` texture.
+- `AppShell.tsx` — Main wrapper. Branches on viewport via `useIsMobile()`: phones (≤768px) render `<MobileShell />` (the desktop route `children` are NOT rendered); larger viewports render sidebar (48px, fixed) + header (36px, fixed) + content area. While `isMobile === null` (pre-mount) renders a neutral `bg-bg-primary` div to avoid a hydration flash. Desktop `<main>` is `fixed top-9 left-12 right-0 bottom-0` with `overflow-y-auto` — the scroll container so `sticky` elements work. Applies `noise-bg` texture. `useWebSocket()` runs in both modes.
 - `Header.tsx` — Thin status bar (36px): IST clock, market status, VIX, Tasks/Fyers/Agent/WS indicators, "STARTING…" pulse when `data_feed_ready=false` (polls health every 3s until ready). Polls `getAllPrices()` + market status every 10s. Uses `useShallow` selector (no price-tick re-renders). `BiasIndicator` sub-component uses scoped `(s) => s.intradayBias` selector.
 - `TasksPopup.tsx` — Background tasks popup (click-to-open). Shows all registered tasks with status dots, type badges, schedule/description, timestamps, errors. Polls every 5s while open.
 - `AgentPopup.tsx` — Agent control popup: start/stop, SEMI/YOLO toggle, positions monitored, pending confirmations, uptime. Profit Cap section shows per-profile cap status with current P&L vs cap for each active profile. Reads Zustand store, writes via API. Click-outside to close.
 - `Sidebar.tsx` — Narrow icon rail (48px): Dashboard → Futures (trending-up) → Options (bar chart) → Research → Trades → Signals (zap) → Agent → Settings.
 
 **charts/**
-- `PriceChart.tsx` — TradingView candlestick chart (1m/5m/15m/1h/1D). Active timeframe stored in Zustand. Refresh button re-fetches without recreating chart. Live updates via scoped `(s) => s.prices[s.selectedSymbol]` selector (re-renders only on selected symbol's price change, not all ticks). IST display via `localization.timeFormatter` adding `IST_OFFSET` (19800s) for axis labels only — backend timestamps fed as UTC unix seconds, do NOT shift them. `fitContent()` always called after data load; `rightOffset: 5` reserves space. OHLC legend via `subscribeCrosshairMove`. Three-effect architecture: create/destroy chart, load data, live ticks.
+- `PriceChart.tsx` — TradingView candlestick chart (1m/5m/15m/1h/1D). Active timeframe stored in Zustand. Refresh button re-fetches without recreating chart. Live updates via scoped `(s) => s.prices[s.selectedSymbol]` selector (re-renders only on selected symbol's price change, not all ticks). IST display via `localization.timeFormatter` adding `IST_OFFSET` (19800s) for axis labels only — backend timestamps fed as UTC unix seconds, do NOT shift them. `fitContent()` always called after data load; `rightOffset: 5` reserves space. OHLC legend via `subscribeCrosshairMove`. Three-effect architecture: create/destroy chart, load data, live ticks. **Light-theme TODO** (full-app pass): chart colors are hardcoded for dark — it needs a `data-theme`-aware `layout`/`grid`/`crosshair` config before the light theme reaches any chart surface.
 - `ChartModal.tsx` — Modal (90vw × 85vh) for detailed chart view. Symbol tabs: 5 default indices + custom watchlist items (fetched on open). Pop-out opens `/chart?symbol=…` in a new tab.
 
 **dashboard/**
-- `PnLCard.tsx` — Single-line strip: Day P&L with inline U/R breakdown, drawdown bar, trades count, NOTIONAL/RISK/MARGIN metrics. Filters by `positionsMinConfidence` from store. Profile-aware: filters positions and closed trades by active profile/manual mode based on `dashboardViewMode`. Shadow mode: computes from `shadowPositions` + `shadowClosedToday`. Prices via `(s) => s.prices` selector; non-price fields via `useShallow`.
+- `PnLCard.tsx` — Single-line strip: Day P&L with inline U/R breakdown, drawdown bar, trades count, NOTIONAL/RISK/MARGIN metrics. Filters by `positionsMinConfidence` from store. Profile-aware: filters positions and closed trades by active profile/manual mode based on `dashboardViewMode`. Shadow mode: computes from `shadowPositions` + `shadowClosedToday`. Live unrealized P&L via shared `livePositionPnl` (`lib/positionPnl.ts`). Prices via `(s) => s.prices` selector; non-price fields via `useShallow`.
 - `Watchlist.tsx` — Uniform symbol list (indices + custom items). Search via `<SymbolSearchInput>`. Custom items stored via `/api/v1/watchlist`. Max-height 300px with scroll.
 - `ScannerHeader.tsx` — Ultra-compact strategy pill bar. Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end to ScanFeed. Uses `(s) => s.addScanLog` selector (no price-tick re-renders).
 - `ScannerPanel.tsx` — Structured signal cards with strategy-aware rendering. "+ Executed" and "+ Expired" toggles (each adds that status to the always-shown PENDING set), symbol search, confidence filter. Uses `useShallow` for signal state (no price-tick re-renders). Three card sections: header (direction, symbol, `P` badge, timestamp, WindowBadge, confidence, strategy badge), prices (entry/SL/target/R:R + strategy context), actions (EXEC, Watch, Details expander, AI panel, dismiss). Details and AI panels mutually exclusive. AI button shows `✦ AI` when `ai_summary` present.
@@ -82,7 +82,15 @@ All pages use `'use client'` directive.
 - `GlobalCues.tsx` — Collapsible morning briefing + global market cues. Manual `↻ refresh` button passes `force=true` to bypass Redis cache. Shows: overnight bias badge, global score bar (BiasBar), Nifty Gap, Nifty/S&P/Nasdaq/Dow Futures/Crude/USD-INR/DXY/India VIX/US VIX. `preopen_reassessed` shown as `pre-open ✓` badge.
 
 **positions/**
-- `ActivePositions.tsx` — Dense table of open positions: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy, Close button. `P` badge on permanent watchlist positions (open) and closed-today trades. Expanded detail: Opened time + fill latency, Strategy, Expiry, Lots/Qty, Stop Loss, Target, Margin (`pos.margin_required` coerced via `Number()`). Closed Today section shows fill latency from `signal_snapshot.generated_at`. Watchlist button resolves symbol via `api.searchSymbols()`. Confidence filter from store. Source pills `[Manual | <profile1> | … | Shadow]` driven by `yoloProfiles` store — for profile mode, filters positions by `yolo_profile_id`; for manual mode, filters by `source === "MANUAL"`. Direction-aware P/L and SL distance. Trailing SL and INVALIDATION exit reasons shown in amber. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks.
+- `ActivePositions.tsx` — Dense table of open positions: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy, Close button. `P` badge on permanent watchlist positions (open) and closed-today trades. Expanded detail: Opened time + fill latency, Strategy, Expiry, Lots/Qty, Stop Loss, Target, Margin (`pos.margin_required` coerced via `Number()`). Closed Today section shows fill latency from `signal_snapshot.generated_at`. Watchlist button resolves symbol via `api.searchSymbols()`. Confidence filter from store. Source pills `[Manual | <profile1> | … | Shadow]` driven by `yoloProfiles` store — for profile mode, filters positions by `yolo_profile_id`; for manual mode, filters by `source === "MANUAL"`. Direction-aware P/L and SL distance via shared `livePositionPnl` (`lib/positionPnl.ts`) — direction is read from the backend's `unrealized_pnl` sign (immune to a stale `target_price`), so long PE/CE options never invert. Trailing SL and INVALIDATION exit reasons shown in amber. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks.
+
+**mobile/** — Phone-only dashboard (Option A: viewport branch in `AppShell`, internal-state tabs, one URL). Reuses the same Zustand stores + `lib/api.ts` functions as the desktop pages; only presentation differs. No backend changes. **Font sizing**: these files use fixed-px text sizes (`text-[9px]`…`text-[17px]`) ~1px larger than the desktop terminal scale — tuned for phone readability without enlarging the desktop UI (which keeps `text-xs`/`text-sm`).
+- `MobileShell.tsx` — Full-screen flex shell: header (app title + `MobilePnlPill` + ☀/☾ theme toggle + refresh button), the active tab's content, and a fixed bottom tab bar (Signals / Positions / Watchlist / Trades). Tab is internal `useState` (no routing). On mount **and on every refresh** (a `refreshKey` counter, threaded to all tabs) hydrates the store via `getYoloProfiles` + `getRiskDashboard` + `getPositions({})` → `setPositions` (open positions are otherwise only fed by WS `trade:open`, which already-open rows don't emit); WebSocket keeps them fresh thereafter. `env(safe-area-inset-*)` padding for notch/home-bar. **Theme**: the root div sets `data-theme={mobileTheme === "light" ? "light" : "dark"}` (persisted store flag) AND carries `text-text-primary` — the explicit color is required because `color` inherits as a *computed* value, so without it un-classed text (symbol names) would inherit the dark-default `color` resolved on `<body>` and render grey in light mode. The toggle flips `mobileTheme` via `setMobileTheme`. Used by: AppShell.
+- `MobilePnlPill.tsx` — Header day-P&L pill scoped to the selected book (Manual / YOLO profile / Shadow via persisted `dashboardViewMode`). **Tapping opens a bottom-sheet drawer to switch the book; the choice persists across reloads and is shared with the Positions tab.** Computes realized (closed-today) + live unrealized P&L via `livePositionPnl`, exactly like the desktop `PnLCard`; shows the book label. Isolated component so price-tick re-renders stay local. Used by: MobileShell.
+- `MobileSignals.tsx` — Signals tab: CONF slider + Executed/Expired toggles (reuses persisted `scanner*` store keys). Card list of today's signals, fetched on mount + polled every 15s + on `refreshKey`, **merged with live WS signals from the store** (store wins on shared ids; `update_count` carried over since WS payloads omit it). Collapsed glance: direction badge, symbol, status, Entry/Target/SL/Conf cells; signals that were deduped/revised (`update_count > 0`) carry an "↻ Updated" badge on the right of the card (left of the chevron). Expand: AI action/summary/rationale, supports/risks (full-width stacked), `ConfidenceFactors` bar, blocked reason, `SignalHistoryPanel`. (Signals carry no lots — sized at execution — so lots is omitted from the glance.)
+- `MobilePositions.tsx` — Positions tab: source selector (Manual / active YOLO profiles / Shadow via `dashboardViewMode`). Mirrors `ActivePositions` source-filter + live-P&L math. Open position cards (glance Entry/LTP/SL-dist/Tgt; expand: opened, fill latency, strategy, expiry, lots/qty, SL, target, margin, conf, Close button) and a Closed-Today section with expandable trade cards. Polls shadow data every 30s in shadow mode.
+- `MobileWatchlist.tsx` — Watchlist tab: the S5 intraday screener as expandable cards. All/Screened/Pinned filter + Score/RS sort. Collapsed: symbol, bias pill (+`•` for gap override), LLM-confidence chip, price/change, score, RS/ADR/ORB/Gap/News strip. Expand: `llm_reason`, factor grid (range pos, vol trend, OI, delivery, sector, 52w prox, PDH, PDL, ORB H/L), news sentiment + headlines. Fetches + batch prices on mount, polls every 30s.
+- `MobileTrades.tsx` — Trades tab: period pills (Today / Yesterday / Week / 30 Days / Custom with date inputs) + source selector (Manual / profiles / Shadow via `tradesViewMode`). Fetches `getTrades({status: "CLOSED", …})` only — closed-trade ledger, no "+ Open". Summary strip (net P&L respecting `showNetPnL`, win rate, count) computed client-side. Expandable trade cards (glance: dir, symbol, strike, strategy, P&L, entry→exit, lots, date, exit reason; expand: side, SL/Tgt, net P&L, charges, margin, source, conf, P&L %, exit time, AI summary).
 
 ---
 
@@ -116,7 +124,7 @@ All API calls go through this module via a single `request()` helper (parses err
 - `api.marginAnalysis(tradeIds[])` — `POST /api/v1/trades/margin-analysis` → `{peak_margin, peak_time, total_margin, trade_count}`. Used by: trades/page
 
 **Signals**
-- `api.getSignals(params?)` — `GET /api/v1/signals` with `status`, `generated_since/until`, `strategy`, `limit`. Used by: signals/page, dashboard/page
+- `api.getSignals(params?)` — `GET /api/v1/signals` with `status`, `generated_since/until`, `strategy`, `limit`. Each signal includes `update_count` (signal_history versions; >0 ⇒ deduped/revised). Used by: signals/page, dashboard/page
 - `api.getActiveSignals()` — `GET /api/v1/signals/active`
 - `api.previewSignal(id)` — `GET /api/v1/signals/{id}/preview` → `SignalPreview`. Used by: ExecuteSignalModal
 - `api.executeSignal(id, opts?)` — `POST /api/v1/signals/{id}/execute`. Used by: ExecuteSignalModal
@@ -186,6 +194,11 @@ All API calls go through this module via a single `request()` helper (parses err
 
 ---
 
+#### lib/positionPnl.ts
+Shared open-position P&L math (used by `ActivePositions`, `PnLCard`, `MobilePositions`, `MobilePnlPill` — single source of truth).
+- `isShortPosition(pos)` — true when the position profits as price falls. Derived primarily from the backend's `unrealized_pnl` sign vs its last price move (immune to a stale `target_price` from partial WS `position:update`s); falls back to SL/target geometry (`target<entry` else `sl>entry`) — the same rule the backend uses, which correctly handles bought options (long), **sold options (short)**, and long/short futures. Fixes a class of bugs where a long PE/CE inverted to −ve when its premium rose.
+- `livePositionPnl(pos, prices)` — returns `{currentPrice, pnl, pnlPct, slDistance, isShort}` from the freshest price (`prices[fyers_option_symbol||symbol]?.ltp` → backend `current_price`), direction via `isShortPosition`.
+
 #### lib/formatters.ts
 - `formatINR(value)` — INR with Indian number system (en-IN locale, 2 decimal places). Used by: most price displays
 - `formatINRCompact(value)` — Compact: `₹1.5L`, `₹2.3Cr`, `₹1.5K` thresholds. Used by: PnLCard, SummaryStrip
@@ -221,7 +234,7 @@ All API calls go through this module via a single `request()` helper (parses err
 - `YoloProfile` — `{id, name, profit_cap, is_active, sort_order, is_capped_today?, invalidation_persist?: number|null, invalidation_quorum?, invalidation_strong_only?}` (the `invalidation_*` fields drive the S5 thesis-invalidation exit; persist null/0 = disabled)
 - `Position` — open position; key fields: `is_shadow`, `signal_confidence`, `signal_generated_at`, `margin_required`, `fyers_option_symbol`, `position_type`, `is_permanent_watchlist`, `yolo_profile_id: string | null`
 - `Trade` — closed/open trade; key fields: `source` (`MANUAL|YOLO|SHADOW`), `charges_json` (brokerage/STT/exchange/GST/SEBI/stamp/total), `net_pnl`, `margin_required`, `is_permanent_watchlist`, `yolo_profile_id: string | null`, `signal_confidence/ai_action/ai_summary/instrument_type/signal_type` (snapshotted columns), `signal_snapshot` (full JSONB), `signal_is_permanent_watchlist`
-- `Signal` — trading opportunity; key fields: `signal_type` (`BUY_CE|BUY_PE|BUY_FUT|SELL_FUT`), `instrument_type` (`OPTION|FUTURE|EQUITY`), `confidence`, `is_permanent_watchlist`, `ai_summary/rationale/adjustment/action`; **no `lots` or `quantity` fields** (resolved at execution via preview endpoint)
+- `Signal` — trading opportunity; key fields: `signal_type` (`BUY_CE|BUY_PE|BUY_FUT|SELL_FUT`), `instrument_type` (`OPTION|FUTURE|EQUITY`), `confidence`, `is_permanent_watchlist`, `ai_summary/rationale/adjustment/action`, `update_count` (signal_history versions; >0 ⇒ deduped/revised — drives the "↻ UPD" badge on signal cards, web + mobile); **no `lots` or `quantity` fields** (resolved at execution via preview endpoint)
 - `SignalHistory` — Case-2 snapshot; `version`, `entry_price/stop_loss/target_price`, `confidence`, `ai_*` fields, `captured_at`
 - `SignalPreview` — from `GET /signals/{id}/preview`: `{lots, quantity, lot_size, entry_price, stop_loss, target_price, risk, notional, margin_required, sizing_meta, warnings[]}`
 - `RiskDashboard` — `{capital, daily_pnl, closed_pnl, daily_drawdown_pct, max_daily_drawdown_pct, trades_today, max_trades_per_day, notional, risk, margin_utilized, is_halted, is_profit_capped, positions_open, profiles: Array<{id, name, profit_cap, current_pnl, is_capped}>}`
@@ -242,6 +255,9 @@ All API calls go through this module via a single `request()` helper (parses err
 ---
 
 ### `src/hooks/` - Custom Hooks
+
+#### hooks/useIsMobile.ts
+`useIsMobile(breakpoint = 768)` — SSR-safe viewport hook via `matchMedia`. Returns `null` until mounted, then a boolean tracking whether the viewport is `≤ breakpoint - 1` px wide. Used by: AppShell (desktop vs `MobileShell` branch).
 
 #### hooks/useWebSocket.ts
 Single hook managing the WebSocket connection. Returns `wsRef`. Auto-reconnects on close (3s delay). Guards all event handlers with `ws === wsRef.current` staleness check to prevent React Strict Mode race conditions. Sends application-level heartbeat ping every 25s to keep the connection alive (backend `manager.py` responds with pong). **All store interactions use `useStore.getState()`** — no reactive subscriptions, so AppShell (which hosts this hook) never re-renders from store changes.
@@ -287,6 +303,7 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 - `wsConnected: boolean`
 - `activeResearches / selectedResearchId / researchReports` — research session state
 - `watchlistItems / intradayBias`
+- `mobileTheme: "dark" | "light"` + `setMobileTheme` — mobile-only theme flag (desktop is always dark). Read by MobileShell to set `data-theme` on its root. Default: `"dark"`
 
 **Persisted keys** (via `partialize`):
 - `scanLogs`, `activeTimeframe`, `dashboardViewMode` (string — `"MANUAL"` | UUID | `"SHADOW"`), `tradesViewMode` (same values), `showNetPnL`
@@ -294,6 +311,7 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 - `scannerShowExecuted`, `scannerShowExpired`, `scannerMinConfidence`
 - `signalsMinConfidence`, `signalsPeriodLabel`, `signalsPeriodStart`, `signalsPeriodEnd`, `signalsStrategy`, `signalsHideInformational`
 - `positionsMinConfidence`
+- `mobileTheme` (`"dark"` | `"light"`)
 
 **Key store actions:**
 - `setTradesPeriod(label, start, end)` — updates period label + ISO strings
@@ -314,22 +332,41 @@ _(No unit tests currently — `applyHoldAnalysis.test.ts` was removed when `appl
 
 ---
 
-## Theme — Institutional Terminal (Dark Only)
+## Theme — Institutional Terminal (Dark) + Mobile Light
 
-Bloomberg-inspired hedge fund terminal aesthetic. Dense, monospace-forward, warm amber accent.
+Bloomberg-inspired hedge fund terminal aesthetic. Dense, monospace-forward, warm amber accent. Dark is the desktop/whole-app default; the mobile shell also ships a Kite-crisp light theme.
 
+### Theme mechanism (ONE for the whole app)
+All color decisions live in CSS variables in `globals.css`, switched by a single `data-theme` attribute on a root element:
+- **Light is the semantic default** — declared on `:root` *and re-asserted* under `[data-theme="light"]` (`:root, [data-theme="light"] { … }`). The re-assert is required so a light subtree nested inside the dark-default app re-resolves the tokens (`color`/`background` inherit as computed values, so the attribute must restate them on the subtree root).
+- **Dark** lives under `[data-theme="dark"]`.
+- Today: `layout.tsx` sets `data-theme="dark"` on `<html>` (whole app dark → desktop byte-for-byte unchanged); `MobileShell` flips its own root to `"light"`/`"dark"` from the persisted `mobileTheme`. **Later: a whole-app toggle just sets `data-theme` on AppShell — no other wiring needed.**
+- `@theme inline` maps every `--<token>` → a Tailwind utility (`bg-bg-primary`, `text-text-primary`, `text-profit`, …), so ~1,989 semantic-token usages auto-flip with the attribute.
+
+### Palettes
 ```
-Background:  #06060b  (--bg-primary)
-Surface:     #0b0b13  (--bg-secondary)
-Tertiary:    #12121c  (--bg-tertiary)
-Elevated:    #181825  (--bg-elevated)
-Border:      #1a1a2a
-Profit:      #00e68a  (green)
-Loss:        #ff4060  (red)
-Accent:      #d4a843  (warm amber/gold — institutional)
-Warning:     #f59e0b  (amber, YOLO badge)
-Font:        Geist Sans + Geist Mono
+TOKEN            DARK [data-theme=dark]      LIGHT :root / [data-theme=light]
+--bg-primary     #06060b  page              #f2f3f5  light-grey page / toolbars
+--bg-secondary   #0b0b13  surface           #ffffff  white cards / header / nav / drawer
+--bg-tertiary    #12121c  fills/pills        #e5e8ee  inactive pills / chips (grey, filled)
+--bg-elevated    #181825                     #eef0f4
+--border         #1a1a2a                     #d9dce3
+--border-hover   #28283e                     #c4c8d1
+--text-primary   #c8c8d4                     #14161c  near-black (symbols, key values)
+--text-secondary #6a6a82                     #3f4655
+--text-muted     #3c3c54                     #667085  (darkened for readability on white)
+--profit         #00e68a                     #07924f  bold green
+--loss           #ff4060                     #d92d20  bold red
+--accent         #d4a843                     #b07d10  warm gold
+--warning        #f59e0b                     #c2410c
+--shadow         #c084fc (= purple-400)      #7c3aed  Shadow-book violet (text/accent)
+--shadow-bg      #a855f7 (= purple-500)      #7c3aed  Shadow-book fill/border (used at low opacity)
+Font: Geist Sans + Geist Mono (both themes)
 ```
+Light establishes a clear elevation hierarchy: **page (grey) < card (white) < pill** — white surfaces lift off the grey page via border + a light-only shadow.
+
+### Tokenizing non-auto-flip colors
+Hardcoded Tailwind palette colors do NOT flip with `data-theme` — tokenize them. The **Shadow-book** violet (`text-purple-400` / `bg-purple-500/15`, ~30 desktop uses) maps to `--shadow`/`--shadow-bg`, exposed as the `shadowbook` / `shadowbook-bg` utilities — named without a trailing dash after "shadow" to avoid Tailwind's `text-shadow-*` utility namespace. Usage: `text-shadowbook bg-shadowbook-bg/15 border-shadowbook-bg/30` (the mobile Shadow source pills use this; the dark values are byte-for-byte equal to the old `purple-400`/`purple-500` hardcodes). **Full-app TODO**: swap the ~30 desktop purple usages + stray `text-white`/`red-400`/`green-400`/`amber-400` to tokens; `bg-black/*` scrims are fine as-is.
 
 ### Design Principles
 - **Density first** — tight padding (py-1.5, px-3), compact rows, minimal whitespace
@@ -342,9 +379,10 @@ Font:        Geist Sans + Geist Mono
 - **Amber accent** — warm gold (#d4a843) for active states, badges, selections
 
 ### CSS Utilities (globals.css)
-- `.noise-bg` — subtle fractal noise texture overlay (opacity 0.015)
+- `.noise-bg` — subtle fractal noise texture overlay (opacity 0.015). **Disabled in light** (`[data-theme="light"].noise-bg::before { display:none }`) so the page stays clean.
 - `.glow-profit` / `.glow-loss` / `.glow-accent` — colored box-shadow glows
 - `.animate-fade-in` — 200ms fade-in with translateY for expanded panels
+- **Light-only bar lift**: `[data-theme="light"] > header` / `> nav` get a faint `box-shadow` so the white app bars separate from the grey content column (scoped to the light subtree's direct children → dark untouched)
 
 ### Layout Dimensions
 - Sidebar: 48px wide (`w-12`)

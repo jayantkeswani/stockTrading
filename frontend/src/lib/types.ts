@@ -154,6 +154,7 @@ export interface Signal {
   ai_adjustment: number | null;
   ai_action: string | null;
   is_permanent_watchlist: boolean;
+  update_count?: number; // signal_history versions; >0 ⇒ the signal was deduped/revised
 }
 
 export interface SignalHistory {

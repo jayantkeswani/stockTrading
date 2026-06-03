@@ -6,7 +6,8 @@ import { useShallow } from "zustand/react/shallow";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
-import type { Position, Trade, YoloProfile } from "@/lib/types";
+import { livePositionPnl } from "@/lib/positionPnl";
+import type { Position, Trade } from "@/lib/types";
 
 interface ActivePositionsProps {
   compact?: boolean;
@@ -408,23 +409,8 @@ function PositionRows({ list, prices, expandedId, toggleExpand, handleClose, han
   return (
     <>
       {list.map((pos) => {
-        const priceKey = pos.fyers_option_symbol || pos.symbol;
-        const livePrice = prices[priceKey]?.ltp;
-        const currentPrice = livePrice ?? pos.current_price ?? 0;
-        const isShort = pos.target_price != null && pos.target_price < pos.entry_price;
         const isFutures = !pos.option_type;
-        const priceDiff = isShort ? pos.entry_price - currentPrice : currentPrice - pos.entry_price;
-        const pnl = currentPrice && pos.entry_price > 0
-          ? priceDiff * pos.quantity
-          : (pos.unrealized_pnl ?? 0);
-        const pnlPct = pos.entry_price > 0 && currentPrice
-          ? (priceDiff / pos.entry_price) * 100
-          : 0;
-        const slDistance = currentPrice && pos.stop_loss
-          ? isShort
-            ? ((pos.stop_loss - currentPrice) / currentPrice) * 100
-            : ((currentPrice - pos.stop_loss) / currentPrice) * 100
-          : 0;
+        const { currentPrice, pnl, pnlPct, slDistance, isShort } = livePositionPnl(pos, prices);
         const isExpanded = expandedId === pos.id;
 
         return (
