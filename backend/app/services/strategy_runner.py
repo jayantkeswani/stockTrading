@@ -727,29 +727,35 @@ class StrategyRunner:
             except Exception:
                 logger.debug("Could not fetch Strategy 5 position/trade counts")
 
-        # Nifty intraday bias (for alignment gate)
-        try:
-            nifty_buffer = self._candle_buffers.get("NIFTY", [])
-            if nifty_buffer:
-                nifty_1m = [
-                    Candle(open=c["o"], high=c["h"], low=c["l"], close=c["c"], volume=c.get("v", 0))
-                    for c in nifty_buffer
-                ]
-                nifty_prev = await self._get_previous_day_levels("NIFTY")
-                nifty_price = nifty_buffer[-1]["c"] if nifty_buffer else 0
-                global_cues = await _get_global_cues_from_redis()
-                nifty_vwap = self._calculate_vwap_from_buffer("NIFTY")
-                nifty_bias = compute_intraday_bias(
-                    prev_day=nifty_prev,
-                    candles_1m=nifty_1m,
-                    vwap=nifty_vwap,
-                    current_price=nifty_price,
-                    global_cues=global_cues,
-                    as_of=now_ist(),
-                )
-                params["_nifty_bias"] = nifty_bias
-        except Exception:
-            logger.debug("Could not compute Nifty bias for Strategy 5")
+        # Nifty intraday bias (for alignment gate) — reuse the value cached on the
+        # NIFTY candle close (single source of truth, also read by the trade monitor's
+        # invalidation exit via nifty_bias_snapshot). Recompute on demand only when the
+        # cache is cold (e.g. manual eval before any NIFTY candle has closed this session).
+        nifty_bias = self._last_nifty_bias
+        if nifty_bias is None:
+            try:
+                nifty_buffer = self._candle_buffers.get("NIFTY", [])
+                if nifty_buffer:
+                    nifty_1m = [
+                        Candle(open=c["o"], high=c["h"], low=c["l"], close=c["c"], volume=c.get("v", 0))
+                        for c in nifty_buffer
+                    ]
+                    nifty_prev = await self._get_previous_day_levels("NIFTY")
+                    nifty_price = nifty_buffer[-1]["c"] if nifty_buffer else 0
+                    global_cues = await _get_global_cues_from_redis()
+                    nifty_vwap = self._calculate_vwap_from_buffer("NIFTY")
+                    nifty_bias = compute_intraday_bias(
+                        prev_day=nifty_prev,
+                        candles_1m=nifty_1m,
+                        vwap=nifty_vwap,
+                        current_price=nifty_price,
+                        global_cues=global_cues,
+                        as_of=now_ist(),
+                    )
+            except Exception:
+                logger.debug("Could not compute Nifty bias for Strategy 5")
+        if nifty_bias is not None:
+            params["_nifty_bias"] = nifty_bias
 
         # ORB levels from Redis (restore after restart)
         try:

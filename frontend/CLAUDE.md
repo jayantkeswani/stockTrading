@@ -74,7 +74,7 @@ All pages use `'use client'` directive.
 - `AgentLog.tsx` — Reverse-chronological Strategy 2 gate diagnostics. Paginated (100/page), IntersectionObserver infinite scroll, 10s auto-refresh in live mode. Category filter pills: GATE (red), SIGNAL (green), SKIP (grey).
 
 **intraday-futures/**
-- `DayStatusBar.tsx` — Phase badge, agent status, date picker, action buttons (Briefing, Screener, Pause/Resume — hidden in historical mode). Polls every 5s (live mode only). Historical mode reads phase from Redis.
+- `DayStatusBar.tsx` — Phase badge (live/today only — hidden in historical, matching the Options page's window badge), date picker, action buttons (Briefing, Screener, Pause/Resume — hidden in historical mode). No agent-status badge: the S5 agent run-state is surfaced only via the Pause/Resume button. Polls every 5s (live mode only).
 - `Watchlist.tsx` — Sortable/filterable Strategy 5 screener table. Filter select: All/Screened/Pinned. Columns: symbol, score, RS percentile, ADR%, Gap%, bias (dot indicator for gap-override with CSS tooltip), LLM confidence badge, news sentiment, ORB range, live LTP. Symbol names clickable when `onOpenChart` prop provided. Polls every 30s in live mode. Conf badge expands `llm_reason` row. `InfoTip` component on Score + Conf column headers.
 - `PermanentWatchlist.tsx` — Compact card for managing always-pinned watchlist. Loads from `GET /api/v1/intraday-futures/permanent-watchlist`. `SymbolSearchInput` (EQ-filtered) for adding. Optimistic add/remove with 422 rollback.
 - `AgentLog.tsx` — Reverse-chronological Strategy 5 activity. Paginated (100/page), IntersectionObserver scroll, 10s poll for first page. Category badges with color coding. Category filter toggle pills. React keys use `timestamp-category-index`.

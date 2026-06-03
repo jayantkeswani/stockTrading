@@ -178,9 +178,6 @@ export function ScannerPanel() {
               {scannerMinConfidence > 0 ? `${scannerMinConfidence}%` : "any"}
             </span>
           </label>
-          <div className="w-px h-3 bg-border" />
-          <div className="w-1 h-1 rounded-full bg-profit animate-pulse" />
-          <span className="text-[10px] text-text-muted font-mono">LIVE</span>
         </div>
       </div>
 

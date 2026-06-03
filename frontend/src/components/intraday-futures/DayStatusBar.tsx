@@ -75,25 +75,11 @@ export function DayStatusBar({
 
   return (
     <div className="flex items-center gap-3 px-3 py-1.5 bg-bg-secondary border border-border rounded">
-      {/* Phase */}
-      <span className={`text-[10px] font-mono px-1.5 py-px rounded ${PHASE_COLORS[phase] || "bg-bg-tertiary text-text-muted"}`}>
-        {phase.replace("_", " ")}
-      </span>
-
-      <div className="w-px h-4 bg-border" />
-
-      {/* Agent status */}
+      {/* Phase (live/today only — hidden in historical, matching the Options window badge) */}
       {!isHistorical && (
-        <>
-          <span className={`text-[10px] font-mono px-1.5 py-px rounded ${
-            agentStatus === "ACTIVE" ? "bg-profit/20 text-profit" :
-            agentStatus === "HALTED" ? "bg-loss/20 text-loss" :
-            "bg-warning/20 text-warning"
-          }`}>
-            {agentStatus}
-          </span>
-          <div className="w-px h-4 bg-border" />
-        </>
+        <span className={`text-[10px] font-mono px-1.5 py-px rounded ${PHASE_COLORS[phase] || "bg-bg-tertiary text-text-muted"}`}>
+          {phase.replace("_", " ")}
+        </span>
       )}
 
       <div className="flex-1" />

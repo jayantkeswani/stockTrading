@@ -63,9 +63,9 @@ Frontend: useWebSocket.ts listens for market:bias_update (NIFTY only)
         → Header.tsx displays "{bias} {strength}" (e.g. "BULLISH MODERATE")
 ```
 
-### S5 Nifty Bias (separate call site)
+### S5 Nifty Bias (single source of truth)
 
-Strategy 5's `_enrich_strategy5_params()` computes a standalone Nifty bias from the NIFTY candle buffer and injects it as `params["_nifty_bias"]`. This is a separate `compute_intraday_bias()` call (line 708 in strategy_runner.py) using the same function.
+Strategy 5's `_enrich_strategy5_params()` reuses the NIFTY bias cached on the NIFTY candle close (`self._last_nifty_bias`, the same value `nifty_bias_snapshot()` exposes to the trade monitor's invalidation exit) and injects it as `params["_nifty_bias"]` — so the signal-gen alignment gate and the live invalidation exit read the identical bias. It recomputes from the NIFTY candle buffer on demand only when the cache is cold (e.g. manual eval before any NIFTY candle has closed this session).
 
 ## Strategy Integration
 
