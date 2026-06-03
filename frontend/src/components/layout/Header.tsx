@@ -12,9 +12,6 @@ function BiasIndicator() {
   const intradayBias = useStore((s) => s.intradayBias);
   if (!intradayBias) return null;
 
-  const staleMs = Date.now() - new Date(intradayBias.updated_at).getTime();
-  const isStale = staleMs > 5 * 60 * 1000;
-
   const colorClass =
     intradayBias.bias === "BULLISH"
       ? "text-profit"
@@ -23,11 +20,10 @@ function BiasIndicator() {
       : "text-text-muted";
 
   return (
-    <span className={`text-[10px] font-mono flex items-center gap-1 ${isStale ? "opacity-40" : ""}`}>
+    <span className="text-[10px] font-mono flex items-center gap-1">
       <span className={colorClass}>
         {intradayBias.bias} {intradayBias.strength}
       </span>
-      {isStale && <span className="text-text-muted/50">~</span>}
     </span>
   );
 }

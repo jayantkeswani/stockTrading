@@ -63,10 +63,10 @@ Frontend: useWebSocket.ts listens for market:bias_update (NIFTY only) → setInt
         → Header.tsx / MobileStatusBar.tsx display "{bias} {strength}" (e.g. "BULLISH MODERATE")
         → hydrated on cold load via GET /api/v1/market/intraday-bias (reads the Redis key)
         → persisted in the Zustand store → survives refresh + stays shown after market close
-          (Header dims it at opacity-40 with a `~` when >5min stale, e.g. after close)
+          (Header + MobileStatusBar render it identically — full-strength, no staleness dimming)
 ```
 
-The 24h Redis TTL (vs the candle cadence) is deliberate: the last bias of the session stays fetchable after market close so the dashboard keeps showing it (dimmed as stale via `updated_at`) instead of blanking.
+The 24h Redis TTL (vs the candle cadence) is deliberate: the last bias of the session stays fetchable after market close so the dashboard keeps showing it instead of blanking.
 
 ### S5 Nifty Bias (single source of truth)
 
