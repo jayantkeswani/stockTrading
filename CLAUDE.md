@@ -254,7 +254,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 ## Test Coverage
 
-- **Backend**: ~1000 pytest tests in `backend/tests/`. Run: `make test`. See `backend/CLAUDE.md` for per-module coverage details.
+- **Backend**: ~1060 pytest tests in `backend/tests/`. Run: `make test`. See `backend/CLAUDE.md` for per-module coverage details.
 - **Frontend**: Vitest unit tests in `frontend/src/__tests__/`. Run: `cd frontend && npm test`. Tests pure logic functions copied verbatim from page files (not exported). Config: `frontend/vitest.config.ts`.
 
 ## Documentation Reference

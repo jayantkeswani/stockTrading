@@ -83,7 +83,7 @@ All three paths fill at the live LTP (not the stale signal premium). SL/target a
 
 ## Test Coverage
 
-~999 tests in `backend/tests/`. See root CLAUDE.md for the full test index. Key patterns:
+~1060 tests in `backend/tests/`. See root CLAUDE.md for the full test index. Key patterns:
 
 - All service tests mock DB/Redis via pytest fixtures; `conftest.py` clears per-candle in-memory caches before each test
 - Integration tests for LLM calls (research module) auto-skipped without `GOOGLE_API_KEY`
@@ -385,13 +385,14 @@ Default dicts: `VWAP_DEFAULTS`, `CANSLIM_DEFAULTS`, `INTRADAY_FUTURES_DEFAULTS`.
 
 - `select_strike(index_price, option_type, symbol) -> int` — ATM or 1-strike ITM per delta target. Used by: resolve_option_details
 - `select_expiry(symbol) -> date` — weekly for NIFTY/SENSEX, monthly for others. Used by: resolve_option_details
-- `find_option_symbol(symbol, strike, expiry, option_type) -> str | None` — symbol master lookup. Used by: resolve_option_details
+- `find_option_symbol(symbol, strike, expiry, option_type) -> str | None` — symbol master lookup; matches on exact underlying name (`n`) + segment OPT + option type + strike, then exact expiry (falls back to nearest expiry on/after, same underlying) — never substitutes a different index's contract. Used by: resolve_option_details
 - `fetch_option_premium(fyers_symbol) -> float | None` — Redis → Fyers REST fallback. Used by: resolve_option_details
 - `resolve_option_details(signal, ctx) -> signal | None` — full pipeline: strike → expiry → symbol → premium → SL/target. Only runs for `instrument_type=OPTION`. Used by: strategy_runner
 
 #### `futures_resolver.py`
 
 - `resolve_futures_contract(symbol, entry_price, from_date=None) -> dict | None` — stock symbol → nearest-month futures (last Thursday expiry). Pass `from_date=current_expiry + 1 day` for roll. Used by: strategy_runner, trade_monitor (expiry roll)
+- `_find_futures_symbol(symbol, expiry) -> str | None` — symbol master lookup; matches on exact underlying name (`n`) + segment FUT, then exact expiry (falls back to nearest expiry on/after, same underlying). Never substring-matches the full Fyers symbol — that let the `BSE:` exchange prefix masquerade as the BSE Ltd stock and resolve to `BSE:BANKEX...FUT`. Used by: resolve_futures_contract, resolve_index_futures_symbol
 - `find_index_futures_expiry(index, from_date) -> date` — near-month expiry via `INDEX_FUTURES_EXPIRY_DOW`. Used by: resolve_index_futures_symbol
 - `resolve_index_futures_symbol(index, from_date=None) -> (fyers_symbol, expiry) | None` — near-month index futures symbol lookup. Used by: strategy_runner (VWAP volume sourcing)
 
@@ -722,9 +723,11 @@ Drop-in replacement for `FyersWSClient` when `MARKET_MODE=simulated`. Same publi
 Class: `SymbolMaster`
 
 - `load()` — downloads NSE_CM/FO + BSE_CM/FO CSVs, parses ~127K symbols, stores as JSON in Redis (`symbols:master`, 24h TTL). CSV source URL swaps to `SIMULATOR_URL/sym_details/` in simulated mode
-- `refresh()` — re-downloads (called inline at startup, daily at 8:00 AM)
-- `search(query, min_score=20) -> list[dict]` — in-memory search: exact/prefix/substring on short name + display name + Fyers symbol. Used by: market_data API (`GET /symbols/search`)
+- `refresh()` — re-downloads + re-parses, logs segment sanity, stores in Redis (called inline at startup, daily at 8:00 AM). Parsed segment tags are cached in the Redis blob — a parser fix only takes effect after the next refresh; force one (restart / `refresh()` / delete `symbols:master`) to clear a stale blob
+- `search(query, min_score=20) -> list[dict]` — in-memory search: exact/prefix/substring on short name + display name + Fyers symbol. Used by: market_data API (`GET /symbols/search`), futures_resolver, option_resolver
 - `is_loaded -> bool`, `count -> int`
+
+**Segment tagging** (`_parse_csv_row`): the `g` field (EQ/FUT/OPT) is derived from the row's strike / option-type / symbol suffix — NOT from the Fyers instrument-type code in col[2]. Col[2] uses 11=index-future, 13=stock-future, 14=index-option, 15=stock-option; a bare 11/14 whitelist mis-tagged every stock future and stock option as EQ, which made `_find_futures_symbol` fall through to a wrong contract (BSE Ltd → `BSE:BANKEX...FUT`). Rule: option if option-type ∈ {CE,PE} or strike > 0; else future if Fyers symbol ends in `FUT`; else EQ. `_log_segment_sanity()` runs after each refresh and warns if NSE FUT < 100 or NSE OPT < 1000 (mis-parse guardrail).
 
 #### `feed_manager.py`
 

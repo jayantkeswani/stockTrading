@@ -167,26 +167,47 @@ async def find_option_symbol(
     # Also try without leading zero for day
     expiry_str_alt = expiry_str.lstrip("0")
 
-    for r in results:
-        if (
-            r.get("g") == "OPT"
+    # Match strictly on the structured underlying name ("n") alongside segment,
+    # option type, and strike — so a different index's contract at the same
+    # strike can never be substituted (the same hazard that mis-resolved BSE
+    # futures). See futures_resolver._find_futures_symbol.
+    target = symbol.upper()
+
+    def _is_match(r: dict) -> bool:
+        return (
+            r.get("n", "").upper() == target
+            and r.get("g") == "OPT"
             and r.get("t") == option_type
             and r.get("k") == strike
-        ):
+        )
+
+    for r in results:
+        if _is_match(r):
             # Check expiry match
             sym_expiry = r.get("x", "")
             if sym_expiry == expiry_str or sym_expiry == expiry_str_alt:
                 return r["s"]
 
-    # If exact expiry match fails, try the closest future expiry with matching strike
-    # This handles holiday-shifted expiry dates
+    # Exact expiry match failed (e.g. holiday-shifted expiry): pick the matching
+    # contract with the nearest expiry on/after the requested date, still
+    # constrained to the exact underlying / strike / type.
+    from datetime import datetime as _dt
+
+    candidates: list[tuple[date, str]] = []
     for r in results:
-        if (
-            r.get("g") == "OPT"
-            and r.get("t") == option_type
-            and r.get("k") == strike
-        ):
-            return r["s"]
+        if not _is_match(r):
+            continue
+        try:
+            d = _dt.strptime(r.get("x", ""), "%d %b %Y").date()
+        except ValueError:
+            continue
+        candidates.append((d, r["s"]))
+
+    future_c = sorted((d, s) for d, s in candidates if d >= expiry)
+    if future_c:
+        return future_c[0][1]
+    if candidates:
+        return sorted(candidates)[-1][1]
 
     logger.warning(
         "No symbol master match for %s %s %s expiry %s",

@@ -151,29 +151,39 @@ async def _find_futures_symbol(symbol: str, expiry: date) -> str | None:
         if not results:
             results = symbol_master.search(symbol, limit=20)
 
-        for entry in results:
-            fyers_sym = entry.get("s", "")  # Fyers symbol, e.g. "NSE:ADANIPORTS26APRFUT"
-            seg = entry.get("g", "")        # Segment: EQ/FUT/OPT
+        # Match strictly on the structured underlying name ("n") and the FUT
+        # segment — never on a substring of the full Fyers symbol. A substring
+        # match lets an exchange prefix masquerade as a stock: the literal
+        # "BSE" in "BSE:BANKEX26JUNFUT" once resolved the BSE Ltd stock to the
+        # BANKEX index future. The underlying name is exact and unambiguous.
+        from datetime import datetime as _dt
 
-            # Check it's a futures contract
-            if seg != "FUT" and "FUT" not in fyers_sym.upper():
-                continue
+        target = symbol.upper()
+        fut_matches = [
+            e for e in results
+            if e.get("n", "").upper() == target and e.get("g", "") == "FUT"
+        ]
 
-            # Check expiry matches — symbol master stores expiry as "DD Mon YYYY"
+        dated: list[tuple[date, str]] = []
+        for entry in fut_matches:
             entry_expiry_str = entry.get("x", "")
-            if entry_expiry_str:
-                from datetime import datetime as _dt
-                try:
-                    entry_expiry_date = _dt.strptime(entry_expiry_str, "%d %b %Y").date()
-                except ValueError:
-                    continue
+            if not entry_expiry_str:
+                continue
+            try:
+                entry_expiry_date = _dt.strptime(entry_expiry_str, "%d %b %Y").date()
+            except ValueError:
+                continue
+            # Exact-expiry match wins immediately.
+            if entry_expiry_date == expiry:
+                return entry.get("s", "")
+            dated.append((entry_expiry_date, entry.get("s", "")))
 
-                if entry_expiry_date == expiry:
-                    return fyers_sym
-
-            # If no expiry in data, try matching by symbol pattern
-            if symbol.upper() in fyers_sym.upper() and "FUT" in fyers_sym.upper():
-                return fyers_sym
+        # No exact-expiry hit (e.g. holiday-shifted or stale expiry-DOW): return
+        # the nearest contract on/after the requested expiry — still constrained
+        # to the exact underlying, so a different instrument can never be picked.
+        future_dated = sorted((d, s) for d, s in dated if d >= expiry)
+        if future_dated:
+            return future_dated[0][1]
 
     except Exception:
         logger.exception("Error searching symbol master for %s FUT", symbol)

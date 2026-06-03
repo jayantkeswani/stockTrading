@@ -68,16 +68,21 @@ def _parse_csv_row(row: list[str], exchange: str, segment: str) -> dict | None:
 
         display_name = row[1].strip()
         short_name = row[13].strip()
-        instrument_type = int(row[2]) if row[2].strip() else 0
         lot_size = int(row[3]) if row[3].strip() else 1
         strike = float(row[15]) if row[15].strip() else -1.0
         option_type = row[16].strip() if len(row) > 16 else "XX"
         expiry_epoch = row[8].strip() if len(row) > 8 else ""
 
-        # Determine segment label
-        if instrument_type == 14:
+        # Determine segment label from authoritative per-row fields, NOT from the
+        # instrument-type code alone. Fyers col[2] uses 11=index-future,
+        # 13=stock-future, 14=index-option, 15=stock-option; a bare 11/14
+        # whitelist mis-tagged every stock future and stock option as EQ — which
+        # made resolve_futures_contract("BSE") fall through to BSE:BANKEX...FUT.
+        # Strike / option-type and the symbol suffix are exchange- and
+        # code-agnostic, so derive from those instead.
+        if option_type in ("CE", "PE") or strike > 0:
             seg_label = "OPT"
-        elif instrument_type == 11:
+        elif fyers_symbol.upper().endswith("FUT"):
             seg_label = "FUT"
         else:
             seg_label = "EQ"
@@ -191,6 +196,7 @@ class SymbolMaster:
         self._symbols = all_symbols
         self._build_index()
         self._loaded = True
+        self._log_segment_sanity()
 
         # Store in Redis as plain JSON (decode_responses=True on pool requires string values)
         try:
@@ -214,6 +220,37 @@ class SymbolMaster:
             name = sym["n"].upper()
             self._by_name.setdefault(name, []).append(i)
         self._loaded = True
+
+    def _log_segment_sanity(self):
+        """Log segment-tag distribution and warn on implausible counts.
+
+        A guardrail against silent mis-segmentation (e.g. all stock futures
+        landing in EQ). The NSE F&O universe always carries hundreds of stock
+        futures and tens of thousands of options; a near-zero FUT/OPT count
+        means the parser is mis-tagging and downstream resolvers will pick the
+        wrong contract.
+        """
+        from collections import Counter
+
+        counts = Counter((s["e"], s["g"]) for s in self._symbols)
+        logger.info(
+            "Symbol master segments: %s",
+            {f"{e}:{g}": n for (e, g), n in sorted(counts.items())},
+        )
+        nse_fut = counts.get(("NSE", "FUT"), 0)
+        nse_opt = counts.get(("NSE", "OPT"), 0)
+        if nse_fut < 100:
+            logger.warning(
+                "Symbol master sanity: only %d NSE FUT symbols (expected >100) "
+                "— segment parsing may be broken; futures resolution at risk",
+                nse_fut,
+            )
+        if nse_opt < 1000:
+            logger.warning(
+                "Symbol master sanity: only %d NSE OPT symbols (expected >1000) "
+                "— segment parsing may be broken",
+                nse_opt,
+            )
 
     def search(
         self,
