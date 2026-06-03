@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     # Signal Confidence LLM Overlay (Phase 2)
     ai_confidence_enabled: bool = True            # Toggle LLM overlay for signals
     ai_confidence_timeout_seconds: int = 25       # Timeout for LLM call; never blocks signal
+    ai_confidence_min_confidence: float = 50.0    # Skip LLM overlay below this raw confidence (saves calls on weak signals)
+    ai_confidence_max_concurrency: int = 5        # Cap concurrent LLM overlay calls (smooths candle-close bursts → fewer timeouts)
     # NOTE: fire_confidence_threshold removed — now per-strategy as min_confidence_to_persist
     # in strategy_configs.parameters JSONB (see services/strategy_params.py)
 

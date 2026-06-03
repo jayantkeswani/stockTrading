@@ -1758,6 +1758,15 @@ class StrategyRunner:
         from app.config import settings as _settings
         if not _settings.ai_confidence_enabled:
             return {}
+        # Confidence floor — skip weak signals before doing any work (the prior-signals
+        # DB query AND the LLM call). score_signal enforces the same floor as a safety net.
+        floor = _settings.ai_confidence_min_confidence
+        if signal.confidence is not None and signal.confidence < floor:
+            logger.debug(
+                "AI overlay skipped — confidence %.1f < floor %.1f for %s %s",
+                signal.confidence, floor, signal.symbol, signal.signal_type,
+            )
+            return {}
         try:
             from app.research.agents.signal_confidence import score_signal
 
