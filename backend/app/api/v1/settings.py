@@ -24,6 +24,7 @@ async def get_trading_settings():
         min_confidence_for_execution=cfg.min_confidence_for_execution,
         shadow_skip_permanent_watchlist=cfg.shadow_skip_permanent_watchlist,
         yolo_skip_permanent_watchlist=cfg.yolo_skip_permanent_watchlist,
+        ai_overlay_enabled=cfg.ai_overlay_enabled,
     )
 
 
@@ -51,4 +52,5 @@ async def patch_trading_settings(body: TradingConfigUpdate):
         min_confidence_for_execution=cfg.min_confidence_for_execution,
         shadow_skip_permanent_watchlist=cfg.shadow_skip_permanent_watchlist,
         yolo_skip_permanent_watchlist=cfg.yolo_skip_permanent_watchlist,
+        ai_overlay_enabled=cfg.ai_overlay_enabled,
     )

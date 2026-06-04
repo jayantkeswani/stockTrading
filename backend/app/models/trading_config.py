@@ -29,3 +29,7 @@ class TradingConfig(Base, TimestampMixin):
     min_confidence_for_execution: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, server_default=text("70.00"))
     shadow_skip_permanent_watchlist: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     yolo_skip_permanent_watchlist: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # Master toggle for the LLM signal-confidence overlay. When false, NO signal gets
+    # the overlay (zero added latency). When true, each strategy's own
+    # parameters.ai_overlay_enabled (default true) decides.
+    ai_overlay_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))

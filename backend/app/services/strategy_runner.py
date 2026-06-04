@@ -1792,6 +1792,18 @@ class StrategyRunner:
         from app.config import settings as _settings
         if not _settings.ai_confidence_enabled:
             return {}
+        # Two-level runtime kill switch (skips ALL overlay work incl. the prior-signals
+        # query + the up-to-25s LLM call → zero added latency before execution):
+        #   master   = trading_config.ai_overlay_enabled
+        #   strategy = strategy_configs.parameters.ai_overlay_enabled (default true)
+        # The overlay runs only when master AND the per-strategy flag are on. Disabling
+        # it for tight-entry strategies (e.g. S6) removes the lag that erodes the fill.
+        cfg = await get_trading_config()
+        if not cfg.ai_overlay_enabled:
+            return {}
+        if (ctx.strategy_params or {}).get("ai_overlay_enabled", True) is False:
+            logger.debug("AI overlay disabled for strategy %s — skipping", signal.strategy_name)
+            return {}
         # Confidence floor — skip weak signals before doing any work (the prior-signals
         # DB query AND the LLM call). score_signal enforces the same floor as a safety net.
         floor = _settings.ai_confidence_min_confidence

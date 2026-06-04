@@ -306,6 +306,7 @@ export const api = {
     min_confidence_for_execution?: number;
     shadow_skip_permanent_watchlist?: boolean;
     yolo_skip_permanent_watchlist?: boolean;
+    ai_overlay_enabled?: boolean;
   }) =>
     request<{
       capital: number;

@@ -61,6 +61,7 @@ interface TradingSettings {
   min_confidence_for_execution: number;
   shadow_skip_permanent_watchlist: boolean;
   yolo_skip_permanent_watchlist: boolean;
+  ai_overlay_enabled?: boolean;
 }
 
 export default function SettingsPage() {
@@ -198,6 +199,24 @@ export default function SettingsPage() {
     }
   };
 
+  // Per-strategy AI overlay toggle — stored in the strategy's parameters JSONB
+  // (ai_overlay_enabled, default true). Only effective when the master AI Overlay is on.
+  const handleToggleStrategyAiOverlay = async (
+    name: string, current: boolean, params: Record<string, unknown>,
+  ) => {
+    const newParams = { ...(params || {}), ai_overlay_enabled: !current };
+    try {
+      await api.updateStrategy(name, { parameters: newParams });
+      setStrategies((prev) =>
+        (Array.isArray(prev) ? prev : []).map((s) =>
+          s.strategy_name === name ? { ...s, parameters: newParams } : s
+        )
+      );
+    } catch {
+      // Error
+    }
+  };
+
   // Optimistic local + store update for a YOLO profile, then PATCH.
   const patchProfileLocal = (id: string, patch: Partial<YoloProfile>) => {
     setYoloProfiles((prev) => {
@@ -325,6 +344,20 @@ export default function SettingsPage() {
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* AI Confidence Overlay — master switch (per-strategy toggle in the Strategies section) */}
+            <div className="flex items-center justify-between mb-3 pb-3 border-b border-border/40">
+              <div className="flex flex-col">
+                <span className="text-xs font-mono font-medium text-text-primary">AI Confidence Overlay</span>
+                <span className="text-[9px] font-mono text-text-muted">Master — off = no LLM overlay on any signal (removes the up-to-25s execution lag)</span>
+              </div>
+              <button
+                onClick={() => setTradingDraft((d) => ({ ...d, ai_overlay_enabled: !(currentSettings.ai_overlay_enabled ?? true) }))}
+                className={`w-8 h-4 rounded-full relative transition-colors ${(currentSettings.ai_overlay_enabled ?? true) ? "bg-accent/40" : "bg-border"}`}
+              >
+                <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${(currentSettings.ai_overlay_enabled ?? true) ? "left-4 bg-accent" : "left-0.5 bg-text-muted"}`} />
+              </button>
             </div>
 
             {/* Risk grid */}
@@ -704,6 +737,23 @@ export default function SettingsPage() {
                           checked={s.yolo_enabled ?? true}
                           onChange={() => handleToggleYoloEnabled(s.strategy_name, s.yolo_enabled ?? true)}
                           color="warning"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span
+                          className="text-[10px] font-mono text-text-muted"
+                          title="AI confidence overlay for this strategy (needs the master AI Overlay on). Off = no LLM call → no execution lag."
+                        >
+                          AI
+                        </span>
+                        <ToggleSwitch
+                          checked={((s.parameters?.ai_overlay_enabled as boolean | undefined) ?? true)}
+                          onChange={() => handleToggleStrategyAiOverlay(
+                            s.strategy_name,
+                            (s.parameters?.ai_overlay_enabled as boolean | undefined) ?? true,
+                            s.parameters,
+                          )}
+                          color="accent"
                         />
                       </div>
                       <div className="flex items-center gap-1">
