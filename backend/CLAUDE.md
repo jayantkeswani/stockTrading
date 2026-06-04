@@ -83,7 +83,7 @@ All three paths fill at the live LTP (not the stale signal premium). SL/target a
 
 ## Test Coverage
 
-~1060 tests in `backend/tests/`. See root CLAUDE.md for the full test index. Key patterns:
+~1084 tests in `backend/tests/`. See root CLAUDE.md for the full test index. Key patterns:
 
 - All service tests mock DB/Redis via pytest fixtures; `conftest.py` clears per-candle in-memory caches before each test
 - Integration tests for LLM calls (research module) auto-skipped without `GOOGLE_API_KEY`
@@ -174,7 +174,7 @@ Key constants (not functions):
 
 #### `enums.py`
 
-Key enums: `OptionType`, `OrderSide`, `TradeStatus`, `ExitReason` (incl. `TRAILING_SL`, `PROFIT_CAP`, `STALE_DATA`, `INVALIDATION`), `SignalStatus`, `SignalType`, `StrategyName` (incl. `CAN_SLIM`, `INTRADAY_FUTURES`, `BREAKOUT_RETEST`), `IndexSymbol`, `InstrumentType`, `PositionType`, `AgentAutonomyLevel`, `AgentActionType` (incl. `SHADOW_EXECUTED`, `PROFIT_CAP_CLOSE`, `INVALIDATION_CLOSE`), `TradeSource` (`MANUAL`/`YOLO`/`SHADOW`)
+Key enums: `OptionType`, `OrderSide`, `TradeStatus`, `ExitReason` (incl. `TRAILING_SL`, `PROFIT_CAP`, `STALE_DATA`, `INVALIDATION`), `SignalStatus`, `SignalType`, `StrategyName` (incl. `CAN_SLIM`, `INTRADAY_FUTURES`, `BREAKOUT_RETEST`, `VWAP_RECLAIM`), `IndexSymbol`, `InstrumentType`, `PositionType`, `AgentAutonomyLevel`, `AgentActionType` (incl. `SHADOW_EXECUTED`, `PROFIT_CAP_CLOSE`, `INVALIDATION_CLOSE`), `TradeSource` (`MANUAL`/`YOLO`/`SHADOW`)
 
 #### `task_registry.py`
 
@@ -371,7 +371,7 @@ Single `/ws` endpoint (handler in `app/api/router.py`). Uses `receive_text()` + 
 - `append_agent_log(prefix, today, category, message) -> None` — rpush to `{prefix}:agent_log:{today}` with 90-day TTL. Used by: strategy_2, strategy_5, strategy_runner
 - `get_agent_log(prefix, date_str, offset, limit) -> list` — newest-first when `limit > 0`, oldest-first when `limit=0`. Used by: options.py, intraday_futures.py APIs
 
-Strategy 2 uses prefix `"strat2"`, Strategy 5 uses `"strat5"`.
+Strategy 2 uses prefix `"strat2"`, Strategy 5 `"strat5"`, Strategy 6 `"strat6"`, Strategy 7 `"strat7"` (routed in `strategy_runner._flush_strategy_logs`).
 
 #### `strategy_params.py`
 
@@ -382,7 +382,7 @@ Strategy 2 uses prefix `"strat2"`, Strategy 5 uses `"strat5"`.
 - `parse_trading_windows(params) -> list[tuple[time, time]]` — parses `trading_windows` list from params dict. Used by: strategy_runner, options API
 - `parse_dead_zone(params) -> tuple[time, time] | None` — parses `dead_zone` from params dict. Used by: strategy_runner
 
-Default dicts: `VWAP_DEFAULTS`, `CANSLIM_DEFAULTS`, `INTRADAY_FUTURES_DEFAULTS`, `BREAKOUT_RETEST_DEFAULTS`.
+Default dicts: `VWAP_DEFAULTS`, `CANSLIM_DEFAULTS`, `INTRADAY_FUTURES_DEFAULTS`, `BREAKOUT_RETEST_DEFAULTS`, `VWAP_RECLAIM_DEFAULTS` (S7 — same VWAP band + windows as S2, plus the reclaim geometry; `ai_overlay_enabled=False`).
 
 #### `option_resolver.py`
 
@@ -491,7 +491,7 @@ Auto-discovers and instantiates active strategies from DB config. Returns `dict[
 - `should_exit(position, current_price, params) -> bool` — SL/target based on option premium
 - `drain_pending_logs() -> list[tuple[str, str]]` — GATE/SIGNAL logs flushed to `strat2:agent_log:{date}`
 
-Sets `instrument_type=OPTION`. Volume filter uses `ctx.candles_5m_futures_volume` for index symbols. SL/target from `market_levels.select_index_sl_target()` (VWAP bands, PDH/PDL, CPR, OI walls, swing levels); falls back to `sl_pct`/`rr_multiplier`. Skips if R:R < 1:1.
+Sets `instrument_type=OPTION`. Volume filter uses `ctx.candles_5m_futures_volume` for index symbols. SL/target from `market_levels.select_index_sl_target()` (VWAP bands, PDH/PDL, CPR, OI walls, swing levels); falls back to `sl_pct`/`rr_multiplier`. Skips if R:R < 1:1. **Entry-quality caveat**: the signal-accuracy study found this immediate reversal-candle entry buys exhaustion (the confidence composite is inverted) — the redesign is `strategy_7_vwap_reclaim.py` (arm→reclaim), shipping dark for a shadow A/B.
 
 #### `strategy_3_gamma_scalping.py` — Expiry Day Gamma (STUB, not implemented)
 
@@ -535,6 +535,14 @@ Sets `instrument_type=FUTURE`, `holding_type=INTRADAY`, `max_lots=2`. Full spec:
 - `drain_pending_logs()` — ARM/SKIP/GATE/SIGNAL/ABORT logs → `strat6` agent-log prefix.
 
 Sets `instrument_type=FUTURE`, `holding_type=INTRADAY`, `max_lots=2`. Fixes S5's late-breakout-chasing entry weakness by entering on the retest (entry next to a tight retest-swing SL — the R:R lever). Levels: ORB / PDH-PDL / intraday swing pivots. Hard gates: time-of-day window + late-day size-down, with-NIFTY-trend (`_nifty_day_change_pct` sign), never-opposing-stock-bias (`intraday_bias.score` sign), reclaim-volume. Lean 4-factor confidence (`setup_factor` 0.30, `reclaim_vol_factor` 0.30, `oi_factor` 0.20, `rr_factor` 0.20) — the noisy S5 factors are deliberately dropped. Computes **completed** 5m bars from `ctx.candles_1m` itself (no timestamp dependency; ORB = first three blocks). Arm state is in-memory/ephemeral (re-forms on restart). Full spec + validation (target-first 18%→36%, forward-direction 37/39/42→49/49/52% vs S5 on the same 25-day window): `docs/strategies/strategy-6-breakout-retest.md`.
+
+#### `strategy_7_vwap_reclaim.py` — VWAP Reclaim (index options, ships dark)
+
+- `evaluate(ctx) -> StrategySignal | None` — per-(symbol×side) state machine, evaluated every 1m: ARM on S2's VWAP-reversal trigger (price in the VWAP band + a 5m reversal candle + bias not STRONG-opposed + no 5m-FUT-volume spike) → fire on a 1m **reclaim** that closes back through the reversal candle's extreme. Aborts on a 1m slice-through of the pullback swing or on `reclaim_timeout`.
+- `should_exit(...) -> None` — exits are trade_monitor-driven (SL/target/trailing/3:25).
+- `drain_pending_logs()` — ARM/SKIP/GATE/SIGNAL/ABORT logs → `strat7` agent-log prefix.
+
+Sets `instrument_type=OPTION`, `holding_type=INTRADAY`, `max_lots=5`. The S2 entry redesign (fixes its root cause: S2 fires on the exhaustion reversal candle at VWAP — 55% of losers never go green). Entry at the reclaim close; **tight stop a hair past the pullback swing** (`swing_buffer_pct` + `min_risk_pct` floor / `max_risk_pct` cap) — the R:R lever; target by R:R (`rr_multiplier` 1.5) → `index_sl`/`index_target` that `option_resolver` delta-converts to a tight premium stop. Computes **completed** 5m bars from `ctx.candles_1m` (`_completed_5m`, S6-style); the volume-spike filter reads `ctx.candles_5m_futures_volume` (index spot volume ~zero). **Lean structural confidence, never an S2-style gate** — deliberately does NOT reuse `compute_confidence` (the study proved it inverted, r −0.224); 3 factors (pullback-depth 0.40, bias-alignment 0.30, R:R 0.30), recorded for calibration only. AI overlay off by default (`ai_overlay_enabled=False` — tight-entry, same as S6). Offline ship-or-kill gate PASSED: target-first 15.6%→36–40%, +30 min forward 52.9%→62.1% (robust across the split) vs S2. Full spec + validation: `docs/strategies/strategy-7-vwap-reclaim.md` (rules) + `docs/strategies/strategy-2-reclaim-entry.md` (rationale). Tooling: `scripts/replay_strategy2_reclaim.py` + `analyze_strategy2_signal_accuracy.py --strategy vwap_reclaim`.
 
 #### `canslim/scoring.py` — CAN SLIM Factor Scoring (pure functions)
 

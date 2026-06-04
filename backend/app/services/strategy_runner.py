@@ -1023,6 +1023,10 @@ class StrategyRunner:
                         from app.services.agent_log import append_agent_log
                         for category, message in logs:
                             await append_agent_log("strat6", today, category, message)
+                    elif strategy.name == StrategyName.VWAP_RECLAIM:
+                        from app.services.agent_log import append_agent_log
+                        for category, message in logs:
+                            await append_agent_log("strat7", today, category, message)
                     else:
                         from app.services.morning_screener import _append_agent_log
                         for category, message in logs:

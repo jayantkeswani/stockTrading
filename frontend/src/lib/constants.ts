@@ -27,6 +27,7 @@ export const STRATEGY_LABELS: Record<string, string> = {
   can_slim: "CAN SLIM",
   intraday_futures: "Intraday Futures",
   breakout_retest: "Breakout Retest",
+  vwap_reclaim: "VWAP Reclaim",
 };
 
 // Strategies a YOLO profile can be scoped to, and the setup_types each emits.
@@ -34,6 +35,7 @@ export const STRATEGY_LABELS: Record<string, string> = {
 // strategies (orb, gamma_scalping) are omitted; option strategies have no setups.
 export const STRATEGY_SETUPS: Record<string, string[]> = {
   vwap_pullback: [],
+  vwap_reclaim: [],
   can_slim: [],
   intraday_futures: ["ORB", "PDH_PDL", "GAP_CONTINUATION", "VWAP_BOUNCE"],
   breakout_retest: ["ORB_RETEST", "PDH_PDL_RETEST", "SWING_RETEST"],

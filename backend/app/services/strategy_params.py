@@ -101,11 +101,42 @@ BREAKOUT_RETEST_DEFAULTS: dict = {
     "max_lots": 2,
 }
 
+VWAP_RECLAIM_DEFAULTS: dict = {
+    # Same windows / dead zone as S2 — for executability-gate parity. Like S2, signals
+    # are GENERATED all session (and shadowed); the window only gates executability.
+    "trading_windows": [
+        {"start": "09:45", "end": "11:00"},
+        {"start": "13:45", "end": "14:45"},
+    ],
+    "dead_zone": {"start": "11:30", "end": "13:30"},
+    # Arm trigger — S2's VWAP band + reversal + volume-spike reject.
+    "vwap_proximity_pct": VWAP_PROXIMITY_PCT,      # 0.15 — outer band
+    "vwap_min_distance_pct": VWAP_MIN_DISTANCE_PCT,  # 0.05 — inner band (dead zone)
+    "vol_spike_mult": 1.2,            # reject the arm if 5m FUT vol > this x avg(20)
+    "block_strong_opposing_bias": True,
+    # Reclaim / confirm.
+    "reclaim_ref": "reversal_extreme",  # "reversal_extreme" (5m hi/lo) | "vwap"
+    "reclaim_timeout": 5,             # 1m candles to wait for the reclaim
+    "require_reclaim_green": True,    # reclaim candle must close in the trade direction
+    # Tight stop at the pullback swing; target by R:R (the lever).
+    "swing_buffer_pct": 0.03,         # SL a hair beyond the swing (% of price)
+    "min_risk_pct": 0.03,             # whipsaw floor on the risk distance (% of price)
+    "max_risk_pct": 1.0,              # skip if risk wider than this (% of price)
+    "rr_multiplier": DEFAULT_TARGET_MULTIPLIER,  # 1.5
+    "target_mode": "rr",              # "rr" | "structure" (select_index_sl_target)
+    "sl_pct_fallback": 0.30,          # option-resolver fallback if index levels dropped
+    "vix_extreme": VIX_EXTREME,
+    # Tight-entry strategy — disable the LLM overlay by default (its ~25s latency erodes
+    # the fill while the stop stays pinned structural; same lesson as S6 breakout_retest).
+    "ai_overlay_enabled": False,
+}
+
 _STRATEGY_DEFAULTS: dict[str, dict] = {
     "vwap_pullback": VWAP_DEFAULTS,
     "can_slim": CANSLIM_DEFAULTS,
     "intraday_futures": INTRADAY_FUTURES_DEFAULTS,
     "breakout_retest": BREAKOUT_RETEST_DEFAULTS,
+    "vwap_reclaim": VWAP_RECLAIM_DEFAULTS,
 }
 
 # In-memory cache: strategy_name -> merged params

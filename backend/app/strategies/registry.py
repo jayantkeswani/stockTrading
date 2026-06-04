@@ -8,6 +8,7 @@ from app.strategies.strategy_3_gamma_scalping import GammaScalpingStrategy
 from app.strategies.strategy_4_canslim import CANSLIMStrategy
 from app.strategies.strategy_5_intraday_futures import IntradayFuturesStrategy
 from app.strategies.strategy_6_breakout_retest import BreakoutRetestStrategy
+from app.strategies.strategy_7_vwap_reclaim import VWAPReclaimStrategy
 
 # All available strategies
 _STRATEGIES: dict[StrategyName, BaseStrategy] = {
@@ -17,6 +18,7 @@ _STRATEGIES: dict[StrategyName, BaseStrategy] = {
     StrategyName.CAN_SLIM: CANSLIMStrategy(),
     StrategyName.INTRADAY_FUTURES: IntradayFuturesStrategy(),
     StrategyName.BREAKOUT_RETEST: BreakoutRetestStrategy(),
+    StrategyName.VWAP_RECLAIM: VWAPReclaimStrategy(),
 }
 
 

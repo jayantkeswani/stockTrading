@@ -380,11 +380,15 @@ window only**. Correlations are weak (best |r| ≈ 0.22) and the sample is small
    and no stop-management policy beats the original — **you cannot fix a bad entry with
    exits**. The S5→S6 move applies directly: require the reversal to **hold / reclaim** the
    level before entering (a 1m confirmation after the reversal candle), rather than firing on
-   the reversal candle itself. This is the real, structural lever — prototype it and re-sim
-   on the shadow signals before shipping. Design spec:
-   [`docs/strategies/strategy-2-reclaim-entry.md`](../strategies/strategy-2-reclaim-entry.md).
-   *Bigger build; the evidence across all four analyses (direction, edge-mining, target
-   re-sim, stop-out probe) points here.*
+   the reversal candle itself. This is the real, structural lever. **BUILT + validated** as
+   Strategy 7 (`vwap_reclaim`, ships dark): the offline ship-or-kill gate PASSED — over the
+   same 27-day window the reclaim entry lifts target-first 15.6%→**40.2%** (removing S2's
+   strongly-sub-random stop bias) and +30 min forward-direction 52.9%→**62.1%** (robust in
+   both split halves), and breaks the confidence inversion (r −0.224 → +0.009). Strategy doc:
+   [`docs/strategies/strategy-7-vwap-reclaim.md`](../strategies/strategy-7-vwap-reclaim.md);
+   design rationale: [`docs/strategies/strategy-2-reclaim-entry.md`](../strategies/strategy-2-reclaim-entry.md).
+   Tooling: `scripts/replay_strategy2_reclaim.py` + `analyze_strategy2_signal_accuracy.py
+   --strategy vwap_reclaim`. The decisive test is now the live shadow real-P&L A/B vs S2.
 3. **The confidence composite cannot be rescued by reweighting — there is no good factor.**
    At 94 signals **no** factor is positively correlated with outcome, and the highest-weight
    (`bias_alignment` 0.25) is flat; the factors with weight (`reversal_quality`,

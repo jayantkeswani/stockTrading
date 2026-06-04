@@ -1,8 +1,20 @@
 # S2 Reclaim-Entry Redesign (design spec)
 
-**Status:** PROPOSED / not built. Design target for the entry redesign motivated by
+**Status:** BUILT as **Strategy 7 (`vwap_reclaim`)**, ships dark — offline ship-or-kill
+gate PASSED. This file is the design rationale; the canonical strategy doc (rules, params,
+validation table, live A/B plan) is [`strategy-7-vwap-reclaim.md`](strategy-7-vwap-reclaim.md).
+Design target for the entry redesign motivated by
 [`docs/backtest/s2-signal-accuracy-study.md`](../backtest/s2-signal-accuracy-study.md).
 This is the S2 analogue of the S5→S6 move.
+
+> **Validation result (98 signals, 2026-04-29→06-04, `replay_strategy2_reclaim.py` +
+> `analyze_strategy2_signal_accuracy.py --strategy vwap_reclaim`).** Target-first
+> 15.6%→**40.2%** (S2's strongly-sub-random stop bias removed → ≈ random), +30 min
+> forward-direction 52.9%→**62.1%** (robust in both split halves — the un-gameable win),
+> confidence inversion broken (r −0.224 → +0.009). Cleared the bar; the decisive test is
+> the live shadow real-P&L A/B. Open questions below were answered in replay: `rr` target +
+> `reversal_extreme` reclaim is the principled default (`vwap` reclaim floods weaker
+> signals; `structure` target is no better).
 
 ## Why (the diagnosis, in one line)
 

@@ -219,8 +219,12 @@ def forward_direction(
 # ── DB fetch (keeps the full indicators JSONB) ────────────────────────────
 
 async def fetch_signals_full(
-    session, start_date: date, end_date: date, min_conf: float
+    session, start_date: date, end_date: date, min_conf: float,
+    strategy_name: str = "vwap_pullback",
 ) -> list[dict]:
+    """Load signals for one index-options strategy. `strategy_name='vwap_reclaim'`
+    scores the reclaim-entry redesign on the SAME first-touch read (it carries the
+    same index_sl/index_target barriers), for a head-to-head vs vwap_pullback."""
     from sqlalchemy import text
 
     start_ts = datetime.combine(start_date, dt_time(0, 0), tzinfo=IST)
@@ -229,11 +233,12 @@ async def fetch_signals_full(
         text("""
             SELECT id, symbol, signal_type, confidence, generated_at, indicators
             FROM signals
-            WHERE strategy_name = 'vwap_pullback' AND confidence >= :min_conf
+            WHERE strategy_name = :strategy_name AND confidence >= :min_conf
               AND generated_at >= :start_ts AND generated_at < :end_ts
             ORDER BY generated_at
         """),
-        {"min_conf": min_conf, "start_ts": start_ts, "end_ts": end_ts},
+        {"strategy_name": strategy_name, "min_conf": min_conf,
+         "start_ts": start_ts, "end_ts": end_ts},
     )
     rows = []
     for r in result.all():
@@ -581,12 +586,13 @@ def _in_window(r: SignalResult) -> bool:
 
 async def build_results(
     start_date: date, end_date: date, min_conf: float, trace: bool, ties: str = "sl",
+    strategy_name: str = "vwap_pullback",
 ) -> list[SignalResult]:
     out: list[SignalResult] = []
     n_barrier = 0
     async with async_session_factory() as session:
-        signals = await fetch_signals_full(session, start_date, end_date, min_conf)
-        print(f"Loaded {len(signals)} vwap_pullback signals "
+        signals = await fetch_signals_full(session, start_date, end_date, min_conf, strategy_name)
+        print(f"Loaded {len(signals)} {strategy_name} signals "
               f"(confidence >= {min_conf}, {start_date} -> {end_date})  [ties={ties}]")
         for sig in signals:
             ind = sig["indicators"]
@@ -673,13 +679,14 @@ def print_headline(results: list[SignalResult], title: str) -> None:
 async def main_async(args) -> None:
     end_date = args.end or args.start
     results = await build_results(
-        args.start, end_date, args.min_confidence, args.trace, ties=args.ties)
+        args.start, end_date, args.min_confidence, args.trace, ties=args.ties,
+        strategy_name=args.strategy)
     if not results:
         print("No signals with candle data in range.")
         return
 
-    print_headline(results, f"S2 SIGNAL ACCURACY   conf>={args.min_confidence:g}   "
-                            f"{args.start} -> {end_date}")
+    print_headline(results, f"{args.strategy.upper()} SIGNAL ACCURACY   "
+                            f"conf>={args.min_confidence:g}   {args.start} -> {end_date}")
     analyze_forward(results)
     analyze_calibration(results)
     analyze_option_type(results)
@@ -734,6 +741,9 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Strategy 2 signal-accuracy measurement")
     p.add_argument("--start", type=parse_date, required=True)
     p.add_argument("--end", type=parse_date, default=None)
+    p.add_argument("--strategy", choices=["vwap_pullback", "vwap_reclaim"],
+                   default="vwap_pullback",
+                   help="index-options strategy to score (vwap_reclaim = the entry redesign)")
     p.add_argument("--min-confidence", type=float, default=0.0)
     p.add_argument("--ties", choices=["sl", "target"], default="sl",
                    help="same-candle both-touch tie-break (default sl, conservative)")

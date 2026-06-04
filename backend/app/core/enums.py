@@ -61,6 +61,7 @@ class StrategyName(StrEnum):
     CAN_SLIM = "can_slim"
     INTRADAY_FUTURES = "intraday_futures"
     BREAKOUT_RETEST = "breakout_retest"
+    VWAP_RECLAIM = "vwap_reclaim"
 
 
 class PositionType(StrEnum):
