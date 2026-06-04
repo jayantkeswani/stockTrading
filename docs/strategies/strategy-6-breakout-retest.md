@@ -96,6 +96,13 @@ The two trustworthy, engine-independent reads both moved decisively: **target-fi
 
 Defaults in `BREAKOUT_RETEST_DEFAULTS` (`backend/app/services/strategy_params.py`): `enabled_levels`, `min_breakout_ext_pct` (0.05), `retest_proximity_pct` (0.15), `reclaim_buffer_pct` (0.0), `slice_buffer_pct` (0.20), `max_wait_minutes` (30), `reclaim_vol_mult` (1.5), `reclaim_vol_lookback` (20), `swing_pivot_left/right` (2/2), `sl_swing_buffer_pct` (0.15), `sl_atr_mult` (0.3), `min_risk_pct` (0.10), `max_risk_pct` (1.5), `rr_multiplier` (1.8), `min_rr` (1.5), `arm_start` (09:30), `arm_cutoff` (13:30), `size_down_after` (12:30), `size_down_mult` (0.5), `require_with_nifty_trend` (true), `nifty_flat_deadband_pct` (0.10), `block_opposing_stock_bias` (true), `stock_bias_deadband` (0.15), `min_adr` (1.5), `min_price` (100), `max_lots` (2).
 
+## Live diagnosis journal
+
+Daily live (paper) behaviour is logged in `docs/journal/strategy-6-journal.html` —
+one honest, signal-level diagnosis per trading day. After ~2–3 weeks the accumulated
+patterns there (not any single session) drive concrete, backtested changes to the
+strategy. Update it per `docs/journal/how-to-update-strategy-6-journal.md`.
+
 ## Known limitations
 
 - **Arm state is ephemeral** — a mid-day backend restart loses in-flight arms (they re-form on the next breakout). ORB/PDH/PDL/swing levels themselves are recomputed each evaluation, so only pending arms are lost. Acceptable: arms are short-lived and we never chase a breakout we didn't witness.

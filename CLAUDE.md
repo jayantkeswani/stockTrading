@@ -300,6 +300,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 - `deployment-architecture.md` — full deployment architecture, infrastructure, secrets management, container health
 - `permanent-watchlist.md` — permanent watchlist design: three stock categories (permanent-only, overlap, screener-only), "P" badge display rules, execution gates, screener bypass rules, data flow
 - `BUGS-2026-04-29.md` — historical bug tracker
+- `journal/strategy-6-journal.html` — **running daily diagnosis journal for Strategy 6** (live paper A/B). Agent-maintained: after ~2–3 weeks the accumulated patterns drive concrete, backtested changes to the strategy. **When you analyze an S6 trading day, append an entry** following `journal/how-to-update-strategy-6-journal.md` — work at the signal level (dedupe the ~3× profile fan-out), be honest about one-winner days, and compute "%-to-target before SL" on the **entry→exit window only** (not whole-window — that includes post-stop bounces). Open the HTML directly in a browser.
 
 ## How-To Guides
 
