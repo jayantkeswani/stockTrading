@@ -41,7 +41,8 @@ Usage:
         python scripts/analyze_strategy5_signal_accuracy.py --start 2026-04-29 --end 2026-06-02
     # confidence floor, strategy, single-signal trace:
     ... --min-confidence 70
-    ... --strategy vwap_pullback          # S2 directional read (index candles, EOD-direction only)
+    # NOTE: for S2 use scripts/analyze_strategy2_signal_accuracy.py — S2's entry/SL/
+    # target are option PREMIUM, scale-mismatched against index spot candles here.
     ... --trace                           # print every signal's first-touch resolution
 """
 
@@ -518,6 +519,13 @@ async def build_results(
 
 
 async def main_async(args) -> None:
+    if args.strategy == "vwap_pullback":
+        print("S2 (vwap_pullback) signal accuracy lives in a dedicated script — this "
+              "analyzer would compare option-PREMIUM SL/target against index-spot "
+              "candles (scale mismatch). Run:\n"
+              "  python scripts/analyze_strategy2_signal_accuracy.py "
+              "--start <d> --end <d>")
+        return
     end_date = args.end or args.start
     results = await build_results(
         args.strategy, args.start, end_date, args.min_confidence, args.trace,
