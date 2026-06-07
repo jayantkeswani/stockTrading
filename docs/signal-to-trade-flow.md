@@ -77,7 +77,7 @@ If resolution fails (no symbol found, no premium), `executable=False` and `block
 
 For `instrument_type=FUTURE` signals:
 
-1. **Contract lookup** — nearest-month futures (last Thursday expiry).
+1. **Contract lookup** — nearest-month NSE futures (last Tuesday expiry; `STOCK_FUTURES_EXPIRY_DOW=1`). Prefers the NSE exchange for dual-listed names (RELIANCE/HDFCBANK also list an illiquid `BSE:...FUT` that never ticks).
 2. **LTP fetch** — live price for the futures contract.
 3. **SL/target adjustment** — proportionally adjusted from spot to futures price.
 4. **WS subscription** — same as options, subscribes before trade creation.

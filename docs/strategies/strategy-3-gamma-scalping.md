@@ -7,9 +7,9 @@
 Exploits maximum gamma on expiry days. ATM options have the highest gamma on expiry, meaning small index moves create disproportionately large premium moves.
 
 ## Applicable Days
-- NIFTY: Thursday weekly expiry
-- SENSEX: Friday weekly expiry
-- BANKNIFTY: Monthly expiry (last Thursday)
+- NIFTY: Tuesday weekly expiry (changed from Thursday, effective Sep 2025)
+- SENSEX: Thursday weekly expiry
+- BANKNIFTY: Monthly expiry (last Tuesday)
 
 ## Rules (to be implemented)
 - Identify 20-minute opening range (9:15-9:35)
