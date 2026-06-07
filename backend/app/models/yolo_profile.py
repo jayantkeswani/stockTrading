@@ -27,6 +27,13 @@ class YoloProfile(Base, TimestampMixin):
     invalidation_quorum: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     invalidation_strong_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
+    # Per-profile YOLO execution-confidence threshold. NULL = inherit the global
+    # trading_config.min_confidence_for_execution. Lets one profile (e.g. a vwap_reclaim
+    # tier) run a lower bar than another (e.g. the S2 tier) from one signal stream.
+    min_confidence_for_execution: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 2), nullable=True
+    )
+
     # Execution-side filters. A profile only executes a signal when
     # (strategies empty OR signal.strategy_name in strategies) AND
     # (setups empty OR signal.indicators.setup_type in setups). Empty list = all

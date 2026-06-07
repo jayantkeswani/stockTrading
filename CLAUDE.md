@@ -166,6 +166,7 @@ See `backend/CLAUDE.md` for execution architecture details (shadow/YOLO isolatio
 - Max trades/day: Set in DB
 - **YOLO Profit Caps**: Configurable via `yolo_profiles` table (Settings page). Multiple profiles run simultaneously (e.g. 5K, 10K, 15K) — each signal creates one Trade+Position per active uncapped profile. Trade monitor checks caps per profile independently, closing only that profile's positions when its cap is hit. Trades carry `yolo_profile_id` FK; `source` stays `"YOLO"` for all profile trades, `"MANUAL"` for user-executed trades.
 - **Thesis-Invalidation Exit (per-profile, S5 only)**: each `yolo_profiles` row carries `invalidation_persist`/`invalidation_quorum`/`invalidation_strong_only` (Settings page → YOLO Profiles → "Inval" toggle). When enabled (`invalidation_persist > 0`, default 3), the trade monitor closes that profile's open S5 positions early (`ExitReason.INVALIDATION`) once the live NIFTY intraday bias flips STRONG-against the position direction for N consecutive 1m candles. Run an enabled profile beside an identical control for live A/B (paper). Helps momentum (S5) — do NOT use for S2 (mean-reversion). See `docs/backtest/s5-invalidation-exit-study.md`.
+- **YOLO execution confidence is per-profile**: each `yolo_profiles` row has `min_confidence_for_execution` (NULL = inherit the global `min_confidence_for_execution` default in `trading_config`); set via Settings → YOLO Profiles → "MinConf". Lets a vwap_reclaim profile run a lower confidence bar (e.g. 40) without lowering the global bar for S2/S5 profiles. The signal `executable` flag and the Telegram notification gate both use the **lowest** threshold among active profiles that subscribe to the signal's strategy/setup — so "executable by at least one profile" is computed strategy-aware.
 - Strike selection: ATM or 1-strike ITM (Delta 0.45-0.60), resolved by `option_resolver.py`
 - Strike gaps: NIFTY=50, BANKNIFTY=100, FINNIFTY=50, SENSEX=100, MIDCPNIFTY=25
 - Preferred premium range: Rs 150-400
@@ -290,7 +291,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 ## Test Coverage
 
-- **Backend**: ~1084 pytest tests in `backend/tests/`. Run: `make test`. See `backend/CLAUDE.md` for per-module coverage details.
+- **Backend**: ~1095 pytest tests in `backend/tests/`. Run: `make test`. See `backend/CLAUDE.md` for per-module coverage details.
 - **Frontend**: Vitest unit tests in `frontend/src/__tests__/`. Run: `cd frontend && npm test`. Tests pure logic functions copied verbatim from page files (not exported). Config: `frontend/vitest.config.ts`.
 
 ## Documentation Reference

@@ -51,9 +51,11 @@ The S2 composite is **inverted** (study §3, r −0.224 vs outcome), so this str
 **not** reuse `compute_confidence`. It records a lean 3-factor structural score
 (pullback-depth 0.40, bias-alignment 0.30, R:R 0.30) for calibration only and runs the
 entry **effectively ungated by confidence** — the score is to be re-weighted from the
-strategy's own win/loss data once the shadow A/B has outcomes. The LLM overlay is disabled
-by default (`ai_overlay_enabled=False` in the defaults) — its ~25s latency erodes a
-tight-entry fill while the structural stop stays pinned (same lesson as S6).
+strategy's own win/loss data once the shadow A/B has outcomes. The AI overlay is
+config-controlled via `strategy_configs.parameters.ai_overlay_enabled` (default-on like
+other strategies); for this tight entry the recommendation is to set `ai_overlay_enabled=false`
+in the config row — its ~25s latency erodes a tight-entry fill while the structural stop
+stays pinned (same lesson as S6).
 
 ## Parameters (`VWAP_RECLAIM_DEFAULTS` in `strategy_params.py`)
 
@@ -100,6 +102,11 @@ weeks, compare `vwap_reclaim` vs `vwap_pullback` shadow trades on realized optio
 rate and break the confidence inversion. **Watch-item:** the tight index swing stop
 delta-converts to a tight *premium* stop (~1–2% on liquid options) — if the shadow book
 shows premium whipsaw, add a premium-SL floor (this is exactly what the A/B is for).
+
+A dedicated YOLO profile for `vwap_reclaim` can set a lower per-profile
+`min_confidence_for_execution` (e.g. 40) so the lean ~50-centred confidence actually
+executes when YOLO is enabled, without lowering the global execution bar for `vwap_pullback`
+or `intraday_futures` profiles.
 
 ## Tests
 

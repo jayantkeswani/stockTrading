@@ -148,3 +148,9 @@ def test_reclaim_timeout_aborts():
     hold = [c(100.05, 100.13, 100.00, 100.10, v=100) for _ in range(7)]
     candles = _FLAT + _REVERSAL + hold + [_RECLAIM]
     assert _drive(s, candles, _params(reclaim_timeout=5)) == []
+
+
+def test_ai_overlay_is_config_controlled_not_hardcoded():
+    """S7's AI overlay is controlled by strategy_configs.parameters (like every other
+    strategy), not forced off by a code default."""
+    assert "ai_overlay_enabled" not in get_defaults_for_strategy("vwap_reclaim")

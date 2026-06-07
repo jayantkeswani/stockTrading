@@ -126,9 +126,10 @@ VWAP_RECLAIM_DEFAULTS: dict = {
     "target_mode": "rr",              # "rr" | "structure" (select_index_sl_target)
     "sl_pct_fallback": 0.30,          # option-resolver fallback if index levels dropped
     "vix_extreme": VIX_EXTREME,
-    # Tight-entry strategy — disable the LLM overlay by default (its ~25s latency erodes
-    # the fill while the stop stays pinned structural; same lesson as S6 breakout_retest).
-    "ai_overlay_enabled": False,
+    # NOTE: the LLM overlay is config-controlled like every other strategy via
+    # `strategy_configs.parameters.ai_overlay_enabled` (default-on-if-absent). For this
+    # tight-entry strategy the recommendation is to disable it in the config row (its ~25s
+    # latency erodes the fill while the stop stays pinned structural — the S6 lesson).
 }
 
 _STRATEGY_DEFAULTS: dict[str, dict] = {

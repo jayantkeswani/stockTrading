@@ -26,6 +26,7 @@ from app.services.lot_sizing import compute_lots_for_yolo
 from app.services.margin_calculator import compute_margin
 from app.services.trading_config import get_trading_config
 from app.services.yolo_profile_service import (
+    effective_execution_threshold,
     get_active_profiles,
     get_uncapped_profile_ids,
     profile_accepts_signal,
@@ -75,14 +76,10 @@ async def auto_execute_signal(signal_id) -> list[dict]:
             return []
 
         cfg = await get_trading_config()
-        min_exec_conf = cfg.min_confidence_for_execution
-        if signal.confidence is not None:
-            if float(signal.confidence) < min_exec_conf:
-                logger.info(
-                    "Auto-execute: confidence %.0f < execution threshold %.0f for %s, skipping",
-                    float(signal.confidence), min_exec_conf, signal.symbol,
-                )
-                return []
+        # Execution confidence is now PER YOLO PROFILE (yolo_profiles.min_confidence_for_execution,
+        # NULL = inherit this global default). The signal-level early-out below uses the LOWEST
+        # subscribing-profile threshold (= "executable by at least one profile"); each profile then
+        # re-checks its own threshold in the per-profile loop.
 
         sc_result = await session.execute(
             select(StrategyConfig).where(StrategyConfig.strategy_name == signal.strategy_name)
@@ -112,6 +109,23 @@ async def auto_execute_signal(signal_id) -> list[dict]:
         if not profiles:
             logger.info("Auto-execute: no uncapped profiles for signal %s, skipping", signal_id)
             return []
+
+        # Signal-level early-out: skip the shared computation when no subscribing profile
+        # would execute this signal at its (own or inherited) confidence threshold.
+        setup_type = (signal.indicators or {}).get("setup_type")
+        if signal.confidence is not None:
+            exec_floor = min(
+                (effective_execution_threshold(p, cfg.min_confidence_for_execution)
+                 for p in profiles
+                 if profile_accepts_signal(p, signal.strategy_name, setup_type)),
+                default=cfg.min_confidence_for_execution,
+            )
+            if float(signal.confidence) < exec_floor:
+                logger.info(
+                    "Auto-execute: confidence %.0f < lowest profile threshold %.0f for %s, skipping",
+                    float(signal.confidence), exec_floor, signal.symbol,
+                )
+                return []
 
         # ── Shared computation (once for all profiles) ───────────────
 
@@ -180,7 +194,6 @@ async def auto_execute_signal(signal_id) -> list[dict]:
         actions = []
         ws_payloads = []
         first_trade_id = None
-        setup_type = (signal.indicators or {}).get("setup_type")
 
         for profile in profiles:
             # Strategy/setup execution filter — a profile only acts on signals it
@@ -192,6 +205,16 @@ async def auto_execute_signal(signal_id) -> list[dict]:
                     profile.name, signal.strategy_name, setup_type,
                 )
                 continue
+
+            # Per-profile confidence gate (its own threshold, or the inherited global default).
+            if signal.confidence is not None:
+                threshold = effective_execution_threshold(profile, cfg.min_confidence_for_execution)
+                if float(signal.confidence) < threshold:
+                    logger.debug(
+                        "Auto-execute: confidence %.0f < profile %s threshold %.0f, skipping",
+                        float(signal.confidence), profile.name, threshold,
+                    )
+                    continue
 
             # Position dedup scoped to this profile
             pos_query = select(Position).where(

@@ -28,6 +28,7 @@ async def list_profiles():
             invalidation_persist=p.invalidation_persist,
             invalidation_quorum=p.invalidation_quorum,
             invalidation_strong_only=p.invalidation_strong_only,
+            min_confidence_for_execution=p.min_confidence_for_execution,
             strategies=list(p.strategies),
             setups=list(p.setups),
         )
@@ -41,6 +42,7 @@ async def create_profile(body: YoloProfileCreate):
     profile = await svc.create_profile(
         name=body.name, profit_cap=body.profit_cap,
         strategies=body.strategies, setups=body.setups,
+        min_confidence_for_execution=body.min_confidence_for_execution,
     )
     return YoloProfileResponse(
         id=profile.id,
@@ -52,6 +54,7 @@ async def create_profile(body: YoloProfileCreate):
         invalidation_persist=profile.invalidation_persist,
         invalidation_quorum=profile.invalidation_quorum,
         invalidation_strong_only=profile.invalidation_strong_only,
+        min_confidence_for_execution=profile.min_confidence_for_execution,
         strategies=list(profile.strategies),
         setups=list(profile.setups),
     )
@@ -80,6 +83,7 @@ async def update_profile(profile_id: uuid.UUID, body: YoloProfileUpdate):
         invalidation_persist=profile.invalidation_persist,
         invalidation_quorum=profile.invalidation_quorum,
         invalidation_strong_only=profile.invalidation_strong_only,
+        min_confidence_for_execution=profile.min_confidence_for_execution,
         strategies=list(profile.strategies),
         setups=list(profile.setups),
     )

@@ -493,6 +493,41 @@ export default function SettingsPage() {
                   className="w-24 bg-bg-tertiary border border-border rounded px-2 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
                 />
               </div>
+              {/* Per-profile YOLO execution-confidence threshold (blank = inherit the global default) */}
+              <div className="flex items-center gap-1">
+                <span
+                  className="text-[9px] font-mono text-text-muted"
+                  title="Per-profile YOLO execution-confidence threshold. Blank = inherit the global default. A signal executes for this profile only when its confidence ≥ this value."
+                >
+                  MinConf
+                </span>
+                <input
+                  type="number"
+                  step="5"
+                  min="0"
+                  max="100"
+                  placeholder="def"
+                  value={p.min_confidence_for_execution ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const v = raw === "" ? null : Number(raw);
+                    setYoloProfiles((prev) => (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, min_confidence_for_execution: v } : x));
+                  }}
+                  onBlur={async (e) => {
+                    const raw = e.target.value;
+                    const v = raw === "" ? null : Number(raw);
+                    setYoloProfiles((prev) => {
+                      const updated = (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, min_confidence_for_execution: v } : x);
+                      useStore.getState().setYoloProfiles(updated);
+                      return updated;
+                    });
+                    // Send -1 to CLEAR back to "inherit global" (the PATCH endpoint drops nulls).
+                    try { await api.updateYoloProfile(p.id, { min_confidence_for_execution: v === null ? -1 : v }); } catch { /* ignore */ }
+                  }}
+                  title="Execution confidence (blank = inherit the global default)"
+                  className="w-12 bg-bg-tertiary border border-border rounded px-1 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
               {/* Thesis-invalidation exit (S5): close early when NIFTY bias flips STRONG-against the trade for N candles */}
               <div className="flex items-center gap-1">
                 <span

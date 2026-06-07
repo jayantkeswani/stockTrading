@@ -91,11 +91,18 @@ class AgentRunner:
             if sig:
                 should_notify = True
                 if sig.confidence is not None:
-                    if float(sig.confidence) < cfg.min_confidence_for_execution:
+                    # Notify when at least one subscribing YOLO profile would execute (its own
+                    # or the inherited global threshold) — execution confidence is per-profile.
+                    from app.services.yolo_profile_service import min_execution_threshold_for
+                    notify_floor = min_execution_threshold_for(
+                        sig.strategy_name, (sig.indicators or {}).get("setup_type"),
+                        cfg.min_confidence_for_execution,
+                    )
+                    if float(sig.confidence) < notify_floor:
                         should_notify = False
                         logger.debug(
                             "Skipping Telegram for %s: confidence %.0f < threshold %.0f",
-                            sig.symbol, float(sig.confidence), cfg.min_confidence_for_execution,
+                            sig.symbol, float(sig.confidence), notify_floor,
                         )
                 if should_notify:
                     await notify_signal_generated(

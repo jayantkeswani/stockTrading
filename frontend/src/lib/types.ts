@@ -32,6 +32,10 @@ export interface YoloProfile {
   invalidation_persist?: number | null;
   invalidation_quorum?: boolean;
   invalidation_strong_only?: boolean;
+  // Per-profile YOLO execution-confidence threshold (0-100). null/absent = inherit the
+  // global trading_config.min_confidence_for_execution. Send a negative value (e.g. -1)
+  // via PATCH to CLEAR an override back to "inherit" (the endpoint drops nulls).
+  min_confidence_for_execution?: number | null;
   // Execution-side filters (empty/absent = act on all signals). A profile only
   // executes a signal whose strategy_name is in `strategies` (if non-empty) AND whose
   // setup_type is in `setups` (if non-empty). Lets a full and a subset profile run

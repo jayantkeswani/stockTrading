@@ -232,6 +232,105 @@ class TestYoloFullExecution:
         assert result == []
 
 
+class TestPerProfileExecutionThreshold:
+    """Execution confidence is per-profile (yolo_profiles.min_confidence_for_execution,
+    NULL = inherit the global default)."""
+
+    @pytest.mark.asyncio
+    @patch("app.agent.auto_executor.notify_auto_executed", new_callable=AsyncMock)
+    @patch("app.agent.auto_executor._final_risk_check", return_value=(True, None))
+    @patch("app.agent.auto_executor.get_uncapped_profile_ids")
+    @patch("app.agent.auto_executor.get_active_profiles")
+    @patch("app.agent.auto_executor.ws_manager")
+    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_trading_config")
+    @patch("app.agent.auto_executor.async_session_factory")
+    async def test_profile_override_below_global_executes_mid_confidence(
+        self, mock_session_factory, mock_cfg, mock_price, mock_ws,
+        mock_profiles, mock_uncapped, mock_risk, mock_notify
+    ):
+        """A profile at threshold 40 executes a conf-55 signal that the global 70 would block."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id, confidence=55)
+
+        pid = uuid.uuid4()
+        mock_profiles.return_value = [_make_profile(pid, name="s7", min_conf=40)]
+        mock_uncapped.return_value = {pid}
+        session, added = _mock_session(mock_session_factory, signal)
+        mock_cfg.return_value = _make_cfg()   # global = 70
+        mock_price.return_value = 420.0
+        mock_ws.broadcast = AsyncMock()
+
+        from app.agent.auto_executor import auto_execute_signal
+        result = await auto_execute_signal(signal_id)
+
+        assert len(result) == 1
+        assert [o for o in added if type(o).__name__ == "Trade"][0].yolo_profile_id == pid
+
+    @pytest.mark.asyncio
+    @patch("app.agent.auto_executor.get_uncapped_profile_ids")
+    @patch("app.agent.auto_executor.get_active_profiles")
+    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_trading_config")
+    @patch("app.agent.auto_executor.async_session_factory")
+    async def test_profile_inherits_global_skips_mid_confidence(
+        self, mock_session_factory, mock_cfg, mock_price,
+        mock_profiles, mock_uncapped
+    ):
+        """A profile with no override (inherit global 70) skips a conf-55 signal → []."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id, confidence=55)
+
+        pid = uuid.uuid4()
+        mock_profiles.return_value = [_make_profile(pid, min_conf=None)]
+        mock_uncapped.return_value = {pid}
+        _mock_session(mock_session_factory, signal)
+        mock_cfg.return_value = _make_cfg()   # global = 70
+
+        from app.agent.auto_executor import auto_execute_signal
+        result = await auto_execute_signal(signal_id)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    @patch("app.agent.auto_executor.notify_auto_executed", new_callable=AsyncMock)
+    @patch("app.agent.auto_executor._final_risk_check", return_value=(True, None))
+    @patch("app.agent.auto_executor.get_uncapped_profile_ids")
+    @patch("app.agent.auto_executor.get_active_profiles")
+    @patch("app.agent.auto_executor.ws_manager")
+    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_trading_config")
+    @patch("app.agent.auto_executor.async_session_factory")
+    async def test_mixed_thresholds_only_low_profile_executes(
+        self, mock_session_factory, mock_cfg, mock_price, mock_ws,
+        mock_profiles, mock_uncapped, mock_risk, mock_notify
+    ):
+        """conf 55, two profiles (40 and 70) → only the 40 profile trades."""
+        signal_id = uuid.uuid4()
+        signal = _make_signal(signal_id, confidence=55)
+
+        low_id, high_id = uuid.uuid4(), uuid.uuid4()
+        mock_profiles.return_value = [
+            _make_profile(low_id, name="s7-40", min_conf=40),
+            _make_profile(high_id, name="s2-70", min_conf=70),
+        ]
+        mock_uncapped.return_value = {low_id, high_id}
+        # Only the low-threshold profile reaches the position-dedup query (the high one is
+        # gated out before it), so one extra no_result is enough.
+        session, added = _mock_session(mock_session_factory, signal, num_profiles=2)
+        mock_cfg.return_value = _make_cfg()
+        mock_price.return_value = 420.0
+        mock_ws.broadcast = AsyncMock()
+
+        from app.agent.auto_executor import auto_execute_signal
+        result = await auto_execute_signal(signal_id)
+
+        assert len(result) == 1
+        trades = [o for o in added if type(o).__name__ == "Trade"]
+        assert len(trades) == 1
+        assert trades[0].yolo_profile_id == low_id
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -270,7 +369,8 @@ def _make_cfg():
     return cfg
 
 
-def _make_profile(profile_id, name="5K", cap=5000, strategies=None, setups=None):
+def _make_profile(profile_id, name="5K", cap=5000, strategies=None, setups=None,
+                  min_conf=None):
     p = MagicMock()
     p.id = profile_id
     p.name = name
@@ -281,6 +381,9 @@ def _make_profile(profile_id, name="5K", cap=5000, strategies=None, setups=None)
     # auto_executor's profile_accepts_signal filter sees real lists, not truthy Mocks.
     p.strategies = strategies if strategies is not None else []
     p.setups = setups if setups is not None else []
+    # Per-profile execution threshold (None = inherit global). Set explicitly so
+    # effective_execution_threshold reads a real value, not a truthy Mock.
+    p.min_confidence_for_execution = min_conf
     return p
 
 

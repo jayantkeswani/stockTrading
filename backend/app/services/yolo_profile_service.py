@@ -37,6 +37,8 @@ class YoloProfileDTO:
     invalidation_persist: int | None = None
     invalidation_quorum: bool = False
     invalidation_strong_only: bool = True
+    # Per-profile YOLO execution-confidence threshold. None = inherit the global default.
+    min_confidence_for_execution: float | None = None
     # Execution-side filters (tuples so the frozen DTO stays hashable). Empty = all.
     strategies: tuple[str, ...] = ()
     setups: tuple[str, ...] = ()
@@ -57,9 +59,37 @@ def _row_to_dto(row: YoloProfile) -> YoloProfileDTO:
         ),
         invalidation_quorum=bool(row.invalidation_quorum),
         invalidation_strong_only=bool(row.invalidation_strong_only),
+        min_confidence_for_execution=(
+            float(row.min_confidence_for_execution)
+            if row.min_confidence_for_execution is not None else None
+        ),
         strategies=tuple(row.strategies or []),
         setups=tuple(row.setups or []),
     )
+
+
+def effective_execution_threshold(profile: YoloProfileDTO, global_default: float) -> float:
+    """The profile's own YOLO execution-confidence threshold, or the global default when
+    unset (None) or a negative sentinel. Used by: auto_executor (per-profile gate),
+    min_execution_threshold_for."""
+    t = profile.min_confidence_for_execution
+    return float(t) if (t is not None and t >= 0) else float(global_default)
+
+
+def min_execution_threshold_for(
+    strategy_name: str, setup_type: str | None, global_default: float
+) -> float:
+    """Lowest execution-confidence threshold among active profiles that subscribe to this
+    signal (strategy+setup) — i.e. the bar for "executable by at least one profile". Returns
+    the global default when the profile cache is cold or no active profile subscribes. Sync
+    (reads the in-memory cache only). Used by: strategy_runner (executable gate), agent_runner
+    (notification gate), auto_executor (signal-level early-out)."""
+    thresholds = [
+        effective_execution_threshold(p, global_default)
+        for p in get_active_profiles_sync()
+        if profile_accepts_signal(p, strategy_name, setup_type)
+    ]
+    return min(thresholds) if thresholds else float(global_default)
 
 
 def profile_accepts_signal(
@@ -190,8 +220,12 @@ async def create_profile(
     profit_cap: float,
     strategies: list[str] | None = None,
     setups: list[str] | None = None,
+    min_confidence_for_execution: float | None = None,
 ) -> YoloProfileDTO:
-    """Create a new YOLO profile (optionally with strategy/setup execution filters)."""
+    """Create a new YOLO profile (optionally with strategy/setup execution filters and a
+    per-profile execution-confidence threshold; None/negative = inherit the global default)."""
+    if min_confidence_for_execution is not None and min_confidence_for_execution < 0:
+        min_confidence_for_execution = None
     async with async_session_factory() as session:
         # Auto-assign sort_order as max+1
         result = await session.execute(
@@ -203,6 +237,7 @@ async def create_profile(
             profit_cap=profit_cap,
             is_active=True,
             sort_order=max_order + 1,
+            min_confidence_for_execution=min_confidence_for_execution,
             strategies=strategies or [],
             setups=setups or [],
         )
@@ -220,11 +255,20 @@ async def update_profile(profile_id: uuid.UUID, **fields) -> YoloProfileDTO:
     allowed = {
         "name", "profit_cap", "is_active", "sort_order",
         "invalidation_persist", "invalidation_quorum", "invalidation_strong_only",
-        "strategies", "setups",
+        "min_confidence_for_execution", "strategies", "setups",
     }
     invalid = set(fields) - allowed
     if invalid:
         raise ValueError(f"Unknown profile fields: {invalid}")
+
+    # Per-profile execution threshold: a negative value is the "inherit global" sentinel
+    # (the PATCH endpoint drops None via exclude_none, so the client sends e.g. -1 to clear).
+    if "min_confidence_for_execution" in fields:
+        v = fields["min_confidence_for_execution"]
+        if v is None or float(v) < 0:
+            fields["min_confidence_for_execution"] = None
+        elif not (0 <= float(v) <= 100):
+            raise ValueError("min_confidence_for_execution must be between 0 and 100")
 
     async with async_session_factory() as session:
         result = await session.execute(

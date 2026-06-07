@@ -7,6 +7,8 @@ from pydantic import BaseModel
 class YoloProfileCreate(BaseModel):
     name: str
     profit_cap: float
+    # Per-profile YOLO execution-confidence threshold (None = inherit the global default).
+    min_confidence_for_execution: float | None = None
     # Execution-side filters (empty = act on all signals).
     strategies: list[str] = []
     setups: list[str] = []
@@ -22,6 +24,9 @@ class YoloProfileUpdate(BaseModel):
     invalidation_persist: int | None = None
     invalidation_quorum: bool | None = None
     invalidation_strong_only: bool | None = None
+    # Per-profile YOLO execution-confidence threshold (0-100). NOTE: the PATCH endpoint drops
+    # None via exclude_none, so send a NEGATIVE value (e.g. -1) to CLEAR back to "inherit global".
+    min_confidence_for_execution: float | None = None
     # Execution-side filters. NOTE: the PATCH endpoint drops None via exclude_none, so
     # send an empty list `[]` (not null) to CLEAR a filter back to "act on all".
     strategies: list[str] | None = None
@@ -38,6 +43,7 @@ class YoloProfileResponse(BaseModel):
     invalidation_persist: int | None = None
     invalidation_quorum: bool = False
     invalidation_strong_only: bool = True
+    min_confidence_for_execution: float | None = None
     strategies: list[str] = []
     setups: list[str] = []
 

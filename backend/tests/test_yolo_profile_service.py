@@ -10,7 +10,12 @@ import uuid
 import pytest
 
 import app.services.yolo_profile_service as svc
-from app.services.yolo_profile_service import YoloProfileDTO, profile_accepts_signal
+from app.services.yolo_profile_service import (
+    YoloProfileDTO,
+    effective_execution_threshold,
+    min_execution_threshold_for,
+    profile_accepts_signal,
+)
 
 
 def _dto(
@@ -109,3 +114,41 @@ def test_default_profile_trade_filter_scopes_to_default_and_manual():
     assert default.id.hex in rendered
     assert "MANUAL" in rendered
     assert other.id.hex not in rendered
+
+
+# ── Per-profile execution-confidence threshold ────────────────────────────
+
+def test_effective_execution_threshold_inherits_or_overrides():
+    g = 70.0
+    inherit = _dto("def", 5000)                       # min_confidence_for_execution=None
+    override = YoloProfileDTO(id=uuid.uuid4(), name="s7", profit_cap=5000, is_active=True,
+                              sort_order=1, min_confidence_for_execution=40.0)
+    sentinel = YoloProfileDTO(id=uuid.uuid4(), name="x", profit_cap=5000, is_active=True,
+                              sort_order=2, min_confidence_for_execution=-1.0)
+    assert effective_execution_threshold(inherit, g) == 70.0   # None → global
+    assert effective_execution_threshold(override, g) == 40.0  # own value
+    assert effective_execution_threshold(sentinel, g) == 70.0  # negative sentinel → global
+
+
+def test_min_execution_threshold_for_cold_cache_returns_global():
+    # _reset_cache fixture leaves the cache at None.
+    assert min_execution_threshold_for("vwap_reclaim", None, 70.0) == 70.0
+
+
+def test_min_execution_threshold_for_is_strategy_aware():
+    # A vwap_reclaim-only profile at 40 lowers the bar for vwap_reclaim signals only;
+    # the default (inherit-global) profile keeps vwap_pullback at the global 70.
+    default = _dto("def", 5000, sort_order=0)          # inherits → 70
+    s7 = YoloProfileDTO(id=uuid.uuid4(), name="s7", profit_cap=5000, is_active=True,
+                        sort_order=1, min_confidence_for_execution=40.0,
+                        strategies=("vwap_reclaim",))
+    svc._cache = [default, s7]
+    assert min_execution_threshold_for("vwap_reclaim", None, 70.0) == 40.0
+    assert min_execution_threshold_for("vwap_pullback", None, 70.0) == 70.0
+
+
+@pytest.mark.asyncio
+async def test_update_profile_rejects_out_of_range_threshold():
+    # The 0-100 range check raises before any DB access.
+    with pytest.raises(ValueError, match="between 0 and 100"):
+        await svc.update_profile(uuid.uuid4(), min_confidence_for_execution=150)
