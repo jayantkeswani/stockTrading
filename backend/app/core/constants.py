@@ -149,7 +149,7 @@ CANSLIM_SCORE_WEIGHTS = {
 CANSLIM_MIN_TOTAL_SCORE = 60.0  # Minimum composite score to qualify
 
 # Stock futures
-STOCK_FUTURES_EXPIRY_DOW = 3     # Thursday (last Thursday of month for NSE stock futures)
+STOCK_FUTURES_EXPIRY_DOW = 1     # Tuesday (last Tuesday of month for NSE stock futures; changed from Thursday, effective Sep 2025). BSE stock futures expire last Thursday — never trade those (illiquid, no WS ticks).
 FUTURES_MARGIN_PCT = 0.18        # ~18% of contract value (SPAN + exposure) — legacy default
 FUTURES_EXPIRY_ROLL_DAYS = 3     # Alert 3 days before futures expiry
 

@@ -164,6 +164,20 @@ async def _find_futures_symbol(symbol: str, expiry: date) -> str | None:
             if e.get("n", "").upper() == target and e.get("g", "") == "FUT"
         ]
 
+        # Prefer NSE when the same underlying lists futures on multiple
+        # exchanges. Single-stock-futures liquidity is entirely on NSE; the
+        # dual-listed BSE contracts (BSE:RELIANCE26JUNFUT, ...) exist in the
+        # master but barely trade and never tick in the WS feed, which froze
+        # live positions at the entry price (0.00 P&L, no SL/target ever firing).
+        # BSE-only instruments (SENSEX/BANKEX index futures) carry no NSE
+        # variant, so this filter is a no-op for them. Belt-and-suspenders with
+        # STOCK_FUTURES_EXPIRY_DOW=Tuesday: NSE's last-Tuesday expiry no longer
+        # collides with BSE's last-Thursday contract, but this keeps the exchange
+        # choice correct even if an expiry date drifts (holiday shift / DOW change).
+        nse_matches = [e for e in fut_matches if e.get("e", "").upper() == "NSE"]
+        if nse_matches:
+            fut_matches = nse_matches
+
         dated: list[tuple[date, str]] = []
         for entry in fut_matches:
             entry_expiry_str = entry.get("x", "")
