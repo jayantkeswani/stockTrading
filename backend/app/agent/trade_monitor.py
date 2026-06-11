@@ -202,11 +202,22 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
 
 
 async def _unrealized_net_pnl(db: AsyncSession, profile_id=None) -> float:
-    """Sum unrealized P&L for open non-shadow positions, minus estimated charges.
+    """Sum BOOKABLE unrealized P&L for open non-shadow positions, minus estimated charges.
+
+    Valuation matches what a close would actually book under the configured fill
+    model: a long exits at the cached bid, a short futures position exits at the
+    cached ask (LTP fallback when the book is missing/invalid, or when
+    fill_model=LTP). An LTP-valued trigger would declare the profit cap reached a
+    spread too early and the booked exits would realize under the cap. Display
+    MTM and SL/target triggers stay LTP-valued.
 
     When profile_id is given, only that YOLO profile's positions are included.
     """
     from app.services.brokerage_calculator import compute_charges
+    from app.services.trading_config import get_trading_config_sync
+
+    cfg = get_trading_config_sync()
+    use_book = cfg is None or cfg.fill_model == "BID_ASK"
 
     query = select(Position, Trade).join(Trade, Trade.id == Position.trade_id).where(
         Position.is_shadow == False,  # noqa: E712
@@ -218,11 +229,28 @@ async def _unrealized_net_pnl(db: AsyncSession, profile_id=None) -> float:
 
     total = 0.0
     for pos, trade in rows:
-        gross = float(pos.unrealized_pnl or 0)
+        is_short = trade.side == "SELL"
 
         price_symbol = pos.fyers_option_symbol or pos.symbol
         price_data = await get_cached_price(price_symbol)
-        exit_price = Decimal(str(price_data["ltp"])) if price_data else (pos.current_price or pos.entry_price)
+        exit_price = None
+        if price_data:
+            book_side = price_data.get("ask") if is_short else price_data.get("bid")
+            try:
+                book_val = float(book_side) if book_side is not None else 0.0
+            except (TypeError, ValueError):
+                book_val = 0.0
+            if use_book and book_val > 0:
+                exit_price = Decimal(str(book_side))
+            elif price_data.get("ltp"):
+                exit_price = Decimal(str(price_data["ltp"]))
+        if exit_price is None:
+            exit_price = pos.current_price or pos.entry_price
+
+        if is_short:
+            gross = float((pos.entry_price - exit_price) * pos.quantity)
+        else:
+            gross = float((exit_price - pos.entry_price) * pos.quantity)
 
         instrument_type = "OPTION" if trade.option_type else "FUTURE"
         charges = compute_charges(

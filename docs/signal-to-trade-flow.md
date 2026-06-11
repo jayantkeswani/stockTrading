@@ -190,7 +190,7 @@ User clicks EXEC in the UI → `POST /api/v1/signals/{id}/execute`.
 Mechanics (`live_price.get_fill_price(symbol, side)`):
 
 - Quote chain: fresh Redis tick (≤10s) → Fyers REST `/quotes` → stale Redis LTP. Per-fill **graceful LTP fallback** when the top-of-book is missing/invalid/crossed or only a stale quote exists; the fallback reason is recorded (`config`, `missing_bid_ask`, `stale_quote`, `signal_premium`, `no_quote`, `stale_data`, `expiry_roll`).
-- **Trigger logic stays on LTP** — SL/target hit detection, MTM, `unrealized_pnl`, and the profit-cap check all still value positions at LTP (v1 decision); only the booked fill price changes.
+- **Trigger logic stays on LTP** — SL/target hit detection, display MTM, and `unrealized_pnl` still value positions at LTP; only the booked fill price changes. Exception: the **profit-cap valuation** (`_unrealized_net_pnl`) values open positions at the exit side of the book (bid for longs, ask for short futures; LTP fallback) — an LTP-valued cap trigger would fire a spread too early and the booked exits would realize under the cap.
 - Every fill writes a snapshot into `Trade.fill_meta` (`{"entry": {...}, "exit": {...}}`): actual model used, fallback reason, price, ltp, bid, ask, spread_bps, and `spread_cost` (per-unit cost vs LTP). `Trade.fill_model` stamps the configured regime at entry.
 - **P&L continuity**: BID_ASK cuts paper P&L materially (~25–35% expected). Any pre/post comparison must filter on `trades.fill_model` (pre-cutover rows are NULL). Cutover = first deploy of this build (developed 2026-06-11).
 - Daily realized spread cost per strategy is SQL-derivable:
