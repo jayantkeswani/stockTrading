@@ -87,8 +87,11 @@ class FeedManager:
         price_data = {
             "symbol": symbol,
             "ltp": ltp,
-            "bid": tick_data.get("bid", ltp),
-            "ask": tick_data.get("ask", ltp),
+            # 0 = no top-of-book on this tick (indices, or lite feed). Never
+            # substitute LTP here — the fill-price helper relies on bid/ask being
+            # real quotes to decide BID_ASK vs LTP-fallback fills.
+            "bid": tick_data.get("bid", 0),
+            "ask": tick_data.get("ask", 0),
             "volume": tick_data.get("volume", 0),
             "change": tick_data.get("change", 0),
             "change_pct": tick_data.get("change_pct", 0),

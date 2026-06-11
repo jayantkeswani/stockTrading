@@ -33,3 +33,8 @@ class TradingConfig(Base, TimestampMixin):
     # the overlay (zero added latency). When true, each strategy's own
     # parameters.ai_overlay_enabled (default true) decides.
     ai_overlay_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # Paper fill model: BID_ASK fills BUYs at ask / SELLs at bid (per-fill LTP
+    # fallback when bid/ask missing or stale); LTP fills everything at last price.
+    # Switching this breaks P&L comparability across the cutover — every Trade is
+    # stamped with the model that filled it so comparisons can filter on it.
+    fill_model: Mapped[str] = mapped_column(String(10), nullable=False, server_default=text("'BID_ASK'"))

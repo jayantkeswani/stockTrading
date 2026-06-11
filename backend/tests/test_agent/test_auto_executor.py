@@ -9,11 +9,20 @@ import pytest
 from app.core.enums import SignalStatus, TradeSource
 
 
+def _make_fill(price: float):
+    """Real FillResult for mocking get_fill_price — fills at `price` with a 0.1% book."""
+    from app.services.live_price import FillResult
+    return FillResult(
+        price=price, model="BID_ASK", side="BUY",
+        ltp=price, bid=round(price * 0.999, 2), ask=price,
+    )
+
+
 class TestYoloPermanentWatchlistSkip:
 
     @pytest.mark.asyncio
     @patch("app.agent.auto_executor.ws_manager")
-    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_fill_price")
     @patch("app.agent.auto_executor.get_trading_config")
     @patch("app.agent.auto_executor.async_session_factory")
     async def test_yolo_skips_permanent_watchlist_signal(
@@ -38,7 +47,7 @@ class TestYoloPermanentWatchlistSkip:
     @patch("app.agent.auto_executor.get_uncapped_profile_ids")
     @patch("app.agent.auto_executor.get_active_profiles")
     @patch("app.agent.auto_executor.ws_manager")
-    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_fill_price")
     @patch("app.agent.auto_executor.get_trading_config")
     @patch("app.agent.auto_executor.async_session_factory")
     async def test_yolo_fires_permanent_watchlist_when_config_off(
@@ -58,7 +67,7 @@ class TestYoloPermanentWatchlistSkip:
         cfg = _make_cfg()
         cfg.yolo_skip_permanent_watchlist = False
         mock_cfg.return_value = cfg
-        mock_price.return_value = 180.0
+        mock_price.return_value = _make_fill(180.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.auto_executor import auto_execute_signal
@@ -84,7 +93,7 @@ class TestYoloFullExecution:
     @patch("app.agent.auto_executor.get_uncapped_profile_ids")
     @patch("app.agent.auto_executor.get_active_profiles")
     @patch("app.agent.auto_executor.ws_manager")
-    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_fill_price")
     @patch("app.agent.auto_executor.get_trading_config")
     @patch("app.agent.auto_executor.async_session_factory")
     async def test_yolo_creates_trade_with_margin_and_lots(
@@ -101,7 +110,7 @@ class TestYoloFullExecution:
 
         session, added_objects = _mock_session(mock_session_factory, signal)
         mock_cfg.return_value = _make_cfg()
-        mock_price.return_value = 420.0
+        mock_price.return_value = _make_fill(420.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.auto_executor import auto_execute_signal
@@ -130,7 +139,7 @@ class TestYoloFullExecution:
     @patch("app.agent.auto_executor.get_uncapped_profile_ids")
     @patch("app.agent.auto_executor.get_active_profiles")
     @patch("app.agent.auto_executor.ws_manager")
-    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_fill_price")
     @patch("app.agent.auto_executor.get_trading_config")
     @patch("app.agent.auto_executor.async_session_factory")
     async def test_yolo_creates_trades_for_multiple_profiles(
@@ -150,7 +159,7 @@ class TestYoloFullExecution:
 
         session, added_objects = _mock_session(mock_session_factory, signal, num_profiles=2)
         mock_cfg.return_value = _make_cfg()
-        mock_price.return_value = 420.0
+        mock_price.return_value = _make_fill(420.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.auto_executor import auto_execute_signal
@@ -171,7 +180,7 @@ class TestYoloFullExecution:
     @patch("app.agent.auto_executor.get_uncapped_profile_ids")
     @patch("app.agent.auto_executor.get_active_profiles")
     @patch("app.agent.auto_executor.ws_manager")
-    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_fill_price")
     @patch("app.agent.auto_executor.get_trading_config")
     @patch("app.agent.auto_executor.async_session_factory")
     async def test_yolo_profile_filter_skips_nonmatching_strategy(
@@ -192,7 +201,7 @@ class TestYoloFullExecution:
 
         session, added_objects = _mock_session(mock_session_factory, signal, num_profiles=2)
         mock_cfg.return_value = _make_cfg()
-        mock_price.return_value = 420.0
+        mock_price.return_value = _make_fill(420.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.auto_executor import auto_execute_signal
@@ -209,7 +218,7 @@ class TestYoloFullExecution:
     @patch("app.agent.auto_executor.get_uncapped_profile_ids")
     @patch("app.agent.auto_executor.get_active_profiles")
     @patch("app.agent.auto_executor.ws_manager")
-    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_fill_price")
     @patch("app.agent.auto_executor.get_trading_config")
     @patch("app.agent.auto_executor.async_session_factory")
     async def test_yolo_returns_empty_when_no_uncapped_profiles(
@@ -242,7 +251,7 @@ class TestPerProfileExecutionThreshold:
     @patch("app.agent.auto_executor.get_uncapped_profile_ids")
     @patch("app.agent.auto_executor.get_active_profiles")
     @patch("app.agent.auto_executor.ws_manager")
-    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_fill_price")
     @patch("app.agent.auto_executor.get_trading_config")
     @patch("app.agent.auto_executor.async_session_factory")
     async def test_profile_override_below_global_executes_mid_confidence(
@@ -258,7 +267,7 @@ class TestPerProfileExecutionThreshold:
         mock_uncapped.return_value = {pid}
         session, added = _mock_session(mock_session_factory, signal)
         mock_cfg.return_value = _make_cfg()   # global = 70
-        mock_price.return_value = 420.0
+        mock_price.return_value = _make_fill(420.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.auto_executor import auto_execute_signal
@@ -270,7 +279,7 @@ class TestPerProfileExecutionThreshold:
     @pytest.mark.asyncio
     @patch("app.agent.auto_executor.get_uncapped_profile_ids")
     @patch("app.agent.auto_executor.get_active_profiles")
-    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_fill_price")
     @patch("app.agent.auto_executor.get_trading_config")
     @patch("app.agent.auto_executor.async_session_factory")
     async def test_profile_inherits_global_skips_mid_confidence(
@@ -298,7 +307,7 @@ class TestPerProfileExecutionThreshold:
     @patch("app.agent.auto_executor.get_uncapped_profile_ids")
     @patch("app.agent.auto_executor.get_active_profiles")
     @patch("app.agent.auto_executor.ws_manager")
-    @patch("app.agent.auto_executor.get_live_price")
+    @patch("app.agent.auto_executor.get_fill_price")
     @patch("app.agent.auto_executor.get_trading_config")
     @patch("app.agent.auto_executor.async_session_factory")
     async def test_mixed_thresholds_only_low_profile_executes(
@@ -319,7 +328,7 @@ class TestPerProfileExecutionThreshold:
         # gated out before it), so one extra no_result is enough.
         session, added = _mock_session(mock_session_factory, signal, num_profiles=2)
         mock_cfg.return_value = _make_cfg()
-        mock_price.return_value = 420.0
+        mock_price.return_value = _make_fill(420.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.auto_executor import auto_execute_signal
@@ -366,6 +375,7 @@ def _make_cfg():
     cfg.min_confidence_for_execution = 70.0
     cfg.yolo_skip_permanent_watchlist = True
     cfg.shadow_skip_permanent_watchlist = True
+    cfg.fill_model = "BID_ASK"
     return cfg
 
 

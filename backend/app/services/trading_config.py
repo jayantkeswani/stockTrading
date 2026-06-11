@@ -40,6 +40,7 @@ class TradingConfigDTO:
     shadow_skip_permanent_watchlist: bool
     yolo_skip_permanent_watchlist: bool
     ai_overlay_enabled: bool = True
+    fill_model: str = "BID_ASK"  # "BID_ASK" | "LTP"
 
     @property
     def yolo_mode(self) -> bool:
@@ -68,6 +69,7 @@ def _row_to_dto(row: TradingConfig) -> TradingConfigDTO:
         shadow_skip_permanent_watchlist=bool(row.shadow_skip_permanent_watchlist),
         yolo_skip_permanent_watchlist=bool(row.yolo_skip_permanent_watchlist),
         ai_overlay_enabled=bool(row.ai_overlay_enabled),
+        fill_model=str(row.fill_model),
     )
 
 
@@ -107,7 +109,7 @@ async def update_trading_config(**fields) -> TradingConfigDTO:
         "max_trades_per_day", "paper_trading", "autonomy_level",
         "min_confidence_to_persist", "min_confidence_for_shadow", "min_confidence_for_execution",
         "shadow_skip_permanent_watchlist", "yolo_skip_permanent_watchlist",
-        "ai_overlay_enabled",
+        "ai_overlay_enabled", "fill_model",
     }
     invalid = set(fields) - allowed
     if invalid:
@@ -117,6 +119,11 @@ async def update_trading_config(**fields) -> TradingConfigDTO:
         level = fields["autonomy_level"]
         if level not in ("MANUAL", "SEMI", "YOLO"):
             raise ValueError(f"Invalid autonomy_level: {level!r}. Must be MANUAL, SEMI, or YOLO.")
+
+    if "fill_model" in fields:
+        model = fields["fill_model"]
+        if model not in ("BID_ASK", "LTP"):
+            raise ValueError(f"Invalid fill_model: {model!r}. Must be BID_ASK or LTP.")
 
     persist_val = fields.get("min_confidence_to_persist")
     shadow_val = fields.get("min_confidence_for_shadow")
@@ -184,6 +191,7 @@ async def ensure_seeded() -> None:
             shadow_skip_permanent_watchlist=True,
             yolo_skip_permanent_watchlist=True,
             ai_overlay_enabled=True,
+            fill_model="BID_ASK",
         )
         session.add(row)
         await session.commit()

@@ -21,7 +21,7 @@ from app.core.constants import (
     MARKET_OPEN,
 )
 from app.services.execution_utils import recompute_sl_target
-from app.services.live_price import get_live_price
+from app.services.live_price import FillResult, get_fill_price
 from app.services.lot_sizing import compute_lots_for_yolo
 from app.services.margin_calculator import compute_margin
 from app.services.trading_config import get_trading_config
@@ -164,17 +164,25 @@ async def auto_execute_signal(signal_id) -> list[dict]:
             position_type = "INTRADAY"
 
         trading_symbol = signal.fyers_futures_symbol or signal.fyers_option_symbol
+        entry_side = "SELL" if "SELL" in signal.signal_type else "BUY"
 
         if trading_symbol:
             try:
-                live_entry = await get_live_price(trading_symbol)
+                entry_fill = await get_fill_price(trading_symbol, entry_side)
             except Exception:
                 logger.warning(
                     "Live price unavailable for %s, falling back to signal premium", trading_symbol
                 )
-                live_entry = float(signal.entry_price)
+                entry_fill = FillResult(
+                    price=float(signal.entry_price), model="LTP", side=entry_side,
+                    ltp=None, bid=None, ask=None, fallback_reason="signal_premium",
+                )
         else:
-            live_entry = float(signal.entry_price)
+            entry_fill = FillResult(
+                price=float(signal.entry_price), model="LTP", side=entry_side,
+                ltp=None, bid=None, ask=None, fallback_reason="signal_premium",
+            )
+        live_entry = entry_fill.price
 
         stop_loss, target_price = recompute_sl_target(
             float(signal.entry_price),
@@ -249,10 +257,12 @@ async def auto_execute_signal(signal_id) -> list[dict]:
                 expiry_date=signal.expiry_date,
                 strike_price=signal.strike_price,
                 option_type=option_type,
-                side="SELL" if "SELL" in signal.signal_type else "BUY",
+                side=entry_side,
                 quantity=quantity,
                 lots=lots,
                 entry_price=live_entry,
+                fill_model=cfg.fill_model,
+                fill_meta={"entry": entry_fill.to_record()},
                 stop_loss=stop_loss,
                 target_price=target_price,
                 status=TradeStatus.OPEN.value,

@@ -156,8 +156,8 @@ class SimulatedWSClient:
 
                         tick_data = {
                             "ltp": v.get("lp", 0),
-                            "bid": v.get("bid", v.get("lp", 0)),
-                            "ask": v.get("ask", v.get("lp", 0)),
+                            "bid": v.get("bid", 0),
+                            "ask": v.get("ask", 0),
                             "volume": v.get("volume", 0),
                             "change": v.get("ch", 0),
                             "change_pct": v.get("chp", 0),
@@ -195,8 +195,8 @@ class SimulatedWSClient:
 
                 tick_data = {
                     "ltp": msg.get("ltp", 0),
-                    "bid": msg.get("bid", msg.get("ltp", 0)),
-                    "ask": msg.get("ask", msg.get("ltp", 0)),
+                    "bid": msg.get("bid", 0),
+                    "ask": msg.get("ask", 0),
                     "volume": msg.get("vol_traded_today", 0),
                     "change": msg.get("ch", 0),
                     "change_pct": msg.get("chp", 0),

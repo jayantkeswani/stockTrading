@@ -144,7 +144,7 @@ Called by `agent_runner.on_new_signal()` only when YOLO mode is active.
 4. Not a permanent watchlist signal (if `yolo_skip_permanent_watchlist=True`)
 5. No existing open YOLO trade for this signal_id
 
-**Per-profile execution** — after signal-level gates pass, shared computation runs once (VIX, lot sizing, live price, SL/target recomputation, margin). Then for each active uncapped YOLO profile:
+**Per-profile execution** — after signal-level gates pass, shared computation runs once (VIX, lot sizing, fill price via `get_fill_price()`, SL/target recomputation, margin). Then for each active uncapped YOLO profile:
 
 1. Position dedup scoped to `yolo_profile_id` — no existing open position for this symbol+direction in this profile
 2. `_final_risk_check(session, symbol, profile_id, profile_cap)` — drawdown, max trades, profit cap all scoped by profile
@@ -170,15 +170,41 @@ Called via `asyncio.create_task()` — fire-and-forget, never blocks the caller.
 
 **Key differences from YOLO:** No `executable` check, no capital gates, no drawdown/max-trades check. Always 1 lot. Shadows blocked signals to measure what would have happened.
 
-**Execution:** Same pattern — fresh LTP via `get_live_price()`, `recompute_sl_target()`, create `Trade(source="SHADOW")` + `Position(is_shadow=True)`.
+**Execution:** Same pattern — fill price via `get_fill_price()`, `recompute_sl_target()`, create `Trade(source="SHADOW")` + `Position(is_shadow=True)`.
 
 ### 4.3 Manual execution (`signals.py` API)
 
 User clicks EXEC in the UI → `POST /api/v1/signals/{id}/execute`.
 
 - Ignores `executable` flag — user can override.
-- Fresh LTP, same `recompute_sl_target()` logic.
+- Fill price via `get_fill_price()` (the preview endpoint quotes the same fill price), same `recompute_sl_target()` logic.
 - Lot sizing via `compute_lots_for_manual()` (same as YOLO logic, no blocking gates — warnings shown instead).
+
+### 4.4 Paper fill model (all three executors + all exits)
+
+`trading_config.fill_model` controls what price a paper execution books:
+
+- **`BID_ASK` (default)** — a BUY fills at the **ask**, a SELL fills at the **bid**. This applies to entries (options are always bought; futures BUY_FUT/SELL_FUT) and to exits (a long exit SELLs at the bid; a short-futures exit BUYs at the ask). LTP is what the last trader got — a marketable order pays the spread, and paper P&L should too.
+- **`LTP`** — everything fills at last traded price (the pre-cutover behaviour, kept as a config fallback).
+
+Mechanics (`live_price.get_fill_price(symbol, side)`):
+
+- Quote chain: fresh Redis tick (≤10s) → Fyers REST `/quotes` → stale Redis LTP. Per-fill **graceful LTP fallback** when the top-of-book is missing/invalid/crossed or only a stale quote exists; the fallback reason is recorded (`config`, `missing_bid_ask`, `stale_quote`, `signal_premium`, `no_quote`, `stale_data`, `expiry_roll`).
+- **Trigger logic stays on LTP** — SL/target hit detection, MTM, `unrealized_pnl`, and the profit-cap check all still value positions at LTP (v1 decision); only the booked fill price changes.
+- Every fill writes a snapshot into `Trade.fill_meta` (`{"entry": {...}, "exit": {...}}`): actual model used, fallback reason, price, ltp, bid, ask, spread_bps, and `spread_cost` (per-unit cost vs LTP). `Trade.fill_model` stamps the configured regime at entry.
+- **P&L continuity**: BID_ASK cuts paper P&L materially (~25–35% expected). Any pre/post comparison must filter on `trades.fill_model` (pre-cutover rows are NULL). Cutover = first deploy of this build (developed 2026-06-11).
+- Daily realized spread cost per strategy is SQL-derivable:
+
+```sql
+SELECT strategy_name,
+       ROUND(SUM(((fill_meta->'entry'->>'spread_cost')::numeric
+                + COALESCE((fill_meta->'exit'->>'spread_cost')::numeric, 0)) * quantity), 0) AS spread_cost_inr,
+       COUNT(*) AS fills
+FROM trades
+WHERE entry_time >= (NOW() AT TIME ZONE 'Asia/Kolkata')::date::timestamptz AT TIME ZONE 'Asia/Kolkata'
+  AND fill_meta IS NOT NULL
+GROUP BY strategy_name ORDER BY spread_cost_inr DESC;
+```
 
 ---
 
@@ -217,12 +243,13 @@ Once a valid price is obtained:
 
 `_close_position()`:
 
-1. Compute brokerage charges via `brokerage_calculator.compute_charges()`.
-2. Update Trade: exit_price, exit_reason, PnL, net_pnl, charges_json, status=CLOSED.
-3. Delete Position row.
-4. Create AgentLog entry.
-5. Broadcast `trade:close` + `agent:action` via WebSocket.
-6. Send Telegram notification (SL hit, profit booked, time exit, etc.).
+1. Re-quote the booked exit via `get_fill_price()` — long exit SELLs at the bid, short-futures exit BUYs at the ask; falls back to the trigger LTP when no book is available. Stale-data closes (`fill_at_market=False`) book exactly the passed price. Fill snapshot recorded in `Trade.fill_meta["exit"]`.
+2. Compute brokerage charges via `brokerage_calculator.compute_charges()` on the booked exit.
+3. Update Trade: exit_price, exit_reason, PnL, net_pnl, charges_json, status=CLOSED.
+4. Delete Position row.
+5. Create AgentLog entry.
+6. Broadcast `trade:close` + `agent:action` via WebSocket.
+7. Send Telegram notification (SL hit, profit booked, time exit, etc.).
 
 ---
 
@@ -246,8 +273,9 @@ Cross-field validation enforces: `persist < shadow <= execution`. All three are 
 |-------|-------------|-----------|
 | Option/futures resolution | Fyers REST `/quotes` | Signal object (in-memory) |
 | WS subscription (at resolve) | Fyers WebSocket | Redis `price:{symbol}` via feed_manager |
-| Executor fresh LTP | `get_live_price()`: Redis → Fyers REST | Trade entry_price (Postgres) |
-| Trade monitor | Redis `price:{symbol}` → REST fallback | Position.current_price (Postgres) |
+| Executor fill price | `get_fill_price()`: fresh Redis tick → Fyers REST → stale LTP | Trade entry_price + fill_meta (Postgres) |
+| Trade monitor (triggers/MTM) | Redis `price:{symbol}` → REST fallback (LTP) | Position.current_price (Postgres) |
+| Exit fill | `get_fill_price()` re-quote at close | Trade exit_price + fill_meta (Postgres) |
 | Candle persistence | WS ticks aggregated by feed_manager | `market_data_1m` (Postgres) |
 
 Key: only WS ticks write to Redis price cache. REST calls in the monitor are consumed in-memory and not cached.

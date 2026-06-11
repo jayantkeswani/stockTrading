@@ -88,15 +88,36 @@ async def close_position(
         trade.exit_reason = body.reason
         trade.exit_time = now_ist()
         if position.current_price:
-            trade.exit_price = position.current_price
+            # Book the exit at the live quote (long exit SELLs at the bid /
+            # short futures exit BUYs at the ask); fall back to the monitored LTP.
+            from app.services.live_price import get_fill_price
+
+            exit_side = "BUY" if trade.side == "SELL" else "SELL"
+            exit_price = position.current_price
+            exit_record = {
+                "model": "LTP", "fallback": "no_quote", "side": exit_side,
+                "price": float(exit_price), "ltp": float(exit_price),
+                "bid": None, "ask": None, "spread_bps": None, "spread_cost": 0.0,
+                "ts": now_ist().isoformat(),
+            }
+            try:
+                fill = await get_fill_price(
+                    position.fyers_option_symbol or position.symbol, exit_side
+                )
+                exit_price = Decimal(str(fill.price))
+                exit_record = fill.to_record()
+            except Exception:
+                pass
+            trade.fill_meta = {**(trade.fill_meta or {}), "exit": exit_record}
+            trade.exit_price = exit_price
             is_short = trade.side == "SELL"
-            diff = (trade.entry_price - position.current_price) if is_short else (position.current_price - trade.entry_price)
+            diff = (trade.entry_price - exit_price) if is_short else (exit_price - trade.entry_price)
             trade.pnl = diff * trade.quantity
             trade.pnl_percent = float(diff / trade.entry_price * 100)
 
             from app.services.brokerage_calculator import compute_charges
             instrument_type = "OPTION" if trade.option_type else "FUTURE"
-            charges = compute_charges(instrument_type, trade.entry_price, position.current_price, trade.quantity, trade.side)
+            charges = compute_charges(instrument_type, trade.entry_price, exit_price, trade.quantity, trade.side)
             trade.charges_json = charges.to_dict()
             trade.net_pnl = trade.pnl - charges.total
 

@@ -425,8 +425,10 @@ async def get_batch_prices(body: BatchPriceRequest):
                             price_data = {
                                 "symbol": fyers_symbol,
                                 "ltp": v.get("lp", 0),
-                                "bid": v.get("bid", v.get("lp", 0)),
-                                "ask": v.get("ask", v.get("lp", 0)),
+                                # 0 = missing top-of-book; never substitute LTP
+                                # (fill-price helper detects missing bid/ask)
+                                "bid": v.get("bid", 0),
+                                "ask": v.get("ask", 0),
                                 "volume": v.get("volume", 0),
                                 "change": v.get("ch", 0),
                                 "change_pct": v.get("chp", 0),

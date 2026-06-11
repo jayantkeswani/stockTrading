@@ -25,6 +25,7 @@ async def get_trading_settings():
         shadow_skip_permanent_watchlist=cfg.shadow_skip_permanent_watchlist,
         yolo_skip_permanent_watchlist=cfg.yolo_skip_permanent_watchlist,
         ai_overlay_enabled=cfg.ai_overlay_enabled,
+        fill_model=cfg.fill_model,
     )
 
 
@@ -53,4 +54,5 @@ async def patch_trading_settings(body: TradingConfigUpdate):
         shadow_skip_permanent_watchlist=cfg.shadow_skip_permanent_watchlist,
         yolo_skip_permanent_watchlist=cfg.yolo_skip_permanent_watchlist,
         ai_overlay_enabled=cfg.ai_overlay_enabled,
+        fill_model=cfg.fill_model,
     )
