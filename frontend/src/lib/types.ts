@@ -135,6 +135,25 @@ export interface Trade {
   } | null;
   signal_is_permanent_watchlist: boolean | null;
   yolo_profile_id: string | null;
+  fill_model: string | null;
+  fill_meta: {
+    entry?: FillRecord;
+    exit?: FillRecord;
+  } | null;
+}
+
+// Per-fill quote snapshot recorded at execution (paper→live slippage dataset)
+export interface FillRecord {
+  model: string; // "BID_ASK" | "LTP" (actual model used for this fill)
+  fallback: string | null;
+  side: string;
+  price: number;
+  ltp: number | null;
+  bid: number | null;
+  ask: number | null;
+  spread_bps: number | null;
+  spread_cost: number;
+  ts: string;
 }
 
 export interface Signal {

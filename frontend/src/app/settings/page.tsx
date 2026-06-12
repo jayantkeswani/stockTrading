@@ -62,6 +62,7 @@ interface TradingSettings {
   shadow_skip_permanent_watchlist: boolean;
   yolo_skip_permanent_watchlist: boolean;
   ai_overlay_enabled?: boolean;
+  fill_model?: string;
 }
 
 export default function SettingsPage() {
@@ -358,6 +359,29 @@ export default function SettingsPage() {
               >
                 <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${(currentSettings.ai_overlay_enabled ?? true) ? "left-4 bg-accent" : "left-0.5 bg-text-muted"}`} />
               </button>
+            </div>
+
+            {/* Paper fill model — BID_ASK (realistic) vs LTP (legacy) */}
+            <div className="flex items-center justify-between mb-3 pb-3 border-b border-border/40">
+              <div className="flex flex-col">
+                <span className="text-xs font-mono font-medium text-text-primary">Fill Model</span>
+                <span className="text-[9px] font-mono text-text-muted">BID/ASK fills buys at ask, sells at bid (realistic spread cost). Switching breaks P&L comparability — trades are stamped with their fill model.</span>
+              </div>
+              <div className="flex items-center gap-1">
+                {["BID_ASK", "LTP"].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setTradingDraft((d) => ({ ...d, fill_model: m }))}
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors ${
+                      (currentSettings.fill_model ?? "BID_ASK") === m
+                        ? "bg-accent/15 border-accent/50 text-accent"
+                        : "bg-bg-tertiary border-border text-text-muted hover:border-border-hover"
+                    }`}
+                  >
+                    {m === "BID_ASK" ? "BID/ASK" : "LTP"}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Risk grid */}

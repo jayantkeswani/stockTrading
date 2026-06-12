@@ -25,7 +25,7 @@ from app.models.signal import Signal
 from app.models.strategy_config import StrategyConfig
 from app.models.trade import Trade, build_signal_snapshot
 from app.services.execution_utils import recompute_sl_target
-from app.services.live_price import get_live_price
+from app.services.live_price import FillResult, get_fill_price
 from app.services.margin_calculator import compute_margin
 from app.services.trading_config import get_trading_config
 from app.websocket.manager import ws_manager
@@ -167,18 +167,26 @@ async def _do_shadow_execute(signal_id) -> None:
             position_type = "INTRADAY"
 
         trading_symbol = signal.fyers_futures_symbol or signal.fyers_option_symbol
+        entry_side = "SELL" if "SELL" in signal.signal_type else "BUY"
 
         if trading_symbol:
             try:
-                entry_price = await get_live_price(trading_symbol)
+                entry_fill = await get_fill_price(trading_symbol, entry_side)
             except Exception:
                 logger.warning(
                     "Shadow: live price unavailable for %s, falling back to signal premium %.2f",
                     trading_symbol, float(signal.entry_price),
                 )
-                entry_price = float(signal.entry_price)
+                entry_fill = FillResult(
+                    price=float(signal.entry_price), model="LTP", side=entry_side,
+                    ltp=None, bid=None, ask=None, fallback_reason="signal_premium",
+                )
         else:
-            entry_price = float(signal.entry_price)
+            entry_fill = FillResult(
+                price=float(signal.entry_price), model="LTP", side=entry_side,
+                ltp=None, bid=None, ask=None, fallback_reason="signal_premium",
+            )
+        entry_price = entry_fill.price
 
         # Recompute SL/target from the live fill price so R:R is preserved
         stop_loss, target_price = recompute_sl_target(
@@ -201,10 +209,12 @@ async def _do_shadow_execute(signal_id) -> None:
             expiry_date=signal.expiry_date,
             strike_price=signal.strike_price,
             option_type=option_type,
-            side="SELL" if "SELL" in signal.signal_type else "BUY",
+            side=entry_side,
             quantity=quantity,
             lots=lots,
             entry_price=entry_price,
+            fill_model=cfg.fill_model,
+            fill_meta={"entry": entry_fill.to_record()},
             stop_loss=stop_loss,
             target_price=target_price,
             status=TradeStatus.OPEN.value,

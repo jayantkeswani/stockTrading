@@ -293,6 +293,7 @@ export const api = {
       min_confidence_for_execution: number;
       shadow_skip_permanent_watchlist: boolean;
       yolo_skip_permanent_watchlist: boolean;
+      fill_model: string;
     }>(`/api/v1/settings/trading`),
   updateTradingSettings: (patch: {
     capital?: number;
@@ -307,6 +308,7 @@ export const api = {
     shadow_skip_permanent_watchlist?: boolean;
     yolo_skip_permanent_watchlist?: boolean;
     ai_overlay_enabled?: boolean;
+    fill_model?: string;
   }) =>
     request<{
       capital: number;
@@ -320,6 +322,7 @@ export const api = {
       min_confidence_for_execution: number;
       shadow_skip_permanent_watchlist: boolean;
       yolo_skip_permanent_watchlist: boolean;
+      fill_model: string;
     }>(`/api/v1/settings/trading`, {
       method: "PATCH",
       body: JSON.stringify(patch),

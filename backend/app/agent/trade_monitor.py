@@ -202,11 +202,22 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
 
 
 async def _unrealized_net_pnl(db: AsyncSession, profile_id=None) -> float:
-    """Sum unrealized P&L for open non-shadow positions, minus estimated charges.
+    """Sum BOOKABLE unrealized P&L for open non-shadow positions, minus estimated charges.
+
+    Valuation matches what a close would actually book under the configured fill
+    model: a long exits at the cached bid, a short futures position exits at the
+    cached ask (LTP fallback when the book is missing/invalid, or when
+    fill_model=LTP). An LTP-valued trigger would declare the profit cap reached a
+    spread too early and the booked exits would realize under the cap. Display
+    MTM and SL/target triggers stay LTP-valued.
 
     When profile_id is given, only that YOLO profile's positions are included.
     """
     from app.services.brokerage_calculator import compute_charges
+    from app.services.trading_config import get_trading_config_sync
+
+    cfg = get_trading_config_sync()
+    use_book = cfg is None or cfg.fill_model == "BID_ASK"
 
     query = select(Position, Trade).join(Trade, Trade.id == Position.trade_id).where(
         Position.is_shadow == False,  # noqa: E712
@@ -218,11 +229,28 @@ async def _unrealized_net_pnl(db: AsyncSession, profile_id=None) -> float:
 
     total = 0.0
     for pos, trade in rows:
-        gross = float(pos.unrealized_pnl or 0)
+        is_short = trade.side == "SELL"
 
         price_symbol = pos.fyers_option_symbol or pos.symbol
         price_data = await get_cached_price(price_symbol)
-        exit_price = Decimal(str(price_data["ltp"])) if price_data else (pos.current_price or pos.entry_price)
+        exit_price = None
+        if price_data:
+            book_side = price_data.get("ask") if is_short else price_data.get("bid")
+            try:
+                book_val = float(book_side) if book_side is not None else 0.0
+            except (TypeError, ValueError):
+                book_val = 0.0
+            if use_book and book_val > 0:
+                exit_price = Decimal(str(book_side))
+            elif price_data.get("ltp"):
+                exit_price = Decimal(str(price_data["ltp"]))
+        if exit_price is None:
+            exit_price = pos.current_price or pos.entry_price
+
+        if is_short:
+            gross = float((pos.entry_price - exit_price) * pos.quantity)
+        else:
+            gross = float((exit_price - pos.entry_price) * pos.quantity)
 
         instrument_type = "OPTION" if trade.option_type else "FUTURE"
         charges = compute_charges(
@@ -526,13 +554,45 @@ async def _close_position(
     exit_reason: ExitReason,
     action_type: AgentActionType,
     requires_confirmation: bool = False,
+    fill_at_market: bool = True,
 ) -> dict:
-    """Close a position and update the corresponding trade."""
+    """Close a position and update the corresponding trade.
+
+    ``exit_price`` is the TRIGGER price (LTP) the caller detected the exit at.
+    When ``fill_at_market`` is True (every live exit), the actual booked exit is
+    re-quoted via get_fill_price — a long exit SELLs at the bid, a short-futures
+    exit BUYs at the ask — falling back to the trigger LTP when no book is
+    available. ``fill_at_market=False`` (stale-data closes) books exactly the
+    passed price. The fill snapshot is recorded in Trade.fill_meta["exit"].
+    """
+    from app.services.live_price import get_fill_price
 
     # Update trade
     trade_result = await db.execute(select(Trade).where(Trade.id == pos.trade_id))
     trade = trade_result.scalar_one_or_none()
     if trade:
+        exit_side = "BUY" if trade.side == "SELL" else "SELL"
+        exit_record = {
+            "model": "LTP",
+            "fallback": "stale_data" if not fill_at_market else "no_quote",
+            "side": exit_side,
+            "price": float(exit_price),
+            "ltp": float(exit_price) if fill_at_market else None,
+            "bid": None, "ask": None,
+            "spread_bps": None, "spread_cost": 0.0,
+            "ts": now_ist().isoformat(),
+        }
+        if fill_at_market:
+            try:
+                fill = await get_fill_price(pos.fyers_option_symbol or pos.symbol, exit_side)
+                exit_price = Decimal(str(fill.price))
+                exit_record = fill.to_record()
+            except Exception:
+                logger.warning(
+                    "Exit fill quote unavailable for %s — booking trigger LTP %.2f",
+                    pos.symbol, float(exit_price),
+                )
+        trade.fill_meta = {**(trade.fill_meta or {}), "exit": exit_record}
         trade.status = TradeStatus.CLOSED
         trade.exit_price = exit_price
         trade.exit_time = now_ist()
@@ -750,6 +810,8 @@ async def _roll_futures_position(
     margin = compute_margin(symbol, float(new_ltp), quantity, "FUTURE")
 
     # 4. Create new Trade + Position
+    # Roll re-entry fills at the resolution LTP (not bid/ask) — rare,
+    # positional-only; recorded honestly so the spread dataset stays clean.
     trade_kwargs = dict(
         strategy_name=pos.strategy_name,
         symbol=symbol,
@@ -760,6 +822,12 @@ async def _roll_futures_position(
         quantity=quantity,
         lots=lots,
         entry_price=new_ltp,
+        fill_meta={"entry": {
+            "model": "LTP", "fallback": "expiry_roll", "side": "BUY",
+            "price": float(new_ltp), "ltp": float(new_ltp),
+            "bid": None, "ask": None, "spread_bps": None, "spread_cost": 0.0,
+            "ts": now.isoformat(),
+        }},
         stop_loss=new_sl,
         target_price=new_target,
         status=TradeStatus.OPEN.value,
@@ -775,6 +843,13 @@ async def _roll_futures_position(
         trade_kwargs["source"] = TradeSource.YOLO.value
         trade_kwargs["yolo_profile_id"] = pos.yolo_profile_id
     original_trade = (await db.execute(select(Trade).where(Trade.id == pos.trade_id))).scalar_one_or_none()
+    # Stamp the current fill regime (cache-only read — no DB I/O on this hot
+    # path); fall back to the rolled-from trade's regime when the cache is cold.
+    from app.services.trading_config import get_trading_config_sync
+    _cfg = get_trading_config_sync()
+    trade_kwargs["fill_model"] = (
+        _cfg.fill_model if _cfg else (original_trade.fill_model if original_trade else None)
+    )
     if original_trade:
         trade_kwargs["is_permanent_watchlist"] = original_trade.is_permanent_watchlist
         trade_kwargs["signal_confidence"] = original_trade.signal_confidence
@@ -903,6 +978,7 @@ async def _close_stale_shadow(db: AsyncSession, pos: Position) -> dict:
     return await _close_position(
         db, pos, pos.entry_price, ExitReason.STALE_DATA,
         AgentActionType.TIME_EXIT, requires_confirmation=False,
+        fill_at_market=False,
     )
 
 

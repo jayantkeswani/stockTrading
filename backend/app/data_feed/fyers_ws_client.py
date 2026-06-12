@@ -120,8 +120,10 @@ class FyersWSClient:
 
                     tick_data = {
                         "ltp": v.get("lp", 0),
-                        "bid": v.get("bid", v.get("lp", 0)),
-                        "ask": v.get("ask", v.get("lp", 0)),
+                        # REST /quotes uses bid/ask keys. Missing values stay 0 —
+                        # never substitute LTP (fill helper must detect missing book).
+                        "bid": v.get("bid", 0),
+                        "ask": v.get("ask", 0),
                         "volume": v.get("volume", 0),
                         "change": v.get("ch", 0),
                         "change_pct": v.get("chp", 0),
@@ -307,8 +309,11 @@ class FyersWSClient:
 
                 tick_data = {
                     "ltp": tick.get("ltp", 0),
-                    "bid": tick.get("bid", tick.get("ltp", 0)),
-                    "ask": tick.get("ask", tick.get("ltp", 0)),
+                    # Fyers full-mode SymbolUpdate field names are bid_price/ask_price
+                    # (NOT bid/ask). Missing values stay 0 — never substitute LTP, so
+                    # the fill-price helper can detect a missing top-of-book.
+                    "bid": tick.get("bid_price", tick.get("bid", 0)),
+                    "ask": tick.get("ask_price", tick.get("ask", 0)),
                     "volume": tick.get("vol_traded_today", 0),
                     "change": tick.get("ch", 0),
                     "change_pct": tick.get("chp", 0),

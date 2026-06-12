@@ -171,6 +171,7 @@ See `backend/CLAUDE.md` for execution architecture details (shadow/YOLO isolatio
 - Strike gaps: NIFTY=50, BANKNIFTY=100, FINNIFTY=50, SENSEX=100, MIDCPNIFTY=25
 - Preferred premium range: Rs 150-400
 - SL/target computed on option premium (not index price), 30-35% SL, 1:1.5 R:R
+- **Paper fill model**: `trading_config.fill_model` (`BID_ASK` default | `LTP`, Settings toggle) — BUYs fill at ask, SELLs at bid on every paper entry AND exit; SL/target triggers + display MTM stay LTP; the profit-cap valuation is exit-side (bid/ask) so caps trigger on bookable P&L. Per-fill quote snapshot in `trades.fill_meta`; each trade stamped with `trades.fill_model` — **pre/post-cutover P&L comparisons must filter on it** (NULL = pre-cutover LTP fills; BID_ASK cuts paper P&L ~25–35%). Details + spread-cost SQL: `docs/signal-to-trade-flow.md` §4.4
 - Expiry: NIFTY weekly Tuesday, SENSEX weekly Thursday, others monthly only (post-SEBI Nov 2024)
 
 ## Commands
@@ -291,7 +292,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 ## Test Coverage
 
-- **Backend**: ~1095 pytest tests in `backend/tests/`. Run: `make test`. See `backend/CLAUDE.md` for per-module coverage details.
+- **Backend**: ~1115 pytest tests in `backend/tests/`. Run: `make test`. See `backend/CLAUDE.md` for per-module coverage details.
 - **Frontend**: Vitest unit tests in `frontend/src/__tests__/`. Run: `cd frontend && npm test`. Tests pure logic functions copied verbatim from page files (not exported). Config: `frontend/vitest.config.ts`.
 
 ## Documentation Reference

@@ -72,6 +72,15 @@ class Trade(Base, TimestampMixin):
     yolo_profile_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("yolo_profiles.id", ondelete="SET NULL"), nullable=True
     )
+    # Fill model in effect when the trade was OPENED ("BID_ASK" | "LTP").
+    # Pre/post-cutover P&L comparisons must filter on this column.
+    fill_model: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Per-fill quote snapshots: {"entry": {...}, "exit": {...}} — each dict carries
+    # model (actual, incl. per-fill LTP fallback), fallback reason, price, ltp, bid,
+    # ask, spread_bps, spread_cost (per-unit vs LTP), side, ts. This is the
+    # paper→live slippage dataset: daily spread cost per strategy is SQL-derivable
+    # as SUM(spread_cost × quantity).
+    fill_meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
         Index("idx_trades_status", "status"),

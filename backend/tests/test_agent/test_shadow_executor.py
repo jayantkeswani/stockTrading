@@ -9,11 +9,20 @@ import pytest
 from app.core.enums import AgentActionType, SignalStatus, TradeSource
 
 
+def _make_fill(price: float):
+    """Real FillResult for mocking get_fill_price — fills at `price` with a 0.1% book."""
+    from app.services.live_price import FillResult
+    return FillResult(
+        price=price, model="BID_ASK", side="BUY",
+        ltp=price, bid=round(price * 0.999, 2), ask=price,
+    )
+
+
 class TestShadowExecuteSignal:
 
     @pytest.mark.asyncio
     @patch("app.agent.shadow_executor.ws_manager")
-    @patch("app.agent.shadow_executor.get_live_price")
+    @patch("app.agent.shadow_executor.get_fill_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
@@ -26,7 +35,7 @@ class TestShadowExecuteSignal:
 
         session, added_objects = _mock_session(mock_session_factory, signal)
         mock_cfg.return_value = _make_cfg()
-        mock_price.return_value = 180.0
+        mock_price.return_value = _make_fill(180.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.shadow_executor import shadow_execute_signal
@@ -55,7 +64,7 @@ class TestShadowExecuteSignal:
 
     @pytest.mark.asyncio
     @patch("app.agent.shadow_executor.ws_manager")
-    @patch("app.agent.shadow_executor.get_live_price")
+    @patch("app.agent.shadow_executor.get_fill_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
@@ -68,7 +77,7 @@ class TestShadowExecuteSignal:
 
         session, added_objects = _mock_session(mock_session_factory, signal)
         mock_cfg.return_value = _make_cfg()
-        mock_price.return_value = 200.0
+        mock_price.return_value = _make_fill(200.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.shadow_executor import shadow_execute_signal
@@ -105,7 +114,7 @@ class TestShadowExecuteSignal:
 
     @pytest.mark.asyncio
     @patch("app.agent.shadow_executor.ws_manager")
-    @patch("app.agent.shadow_executor.get_live_price")
+    @patch("app.agent.shadow_executor.get_fill_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
@@ -119,7 +128,7 @@ class TestShadowExecuteSignal:
         added_2: list = []
 
         mock_cfg.return_value = _make_cfg()
-        mock_price.return_value = 150.0
+        mock_price.return_value = _make_fill(150.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.shadow_executor import shadow_execute_signal
@@ -155,7 +164,7 @@ class TestShadowExecuteSignal:
 
     @pytest.mark.asyncio
     @patch("app.agent.shadow_executor.ws_manager")
-    @patch("app.agent.shadow_executor.get_live_price", side_effect=Exception("timeout"))
+    @patch("app.agent.shadow_executor.get_fill_price", side_effect=Exception("timeout"))
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
@@ -196,7 +205,7 @@ class TestShadowExecuteSignal:
 
     @pytest.mark.asyncio
     @patch("app.agent.shadow_executor.ws_manager")
-    @patch("app.agent.shadow_executor.get_live_price")
+    @patch("app.agent.shadow_executor.get_fill_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
@@ -209,7 +218,7 @@ class TestShadowExecuteSignal:
 
         session, added_objects = _mock_session(mock_session_factory, signal)
         mock_cfg.return_value = _make_cfg(min_confidence_for_shadow=45.0)
-        mock_price.return_value = 180.0
+        mock_price.return_value = _make_fill(180.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.shadow_executor import shadow_execute_signal
@@ -244,7 +253,7 @@ class TestShadowExecuteSignal:
 
     @pytest.mark.asyncio
     @patch("app.agent.shadow_executor.ws_manager")
-    @patch("app.agent.shadow_executor.get_live_price")
+    @patch("app.agent.shadow_executor.get_fill_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
@@ -259,7 +268,7 @@ class TestShadowExecuteSignal:
         # shadow trade is CLOSED, so the OPEN filter excludes it.
         session, added_objects = _mock_session(mock_session_factory, signal)
         mock_cfg.return_value = _make_cfg()
-        mock_price.return_value = 185.0
+        mock_price.return_value = _make_fill(185.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.shadow_executor import shadow_execute_signal
@@ -289,7 +298,7 @@ class TestShadowExecuteSignal:
 
     @pytest.mark.asyncio
     @patch("app.agent.shadow_executor.ws_manager")
-    @patch("app.agent.shadow_executor.get_live_price")
+    @patch("app.agent.shadow_executor.get_fill_price")
     @patch("app.agent.shadow_executor.get_trading_config")
     @patch("app.agent.shadow_executor.async_session_factory")
     @patch("app.agent.shadow_executor.is_past_close_deadline", return_value=False)
@@ -305,7 +314,7 @@ class TestShadowExecuteSignal:
         cfg = _make_cfg()
         cfg.shadow_skip_permanent_watchlist = False
         mock_cfg.return_value = cfg
-        mock_price.return_value = 180.0
+        mock_price.return_value = _make_fill(180.0)
         mock_ws.broadcast = AsyncMock()
 
         from app.agent.shadow_executor import shadow_execute_signal
@@ -351,6 +360,7 @@ def _make_cfg(min_confidence_for_shadow=45.0, min_confidence_for_execution=60.0)
     cfg.min_confidence_for_execution = min_confidence_for_execution
     cfg.shadow_skip_permanent_watchlist = True
     cfg.yolo_skip_permanent_watchlist = True
+    cfg.fill_model = "BID_ASK"
     return cfg
 
 

@@ -884,3 +884,103 @@ class TestInvalidationExit:
             db = AsyncMock()
             for pos in (shadow, non_s5, no_profile):
                 assert await _check_invalidation(db, pos, Decimal("1000"), is_short_pos=False) is None
+
+
+# ---------------------------------------------------------------------------
+# Profit-cap valuation — _unrealized_net_pnl books at the exit side of the book
+# ---------------------------------------------------------------------------
+
+def _make_trade_for_pos(pos, *, side="BUY", option_type="CE"):
+    trade = MagicMock()
+    trade.id = pos.trade_id
+    trade.side = side
+    trade.option_type = option_type
+    return trade
+
+
+def _pnl_db(rows):
+    """DB session mock whose execute().all() returns (Position, Trade) rows."""
+    db = MagicMock()
+    result = MagicMock()
+    result.all.return_value = rows
+    db.execute = AsyncMock(return_value=result)
+    return db
+
+
+def _expected_net(entry, exit_px, qty, side, instrument_type):
+    from app.services.brokerage_calculator import compute_charges
+    gross = float((entry - exit_px) * qty) if side == "SELL" else float((exit_px - entry) * qty)
+    charges = compute_charges(instrument_type, entry, exit_px, qty, side)
+    return gross - float(charges.total)
+
+
+def _quote_patches(quote, fill_model="BID_ASK"):
+    cfg = MagicMock(fill_model=fill_model)
+    return (
+        patch(
+            "app.agent.trade_monitor.get_cached_price",
+            new_callable=AsyncMock, return_value=quote,
+        ),
+        patch(
+            "app.services.trading_config.get_trading_config_sync",
+            return_value=cfg,
+        ),
+    )
+
+
+class TestUnrealizedNetPnlBookValuation:
+    """The cap trigger values open positions at the bookable exit price."""
+
+    @pytest.mark.asyncio
+    async def test_long_valued_at_bid_not_ltp(self):
+        pos = _make_position(entry_price=Decimal("200"), quantity=150)
+        rows = [(pos, _make_trade_for_pos(pos))]
+        p1, p2 = _quote_patches({"ltp": 220.0, "bid": 218.0, "ask": 221.0})
+        with p1, p2:
+            from app.agent.trade_monitor import _unrealized_net_pnl
+            total = await _unrealized_net_pnl(_pnl_db(rows))
+
+        expected = _expected_net(Decimal("200"), Decimal("218.0"), 150, "BUY", "OPTION")
+        assert total == pytest.approx(expected)
+
+    @pytest.mark.asyncio
+    async def test_short_futures_valued_at_ask(self):
+        pos = _make_position(
+            entry_price=Decimal("1000"), quantity=500,
+            fyers_option_symbol="NSE:VEDL26JUNFUT", symbol="VEDL",
+        )
+        rows = [(pos, _make_trade_for_pos(pos, side="SELL", option_type=None))]
+        p1, p2 = _quote_patches({"ltp": 990.0, "bid": 989.0, "ask": 991.0})
+        with p1, p2:
+            from app.agent.trade_monitor import _unrealized_net_pnl
+            total = await _unrealized_net_pnl(_pnl_db(rows))
+
+        # short exit BUYs at the ask (991), not LTP (990)
+        expected = _expected_net(Decimal("1000"), Decimal("991.0"), 500, "SELL", "FUTURE")
+        assert total == pytest.approx(expected)
+
+    @pytest.mark.asyncio
+    async def test_missing_book_falls_back_to_ltp(self):
+        pos = _make_position(entry_price=Decimal("200"), quantity=150)
+        rows = [(pos, _make_trade_for_pos(pos))]
+        p1, p2 = _quote_patches({"ltp": 220.0, "bid": 0, "ask": 0})
+        with p1, p2:
+            from app.agent.trade_monitor import _unrealized_net_pnl
+            total = await _unrealized_net_pnl(_pnl_db(rows))
+
+        expected = _expected_net(Decimal("200"), Decimal("220.0"), 150, "BUY", "OPTION")
+        assert total == pytest.approx(expected)
+
+    @pytest.mark.asyncio
+    async def test_ltp_regime_ignores_book(self):
+        pos = _make_position(entry_price=Decimal("200"), quantity=150)
+        rows = [(pos, _make_trade_for_pos(pos))]
+        p1, p2 = _quote_patches(
+            {"ltp": 220.0, "bid": 218.0, "ask": 221.0}, fill_model="LTP",
+        )
+        with p1, p2:
+            from app.agent.trade_monitor import _unrealized_net_pnl
+            total = await _unrealized_net_pnl(_pnl_db(rows))
+
+        expected = _expected_net(Decimal("200"), Decimal("220.0"), 150, "BUY", "OPTION")
+        assert total == pytest.approx(expected)

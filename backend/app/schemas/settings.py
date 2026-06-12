@@ -16,6 +16,7 @@ class TradingConfigResponse(BaseModel):
     shadow_skip_permanent_watchlist: bool
     yolo_skip_permanent_watchlist: bool
     ai_overlay_enabled: bool = True
+    fill_model: str = "BID_ASK"  # "BID_ASK" | "LTP"
 
     model_config = {"from_attributes": True}
 
@@ -33,3 +34,4 @@ class TradingConfigUpdate(BaseModel):
     shadow_skip_permanent_watchlist: bool | None = None
     yolo_skip_permanent_watchlist: bool | None = None
     ai_overlay_enabled: bool | None = None
+    fill_model: str | None = Field(default=None, pattern="^(BID_ASK|LTP)$")
