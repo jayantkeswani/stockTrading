@@ -39,6 +39,8 @@ class YoloProfileDTO:
     invalidation_strong_only: bool = True
     # Per-profile YOLO execution-confidence threshold. None = inherit the global default.
     min_confidence_for_execution: float | None = None
+    # Per-profile intraday-bias strength gate (None = no gate; "WEAK"/"MODERATE"/"STRONG").
+    min_bias_strength: str | None = None
     # Execution-side filters (tuples so the frozen DTO stays hashable). Empty = all.
     strategies: tuple[str, ...] = ()
     setups: tuple[str, ...] = ()
@@ -63,6 +65,7 @@ def _row_to_dto(row: YoloProfile) -> YoloProfileDTO:
             float(row.min_confidence_for_execution)
             if row.min_confidence_for_execution is not None else None
         ),
+        min_bias_strength=row.min_bias_strength,
         strategies=tuple(row.strategies or []),
         setups=tuple(row.setups or []),
     )
@@ -77,35 +80,72 @@ def effective_execution_threshold(profile: YoloProfileDTO, global_default: float
 
 
 def min_execution_threshold_for(
-    strategy_name: str, setup_type: str | None, global_default: float
+    strategy_name: str,
+    setup_type: str | None,
+    global_default: float,
+    bias_strength: str | None = None,
 ) -> float:
     """Lowest execution-confidence threshold among active profiles that subscribe to this
-    signal (strategy+setup) — i.e. the bar for "executable by at least one profile". Returns
-    the global default when the profile cache is cold or no active profile subscribes. Sync
-    (reads the in-memory cache only). Used by: strategy_runner (executable gate), agent_runner
-    (notification gate), auto_executor (signal-level early-out)."""
+    signal (strategy+setup+bias) — i.e. the bar for "executable by at least one profile".
+    Returns the global default when the profile cache is cold or no active profile subscribes.
+    Pass `bias_strength` (via `signal_bias_strength`) so a bias-gated profile is only counted
+    for signals it would actually execute. Sync (reads the in-memory cache only). Used by:
+    strategy_runner (executable gate), agent_runner (notification gate), auto_executor
+    (signal-level early-out)."""
     thresholds = [
         effective_execution_threshold(p, global_default)
         for p in get_active_profiles_sync()
-        if profile_accepts_signal(p, strategy_name, setup_type)
+        if profile_accepts_signal(p, strategy_name, setup_type, bias_strength)
     ]
     return min(thresholds) if thresholds else float(global_default)
 
 
-def profile_accepts_signal(
-    profile: YoloProfileDTO, strategy_name: str, setup_type: str | None
-) -> bool:
-    """True if the profile's strategy/setup filters admit this signal.
+_BIAS_RANK = {"WEAK": 1, "MODERATE": 2, "STRONG": 3}
 
-    Empty filter list = accept all (backward compatible). The two filters are
-    independent AND conditions: a profile with `setups=["ORB_RETEST"]` only executes
-    that setup; a signal with no setup_type is rejected by a non-empty setups filter.
-    Used by: auto_executor (per-profile fan-out gate).
+
+def signal_bias_strength(indicators: dict | None) -> str | None:
+    """Extract the stored stock intraday-bias strength from a signal's indicators JSONB
+    (written at signal time as ctx.intraday_bias.components by compute_intraday_bias).
+    Returns "WEAK"/"MODERATE"/"STRONG", or None when absent (non-S5 signals carry no bias).
+    Used by: auto_executor, strategy_runner, agent_runner — to feed the per-profile bias gate."""
+    ib = (indicators or {}).get("intraday_bias") or {}
+    return ib.get("strength") if isinstance(ib, dict) else None
+
+
+def _normalize_bias_strength(v: str | None) -> str | None:
+    """Validate/normalize a bias-strength gate value: falsy/"" -> None (no gate); else
+    uppercased and must be WEAK/MODERATE/STRONG. Raises ValueError otherwise."""
+    if not v:
+        return None
+    u = str(v).strip().upper()
+    if u not in _BIAS_RANK:
+        raise ValueError("min_bias_strength must be WEAK, MODERATE, or STRONG")
+    return u
+
+
+def profile_accepts_signal(
+    profile: YoloProfileDTO,
+    strategy_name: str,
+    setup_type: str | None,
+    bias_strength: str | None = None,
+) -> bool:
+    """True if the profile's strategy/setup/bias filters admit this signal.
+
+    Empty strategy/setup filter = accept all (backward compatible); the filters are
+    independent AND conditions (a profile with `setups=["ORB_RETEST"]` only executes that
+    setup; a signal with no setup_type is rejected by a non-empty setups filter). When
+    `min_bias_strength` is set, the signal's stock intraday-bias `bias_strength` must be
+    >= it (ordinal WEAK<MODERATE<STRONG); a signal with no bias (None) is rejected. Pass
+    `bias_strength` via `signal_bias_strength(signal.indicators)`. Used by: auto_executor
+    (per-profile fan-out gate), min_execution_threshold_for (executable/notify bar).
     """
     if profile.strategies and strategy_name not in profile.strategies:
         return False
     if profile.setups and (setup_type is None or setup_type not in profile.setups):
         return False
+    if profile.min_bias_strength:
+        if _BIAS_RANK.get(bias_strength or "", 0) < _BIAS_RANK.get(profile.min_bias_strength, 0):
+            return False
     return True
 
 
@@ -221,11 +261,14 @@ async def create_profile(
     strategies: list[str] | None = None,
     setups: list[str] | None = None,
     min_confidence_for_execution: float | None = None,
+    min_bias_strength: str | None = None,
 ) -> YoloProfileDTO:
-    """Create a new YOLO profile (optionally with strategy/setup execution filters and a
-    per-profile execution-confidence threshold; None/negative = inherit the global default)."""
+    """Create a new YOLO profile (optionally with strategy/setup execution filters, a
+    per-profile execution-confidence threshold, and an intraday-bias strength gate;
+    None/negative confidence = inherit the global default; falsy bias = no gate)."""
     if min_confidence_for_execution is not None and min_confidence_for_execution < 0:
         min_confidence_for_execution = None
+    min_bias_strength = _normalize_bias_strength(min_bias_strength)
     async with async_session_factory() as session:
         # Auto-assign sort_order as max+1
         result = await session.execute(
@@ -238,6 +281,7 @@ async def create_profile(
             is_active=True,
             sort_order=max_order + 1,
             min_confidence_for_execution=min_confidence_for_execution,
+            min_bias_strength=min_bias_strength,
             strategies=strategies or [],
             setups=setups or [],
         )
@@ -255,7 +299,7 @@ async def update_profile(profile_id: uuid.UUID, **fields) -> YoloProfileDTO:
     allowed = {
         "name", "profit_cap", "is_active", "sort_order",
         "invalidation_persist", "invalidation_quorum", "invalidation_strong_only",
-        "min_confidence_for_execution", "strategies", "setups",
+        "min_confidence_for_execution", "min_bias_strength", "strategies", "setups",
     }
     invalid = set(fields) - allowed
     if invalid:
@@ -269,6 +313,11 @@ async def update_profile(profile_id: uuid.UUID, **fields) -> YoloProfileDTO:
             fields["min_confidence_for_execution"] = None
         elif not (0 <= float(v) <= 100):
             raise ValueError("min_confidence_for_execution must be between 0 and 100")
+
+    # Bias-strength gate: the PATCH endpoint drops None via exclude_none, so the client
+    # sends an empty string "" to CLEAR the gate back to "no gate" (any bias).
+    if "min_bias_strength" in fields:
+        fields["min_bias_strength"] = _normalize_bias_strength(fields["min_bias_strength"])
 
     async with async_session_factory() as session:
         result = await session.execute(

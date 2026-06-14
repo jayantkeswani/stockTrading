@@ -36,6 +36,10 @@ export interface YoloProfile {
   // global trading_config.min_confidence_for_execution. Send a negative value (e.g. -1)
   // via PATCH to CLEAR an override back to "inherit" (the endpoint drops nulls).
   min_confidence_for_execution?: number | null;
+  // Per-profile intraday-bias gate. null/absent = no gate (any bias). "WEAK" | "MODERATE" |
+  // "STRONG" = only execute signals whose intraday-bias strength meets the bar. Send an
+  // empty string "" via PATCH to CLEAR back to "no gate" (the endpoint drops nulls).
+  min_bias_strength?: string | null;
   // Execution-side filters (empty/absent = act on all signals). A profile only
   // executes a signal whose strategy_name is in `strategies` (if non-empty) AND whose
   // setup_type is in `setups` (if non-empty). Lets a full and a subset profile run

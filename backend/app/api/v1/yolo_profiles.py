@@ -29,6 +29,7 @@ async def list_profiles():
             invalidation_quorum=p.invalidation_quorum,
             invalidation_strong_only=p.invalidation_strong_only,
             min_confidence_for_execution=p.min_confidence_for_execution,
+            min_bias_strength=p.min_bias_strength,
             strategies=list(p.strategies),
             setups=list(p.setups),
         )
@@ -43,6 +44,7 @@ async def create_profile(body: YoloProfileCreate):
         name=body.name, profit_cap=body.profit_cap,
         strategies=body.strategies, setups=body.setups,
         min_confidence_for_execution=body.min_confidence_for_execution,
+        min_bias_strength=body.min_bias_strength,
     )
     return YoloProfileResponse(
         id=profile.id,
@@ -55,6 +57,7 @@ async def create_profile(body: YoloProfileCreate):
         invalidation_quorum=profile.invalidation_quorum,
         invalidation_strong_only=profile.invalidation_strong_only,
         min_confidence_for_execution=profile.min_confidence_for_execution,
+        min_bias_strength=profile.min_bias_strength,
         strategies=list(profile.strategies),
         setups=list(profile.setups),
     )
@@ -84,6 +87,7 @@ async def update_profile(profile_id: uuid.UUID, body: YoloProfileUpdate):
         invalidation_quorum=profile.invalidation_quorum,
         invalidation_strong_only=profile.invalidation_strong_only,
         min_confidence_for_execution=profile.min_confidence_for_execution,
+        min_bias_strength=profile.min_bias_strength,
         strategies=list(profile.strategies),
         setups=list(profile.setups),
     )

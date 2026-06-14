@@ -93,10 +93,13 @@ class AgentRunner:
                 if sig.confidence is not None:
                     # Notify when at least one subscribing YOLO profile would execute (its own
                     # or the inherited global threshold) — execution confidence is per-profile.
-                    from app.services.yolo_profile_service import min_execution_threshold_for
+                    from app.services.yolo_profile_service import (
+                        min_execution_threshold_for, signal_bias_strength,
+                    )
                     notify_floor = min_execution_threshold_for(
                         sig.strategy_name, (sig.indicators or {}).get("setup_type"),
                         cfg.min_confidence_for_execution,
+                        signal_bias_strength(sig.indicators),
                     )
                     if float(sig.confidence) < notify_floor:
                         should_notify = False
