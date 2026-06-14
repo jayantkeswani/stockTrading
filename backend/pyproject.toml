@@ -8,7 +8,12 @@ version = "0.1.0"
 description = "Indian stock market options trading system"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115.0",
+    # Pinned: fastapi 0.137.0 added a strict "Prefix and path cannot be both empty" check that
+    # rejects our @router.get("") collection routes — a non-reproducible build (the old >= floor)
+    # resolved 0.137.0 and crash-looped prod on the v1.27.0 deploy. 0.136.3 + starlette 1.1.0 are
+    # verified-good (app.main imports). Bump only together with migrating the empty-path routes.
+    "fastapi==0.136.3",
+    "starlette==1.1.0",
     "uvicorn[standard]>=0.30.0",
     "sqlalchemy[asyncio]>=2.0.30",
     "asyncpg>=0.30.0",

@@ -466,4 +466,4 @@ curl -s http://localhost:8080/api/v1/market/prices | python3 -m json.tool
 
 ## Known Cleanup Tasks
 
-- _None currently._
+- **Backend deps in `backend/pyproject.toml` are unpinned (`>=`), so Docker image rebuilds re-resolve latest and aren't reproducible.** This crash-looped prod once (fastapi 0.137.0's strict empty-path check vs our `@router.get("")` collection routes), so `fastapi` is pinned `==0.136.3` + `starlette==1.1.0`. Proper fix: add a lock file (`uv lock` / `pip-compile`) so the build installs an exact tested set; then `fastapi` can be unpinned once the empty-path routes are migrated to non-empty paths.
