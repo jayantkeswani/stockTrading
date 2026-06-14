@@ -552,6 +552,35 @@ export default function SettingsPage() {
                   className="w-12 bg-bg-tertiary border border-border rounded px-1 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
                 />
               </div>
+              {/* Per-profile intraday-bias gate (blank = no gate, any bias) */}
+              <div className="flex items-center gap-1">
+                <span
+                  className="text-[9px] font-mono text-text-muted"
+                  title="Per-profile intraday-bias gate. '—' = no gate (any bias). WEAK/MODERATE/STRONG = only execute signals whose intraday-bias strength meets this bar."
+                >
+                  Bias
+                </span>
+                <select
+                  value={p.min_bias_strength ?? ""}
+                  onChange={async (e) => {
+                    const v = e.target.value;
+                    setYoloProfiles((prev) => {
+                      const updated = (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, min_bias_strength: v === "" ? null : v } : x);
+                      useStore.getState().setYoloProfiles(updated);
+                      return updated;
+                    });
+                    // Send "" to CLEAR back to "no gate" (the PATCH endpoint drops nulls).
+                    try { await api.updateYoloProfile(p.id, { min_bias_strength: v }); } catch { /* ignore */ }
+                  }}
+                  title="Intraday-bias gate (— = no gate)"
+                  className="bg-bg-tertiary border border-border rounded px-1 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                >
+                  <option value="">—</option>
+                  <option value="WEAK">WEAK</option>
+                  <option value="MODERATE">MODERATE</option>
+                  <option value="STRONG">STRONG</option>
+                </select>
+              </div>
               {/* Thesis-invalidation exit (S5): close early when NIFTY bias flips STRONG-against the trade for N candles */}
               <div className="flex items-center gap-1">
                 <span

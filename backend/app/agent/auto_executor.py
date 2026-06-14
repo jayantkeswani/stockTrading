@@ -30,6 +30,7 @@ from app.services.yolo_profile_service import (
     get_active_profiles,
     get_uncapped_profile_ids,
     profile_accepts_signal,
+    signal_bias_strength,
 )
 from app.core.database import async_session_factory
 from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
@@ -113,11 +114,12 @@ async def auto_execute_signal(signal_id) -> list[dict]:
         # Signal-level early-out: skip the shared computation when no subscribing profile
         # would execute this signal at its (own or inherited) confidence threshold.
         setup_type = (signal.indicators or {}).get("setup_type")
+        bias_strength = signal_bias_strength(signal.indicators)
         if signal.confidence is not None:
             exec_floor = min(
                 (effective_execution_threshold(p, cfg.min_confidence_for_execution)
                  for p in profiles
-                 if profile_accepts_signal(p, signal.strategy_name, setup_type)),
+                 if profile_accepts_signal(p, signal.strategy_name, setup_type, bias_strength)),
                 default=cfg.min_confidence_for_execution,
             )
             if float(signal.confidence) < exec_floor:
@@ -207,7 +209,7 @@ async def auto_execute_signal(signal_id) -> list[dict]:
             # Strategy/setup execution filter — a profile only acts on signals it
             # subscribes to (empty filters = all). Lets a full and a subset profile
             # run side-by-side off one signal stream.
-            if not profile_accepts_signal(profile, signal.strategy_name, setup_type):
+            if not profile_accepts_signal(profile, signal.strategy_name, setup_type, bias_strength):
                 logger.debug(
                     "Auto-execute: profile %s does not subscribe to %s/%s, skipping",
                     profile.name, signal.strategy_name, setup_type,

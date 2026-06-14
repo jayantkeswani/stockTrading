@@ -34,6 +34,14 @@ class YoloProfile(Base, TimestampMixin):
         Numeric(5, 2), nullable=True
     )
 
+    # Per-profile minimum intraday-bias strength gate. NULL = no gate (any bias).
+    # When set ("WEAK"/"MODERATE"/"STRONG") the profile only executes a signal whose stored
+    # stock intraday_bias.strength is >= this (ordinal WEAK<MODERATE<STRONG); a signal with
+    # no bias object is rejected. Only S5 (intraday_futures) signals carry intraday_bias, so
+    # this is effectively S5-scoped. Promotes the bias from a soft confidence factor into a
+    # hard precondition for one book (the validated S5 PDH_PDL/ORB + STRONG-bias setup).
+    min_bias_strength: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
     # Execution-side filters. A profile only executes a signal when
     # (strategies empty OR signal.strategy_name in strategies) AND
     # (setups empty OR signal.indicators.setup_type in setups). Empty list = all

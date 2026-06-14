@@ -77,7 +77,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  updateYoloProfile: (id: string, data: { name?: string; profit_cap?: number; is_active?: boolean; sort_order?: number; invalidation_persist?: number | null; invalidation_quorum?: boolean; invalidation_strong_only?: boolean; min_confidence_for_execution?: number | null; strategies?: string[]; setups?: string[] }) =>
+  updateYoloProfile: (id: string, data: { name?: string; profit_cap?: number; is_active?: boolean; sort_order?: number; invalidation_persist?: number | null; invalidation_quorum?: boolean; invalidation_strong_only?: boolean; min_confidence_for_execution?: number | null; min_bias_strength?: string; strategies?: string[]; setups?: string[] }) =>
     request<import("./types").YoloProfile>(`/api/v1/yolo-profiles/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
