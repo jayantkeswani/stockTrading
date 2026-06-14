@@ -6,7 +6,8 @@ import { useShallow } from "zustand/react/shallow";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
-import { livePositionPnl } from "@/lib/positionPnl";
+import { livePositionPnl, positionPriceKeys } from "@/lib/positionPnl";
+import { usePrices } from "@/hooks/usePrices";
 import { addToPersonalWatchlist } from "@/lib/watchlistAdd";
 import type { Position, Trade } from "@/lib/types";
 
@@ -222,7 +223,6 @@ function ClosedTradeCard({ t }: { t: Trade }) {
  * Used by: MobileShell.
  */
 export function MobilePositions({ refreshKey }: { refreshKey?: number }) {
-  const prices = useStore((s) => s.prices);
   const {
     positions, closedToday, setClosedToday,
     dashboardViewMode, setDashboardViewMode,
@@ -238,6 +238,13 @@ export function MobilePositions({ refreshKey }: { refreshKey?: number }) {
     positionsMinConfidence: s.positionsMinConfidence,
     yoloProfiles: s.yoloProfiles,
   })));
+  // Scoped to the open positions' price keys (real + shadow) — re-renders on
+  // those ticks, not every symbol's.
+  const priceKeys = useMemo(
+    () => positionPriceKeys([...positions, ...shadowPositions]),
+    [positions, shadowPositions],
+  );
+  const prices = usePrices(priceKeys);
 
   const prevLen = useRef(positions.length);
 

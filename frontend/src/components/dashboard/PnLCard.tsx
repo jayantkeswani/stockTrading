@@ -3,11 +3,12 @@
 import { useMemo } from "react";
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
+import { usePrices } from "@/hooks/usePrices";
+import { positionPriceKeys } from "@/lib/positionPnl";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { livePositionPnl } from "@/lib/positionPnl";
 
 export function PnLCard() {
-  const prices = useStore((s) => s.prices);
   const { risk, positions, dashboardViewMode, shadowPositions, shadowClosedToday, positionsMinConfidence, yoloProfiles, closedToday } = useStore(useShallow((s) => ({
     risk: s.risk,
     positions: s.positions,
@@ -18,6 +19,13 @@ export function PnLCard() {
     yoloProfiles: s.yoloProfiles,
     closedToday: s.closedToday,
   })));
+  // Scoped to the open positions' price keys (real + shadow) — the only symbols
+  // this card reads — so it re-renders on those ticks, not every symbol's.
+  const priceKeys = useMemo(
+    () => positionPriceKeys([...positions, ...shadowPositions]),
+    [positions, shadowPositions],
+  );
+  const prices = usePrices(priceKeys);
 
   const effectiveMode = useMemo(() => {
     if (dashboardViewMode === "SHADOW") return "SHADOW";

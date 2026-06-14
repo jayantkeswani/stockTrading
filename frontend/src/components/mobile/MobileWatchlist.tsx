@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
+import { usePrices } from "@/hooks/usePrices";
 import { pnlColor, formatINR } from "@/lib/formatters";
 import { SYMBOLS } from "@/lib/constants";
 import { SymbolSearchInput } from "@/components/shared/SymbolSearchInput";
@@ -218,7 +219,6 @@ export function MobileWatchlist({ refreshKey, onOpenChart }: { refreshKey?: numb
   const filterKey = useStore((s) => s.watchlistFilter);
   const setFilterKey = useStore((s) => s.setWatchlistFilter);
   const [sortKey, setSortKey] = useState<"composite_score" | "rs_percentile">("composite_score");
-  const prices = useStore((s) => s.prices);
   const updatePrice = useStore((s) => s.updatePrice);
   const { watchlistItems, setWatchlistItems, addWatchlistItem, removeWatchlistItem } = useStore(useShallow((s) => ({
     watchlistItems: s.watchlistItems,
@@ -226,6 +226,17 @@ export function MobileWatchlist({ refreshKey, onOpenChart }: { refreshKey?: numb
     addWatchlistItem: s.addWatchlistItem,
     removeWatchlistItem: s.removeWatchlistItem,
   })));
+  // Scoped to the symbols actually rendered: personal (indices + custom items)
+  // and the screener rows' EQ symbols — no re-render on unrelated ticks.
+  const watchedSymbols = useMemo(
+    () => [
+      ...SYMBOLS,
+      ...watchlistItems.map((i) => i.symbol),
+      ...items.flatMap((i) => [`NSE:${i.symbol}-EQ`, i.symbol]),
+    ],
+    [watchlistItems, items],
+  );
+  const prices = usePrices(watchedSymbols);
 
   const fetchPersonalPrices = useCallback(async (symbols: string[]) => {
     if (symbols.length === 0) return;

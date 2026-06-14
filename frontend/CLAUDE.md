@@ -39,13 +39,13 @@ All pages use `'use client'` directive.
 - `ChartModal.tsx` — Modal (90vw × 85vh) for detailed chart view. Symbol tabs: 5 default indices + custom watchlist items (fetched on open). Pop-out opens `/chart?symbol=…` in a new tab.
 
 **dashboard/**
-- `PnLCard.tsx` — Single-line strip: Day P&L with inline U/R breakdown, drawdown bar, trades count, NOTIONAL/RISK/MARGIN metrics. Filters by `positionsMinConfidence` from store. Profile-aware: filters positions and closed trades by active profile/manual mode based on `dashboardViewMode`. Shadow mode: computes from `shadowPositions` + `shadowClosedToday`. Live unrealized P&L via shared `livePositionPnl` (`lib/positionPnl.ts`). Prices via `(s) => s.prices` selector; non-price fields via `useShallow`.
+- `PnLCard.tsx` — Single-line strip: Day P&L with inline U/R breakdown, drawdown bar, trades count, NOTIONAL/RISK/MARGIN metrics. Filters by `positionsMinConfidence` from store. Profile-aware: filters positions and closed trades by active profile/manual mode based on `dashboardViewMode`. Shadow mode: computes from `shadowPositions` + `shadowClosedToday`. Live unrealized P&L via shared `livePositionPnl` (`lib/positionPnl.ts`). Prices via `usePrices(positionPriceKeys(...))` (scoped to the open positions' symbols — no whole-map re-render); non-price fields via `useShallow`.
 - `Watchlist.tsx` — Uniform symbol list (indices + custom items). Search via `<SymbolSearchInput direction="down">` placed at the top (below the header). Custom items stored via `/api/v1/watchlist`. Max-height 300px with scroll.
 - `ScannerHeader.tsx` — Ultra-compact strategy pill bar. Triggers manual batch evaluation via `POST /api/v1/strategies/evaluate/batch`. Logs start/end to ScanFeed. Uses `(s) => s.addScanLog` selector (no price-tick re-renders).
 - `ScannerPanel.tsx` — Structured signal cards with strategy-aware rendering. A **strategy dropdown** (`scannerStrategy`, options derived from today's matching signals + "All strategies"; shared with the mobile Signals tab), "+ Executed" and "+ Expired" toggles (each adds that status to the always-shown PENDING set), symbol search, confidence filter. Uses `useShallow` for signal state (no price-tick re-renders). Three card sections: header (direction, symbol, `P` badge, timestamp, WindowBadge, confidence, strategy badge), prices (entry/SL/target/R:R + strategy context), actions (EXEC, Watch, Details expander, AI panel, dismiss). Details and AI panels mutually exclusive. AI button shows `✦ AI` when `ai_summary` present.
 - `ExecuteSignalModal.tsx` — Pre-trade confirm modal. Fetches `GET /signals/{id}/preview` for live entry price + computed lots. Shows lot stepper, quantity, Notional, Margin, `preview.warnings`. Submits `POST /signals/{id}/execute` with optional lots override.
 - `QuickStats.tsx` — Compact stats card: Trades Today (vs max), Open Positions count, Notional. Reads `risk` + `positions` via `useShallow` (no price-tick re-renders). Shows HALTED banner when `risk.is_halted`.
-- `SymbolSelector.tsx` — Tab row for selecting the active index symbol. One button per SYMBOL (5 indices). Shows LTP + change % from store `prices`. Prices via `(s) => s.prices` selector; selection state via `useShallow`. Active button styled with amber accent.
+- `SymbolSelector.tsx` — Tab row for selecting the active index symbol. One button per SYMBOL (5 indices). Shows LTP + change % from store `prices`. Prices via `usePrices(SYMBOLS)` (scoped to the 5 indices — no whole-map re-render); selection state via `useShallow`. Active button styled with amber accent.
 - `ScanFeed.tsx` — Compact scan log, max-height 160px. Filters `scanLogs` to today-only (IST timestamp comparison, not string prefix). Uses `(s) => s.scanLogs` selector (no price-tick re-renders).
 - `AgentFeed.tsx` — Agent action log. All/Real/Shadow filter. Purple `SHADOW` pill for shadow entries. Trailing SL detection: `action_type === "SL_TRIGGERED"` + `details.reason === "TRAILING_SL"` → amber "TRAILING SL" text. Uses `(s) => s.agentLogs` selector (no price-tick re-renders).
 
@@ -204,6 +204,7 @@ All API calls go through this module via a single `request()` helper (parses err
 Shared open-position P&L math (used by `ActivePositions`, `PnLCard`, `MobilePositions`, `MobilePnlPill` — single source of truth).
 - `isShortPosition(pos)` — true when the position profits as price falls. Derived primarily from the backend's `unrealized_pnl` sign vs its last price move (immune to a stale `target_price` from partial WS `position:update`s); falls back to SL/target geometry (`target<entry` else `sl>entry`) — the same rule the backend uses, which correctly handles bought options (long), **sold options (short)**, and long/short futures. Fixes a class of bugs where a long PE/CE inverted to −ve when its premium rose.
 - `livePositionPnl(pos, prices)` — returns `{currentPrice, pnl, pnlPct, slDistance, isShort}` from the freshest price (`prices[fyers_option_symbol||symbol]?.ltp` → backend `current_price`), direction via `isShortPosition`.
+- `positionPriceKeys(positions)` — the price-map keys a set of positions reads (`fyers_option_symbol||symbol`, matching `livePositionPnl`). Feed to `usePrices()` so a position view subscribes only to its own symbols. Used by: PnLCard, ActivePositions, MobilePositions, MobilePnlPill.
 
 #### lib/formatters.ts
 - `formatINR(value)` — INR with Indian number system (en-IN locale, 2 decimal places). Used by: most price displays
@@ -265,6 +266,9 @@ Shared open-position P&L math (used by `ActivePositions`, `PnLCard`, `MobilePosi
 
 ### `src/hooks/` - Custom Hooks
 
+#### hooks/usePrices.ts
+`usePrices(symbols)` — scoped live-price subscription. Returns a `Record<string, PriceData>` keyed by the requested symbols (missing ones omitted), backed by `useShallow`, so the component re-renders ONLY when one of *those* symbols ticks — not on every 500ms flush of the shared `prices` map (the backend broadcasts every symbol). Unchanged symbols keep their `PriceData` reference across flushes, so the shallow compare skips the re-render when nothing the component shows moved; the returned object identity is stable in that case too (safe as a `useMemo` dep). Always use this instead of `useStore((s) => s.prices)` for a known, bounded symbol set. Used by: SymbolSelector, dashboard/Watchlist, PnLCard, ActivePositions, intraday-futures/Watchlist, MobileWatchlist, MobilePositions, MobilePnlPill (position views pass `positionPriceKeys(...)`). PriceChart subscribes to a single symbol directly (`(s) => s.prices[s.selectedSymbol]`).
+
 #### hooks/useIsMobile.ts
 `useIsMobile(breakpoint = 768)` — SSR-safe viewport hook via `matchMedia`. Returns `null` until mounted, then a boolean tracking whether the viewport is `≤ breakpoint - 1` px wide. Used by: AppShell (desktop vs `MobileShell` branch).
 
@@ -304,7 +308,7 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 - `yoloProfiles: YoloProfile[]` + `setYoloProfiles` — list of YOLO profiles from the API; consumed by ActivePositions, trades/page, PnLCard, dashboard/page
 - `dashboardViewMode: string` — `"MANUAL"` | profile UUID | `"SHADOW"`. Drives ActivePositions + PnLCard source filtering. Default: `"MANUAL"`
 - `tradesViewMode: string` — `"MANUAL"` | profile UUID | `"SHADOW"`. Drives Trades page source filtering (independent from dashboard). Default: `"MANUAL"`
-- `signals` — `addSignal()` deduplicates by id (used for both new signals and dedup updates)
+- `signals` — `addSignal()` deduplicates by id (used for both new signals and dedup updates), capped at 300 (newest first) so a long live session stays bounded; the Signals page fetches its own full history via the API
 - `scanLogs: ScanLogEntry[]` — capped at 20 entries; `addScanLog()` prepends
 - `risk: RiskDashboard | null`
 - `marketStatus: MarketStatus | null`
@@ -409,8 +413,17 @@ Hardcoded Tailwind palette colors do NOT flip with `data-theme` — tokenize the
 // WRONG — re-renders on every WS event
 const { prices, positions } = useStore();
 
-// CORRECT — prices re-render scoped to price ticks only
+// WRONG — re-renders on EVERY symbol's tick. The store replaces the whole
+// `prices` object reference on each 500ms batch flush, so subscribing to the
+// whole map re-renders ~2×/sec even when none of the symbols you show changed.
 const prices = useStore((s) => s.prices);
+
+// CORRECT — scope to the symbols the component actually reads via usePrices().
+// useShallow under the hood → re-renders only when one of THESE symbols ticks.
+import { usePrices } from "@/hooks/usePrices";
+const prices = usePrices(SYMBOLS);                       // a fixed set
+const prices = usePrices(positionPriceKeys(positions));  // derived (memoize the array)
+// (a single symbol can subscribe directly: `(s) => s.prices[s.selectedSymbol]`)
 
 // CORRECT — non-price fields: useShallow stops re-renders from unrelated slices
 import { useShallow } from "zustand/react/shallow";
@@ -430,7 +443,7 @@ const handleClick = useCallback(() => {
 
 **`updatePrice` uses 500ms batching + LTP dedup** — price ticks accumulated in `_pendingPrices`, flushed via `setTimeout(500ms)` (~2 updates/sec). Unchanged LTPs skipped. Do not remove the batching or the LTP check.
 
-**`prices` is a shared map for ALL subscribed symbols** — backend broadcasts all prices. Components read only the keys they need.
+**`prices` is a shared map for ALL broadcast symbols** — backend broadcasts every symbol's tick (no subscription filtering), so the map can hold hundreds of entries during market hours. NEVER subscribe to the whole map (`(s) => s.prices`) for a bounded view — use `usePrices(symbols)` so the component re-renders only on its own symbols' ticks. The whole-map subscription is justified only if a component genuinely needs every symbol (none currently do).
 
 ## Conventions
 - All pages are client components (`'use client'`)

@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
+import { usePrices } from "@/hooks/usePrices";
 import { SYMBOLS } from "@/lib/constants";
 import { formatINR, pnlColor } from "@/lib/formatters";
 import { api } from "@/lib/api";
@@ -20,9 +21,6 @@ interface WatchlistItem {
 }
 
 export function Watchlist({ onOpenChart }: WatchlistProps) {
-  // prices separated so price ticks don't cause unrelated store slices to
-  // trigger re-renders across the whole component.
-  const prices = useStore((s) => s.prices);
   const { updatePrice, watchlistItems, setWatchlistItems, addWatchlistItem, removeWatchlistItem } = useStore(
     useShallow((s) => ({
       updatePrice: s.updatePrice,
@@ -32,6 +30,13 @@ export function Watchlist({ onOpenChart }: WatchlistProps) {
       removeWatchlistItem: s.removeWatchlistItem,
     }))
   );
+  // Scoped to the indices + custom items actually rendered — no re-render on
+  // unrelated symbol ticks.
+  const watchedSymbols = useMemo(
+    () => [...SYMBOLS, ...watchlistItems.map((i) => i.symbol)],
+    [watchlistItems],
+  );
+  const prices = usePrices(watchedSymbols);
 
   // Fetch prices for watchlist symbols
   const fetchWatchlistPrices = useCallback(

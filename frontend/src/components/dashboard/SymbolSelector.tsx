@@ -2,11 +2,13 @@
 
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
+import { usePrices } from "@/hooks/usePrices";
 import { SYMBOLS } from "@/lib/constants";
 import { formatINR, pnlColor } from "@/lib/formatters";
 
 export function SymbolSelector() {
-  const prices = useStore((s) => s.prices);
+  // Scoped to the 5 indices only — no re-render on unrelated symbol ticks.
+  const prices = usePrices(SYMBOLS);
   const { selectedSymbol, setSelectedSymbol } = useStore(useShallow((s) => ({
     selectedSymbol: s.selectedSymbol,
     setSelectedSymbol: s.setSelectedSymbol,

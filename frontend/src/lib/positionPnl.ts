@@ -24,6 +24,16 @@ export function isShortPosition(pos: Position): boolean {
     : pos.stop_loss > pos.entry_price;
 }
 
+/**
+ * The price-map keys a set of positions reads (`fyers_option_symbol || symbol`,
+ * matching `livePositionPnl`). Feed to `usePrices()` so a position view
+ * subscribes only to its own symbols. Used by: PnLCard, ActivePositions,
+ * MobilePositions, MobilePnlPill.
+ */
+export function positionPriceKeys(positions: Position[]): string[] {
+  return positions.map((p) => p.fyers_option_symbol || p.symbol);
+}
+
 export interface LivePnl {
   currentPrice: number;
   pnl: number;

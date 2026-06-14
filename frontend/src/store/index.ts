@@ -286,8 +286,12 @@ export const useStore = create<AppState>()(
       signals: [],
       setSignals: (signals) => set({ signals }),
       addSignal: (signal) =>
+        // Capped at 300 (newest first) so a long live session doesn't grow the
+        // in-memory list unbounded — same pattern as scanLogs/agentLogs. Dedup
+        // updates replace by id (no growth); the cap only trims old distinct
+        // signals. The Signals page fetches its own full history via the API.
         set((state) => ({
-          signals: [signal, ...state.signals.filter((s) => s.id !== signal.id)],
+          signals: [signal, ...state.signals.filter((s) => s.id !== signal.id)].slice(0, 300),
         })),
       updateSignal: (id, updates) =>
         set((state) => ({
