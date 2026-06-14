@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
+import { usePrices } from "@/hooks/usePrices";
 import { formatINR, pnlColor } from "@/lib/formatters";
-import { livePositionPnl } from "@/lib/positionPnl";
+import { livePositionPnl, positionPriceKeys } from "@/lib/positionPnl";
 
 /**
  * Header day-P&L pill, scoped to the currently selected book (Manual / YOLO
@@ -16,7 +17,6 @@ import { livePositionPnl } from "@/lib/positionPnl";
  */
 export function MobilePnlPill() {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const prices = useStore((s) => s.prices);
   const setDashboardViewMode = useStore((s) => s.setDashboardViewMode);
   const {
     risk, positions, closedToday, dashboardViewMode,
@@ -31,6 +31,13 @@ export function MobilePnlPill() {
     positionsMinConfidence: s.positionsMinConfidence,
     yoloProfiles: s.yoloProfiles,
   })));
+  // Scoped to the open positions' price keys (real + shadow) so the header pill
+  // re-renders on those ticks, not every symbol's.
+  const priceKeys = useMemo(
+    () => positionPriceKeys([...positions, ...shadowPositions]),
+    [positions, shadowPositions],
+  );
+  const prices = usePrices(priceKeys);
 
   const activeProfiles = (Array.isArray(yoloProfiles) ? yoloProfiles : [])
     .filter((p) => p.is_active).sort((a, b) => a.sort_order - b.sort_order);

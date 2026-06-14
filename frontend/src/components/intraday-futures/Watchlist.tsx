@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, Fragment } from "react";
+import { useEffect, useMemo, useState, Fragment } from "react";
 import { api } from "@/lib/api";
 import { useStore } from "@/store";
+import { usePrices } from "@/hooks/usePrices";
 import { pnlColor } from "@/lib/formatters";
 import type { S5WatchlistItem } from "@/lib/types";
 
@@ -50,7 +51,13 @@ export function Watchlist({ date = null, onOpenChart }: { date?: string | null; 
   const [sortKey, setSortKey] = useState<"composite_score" | "rs_percentile">("composite_score");
   const [filterKey, setFilterKey] = useState<"all" | "screened" | "pinned">("all");
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
-  const prices = useStore((s) => s.prices);
+  // Scoped to the screener rows' EQ symbols (and bare fallback) — re-renders on
+  // those ticks, not every symbol's.
+  const watchedSymbols = useMemo(
+    () => items.flatMap((i) => [`NSE:${i.symbol}-EQ`, i.symbol]),
+    [items],
+  );
+  const prices = usePrices(watchedSymbols);
   const updatePrice = useStore((s) => s.updatePrice);
 
   const isHistorical = date != null;

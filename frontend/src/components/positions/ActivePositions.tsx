@@ -3,10 +3,11 @@
 import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
+import { usePrices } from "@/hooks/usePrices";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
-import { livePositionPnl } from "@/lib/positionPnl";
+import { livePositionPnl, positionPriceKeys } from "@/lib/positionPnl";
 import type { Position, Trade } from "@/lib/types";
 
 interface ActivePositionsProps {
@@ -46,9 +47,6 @@ function formatLatency(fillTime: string, generatedAt: string | null): string | n
 }
 
 export function ActivePositions({ compact }: ActivePositionsProps) {
-  // prices separated so price ticks only re-render this component, not
-  // unrelated store slices (agent logs, research, signals, etc.).
-  const prices = useStore((s) => s.prices);
   const {
     positions, closedToday, setClosedToday,
     dashboardViewMode, setDashboardViewMode,
@@ -70,6 +68,13 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
     setPositionsMinConfidence: s.setPositionsMinConfidence,
     yoloProfiles: s.yoloProfiles,
   })));
+  // Scoped to the open positions' price keys (real + shadow) — the only symbols
+  // this table reads — so it re-renders on those ticks, not every symbol's.
+  const priceKeys = useMemo(
+    () => positionPriceKeys([...positions, ...shadowPositions]),
+    [positions, shadowPositions],
+  );
+  const prices = usePrices(priceKeys);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [watchlistStatuses, setWatchlistStatuses] = useState<Record<string, string>>({});
