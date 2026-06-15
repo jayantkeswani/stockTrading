@@ -61,7 +61,10 @@ resource "google_compute_instance" "app" {
   allow_stopping_for_update = true
 
   lifecycle {
-    ignore_changes = [metadata_startup_script]
+    # Boot disk is restored from a snapshot (see infrastructure/terraform zone move
+    # 2026-06-15), so it has no source image — ignore the image diff to avoid an
+    # accidental instance replacement that would destroy production data.
+    ignore_changes = [metadata_startup_script, boot_disk[0].initialize_params[0].image]
   }
 
   depends_on = [

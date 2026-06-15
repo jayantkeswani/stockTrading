@@ -13,7 +13,7 @@ variable "region" {
 variable "zone" {
   description = "GCP zone"
   type        = string
-  default     = "asia-south1-a"
+  default     = "asia-south1-c"
 }
 
 variable "machine_type" {
