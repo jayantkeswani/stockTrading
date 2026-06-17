@@ -120,7 +120,7 @@ All API calls go through this module via a single `request()` helper (parses err
 - `api.updateSL(id, stopLoss)` — `PATCH /api/v1/positions/{id}/sl`
 
 **Trades**
-- `api.getTrades(params?)` — `GET /api/v1/trades` with optional filters: `status`, `source`, `yolo_profile_id`, `strategy`, `limit`, `entry_since/until`, `min/max_confidence`, `ai_action`, `instrument_type`, `signal_type`, `min/max_lots`, `exclude_permanent`. Used by: trades/page
+- `api.getTrades(params?)` — `GET /api/v1/trades` with optional filters: `status`, `source`, `yolo_profile_id`, `strategy`, `limit`, `entry_since/until`, `min/max_confidence`, `ai_action`, `instrument_type`, `signal_type`, `setup_type`, `min_adr`, `min/max_lots`, `exclude_permanent`. Used by: trades/page
 - `api.getClosedTradesToday(source?)` — `GET /api/v1/trades?status=CLOSED&closed_since={IST-midnight}`. Used by: ActivePositions, dashboard/page
 - `api.getTradeSummary(opts?)` — `GET /api/v1/trades/summary`. `opts`: `{ source?, yolo_profile_id?, exclude_permanent? }`. Used by: trades/page
 - `api.holdAnalysis(tradeIds, scenario)` — `POST /api/v1/trades/hold-analysis`, scenario: `"best"|"worst"|"eod"|"sl_tgt"` → `HoldAnalysisResponse`. Used by: trades/page

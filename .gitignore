@@ -63,6 +63,7 @@ scripts/intraday_hunter/data/
 # Claude Code — local settings are machine-specific
 .claude/settings.local.json
 .claude/worktrees/
+.analysis/
 
 # Terraform
 infrastructure/terraform/.terraform/
