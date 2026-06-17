@@ -98,8 +98,13 @@ async def run_morning_briefing(as_of: date | None = None, force: bool = False) -
 
     Gathers trade history, computes stats, and asks the LLM for a briefing.
     Pass force=True to re-run even if a cached result exists (e.g. manual trigger).
+
+    Gated on the master `trading_config.ai_overlay_enabled` switch: when the
+    overlay is off, the Pro-model synthesis call is skipped and a deterministic
+    default-approach briefing is returned (mirrors the LLM-failure fallback).
     """
     from app.core.utils import now_ist
+    from app.services.trading_config import get_trading_config
 
     today = as_of or now_ist().date()
     r = get_redis()
@@ -113,8 +118,19 @@ async def run_morning_briefing(as_of: date | None = None, force: bool = False) -
 
     data = await _gather_briefing_data(today)
 
-    llm = create_llm_client(pro=True)
-    briefing = await _synthesize_briefing(llm, data)
+    cfg = await get_trading_config()
+    if not cfg.ai_overlay_enabled:
+        logger.info("Morning briefing LLM skipped — ai_overlay_enabled is off")
+        conservative = data.get("consecutive_losses", 0) >= 3
+        briefing = {
+            "approach": "conservative" if conservative else "normal",
+            "summary": "LLM disabled (ai_overlay_enabled off). Using default approach.",
+            "flags": ["llm_disabled"],
+            "max_lots_recommendation": 1 if conservative else 2,
+        }
+    else:
+        llm = create_llm_client(pro=True)
+        briefing = await _synthesize_briefing(llm, data)
     briefing["date"] = str(today)
     briefing["generated_at"] = time.time()
 
@@ -872,7 +888,22 @@ async def _stage2_news_sentiment(candidates: list[dict]) -> list[dict]:
     Uses a 48-hour news window (vs 30 days in the research module) since
     the screener cares about recency — yesterday's downgrade matters more
     than last month's results.
+
+    Gated on the master `trading_config.ai_overlay_enabled` switch: when the
+    overlay is off (LLM kill switch — controls the morning workflow's LLM spend
+    too), the ~2 Gemini calls per candidate (grounded search + sentiment) are
+    skipped and candidates pass through on quant score alone (sorted + capped).
     """
+    from app.services.trading_config import get_trading_config
+
+    cfg = await get_trading_config()
+    if not cfg.ai_overlay_enabled:
+        logger.info("Stage 2 news sentiment skipped — ai_overlay_enabled is off")
+        manual_pins = [c for c in candidates if c.get("manual")]
+        screened = [c for c in candidates if not c.get("manual")]
+        screened.sort(key=lambda x: x["composite_score"], reverse=True)
+        return screened[:TOP_N_FOR_CONFIDENCE] + manual_pins
+
     from app.research.agents.base import ResearchContext
     from app.research.agents.news_sentiment import (
         SEARCH_SYSTEM_PROMPT,
@@ -1221,42 +1252,52 @@ async def _stage3_llm_confidence(candidates: list[dict]) -> list[dict]:
 
     Splits candidates into batches to avoid exceeding LLM output token limits.
     Sector correlation dedup is done deterministically after rating.
+
+    Gated on the master `trading_config.ai_overlay_enabled` switch: when the
+    overlay is off, the batched Pro-model rating calls are skipped (ratings stay
+    empty → every candidate defaults to MEDIUM = kept) while the deterministic
+    sector dedup still runs.
     """
     if not candidates:
         return []
 
     from app.core.utils import now_ist
+    from app.services.trading_config import get_trading_config
 
     today = now_ist().date()
 
-    # --- Gather enrichment data in parallel ---
-    global_cues, briefing, fundamentals, trade_history = await asyncio.gather(
-        _get_confidence_global_cues(today),
-        _get_confidence_briefing(today),
-        _get_confidence_fundamentals([c["symbol"] for c in candidates]),
-        _get_confidence_trade_history([c["symbol"] for c in candidates]),
-    )
-
-    llm = create_llm_client(pro=True)
-
-    # --- Split into batches and rate sequentially ---
-    batches = [
-        candidates[i : i + _STAGE3_BATCH_SIZE]
-        for i in range(0, len(candidates), _STAGE3_BATCH_SIZE)
-    ]
-    total_batches = len(batches)
-    logger.info(
-        "Stage 3: rating %d candidates in %d batch(es) of %d",
-        len(candidates), total_batches, _STAGE3_BATCH_SIZE,
-    )
-
+    cfg = await get_trading_config()
     ratings: dict[str, dict] = {}
-    for idx, batch in enumerate(batches, 1):
-        batch_ratings = await _rate_confidence_batch(
-            batch, global_cues, briefing, fundamentals, trade_history,
-            llm, idx, total_batches,
+    if not cfg.ai_overlay_enabled:
+        logger.info("Stage 3 LLM confidence skipped — ai_overlay_enabled is off")
+    else:
+        # --- Gather enrichment data in parallel ---
+        global_cues, briefing, fundamentals, trade_history = await asyncio.gather(
+            _get_confidence_global_cues(today),
+            _get_confidence_briefing(today),
+            _get_confidence_fundamentals([c["symbol"] for c in candidates]),
+            _get_confidence_trade_history([c["symbol"] for c in candidates]),
         )
-        ratings.update(batch_ratings)
+
+        llm = create_llm_client(pro=True)
+
+        # --- Split into batches and rate sequentially ---
+        batches = [
+            candidates[i : i + _STAGE3_BATCH_SIZE]
+            for i in range(0, len(candidates), _STAGE3_BATCH_SIZE)
+        ]
+        total_batches = len(batches)
+        logger.info(
+            "Stage 3: rating %d candidates in %d batch(es) of %d",
+            len(candidates), total_batches, _STAGE3_BATCH_SIZE,
+        )
+
+        for idx, batch in enumerate(batches, 1):
+            batch_ratings = await _rate_confidence_batch(
+                batch, global_cues, briefing, fundamentals, trade_history,
+                llm, idx, total_batches,
+            )
+            ratings.update(batch_ratings)
 
     # --- Deterministic sector dedup (replaces LLM correlated_groups) ---
     correlated_drops = _deduplicate_correlated_sectors(candidates)
