@@ -32,6 +32,8 @@ class ExitReason(StrEnum):
     MARKET_EXIT = "MARKET_EXIT"
     STALE_DATA = "STALE_DATA"
     INVALIDATION = "INVALIDATION"  # Thesis-invalidation exit: index bias flipped STRONG-against the trade
+    LOSS_CAP = "LOSS_CAP"  # Per-profile daily loss cap hit (symmetric twin of PROFIT_CAP)
+    PER_LOT_STOP = "PER_LOT_STOP"  # Per-profile per-lot MTM loss stop hit (hard money stop)
 
 
 class SignalStatus(StrEnum):
@@ -98,6 +100,8 @@ class AgentActionType(StrEnum):
     SHADOW_EXECUTED = "SHADOW_EXECUTED"
     PROFIT_CAP_CLOSE = "PROFIT_CAP_CLOSE"
     INVALIDATION_CLOSE = "INVALIDATION_CLOSE"
+    LOSS_CAP_CLOSE = "LOSS_CAP_CLOSE"
+    PER_LOT_STOP_CLOSE = "PER_LOT_STOP_CLOSE"
 
 
 class TradeSource(StrEnum):

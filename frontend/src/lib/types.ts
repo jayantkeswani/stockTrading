@@ -40,6 +40,14 @@ export interface YoloProfile {
   // "STRONG" = only execute signals whose intraday-bias strength meets the bar. Send an
   // empty string "" via PATCH to CLEAR back to "no gate" (the endpoint drops nulls).
   min_bias_strength?: string | null;
+  // Opt-in positive-magnitude gates (null/absent/0 = off). Send 0 via PATCH to clear back to off.
+  // min_adr: ADR% execution floor (only execute signals whose indicators.adr_pct ≥ this).
+  // loss_cap: per-profile DAILY loss cap in INR (symmetric to profit_cap; closes the profile's
+  //   positions + halts it for the day when net P&L ≤ -loss_cap).
+  // per_lot_loss_stop: per-position per-lot MTM loss stop in INR (hard money stop, S5-futures).
+  min_adr?: number | null;
+  loss_cap?: number | null;
+  per_lot_loss_stop?: number | null;
   // Execution-side filters (empty/absent = act on all signals). A profile only
   // executes a signal whose strategy_name is in `strategies` (if non-empty) AND whose
   // setup_type is in `setups` (if non-empty). Lets a full and a subset profile run

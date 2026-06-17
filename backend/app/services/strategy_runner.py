@@ -29,7 +29,11 @@ from app.core.constants import (
 from app.services.position_sizing import calculate_lots, vix_to_multiplier
 from app.services.strategy_params import get_strategy_params, parse_trading_windows, parse_dead_zone
 from app.services.trading_config import get_trading_config
-from app.services.yolo_profile_service import min_execution_threshold_for, signal_bias_strength
+from app.services.yolo_profile_service import (
+    min_execution_threshold_for,
+    signal_adr,
+    signal_bias_strength,
+)
 from app.core.database import async_session_factory
 from app.core.enums import InstrumentType, SignalStatus, StrategyName, TradeSource
 from app.core.redis import get_cached_price, get_redis
@@ -286,6 +290,7 @@ class StrategyRunner:
             min_conf = min_execution_threshold_for(
                 str(signal.strategy_name), (signal.indicators or {}).get("setup_type"),
                 cfg.min_confidence_for_execution, signal_bias_strength(signal.indicators),
+                signal_adr(signal.indicators),
             )
             if executable and signal.confidence < min_conf:
                 executable = False
@@ -1600,6 +1605,7 @@ class StrategyRunner:
                     min_conf = min_execution_threshold_for(
                         str(signal.strategy_name), (signal.indicators or {}).get("setup_type"),
                         cfg.min_confidence_for_execution, signal_bias_strength(signal.indicators),
+                        signal_adr(signal.indicators),
                     )
                     if strat_executable and signal.confidence < min_conf:
                         strat_executable = False

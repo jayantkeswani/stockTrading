@@ -42,6 +42,26 @@ class YoloProfile(Base, TimestampMixin):
     # hard precondition for one book (the validated S5 PDH_PDL/ORB + STRONG-bias setup).
     min_bias_strength: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
+    # Per-profile minimum ADR% execution gate. NULL = no filter. When set, the profile only
+    # executes a signal whose stored indicators.adr_pct is >= this. The universe backtest
+    # found the PDH_PDL edge concentrated above an ~2.8% ADR cutoff (below it a net loser),
+    # so this promotes ADR from a soft screener factor into a hard execution precondition.
+    min_adr: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+
+    # Per-profile DAILY loss cap (positive INR magnitude). NULL/0 = no cap. The symmetric twin
+    # of profit_cap: when this profile's net P&L (realized + bookable unrealized, after charges)
+    # falls to <= -loss_cap, the trade monitor closes all of this profile's open positions
+    # (ExitReason.LOSS_CAP) and blocks further YOLO executions for the rest of the day. Distinct
+    # from the global trading_config drawdown gate (which is shared across all profiles).
+    loss_cap: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+
+    # Per-profile per-LOT MTM loss stop (positive INR magnitude per lot). NULL/0 = disabled.
+    # A hard money stop checked per open position: when a position's unrealized loss per lot
+    # reaches this, the trade monitor closes that single position (ExitReason.PER_LOT_STOP) —
+    # it can fire before the structural SL. Validated as S5-futures tail insurance (options are
+    # effectively immune since they can't lose more than the premium paid).
+    per_lot_loss_stop: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+
     # Execution-side filters. A profile only executes a signal when
     # (strategies empty OR signal.strategy_name in strategies) AND
     # (setups empty OR signal.indicators.setup_type in setups). Empty list = all

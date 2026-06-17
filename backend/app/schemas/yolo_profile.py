@@ -11,6 +11,10 @@ class YoloProfileCreate(BaseModel):
     min_confidence_for_execution: float | None = None
     # Per-profile intraday-bias gate (None = no gate; "WEAK"/"MODERATE"/"STRONG").
     min_bias_strength: str | None = None
+    # Opt-in positive-magnitude gates (None/<=0 = off): ADR% floor, daily loss cap, per-lot stop.
+    min_adr: float | None = None
+    loss_cap: float | None = None
+    per_lot_loss_stop: float | None = None
     # Execution-side filters (empty = act on all signals).
     strategies: list[str] = []
     setups: list[str] = []
@@ -32,6 +36,11 @@ class YoloProfileUpdate(BaseModel):
     # Per-profile intraday-bias gate (WEAK/MODERATE/STRONG). NOTE: the PATCH endpoint drops None
     # via exclude_none, so send an empty string "" to CLEAR the gate back to "no gate".
     min_bias_strength: str | None = None
+    # Opt-in positive-magnitude gates: ADR% floor, daily loss cap, per-lot MTM loss stop. NOTE:
+    # the PATCH endpoint drops None via exclude_none, so send 0 to CLEAR back to "off".
+    min_adr: float | None = None
+    loss_cap: float | None = None
+    per_lot_loss_stop: float | None = None
     # Execution-side filters. NOTE: the PATCH endpoint drops None via exclude_none, so
     # send an empty list `[]` (not null) to CLEAR a filter back to "act on all".
     strategies: list[str] | None = None
@@ -50,6 +59,9 @@ class YoloProfileResponse(BaseModel):
     invalidation_strong_only: bool = True
     min_confidence_for_execution: float | None = None
     min_bias_strength: str | None = None
+    min_adr: float | None = None
+    loss_cap: float | None = None
+    per_lot_loss_stop: float | None = None
     strategies: list[str] = []
     setups: list[str] = []
 

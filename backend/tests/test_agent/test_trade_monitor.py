@@ -984,3 +984,155 @@ class TestUnrealizedNetPnlBookValuation:
 
         expected = _expected_net(Decimal("200"), Decimal("220.0"), 150, "BUY", "OPTION")
         assert total == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# Per-lot MTM loss stop + daily loss cap (per-profile)
+# ---------------------------------------------------------------------------
+
+def _capped_profile(profile_id, *, profit_cap=10000.0, loss_cap=None,
+                    per_lot_loss_stop=None, name="P") -> YoloProfileDTO:
+    return YoloProfileDTO(
+        id=profile_id, name=name, profit_cap=profit_cap, is_active=True, sort_order=0,
+        loss_cap=loss_cap, per_lot_loss_stop=per_lot_loss_stop,
+    )
+
+
+class TestPerLotLossStop:
+    """Per-position per-lot MTM loss stop — closes a single position before the structural SL."""
+
+    @pytest.mark.asyncio
+    @patch("app.agent.trade_monitor.ws_manager")
+    @patch("app.agent.trade_monitor.get_cached_price", new_callable=AsyncMock)
+    async def test_per_lot_stop_fires_before_structural_sl(self, mock_price, mock_ws):
+        # Long futures: entry 1000, SL 960 (loss 40*200=8000 → 4000/lot at SL), per-lot stop
+        # 3000 → fires at a 30-pt drop (price 970, still above the 960 SL).
+        pid = uuid.uuid4()
+        pos = _make_position(
+            entry_price=Decimal("1000"), stop_loss=Decimal("960"),
+            target_price=Decimal("1080"), lots=2, quantity=200,
+            strategy_name=StrategyName.INTRADAY_FUTURES.value,
+            fyers_option_symbol="NSE:VEDL26JUNFUT", symbol="VEDL",
+        )
+        pos.instrument_type = "FUTURE"
+        pos.option_type = ""
+        pos.yolo_profile_id = pid
+        trade = _make_trade(pos)
+        mock_price.return_value = {"ltp": 970.0}
+        mock_ws.broadcast = AsyncMock()
+        db = _mock_db_for_close(trade)
+
+        profile = _capped_profile(pid, per_lot_loss_stop=3000.0)
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync",
+                   return_value=[profile]):
+            from app.agent.trade_monitor import _check_position
+            action = await _check_position(db, pos, yolo_mode=True)
+
+        assert action is not None
+        assert action["action_type"] == AgentActionType.PER_LOT_STOP_CLOSE.value
+        assert trade.exit_reason == ExitReason.PER_LOT_STOP.value
+        db.delete.assert_called_once_with(pos)
+
+    @pytest.mark.asyncio
+    @patch("app.agent.trade_monitor.ws_manager")
+    @patch("app.agent.trade_monitor.get_cached_price", new_callable=AsyncMock)
+    async def test_per_lot_stop_not_breached_keeps_position(self, mock_price, mock_ws):
+        pid = uuid.uuid4()
+        pos = _make_position(
+            entry_price=Decimal("1000"), stop_loss=Decimal("960"),
+            target_price=Decimal("1080"), lots=2, quantity=200,
+            strategy_name=StrategyName.INTRADAY_FUTURES.value,
+            fyers_option_symbol="NSE:VEDL26JUNFUT", symbol="VEDL",
+        )
+        pos.instrument_type = "FUTURE"
+        pos.option_type = ""
+        pos.yolo_profile_id = pid
+        trade = _make_trade(pos)
+        mock_price.return_value = {"ltp": 990.0}  # -10/pt → -1000/lot, above the -3000 stop
+        mock_ws.broadcast = AsyncMock()
+        db = _mock_db_for_close(trade)
+
+        profile = _capped_profile(pid, per_lot_loss_stop=3000.0)
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync",
+                   return_value=[profile]):
+            from app.agent.trade_monitor import _check_position
+            action = await _check_position(db, pos, yolo_mode=True)
+
+        assert action is None
+        db.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("app.agent.trade_monitor.ws_manager")
+    @patch("app.agent.trade_monitor.get_cached_price", new_callable=AsyncMock)
+    async def test_no_per_lot_stop_when_profile_unset(self, mock_price, mock_ws):
+        pid = uuid.uuid4()
+        pos = _make_position(
+            entry_price=Decimal("1000"), stop_loss=Decimal("960"),
+            target_price=Decimal("1080"), lots=2, quantity=200,
+            strategy_name=StrategyName.INTRADAY_FUTURES.value,
+            fyers_option_symbol="NSE:VEDL26JUNFUT", symbol="VEDL",
+        )
+        pos.instrument_type = "FUTURE"
+        pos.option_type = ""
+        pos.yolo_profile_id = pid
+        trade = _make_trade(pos)
+        mock_price.return_value = {"ltp": 970.0}  # would breach a 3000 stop, but none is set
+        mock_ws.broadcast = AsyncMock()
+        db = _mock_db_for_close(trade)
+
+        profile = _capped_profile(pid, per_lot_loss_stop=None)
+        with patch("app.services.yolo_profile_service.get_active_profiles_sync",
+                   return_value=[profile]):
+            from app.agent.trade_monitor import _check_position
+            action = await _check_position(db, pos, yolo_mode=True)
+
+        assert action is None
+
+
+class TestDailyLossCap:
+    """Per-profile daily loss cap in _check_pnl_caps (symmetric twin of the profit cap)."""
+
+    @pytest.mark.asyncio
+    @patch("app.agent.trade_monitor.notify_loss_cap_halt", new_callable=AsyncMock)
+    @patch("app.agent.trade_monitor.notify_profit_cap_halt", new_callable=AsyncMock)
+    @patch("app.agent.trade_monitor._unrealized_net_pnl", new_callable=AsyncMock)
+    @patch("app.agent.trade_monitor.get_cached_price", new_callable=AsyncMock)
+    @patch("app.agent.trade_monitor.ws_manager")
+    async def test_loss_cap_closes_positions_and_notifies(
+        self, mock_ws, mock_price, mock_unreal, mock_profit_notify, mock_loss_notify,
+    ):
+        pid = uuid.uuid4()
+        profile = _capped_profile(pid, profit_cap=10000.0, loss_cap=20000.0, name="20K")
+        pos = _make_position(symbol="VEDL", fyers_option_symbol="NSE:VEDL26JUNFUT")
+        pos.yolo_profile_id = pid
+        trade = _make_trade(pos)
+
+        # realized net -22000 (gross -22000), unrealized 0 → total -22000 <= -20000 → loss cap
+        realized_result = MagicMock()
+        realized_result.one.return_value = (Decimal("-22000"), Decimal("-22000"))
+        positions_result = MagicMock()
+        positions_result.scalars.return_value.all.return_value = [pos]
+        trade_result = MagicMock()
+        trade_result.scalar_one_or_none.return_value = trade
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[realized_result, positions_result, trade_result])
+        db.add = MagicMock()
+        db.delete = AsyncMock()
+        db.flush = AsyncMock()
+        db.commit = AsyncMock()
+        mock_unreal.return_value = 0.0
+        mock_price.return_value = {"ltp": 100.0}
+        mock_ws.broadcast = AsyncMock()
+
+        with patch("app.services.yolo_profile_service.get_active_profiles",
+                   new_callable=AsyncMock, return_value=[profile]), \
+             patch("app.services.yolo_profile_service.get_uncapped_profile_ids",
+                   new_callable=AsyncMock, return_value={pid}):
+            from app.agent.trade_monitor import _check_pnl_caps
+            actions = await _check_pnl_caps(db)
+
+        assert actions and len(actions) == 1
+        assert trade.exit_reason == ExitReason.LOSS_CAP.value
+        mock_loss_notify.assert_called_once()
+        mock_profit_notify.assert_not_called()
