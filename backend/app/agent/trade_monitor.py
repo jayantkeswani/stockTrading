@@ -20,6 +20,7 @@ from app.agent.notification import (
     notify_expiry_roll,
     notify_expiry_roll_failed,
     notify_invalidation_exit,
+    notify_loss_cap_halt,
     notify_profit_booked,
     notify_profit_cap_halt,
     notify_sl_hit,
@@ -65,7 +66,7 @@ async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[d
     """
     actions = []
 
-    cap_actions = await _check_profit_cap(db)
+    cap_actions = await _check_pnl_caps(db)
     if cap_actions:
         actions.extend(cap_actions)
 
@@ -85,14 +86,14 @@ async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[d
     return actions
 
 
-async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
-    """Close open positions for any YOLO profile whose daily net profit cap is reached.
+async def _check_pnl_caps(db: AsyncSession) -> list[dict] | None:
+    """Close open positions for any YOLO profile whose daily net profit OR loss cap is reached.
 
-    Each profile is checked independently — only that profile's positions are
-    closed when its cap is hit. Other profiles continue trading.
-
-    Uses net P&L (after brokerage, STT, exchange, GST, SEBI, stamp duty).
-    Closed trades use stored net_pnl; open positions estimate charges from LTP.
+    Each profile is checked independently on its own net P&L (realized + bookable unrealized,
+    after brokerage/STT/exchange/GST/SEBI/stamp duty) — only that profile's positions are
+    closed when one of its caps is hit. Profit cap is checked first; the loss cap (a positive
+    magnitude on the profile, None/0 = no cap) fires when net P&L falls to <= -loss_cap. A
+    capped profile is then excluded by get_uncapped_profile_ids, halting it for the day.
 
     Returns list of close actions if any cap was hit, None otherwise.
     """
@@ -137,7 +138,19 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
         unrealized_pnl = await _unrealized_net_pnl(db, profile_id=profile.id)
 
         total_pnl = realized_pnl + unrealized_pnl
-        if total_pnl < float(profile.profit_cap):
+
+        # Profit cap (>= cap) takes precedence; then the daily loss cap (<= -loss_cap).
+        loss_cap = float(profile.loss_cap) if profile.loss_cap else 0.0
+        if total_pnl >= float(profile.profit_cap):
+            kind, exit_reason, action_type, limit = (
+                "profit", ExitReason.PROFIT_CAP, AgentActionType.PROFIT_CAP_CLOSE,
+                float(profile.profit_cap),
+            )
+        elif loss_cap > 0 and total_pnl <= -loss_cap:
+            kind, exit_reason, action_type, limit = (
+                "loss", ExitReason.LOSS_CAP, AgentActionType.LOSS_CAP_CLOSE, loss_cap,
+            )
+        else:
             continue
 
         # Cap hit for this profile — close its open positions
@@ -159,17 +172,14 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
             else:
                 exit_price = pos.current_price or pos.entry_price
 
-            action = await _close_position(
-                db, pos, exit_price,
-                ExitReason.PROFIT_CAP,
-                AgentActionType.PROFIT_CAP_CLOSE,
-            )
+            action = await _close_position(db, pos, exit_price, exit_reason, action_type)
             all_actions.append(action)
 
         capped_profiles.append({
+            "kind": kind,
             "name": profile.name,
             "total_pnl": total_pnl,
-            "cap": float(profile.profit_cap),
+            "cap": limit,
             "positions_closed": len(open_positions),
             "is_default": profile.id == default_profile_id,
         })
@@ -184,19 +194,26 @@ async def _check_profit_cap(db: AsyncSession) -> list[dict] | None:
         # close their positions and log, just silently).
         if cp["is_default"]:
             try:
-                await notify_profit_cap_halt(
+                notifier = notify_profit_cap_halt if cp["kind"] == "profit" else notify_loss_cap_halt
+                await notifier(
                     daily_pnl=cp["total_pnl"],
                     limit=cp["cap"],
                     positions_closed=cp["positions_closed"],
                     profile_name=cp["name"],
                 )
             except Exception:
-                logger.warning("Failed to send profit cap notification for profile %s", cp["name"])
+                logger.warning("Failed to send %s cap notification for profile %s", cp["kind"], cp["name"])
 
-        logger.info(
-            "Profit cap hit for profile %s: net PnL ₹%.0f >= cap ₹%.0f, closed %d positions",
-            cp["name"], cp["total_pnl"], cp["cap"], cp["positions_closed"],
-        )
+        if cp["kind"] == "profit":
+            logger.info(
+                "Profit cap hit for profile %s: net PnL ₹%.0f >= cap ₹%.0f, closed %d positions",
+                cp["name"], cp["total_pnl"], cp["cap"], cp["positions_closed"],
+            )
+        else:
+            logger.info(
+                "Loss cap hit for profile %s: net PnL ₹%.0f <= -₹%.0f, closed %d positions",
+                cp["name"], cp["total_pnl"], cp["cap"], cp["positions_closed"],
+            )
 
     return all_actions
 
@@ -328,6 +345,14 @@ async def _check_position(
             db, pos, current_price, exit_reason,
             AgentActionType.SL_TRIGGERED, requires_confirmation=False,
         )
+
+    # 1.5 Per-lot MTM loss stop — per-profile hard money stop (S5-futures tail insurance).
+    # Closes a single position when its unrealized loss per lot reaches the profile's
+    # per_lot_loss_stop. Placed after the structural SL but before target/trailing so it can
+    # cap a runaway loss earlier than the structural stop.
+    perlot_action = await _check_per_lot_stop(db, pos, current_price)
+    if perlot_action:
+        return perlot_action
 
     # 2. Check target
     target_hit = (pos.target_price and current_price <= pos.target_price) if is_short_pos else (pos.target_price and current_price >= pos.target_price)
@@ -545,6 +570,43 @@ async def _check_invalidation(
             AgentActionType.INVALIDATION_CLOSE, requires_confirmation=False,
         )
     return None
+
+
+async def _check_per_lot_stop(
+    db: AsyncSession, pos: Position, current_price: Decimal
+) -> dict | None:
+    """Per-lot MTM loss stop for a YOLO position whose profile sets per_lot_loss_stop.
+
+    Closes the position with ExitReason.PER_LOT_STOP when its unrealized loss PER LOT reaches
+    the profile's `per_lot_loss_stop` (a positive INR magnitude). LTP-valued like the SL/target
+    triggers (uses the freshly computed `pos.unrealized_pnl`). Gated to non-shadow positions
+    carrying a yolo_profile_id whose active profile has the stop set. Returns the close action,
+    or None to keep monitoring. Validated as S5-futures tail insurance (options can't realistically
+    breach a per-lot money stop since they can't lose more than the premium paid).
+    """
+    if pos.is_shadow or pos.yolo_profile_id is None or not pos.lots:
+        return None
+
+    from app.services.yolo_profile_service import get_active_profiles_sync
+
+    profile = next(
+        (p for p in get_active_profiles_sync() if p.id == pos.yolo_profile_id), None
+    )
+    if profile is None or not profile.per_lot_loss_stop or profile.per_lot_loss_stop <= 0:
+        return None
+
+    pnl_per_lot = float(pos.unrealized_pnl or 0) / pos.lots
+    if pnl_per_lot > -float(profile.per_lot_loss_stop):
+        return None
+
+    logger.info(
+        "Per-lot loss stop for %s (profile %s): unrealized ₹%.0f/lot <= -₹%.0f/lot, closing",
+        pos.symbol, profile.name, pnl_per_lot, float(profile.per_lot_loss_stop),
+    )
+    return await _close_position(
+        db, pos, current_price, ExitReason.PER_LOT_STOP,
+        AgentActionType.PER_LOT_STOP_CLOSE, requires_confirmation=False,
+    )
 
 
 async def _close_position(

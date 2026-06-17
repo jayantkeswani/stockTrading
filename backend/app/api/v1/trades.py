@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytz
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc, select, func
+from sqlalchemy import Float, cast, desc, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -48,6 +48,8 @@ async def list_trades(
     ai_action: str | None = None,
     instrument_type: str | None = None,
     signal_type: str | None = None,
+    setup_type: str | None = None,
+    min_adr: float | None = None,
     min_lots: int | None = None,
     max_lots: int | None = None,
     exclude_permanent: bool | None = None,
@@ -84,6 +86,20 @@ async def list_trades(
         query = query.where(Trade.signal_instrument_type == instrument_type)
     if signal_type:
         query = query.where(Trade.signal_type == signal_type)
+    # Setup + ADR read from the trade's signal_snapshot indicators JSONB.
+    if setup_type:
+        # Comma-separated = multi-select (OR across setups); single value still works.
+        setups = [s for s in setup_type.split(",") if s]
+        if setups:
+            query = query.where(
+                Trade.signal_snapshot["indicators"]["setup_type"].astext.in_(setups)
+            )
+    if min_adr is not None:
+        # Guard the numeric cast: only rows whose adr_pct is a plain number (skips
+        # NULL / missing / non-numeric, so the cast can't raise on the full set).
+        adr_txt = Trade.signal_snapshot["indicators"]["adr_pct"].astext
+        query = query.where(adr_txt.op("~")(r"^[0-9]+\.?[0-9]*$"))
+        query = query.where(cast(adr_txt, Float) >= min_adr)
     if closed_since is not None:
         query = query.where(Trade.exit_time >= closed_since)
         query = query.order_by(desc(Trade.exit_time))

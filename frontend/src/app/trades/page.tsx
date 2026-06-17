@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { api } from "@/lib/api";
 import { startOfDayIST, endOfDayIST, startOfWeekIST, subDaysIST, subMonthsIST, isoDateIST, formatINR, pnlColor } from "@/lib/formatters";
-import { STRATEGY_LABELS } from "@/lib/constants";
+import { STRATEGY_LABELS, STRATEGY_SETUPS } from "@/lib/constants";
 import type { Trade, YoloProfile } from "@/lib/types";
 import { PeriodFilter, type Period } from "@/components/trades/PeriodFilter";
 import { SummaryStrip } from "@/components/trades/SummaryStrip";
@@ -11,6 +11,9 @@ import { PnLHeatmap } from "@/components/trades/PnLHeatmap";
 import { TradesTable, type HoldData } from "@/components/trades/TradesTable";
 import { useStore } from "@/store";
 import { useShallow } from "zustand/react/shallow";
+
+// Distinct setup_types across the filterable strategies (S5 + S6), for the sim Setup filter.
+const SETUP_OPTIONS = [...new Set(Object.values(STRATEGY_SETUPS).flat())];
 
 function periodFromLabel(label: string): Period {
   const now = new Date();
@@ -95,8 +98,8 @@ function computeMarginTimeline(trades: Trade[]): { peak_margin: number; peak_tim
   };
 }
 
-function isSimActive(sim: { min_confidence: number; ai_action: string; instrument_type: string; signal_types: string[]; sim_lots: number | null }): boolean {
-  return sim.min_confidence > 0 || sim.ai_action !== "" || sim.instrument_type !== "" || sim.signal_types.length > 0 || sim.sim_lots !== null;
+function isSimActive(sim: { min_confidence: number; ai_action: string; instrument_type: string; signal_types: string[]; sim_lots: number | null; setup_types: string[]; min_adr: number | null }): boolean {
+  return sim.min_confidence > 0 || sim.ai_action !== "" || sim.instrument_type !== "" || sim.signal_types.length > 0 || sim.sim_lots !== null || sim.setup_types.length > 0 || sim.min_adr !== null;
 }
 
 function FilterPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
@@ -174,7 +177,9 @@ export default function TradesPage() {
     api.getYoloProfiles().then((p) => setYoloProfiles(p as YoloProfile[])).catch(() => {});
   }, [setYoloProfiles]);
 
-  const sim = tradesSim;
+  // Normalize against stale persisted state (setup_types was added after some clients
+  // persisted the old shape) so `.length`/`.includes` never hit undefined.
+  const sim = { ...tradesSim, setup_types: tradesSim.setup_types ?? [] };
   const simOpen = tradesSimOpen;
   const simActive = simOpen && isSimActive(sim);
 
@@ -210,6 +215,8 @@ export default function TradesPage() {
                 min_confidence: sim.min_confidence > 0 ? sim.min_confidence : undefined,
                 ai_action: sim.ai_action || undefined,
                 instrument_type: sim.instrument_type || undefined,
+                setup_type: sim.setup_types.length ? sim.setup_types.join(",") : undefined,
+                min_adr: sim.min_adr != null ? sim.min_adr : undefined,
               }
             : {}),
         })) as Trade[];
@@ -223,7 +230,7 @@ export default function TradesPage() {
     load();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period.start, period.end, effectiveMode, isShadow, isManual, tradesStrategy, tradesShowOpen, tradesExcludePinned, simOpen, sim.min_confidence, sim.ai_action, sim.instrument_type]);
+  }, [period.start, period.end, effectiveMode, isShadow, isManual, tradesStrategy, tradesShowOpen, tradesExcludePinned, simOpen, sim.min_confidence, sim.ai_action, sim.instrument_type, sim.setup_types.join(","), sim.min_adr]);
 
   useEffect(() => {
     if (!holdOpen) {
@@ -488,6 +495,8 @@ export default function TradesPage() {
                 {sim.ai_action && <span>· {sim.ai_action}</span>}
                 {sim.sim_lots != null && <span>· {sim.sim_lots}L</span>}
                 {sim.instrument_type && <span>· {sim.instrument_type}</span>}
+                {sim.setup_types.length > 0 && <span>· {sim.setup_types.map((s) => s.replace(/_/g, " ")).join(", ")}</span>}
+                {sim.min_adr != null && <span>· ADR ≥{sim.min_adr}%</span>}
                 {sim.signal_types.length > 0 && <span>· {sim.signal_types.map(s => s.replace("_", " ")).join(", ")}</span>}
               </div>
             )}
@@ -605,12 +614,52 @@ export default function TradesPage() {
                     ))}
                   </div>
                 </div>
+
+                {/* Setup (multi-select — combine setups to see their joint performance) */}
+                <div className="space-y-2">
+                  <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">Setup</span>
+                  <div className="grid grid-cols-2 gap-1">
+                    {SETUP_OPTIONS.map((s) => (
+                      <FilterPill
+                        key={s}
+                        label={s.replace(/_/g, " ")}
+                        active={sim.setup_types.includes(s)}
+                        onClick={() => setTradesSim({ setup_types: toggleItem(sim.setup_types, s) })}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Min ADR */}
+                <div className="space-y-2">
+                  <span className="text-[9px] font-mono uppercase tracking-widest text-text-muted">Min ADR %</span>
+                  <div className="text-[9px] font-mono text-text-muted/60 leading-tight">
+                    Stock&apos;s avg daily range at signal time
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <input
+                      type="number" min={0} max={20} step={0.1}
+                      value={sim.min_adr ?? ""}
+                      placeholder="Any"
+                      onChange={(e) => setTradesSim({ min_adr: e.target.value === "" ? null : Number(e.target.value) })}
+                      className="w-20 bg-bg-tertiary border border-border rounded px-2 py-1 text-xs font-mono text-text-primary focus:border-accent/40 focus:outline-none"
+                    />
+                    {sim.min_adr != null && (
+                      <button
+                        onClick={() => setTradesSim({ min_adr: null })}
+                        className="text-[9px] font-mono text-text-muted/40 hover:text-text-muted transition-colors"
+                      >
+                        clear
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {simActive && (
                 <p className="text-[9px] font-mono text-text-muted/40">
                   {sim.sim_lots != null && `P&L recalculated as if every trade used ${sim.sim_lots} lot${sim.sim_lots !== 1 ? "s" : ""}. `}
-                  Confidence / AI action / instrument filters exclude trades with no linked signal. Signal type filtered client-side.
+                  Confidence / AI action / instrument / setup / ADR filters exclude trades with no linked signal (ADR also drops older trades captured before adr_pct was tracked). Signal type filtered client-side.
                 </p>
               )}
             </div>

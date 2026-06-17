@@ -30,6 +30,9 @@ async def list_profiles():
             invalidation_strong_only=p.invalidation_strong_only,
             min_confidence_for_execution=p.min_confidence_for_execution,
             min_bias_strength=p.min_bias_strength,
+            min_adr=p.min_adr,
+            loss_cap=p.loss_cap,
+            per_lot_loss_stop=p.per_lot_loss_stop,
             strategies=list(p.strategies),
             setups=list(p.setups),
         )
@@ -45,6 +48,8 @@ async def create_profile(body: YoloProfileCreate):
         strategies=body.strategies, setups=body.setups,
         min_confidence_for_execution=body.min_confidence_for_execution,
         min_bias_strength=body.min_bias_strength,
+        min_adr=body.min_adr, loss_cap=body.loss_cap,
+        per_lot_loss_stop=body.per_lot_loss_stop,
     )
     return YoloProfileResponse(
         id=profile.id,
@@ -58,6 +63,9 @@ async def create_profile(body: YoloProfileCreate):
         invalidation_strong_only=profile.invalidation_strong_only,
         min_confidence_for_execution=profile.min_confidence_for_execution,
         min_bias_strength=profile.min_bias_strength,
+        min_adr=profile.min_adr,
+        loss_cap=profile.loss_cap,
+        per_lot_loss_stop=profile.per_lot_loss_stop,
         strategies=list(profile.strategies),
         setups=list(profile.setups),
     )
@@ -88,6 +96,9 @@ async def update_profile(profile_id: uuid.UUID, body: YoloProfileUpdate):
         invalidation_strong_only=profile.invalidation_strong_only,
         min_confidence_for_execution=profile.min_confidence_for_execution,
         min_bias_strength=profile.min_bias_strength,
+        min_adr=profile.min_adr,
+        loss_cap=profile.loss_cap,
+        per_lot_loss_stop=profile.per_lot_loss_stop,
         strategies=list(profile.strategies),
         setups=list(profile.setups),
     )

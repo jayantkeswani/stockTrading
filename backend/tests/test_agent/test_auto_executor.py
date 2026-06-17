@@ -394,6 +394,12 @@ def _make_profile(profile_id, name="5K", cap=5000, strategies=None, setups=None,
     # Per-profile execution threshold (None = inherit global). Set explicitly so
     # effective_execution_threshold reads a real value, not a truthy Mock.
     p.min_confidence_for_execution = min_conf
+    # Opt-in gates default off (None) — set explicitly so the ADR / loss-cap checks see
+    # real values, not truthy Mocks (matches the real YoloProfileDTO defaults).
+    p.min_bias_strength = None
+    p.min_adr = None
+    p.loss_cap = None
+    p.per_lot_loss_stop = None
     return p
 
 

@@ -41,6 +41,12 @@ class YoloProfileDTO:
     min_confidence_for_execution: float | None = None
     # Per-profile intraday-bias strength gate (None = no gate; "WEAK"/"MODERATE"/"STRONG").
     min_bias_strength: str | None = None
+    # Per-profile ADR% execution gate (None = no filter; signal indicators.adr_pct must be >=).
+    min_adr: float | None = None
+    # Per-profile daily loss cap (positive INR magnitude; None = no cap). Symmetric to profit_cap.
+    loss_cap: float | None = None
+    # Per-profile per-lot MTM loss stop (positive INR magnitude per lot; None = disabled).
+    per_lot_loss_stop: float | None = None
     # Execution-side filters (tuples so the frozen DTO stays hashable). Empty = all.
     strategies: tuple[str, ...] = ()
     setups: tuple[str, ...] = ()
@@ -66,6 +72,11 @@ def _row_to_dto(row: YoloProfile) -> YoloProfileDTO:
             if row.min_confidence_for_execution is not None else None
         ),
         min_bias_strength=row.min_bias_strength,
+        min_adr=float(row.min_adr) if row.min_adr is not None else None,
+        loss_cap=float(row.loss_cap) if row.loss_cap is not None else None,
+        per_lot_loss_stop=(
+            float(row.per_lot_loss_stop) if row.per_lot_loss_stop is not None else None
+        ),
         strategies=tuple(row.strategies or []),
         setups=tuple(row.setups or []),
     )
@@ -84,18 +95,19 @@ def min_execution_threshold_for(
     setup_type: str | None,
     global_default: float,
     bias_strength: str | None = None,
+    adr_pct: float | None = None,
 ) -> float:
     """Lowest execution-confidence threshold among active profiles that subscribe to this
-    signal (strategy+setup+bias) — i.e. the bar for "executable by at least one profile".
+    signal (strategy+setup+bias+ADR) — i.e. the bar for "executable by at least one profile".
     Returns the global default when the profile cache is cold or no active profile subscribes.
-    Pass `bias_strength` (via `signal_bias_strength`) so a bias-gated profile is only counted
-    for signals it would actually execute. Sync (reads the in-memory cache only). Used by:
-    strategy_runner (executable gate), agent_runner (notification gate), auto_executor
-    (signal-level early-out)."""
+    Pass `bias_strength` (via `signal_bias_strength`) and `adr_pct` (via `signal_adr`) so a
+    bias- or ADR-gated profile is only counted for signals it would actually execute. Sync
+    (reads the in-memory cache only). Used by: strategy_runner (executable gate), agent_runner
+    (notification gate), auto_executor (signal-level early-out)."""
     thresholds = [
         effective_execution_threshold(p, global_default)
         for p in get_active_profiles_sync()
-        if profile_accepts_signal(p, strategy_name, setup_type, bias_strength)
+        if profile_accepts_signal(p, strategy_name, setup_type, bias_strength, adr_pct)
     ]
     return min(thresholds) if thresholds else float(global_default)
 
@@ -110,6 +122,17 @@ def signal_bias_strength(indicators: dict | None) -> str | None:
     Used by: auto_executor, strategy_runner, agent_runner — to feed the per-profile bias gate."""
     ib = (indicators or {}).get("intraday_bias") or {}
     return ib.get("strength") if isinstance(ib, dict) else None
+
+
+def signal_adr(indicators: dict | None) -> float | None:
+    """Extract the stored ADR% (indicators.adr_pct) from a signal's indicators JSONB, to feed
+    the per-profile ADR gate. Returns a float, or None when absent/non-numeric (a profile with
+    a min_adr set rejects such a signal). Used by: auto_executor, strategy_runner, agent_runner."""
+    v = (indicators or {}).get("adr_pct")
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_bias_strength(v: str | None) -> str | None:
@@ -128,16 +151,19 @@ def profile_accepts_signal(
     strategy_name: str,
     setup_type: str | None,
     bias_strength: str | None = None,
+    adr_pct: float | None = None,
 ) -> bool:
-    """True if the profile's strategy/setup/bias filters admit this signal.
+    """True if the profile's strategy/setup/bias/ADR filters admit this signal.
 
     Empty strategy/setup filter = accept all (backward compatible); the filters are
     independent AND conditions (a profile with `setups=["ORB_RETEST"]` only executes that
     setup; a signal with no setup_type is rejected by a non-empty setups filter). When
     `min_bias_strength` is set, the signal's stock intraday-bias `bias_strength` must be
-    >= it (ordinal WEAK<MODERATE<STRONG); a signal with no bias (None) is rejected. Pass
-    `bias_strength` via `signal_bias_strength(signal.indicators)`. Used by: auto_executor
-    (per-profile fan-out gate), min_execution_threshold_for (executable/notify bar).
+    >= it (ordinal WEAK<MODERATE<STRONG); a signal with no bias (None) is rejected. When
+    `min_adr` is set, the signal's `adr_pct` must be >= it; a signal with no ADR (None) is
+    rejected. Pass `bias_strength` via `signal_bias_strength(...)` and `adr_pct` via
+    `signal_adr(...)`. Used by: auto_executor (per-profile fan-out gate),
+    min_execution_threshold_for (executable/notify bar).
     """
     if profile.strategies and strategy_name not in profile.strategies:
         return False
@@ -145,6 +171,9 @@ def profile_accepts_signal(
         return False
     if profile.min_bias_strength:
         if _BIAS_RANK.get(bias_strength or "", 0) < _BIAS_RANK.get(profile.min_bias_strength, 0):
+            return False
+    if profile.min_adr is not None:
+        if adr_pct is None or adr_pct < profile.min_adr:
             return False
     return True
 
@@ -181,19 +210,26 @@ async def get_all_profiles() -> list[YoloProfileDTO]:
 
 
 async def get_uncapped_profile_ids(today: date) -> set[uuid.UUID]:
-    """Return IDs of active profiles that haven't been profit-capped today."""
+    """Return IDs of active profiles that haven't been capped today — profit OR loss.
+
+    Once a profile hits its profit cap or its daily loss cap, it stops trading for the
+    rest of the day: this set excludes it, so the trade monitor skips re-checking it and
+    the auto-executor skips creating new trades for it.
+    """
     active = await get_active_profiles()
     if not active:
         return set()
 
     async with async_session_factory() as session:
-        # A profile is "capped" if it has any trade closed with PROFIT_CAP today
+        # A profile is "capped" if it has any trade closed with PROFIT_CAP or LOSS_CAP today
         result = await session.execute(
             select(Trade.yolo_profile_id)
             .where(
                 and_(
                     Trade.source == TradeSource.YOLO.value,
-                    Trade.exit_reason == ExitReason.PROFIT_CAP.value,
+                    Trade.exit_reason.in_(
+                        (ExitReason.PROFIT_CAP.value, ExitReason.LOSS_CAP.value)
+                    ),
                     func.date(Trade.exit_time) == today,
                     Trade.yolo_profile_id.isnot(None),
                 )
@@ -255,6 +291,14 @@ def default_profile_trade_filter():
     )
 
 
+def _normalize_positive(v: float | None) -> float | None:
+    """Normalize an opt-in positive-magnitude gate (min_adr / loss_cap / per_lot_loss_stop):
+    None or any value <= 0 means "off" → stored as NULL. So the client sends 0 to disable."""
+    if v is None:
+        return None
+    return float(v) if float(v) > 0 else None
+
+
 async def create_profile(
     name: str,
     profit_cap: float,
@@ -262,13 +306,20 @@ async def create_profile(
     setups: list[str] | None = None,
     min_confidence_for_execution: float | None = None,
     min_bias_strength: str | None = None,
+    min_adr: float | None = None,
+    loss_cap: float | None = None,
+    per_lot_loss_stop: float | None = None,
 ) -> YoloProfileDTO:
     """Create a new YOLO profile (optionally with strategy/setup execution filters, a
-    per-profile execution-confidence threshold, and an intraday-bias strength gate;
-    None/negative confidence = inherit the global default; falsy bias = no gate)."""
+    per-profile execution-confidence threshold, an intraday-bias strength gate, an ADR floor,
+    a daily loss cap, and a per-lot MTM loss stop; None/negative confidence = inherit the
+    global default; falsy bias = no gate; <=0 min_adr/loss_cap/per_lot_loss_stop = off)."""
     if min_confidence_for_execution is not None and min_confidence_for_execution < 0:
         min_confidence_for_execution = None
     min_bias_strength = _normalize_bias_strength(min_bias_strength)
+    min_adr = _normalize_positive(min_adr)
+    loss_cap = _normalize_positive(loss_cap)
+    per_lot_loss_stop = _normalize_positive(per_lot_loss_stop)
     async with async_session_factory() as session:
         # Auto-assign sort_order as max+1
         result = await session.execute(
@@ -282,6 +333,9 @@ async def create_profile(
             sort_order=max_order + 1,
             min_confidence_for_execution=min_confidence_for_execution,
             min_bias_strength=min_bias_strength,
+            min_adr=min_adr,
+            loss_cap=loss_cap,
+            per_lot_loss_stop=per_lot_loss_stop,
             strategies=strategies or [],
             setups=setups or [],
         )
@@ -300,6 +354,7 @@ async def update_profile(profile_id: uuid.UUID, **fields) -> YoloProfileDTO:
         "name", "profit_cap", "is_active", "sort_order",
         "invalidation_persist", "invalidation_quorum", "invalidation_strong_only",
         "min_confidence_for_execution", "min_bias_strength", "strategies", "setups",
+        "min_adr", "loss_cap", "per_lot_loss_stop",
     }
     invalid = set(fields) - allowed
     if invalid:
@@ -318,6 +373,12 @@ async def update_profile(profile_id: uuid.UUID, **fields) -> YoloProfileDTO:
     # sends an empty string "" to CLEAR the gate back to "no gate" (any bias).
     if "min_bias_strength" in fields:
         fields["min_bias_strength"] = _normalize_bias_strength(fields["min_bias_strength"])
+
+    # Opt-in positive-magnitude gates: the PATCH endpoint drops None via exclude_none, so the
+    # client sends 0 to CLEAR back to "off" (stored as NULL). Negative values are also off.
+    for k in ("min_adr", "loss_cap", "per_lot_loss_stop"):
+        if k in fields:
+            fields[k] = _normalize_positive(fields[k])
 
     async with async_session_factory() as session:
         result = await session.execute(

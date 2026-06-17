@@ -581,6 +581,103 @@ export default function SettingsPage() {
                   <option value="STRONG">STRONG</option>
                 </select>
               </div>
+              {/* Per-profile ADR% execution floor (blank = no filter) */}
+              <div className="flex items-center gap-1">
+                <span
+                  className="text-[9px] font-mono text-text-muted"
+                  title="Per-profile ADR% execution floor. Blank = no filter. Only execute signals whose ADR% ≥ this (e.g. 2.8)."
+                >
+                  ADR≥
+                </span>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  placeholder="off"
+                  value={p.min_adr ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const v = raw === "" ? null : Number(raw);
+                    setYoloProfiles((prev) => (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, min_adr: v } : x));
+                  }}
+                  onBlur={async (e) => {
+                    const raw = e.target.value;
+                    const v = raw === "" ? null : Number(raw);
+                    setYoloProfiles((prev) => {
+                      const updated = (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, min_adr: v } : x);
+                      useStore.getState().setYoloProfiles(updated);
+                      return updated;
+                    });
+                    // Send 0 to CLEAR back to "off" (the PATCH endpoint drops nulls).
+                    try { await api.updateYoloProfile(p.id, { min_adr: v === null ? 0 : v }); } catch { /* ignore */ }
+                  }}
+                  className="w-12 bg-bg-tertiary border border-border rounded px-1 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+              {/* Per-profile DAILY loss cap (blank = no cap) */}
+              <div className="flex items-center gap-1">
+                <span
+                  className="text-[9px] font-mono text-text-muted"
+                  title="Per-profile DAILY loss cap (INR). Blank = no cap. Closes this profile's positions and halts it for the day when net P&L ≤ -this."
+                >
+                  LossCap
+                </span>
+                <input
+                  type="number"
+                  step="1000"
+                  min="0"
+                  placeholder="off"
+                  value={p.loss_cap ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const v = raw === "" ? null : Number(raw);
+                    setYoloProfiles((prev) => (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, loss_cap: v } : x));
+                  }}
+                  onBlur={async (e) => {
+                    const raw = e.target.value;
+                    const v = raw === "" ? null : Number(raw);
+                    setYoloProfiles((prev) => {
+                      const updated = (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, loss_cap: v } : x);
+                      useStore.getState().setYoloProfiles(updated);
+                      return updated;
+                    });
+                    try { await api.updateYoloProfile(p.id, { loss_cap: v === null ? 0 : v }); } catch { /* ignore */ }
+                  }}
+                  className="w-20 bg-bg-tertiary border border-border rounded px-1 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
+              {/* Per-profile per-lot MTM loss stop (blank = disabled) */}
+              <div className="flex items-center gap-1">
+                <span
+                  className="text-[9px] font-mono text-text-muted"
+                  title="Per-profile per-lot MTM loss stop (INR/lot). Blank = off. Closes a single position when its unrealized loss per lot reaches this (hard money stop, S5-futures)."
+                >
+                  /lot
+                </span>
+                <input
+                  type="number"
+                  step="1000"
+                  min="0"
+                  placeholder="off"
+                  value={p.per_lot_loss_stop ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const v = raw === "" ? null : Number(raw);
+                    setYoloProfiles((prev) => (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, per_lot_loss_stop: v } : x));
+                  }}
+                  onBlur={async (e) => {
+                    const raw = e.target.value;
+                    const v = raw === "" ? null : Number(raw);
+                    setYoloProfiles((prev) => {
+                      const updated = (Array.isArray(prev) ? prev : []).map((x) => x.id === p.id ? { ...x, per_lot_loss_stop: v } : x);
+                      useStore.getState().setYoloProfiles(updated);
+                      return updated;
+                    });
+                    try { await api.updateYoloProfile(p.id, { per_lot_loss_stop: v === null ? 0 : v }); } catch { /* ignore */ }
+                  }}
+                  className="w-16 bg-bg-tertiary border border-border rounded px-1 py-1 text-xs font-mono focus:border-accent/50 focus:outline-none"
+                />
+              </div>
               {/* Thesis-invalidation exit (S5): close early when NIFTY bias flips STRONG-against the trade for N candles */}
               <div className="flex items-center gap-1">
                 <span

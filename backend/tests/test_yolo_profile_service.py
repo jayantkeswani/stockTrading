@@ -21,6 +21,7 @@ from app.services.yolo_profile_service import (
 def _dto(
     name: str, cap: float, active: bool = True, sort_order: int = 0,
     strategies: tuple = (), setups: tuple = (), min_bias_strength: str | None = None,
+    min_adr: float | None = None,
 ) -> YoloProfileDTO:
     return YoloProfileDTO(
         id=uuid.uuid4(),
@@ -31,6 +32,7 @@ def _dto(
         strategies=strategies,
         setups=setups,
         min_bias_strength=min_bias_strength,
+        min_adr=min_adr,
     )
 
 
@@ -216,3 +218,59 @@ def test_min_execution_threshold_for_is_bias_aware():
 async def test_update_profile_rejects_invalid_bias_strength():
     with pytest.raises(ValueError, match="WEAK, MODERATE, or STRONG"):
         await svc.update_profile(uuid.uuid4(), min_bias_strength="HUGE")
+
+
+# ── ADR execution gate ──────────────────────────────────────────────────────────
+
+def test_signal_adr_extraction():
+    """Reads indicators.adr_pct as a float; missing/non-numeric → None."""
+    from app.services.yolo_profile_service import signal_adr
+    assert signal_adr({"adr_pct": 2.8}) == 2.8
+    assert signal_adr({"adr_pct": "3.1"}) == 3.1
+    assert signal_adr({"adr_pct": None}) is None
+    assert signal_adr({"adr_pct": "n/a"}) is None
+    assert signal_adr({}) is None
+    assert signal_adr(None) is None
+
+
+def test_profile_accepts_signal_no_adr_gate_accepts_any():
+    """min_adr=None (default) = no filter → any ADR (incl. missing) passes."""
+    p = _dto("full", 0)
+    assert profile_accepts_signal(p, "intraday_futures", "PDH_PDL", None, 5.0)
+    assert profile_accepts_signal(p, "intraday_futures", "PDH_PDL", None, None)
+
+
+def test_profile_accepts_signal_adr_gate():
+    """min_adr gate: only signals with adr_pct >= the floor pass; missing ADR is rejected."""
+    p = _dto("adr", 0, strategies=("intraday_futures",), min_adr=2.8)
+    assert profile_accepts_signal(p, "intraday_futures", "PDH_PDL", None, 2.8)   # equal passes
+    assert profile_accepts_signal(p, "intraday_futures", "PDH_PDL", None, 3.5)
+    assert not profile_accepts_signal(p, "intraday_futures", "PDH_PDL", None, 2.7)
+    assert not profile_accepts_signal(p, "intraday_futures", "PDH_PDL", None, None)
+
+
+def test_min_execution_threshold_for_is_adr_aware():
+    """An ADR-gated profile at conf 40 lowers the executable bar ONLY for signals that clear
+    its ADR floor; a below-ADR signal keeps the global bar (the gated profile won't run it)."""
+    default = _dto("def", 5000, sort_order=0)                 # inherits global 70, no ADR gate
+    adr_prof = YoloProfileDTO(
+        id=uuid.uuid4(), name="ADR", profit_cap=10000, is_active=True, sort_order=1,
+        min_confidence_for_execution=40.0, strategies=("intraday_futures",), min_adr=2.8,
+    )
+    svc._cache = [default, adr_prof]
+    assert min_execution_threshold_for("intraday_futures", "PDH_PDL", 70.0, None, 3.0) == 40.0
+    assert min_execution_threshold_for("intraday_futures", "PDH_PDL", 70.0, None, 2.0) == 70.0
+    # legacy callers that don't pass an ADR → the gated profile is excluded → global default
+    assert min_execution_threshold_for("intraday_futures", "PDH_PDL", 70.0) == 70.0
+
+
+@pytest.mark.asyncio
+async def test_update_profile_normalizes_positive_gates():
+    """min_adr/loss_cap/per_lot_loss_stop: <=0 normalizes to None (off); the DB write itself
+    needs a real session, so we just assert the normalization helper that the endpoint uses."""
+    from app.services.yolo_profile_service import _normalize_positive
+    assert _normalize_positive(0) is None
+    assert _normalize_positive(-5) is None
+    assert _normalize_positive(None) is None
+    assert _normalize_positive(2.8) == 2.8
+    assert _normalize_positive(20000) == 20000.0

@@ -30,6 +30,7 @@ from app.services.yolo_profile_service import (
     get_active_profiles,
     get_uncapped_profile_ids,
     profile_accepts_signal,
+    signal_adr,
     signal_bias_strength,
 )
 from app.core.database import async_session_factory
@@ -115,11 +116,12 @@ async def auto_execute_signal(signal_id) -> list[dict]:
         # would execute this signal at its (own or inherited) confidence threshold.
         setup_type = (signal.indicators or {}).get("setup_type")
         bias_strength = signal_bias_strength(signal.indicators)
+        adr_pct = signal_adr(signal.indicators)
         if signal.confidence is not None:
             exec_floor = min(
                 (effective_execution_threshold(p, cfg.min_confidence_for_execution)
                  for p in profiles
-                 if profile_accepts_signal(p, signal.strategy_name, setup_type, bias_strength)),
+                 if profile_accepts_signal(p, signal.strategy_name, setup_type, bias_strength, adr_pct)),
                 default=cfg.min_confidence_for_execution,
             )
             if float(signal.confidence) < exec_floor:
@@ -209,10 +211,10 @@ async def auto_execute_signal(signal_id) -> list[dict]:
             # Strategy/setup execution filter — a profile only acts on signals it
             # subscribes to (empty filters = all). Lets a full and a subset profile
             # run side-by-side off one signal stream.
-            if not profile_accepts_signal(profile, signal.strategy_name, setup_type, bias_strength):
+            if not profile_accepts_signal(profile, signal.strategy_name, setup_type, bias_strength, adr_pct):
                 logger.debug(
-                    "Auto-execute: profile %s does not subscribe to %s/%s, skipping",
-                    profile.name, signal.strategy_name, setup_type,
+                    "Auto-execute: profile %s does not subscribe to %s/%s (adr=%s), skipping",
+                    profile.name, signal.strategy_name, setup_type, adr_pct,
                 )
                 continue
 
@@ -243,7 +245,7 @@ async def auto_execute_signal(signal_id) -> list[dict]:
                 continue
 
             is_safe, reason = await _final_risk_check(
-                session, signal.symbol, profile.id, profile.profit_cap,
+                session, signal.symbol, profile.id, profile.profit_cap, profile.loss_cap,
             )
             if not is_safe:
                 logger.info(
@@ -426,8 +428,15 @@ async def auto_execute_signal(signal_id) -> list[dict]:
 
 async def _final_risk_check(
     session: AsyncSession, symbol: str, profile_id, profile_cap: float,
+    loss_cap: float | None = None,
 ) -> tuple[bool, str | None]:
-    """One final risk validation before auto-execution, scoped to a YOLO profile."""
+    """One final risk validation before auto-execution, scoped to a YOLO profile.
+
+    Checks (per profile): max trades/day, the global drawdown gate, the daily profit cap, and
+    the daily loss cap (a positive magnitude; None/0 = no cap). The profit/loss caps compare
+    live total P&L (realized + unrealized) so a new trade is blocked even before the trade
+    monitor's 500ms cap-close has fired.
+    """
     today = now_ist().date()
     today_start = datetime.combine(today, MARKET_OPEN, tzinfo=IST)
 
@@ -467,8 +476,9 @@ async def _final_risk_check(
             pass
         return False, "Drawdown limit breached"
 
-    # Profit cap — compare against profile's cap
-    if profile_cap > 0:
+    # Profit/loss caps — compare live total P&L (realized + unrealized) against the profile's caps
+    loss_cap = float(loss_cap) if loss_cap else 0.0
+    if profile_cap > 0 or loss_cap > 0:
         unrealized_result = await session.execute(
             select(func.coalesce(func.sum(Position.unrealized_pnl), 0)).where(
                 Position.yolo_profile_id == profile_id,
@@ -476,7 +486,8 @@ async def _final_risk_check(
         )
         unrealized_pnl = float(unrealized_result.scalar_one())
         total_pnl = realized_pnl + unrealized_pnl
-        if total_pnl >= profile_cap:
+
+        if profile_cap > 0 and total_pnl >= profile_cap:
             logger.info(
                 "Profit cap blocking new trade: total PnL ₹%.0f >= profile cap ₹%.0f",
                 total_pnl, profile_cap,
@@ -495,5 +506,25 @@ async def _final_risk_check(
             )
             session.add(log)
             return False, "Daily profit cap reached"
+
+        if loss_cap > 0 and total_pnl <= -loss_cap:
+            logger.info(
+                "Loss cap blocking new trade: total PnL ₹%.0f <= -₹%.0f (profile loss cap)",
+                total_pnl, loss_cap,
+            )
+            log = AgentLog(
+                action_type=AgentActionType.LOSS_CAP_CLOSE.value,
+                details={
+                    "event": "loss_cap_block",
+                    "daily_pnl": round(total_pnl, 0),
+                    "limit": round(-loss_cap, 0),
+                    "realized": round(realized_pnl, 0),
+                    "unrealized": round(unrealized_pnl, 0),
+                    "profile_id": str(profile_id),
+                },
+                requires_confirmation=False,
+            )
+            session.add(log)
+            return False, "Daily loss cap reached"
 
     return True, None

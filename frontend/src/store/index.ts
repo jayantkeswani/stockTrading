@@ -134,6 +134,8 @@ interface AppState {
     instrument_type: string;
     signal_types: string[];
     sim_lots: number | null;
+    setup_types: string[];
+    min_adr: number | null;
   };
   setTradesPeriod: (label: string, start: Date, end: Date) => void;
   setTradesStrategy: (strategy: string) => void;
@@ -410,12 +412,12 @@ export const useStore = create<AppState>()(
       tradesExcludePinned: false,
       setTradesExcludePinned: (v) => set({ tradesExcludePinned: v }),
       tradesSimOpen: false,
-      tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null },
+      tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null, setup_types: [], min_adr: null },
       setTradesPeriod: (label, start, end) => set({ tradesPeriodLabel: label, tradesPeriodStart: start.toISOString(), tradesPeriodEnd: end.toISOString() }),
       setTradesStrategy: (strategy) => set({ tradesStrategy: strategy }),
       setTradesSimOpen: (open) => set({ tradesSimOpen: open }),
       setTradesSim: (updates) => set((state) => ({ tradesSim: { ...state.tradesSim, ...updates } })),
-      resetTradesSim: () => set({ tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null } }),
+      resetTradesSim: () => set({ tradesSim: { min_confidence: 0, ai_action: "", instrument_type: "", signal_types: [], sim_lots: null, setup_types: [], min_adr: null } }),
 
       tradesShowHeatmap: false,
       tradesMarginOpen: false,

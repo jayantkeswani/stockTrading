@@ -361,6 +361,27 @@ async def notify_profit_cap_halt(
     await send_telegram(msg)
 
 
+async def notify_loss_cap_halt(
+    daily_pnl: float,
+    limit: float,
+    positions_closed: int,
+    profile_name: str | None = None,
+) -> None:
+    """Send a daily-loss-cap-hit halt notification via Telegram (symmetric to profit cap).
+
+    `limit` is the positive loss-cap magnitude; `daily_pnl` is the (negative) net P&L that
+    breached -limit. When profile_name is provided the title names the YOLO profile.
+    """
+    title = f"Loss Cap HIT — {profile_name}" if profile_name else "Daily Loss Limit Hit"
+    msg = (
+        f"🛑 <b>Trading Halted — {title}</b>\n"
+        f"Daily PnL  −₹{abs(daily_pnl):,.0f}\n"
+        f"Limit  −₹{limit:,.0f}\n"
+        f"Closed {positions_closed} position(s). No new trades today."
+    )
+    await send_telegram(msg)
+
+
 # ── Daily summary ──────────────────────────────────────────────────────────────
 
 async def notify_daily_summary(
