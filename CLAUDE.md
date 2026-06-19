@@ -130,6 +130,7 @@ stockTrading/
 - `sim_s5_riskcap.py` — simulates the curated S5 SHADOW book (`--setups ORB,PDH_PDL --min-adr 2.8 --confidence 40`) under two risk overlays: a per-trade `--per-trade-cap` ₹/lot MTM stop + a `--daily-stop` realized-loss day breaker. Stages prod shadow trades into bt table `s5_shadow` (real fills + signal snapshot). Applies overlays to REAL outcomes (faithful: keep `net_pnl`, override to −cap only when the trade's real MAE breached the floor — brackets WICK vs CLOSE basis) alongside a re-sim ladder; a wrong-instrument guard drops the `BSE`→BANKEX mis-resolution (index-scale entry vs stock candles). Finding (`docs/backtest/s5-riskcap-overlay-study.md`): the 8K/lot cap is net-NEGATIVE (filters already removed big losers, so it only chops dip-and-recover winners); the −20K daily breaker is the value-add. Run with DATABASE_URL=bt
 - `audit_screener_data.py` — read-only freshness check for S5 morning screener data
 - `audit_vwap_data.py` — read-only freshness check for S2 VWAP Pullback data (10 checks)
+- `intraday_hunter/validate_setups.py` — independent validation of the @IntradayHunter setups as mechanical INDEX hypotheses, scored engine-independent (first-touch + forward-direction vs base rate, train/test split) over local 1m index candles (`--gap1/--gap-min/--stop-pct/--rr/--indices`). Run with DATABASE_URL=local. Verdict + findings in `docs/strategies/intraday-hunter-study.md` §Phase 4
 - `telegram/` — MTProto client (Telethon) + signal parser + verifier + setup analyzer. Scripts: `list_dialogs.py`, `fetch_history.py`, `parse_signals.py`, `probe_fyers_history.py`, `verify_signals.py`, `analyze_setups.py`, `analyze_edge.py`. Session files + data/ gitignored. Uses TELEGRAM_API_ID/API_HASH/PHONE/SESSION_NAME from .env
 
 ## Strategies
@@ -316,6 +317,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 - `shadow-agent.md` — shadow executor design, isolation guarantees
 - `signal-confidence-agent.md` — LLM confidence overlay design
+- `intraday-hunter-agent.md` — **DESIGN spec** (not yet built) for the discretionary @IntradayHunter-style index-options agent: two-call flow (pre-open thesis → at-open ENTER/WAIT/SKIP decision), 9:15–9:30 watcher, single-direction variable basket, mplfinance charts via the `claude` CLI (OAuth), multi-day structural memory (no P&L), autorun via the backend scheduler, and a `/intraday-hunter` UI page (replaces Telegram). Full prompt templates + JSON schemas + 6 contrasting few-shot exemplars inside
 
 ### docs/backtest/
 

@@ -1,7 +1,8 @@
 # Intraday Hunter (YouTube) — Reverse-Engineering Study
 
-**Status:** Phase 3 complete — 30 days analyzed. Ready for Phase 4 (signal generator implementation). NOT yet a registered backend strategy.
-**Last updated:** 2026-05-01
+**Status:** Phase 4 INDEPENDENT VALIDATION complete — his claimed P&L is NOT reproducible as an
+index-direction edge; one kernel (−2%+ gap-down reversal) survives. NOT a registered backend strategy.
+**Last updated:** 2026-06-18
 **Goal:** Reverse-engineer the intraday options trading strategy of the YouTube channel
 "Intraday Hunter" (@IntradayHunter), validate it against real historical price data,
 and ultimately port it as an automatable backend strategy signal.
@@ -9,6 +10,9 @@ and ultimately port it as an automatable backend strategy signal.
 This document is the **session memory** for the study. A fresh agent session should
 be able to read this file alone and understand everything researched, what is confirmed,
 what is still unknown, and what the next steps are.
+
+> **Phases 1–3 (below) are his SELF-REPORTED behavior, read off his own videos — not
+> evidence the strategy works.** Phase 4 is the first independent test. Read Phase 4 first.
 
 ---
 
@@ -33,6 +37,65 @@ what is still unknown, and what the next steps are.
   had a very specific fast-selloff + rejection at support structure.
 - **Three setup rules** with win rates are fully documented in the Updated Strategy
   Framework section. Phase 3 is complete — 30 days, 60 videos analyzed.
+
+---
+
+## Phase 4: Independent validation (2026-06-18) — the part that matters
+
+**Why this phase exists:** Phases 1–3 are a meticulous transcription of what he *shows
+on screen*. Every headline number (73% win, ₹29.5L, 3.3× PF) is the subject's own
+self-report — selection bias (he posts what he wants), discretionary exits we cannot
+replicate, and a single abnormally-volatile regime (Feb–Apr 2026) all confound it.
+Phase 4 ignores his P&L entirely and tests his setups as **falsifiable, mechanical
+hypotheses about INDEX behavior**, using the same engine-independent first-touch +
+forward-direction method as `analyze_strategy2_signal_accuracy.py`.
+
+**Tool:** `scripts/intraday_hunter/validate_setups.py` — classifies every (index, day)
+over 165 days of 1m index spot candles (NIFTY/BANKNIFTY/SENSEX, Oct 2025 → Jun 2026)
+into his three setups at the 09:15 open, then scores forward-favorable direction at
++15/30/60 min and EOD vs the **unconditional base rate**, first-touch target-vs-stop,
+MFE/time-to-peak, per-index, and a chronological train/test split.
+
+### RECOMMENDATIONS
+
+1. **Discard Setup 2 (continuation) and Setup 3 (fade gap-up).** Setup 2 is pure noise
+   (+30min 50% vs 51% base; target-first 42% = negative expectancy). Setup 3 is an
+   independently-confirmed loser early in the day (+15min 23% vs 49% base, −26pp) — his
+   own "avoid" label is correct.
+2. **Keep ONE kernel for further work: the −2%+ gap-down reversal (LONG), on NIFTY/SENSEX,
+   held toward EOD.** It is the only setup with a real, robust index edge.
+3. **Raise his entry threshold from −1.5% to −2.0%.** The −1.5%–2.0% band is noise and
+   fails the train/test split; the edge lives only in the ≥2% tail.
+4. **Do NOT trade it on BankNifty the way he does**, and **do NOT exit in ~10 minutes.**
+   The edge is weakest on BankNifty (his primary instrument) and the move's median peak
+   is ~283 min away — his fast-exit style does not capture it.
+5. **Before any capital, run the options-layer test.** Index direction ≠ option win rate
+   (theta + tight-stop whipsaw killed Strategy 7). A +30pp EOD *index* edge is necessary,
+   not sufficient. Grow n with more index history (currently only 15 qualifying −2% days).
+
+### FINDINGS
+
+Base rate: index up-from-open ~51% at +30min, ~50% EOD (intraday direction ≈ coin flip).
+
+| Setup | n | +15m | +30m | +60m | EOD | target-first @1.5R | train/test +30m | verdict |
+|---|---|---|---|---|---|---|---|---|
+| 1 — gap-down ≤ −1.5% → LONG | 22 | 50% | 55% | 59% | 68% | 52% | 69% → **33%** | not robust at this threshold |
+| 1 — gap-down ≤ **−2.0%** → LONG | 15 | **67%** | 67% | 73% | **80%** | **64%** | **67% → 67%** | **real, robust kernel** |
+| 2 — structure continuation | 52 | 46% | 50% | 52% | 58% | 42% | 45% → 57% | noise |
+| 3 — fade gap-up → SHORT | 13 | **23%** | 38% | 46% | 54% | 55% | 29% → 50% | confirmed loser early |
+
+- His marquee day (Mar 19, BN −3.34% gap) is real in the index: the first 1m candle ran
+  +1.1% off the open. But the move is front-loaded into minute 1 then chops — confirming
+  the edge exists but demands first-minute execution OR an EOD hold, not a 10-min ride.
+- The ≥2% gap-down edge is weakest on BANKNIFTY (50% +30min, n=6) vs NIFTY (75%) / SENSEX (80%).
+
+### CAVEATS
+
+- **Small n** (15/22/52/13) — directionally indicative, not conclusive. Only 165 days of
+  local 1m index history; more history (Fyers backfill) would firm this up.
+- **Index direction is not the tradeable object.** The options translation (theta, spread,
+  tight stop) is untested and is where S2/S7 edges evaporated.
+- This validates *index behavior under his triggers*, not his discretionary execution.
 
 ---
 
