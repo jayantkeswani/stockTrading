@@ -259,11 +259,43 @@ ACTIVATION_ADDENDUM_B = dedent(
 ).strip()
 
 
+# Variant C: the two evidence-backed fixes from the May/June + bear-window validation —
+# (1) cut the chronic over-conservatism (take clean directional mornings BOTH ways), and
+# (2) add the gap-down -> PE-continuation path (its biggest specific blind spot: it only
+# hunted CE reversals on gap-downs and skipped the breakdowns, e.g. Mar 23/30). Baseline A
+# is left unchanged so C can be compared against it and reverted.
+FIX_ADDENDUM_C = dedent(
+    """
+    === CALIBRATION FIXES (this variant) ===
+    Testing showed you SKIP far too much: you traded only ~1 in 3 tradable days and missed
+    clean directional moves BOTH up and down — leaving most of the edge untaken. Correct this:
+
+    1. TAKE THE CLEAN DIRECTION (either way). A decisive one-directional open IS your setup —
+       you do NOT need a textbook "trapped side". When the gap + your thesis OR the first
+       ~5-6 candles (09:15-~09:21) show a clear one-way push, BUY it now: CALL if it is
+       pushing UP and holding above the prev close / breaking the PDH; PUT if it is pushing
+       DOWN and holding below the prev close / breaking the PDL. Rely on your hard loss-cut;
+       being wrong ~30% of the time is the business. SKIP is ONLY for genuine two-sided chop
+       (price whipsawing across the prev close with no net direction after ~5-6 candles).
+
+    2. GAP-DOWN IS NOT ALWAYS A CE-REVERSAL. On a gap-down you have TWO valid plays, not one:
+         - CE reversal — ONLY if the low holds and price reclaims the prev close (the V-turn).
+         - PE CONTINUATION — if the gap-down does NOT reclaim and keeps making new lows within
+           ~5-6 candles, that is a breakdown: BUY PUT and ride it. Do NOT skip a persistent
+           gap-down waiting for a reversal that is not coming — that is a PUT, not a no-trade.
+       Symmetrically, a gap-UP that holds and extends is a CALL continuation (don't fade it).
+    """
+).strip()
+
+
 def build_system_prompt(variant: str = "A") -> str:
-    """The full, frozen system prompt = core rules + worked examples (+ activation for B)."""
+    """The full, frozen system prompt = core rules + worked examples (+ variant addendum)."""
     base = f"{SYSTEM_PROMPT_CORE}\n{render_few_shot()}"
-    if variant.upper() == "B":
+    v = variant.upper()
+    if v == "B":
         base += "\n\n" + ACTIVATION_ADDENDUM_B
+    elif v == "C":
+        base += "\n\n" + FIX_ADDENDUM_C
     return base
 
 

@@ -1,9 +1,32 @@
 # Intraday Hunter Agent — Validation Log (session memory)
 
-**Status:** Agent prototyped + heavily backtested. NOT wired into the backend yet (design-spec
-tasks 5–14 pending). This doc is the continuity reference — read it + `intraday-hunter-agent.md`
-to resume after context summarization.
+**Status:** Agent prototyped + heavily backtested. **Variant C (the 2 calibration fixes) VALIDATED as
+the new baseline** — adopt C. NOT wired into the backend yet (design-spec tasks 5–14 pending). This doc
+is the continuity reference — read it + `intraday-hunter-agent.md` to resume after summarization.
 **Last updated:** 2026-06-20
+
+## ⭐ RESUME HERE — current decision + next steps
+- **Adopt variant C.** It beat baseline A across BOTH regimes (same ~79% accuracy when it commits, but
+  nearly 2× the correct trades, discipline intact). Numbers below in "C RESULT".
+- **Two gates remain before trusting C with capital** (neither done):
+  1. **Non-determinism stability** — run C ×3 on one window, measure how much the decisions vary
+     (Opus is stochastic, `temperature` removed on 4.8). Decide if majority-vote (N=3/5) is needed.
+  2. **Real option P&L** — everything so far is INDEX DIRECTION; theta + tight stop killed S7. Needs an
+     options-layer test (resolve ATM CE/PE premiums on the agent's entries).
+- Then: **build the backend** (tasks 5–14 in `intraday-hunter-agent.md`) using the **C** prompt.
+- Variants live in `prompts.py` (`build_system_prompt("A"|"B"|"C")`); run via `simulate.py --variant C`.
+- Baseline A is committed (revert point) at `f443449`; C committed on top (see git log).
+
+## C RESULT (2026-06-20) — the 2 fixes worked, adopt C
+Graded by "right side" = the side that actually paid (from his verified result), 2-hour hold window.
+- **Bear (9 down days, Mar 23–30 + Mar 6–13 + May 8–12):** A bought PUT 2 / skip 6 / wrong-CALL 1  →
+  **C bought PUT 4 / skip 3 / wrong-CALL 2.** Gap-down→PE-continuation fix confirmed (Mar 30 skip→PUT✓).
+- **Bull (June 1–19):** A right-side 4 / wrong 1 / skip 10  →  **C right-side 7 / wrong 1 / skip 7**, and
+  C still **correctly skipped the genuine chop/loss days (Jun 2, 16)** AND took the **correct contrarian
+  PUT on Jun 19** (where the human LOST buying CALL). Discipline held.
+- **Combined: A 8 entries (6 right/2 wrong, 75%) → C 14 entries (11 right/3 wrong, 79%).** ~2× the correct
+  trades at the same accuracy, both directions, no erosion of the chop-skip.
+- Caveats unchanged: single C run (non-determinism), index-direction not option P&L, his self-reported size.
 
 ## What exists (code)
 - `backend/app/services/intraday_hunter/`: `prompts.py` (system prompt + 7 few-shot exemplars +
