@@ -5,17 +5,31 @@ the new baseline** — adopt C. NOT wired into the backend yet (design-spec task
 is the continuity reference — read it + `intraday-hunter-agent.md` to resume after summarization.
 **Last updated:** 2026-06-20
 
-## ⭐ RESUME HERE — current decision + next steps
-- **Adopt variant C.** It beat baseline A across BOTH regimes (same ~79% accuracy when it commits, but
-  nearly 2× the correct trades, discipline intact). Numbers below in "C RESULT".
-- **Two gates remain before trusting C with capital** (neither done):
-  1. **Non-determinism stability** — run C ×3 on one window, measure how much the decisions vary
-     (Opus is stochastic, `temperature` removed on 4.8). Decide if majority-vote (N=3/5) is needed.
-  2. **Real option P&L** — everything so far is INDEX DIRECTION; theta + tight stop killed S7. Needs an
-     options-layer test (resolve ATM CE/PE premiums on the agent's entries).
-- Then: **build the backend** (tasks 5–14 in `intraday-hunter-agent.md`) using the **C** prompt.
-- Variants live in `prompts.py` (`build_system_prompt("A"|"B"|"C")`); run via `simulate.py --variant C`.
-- Baseline A is committed (revert point) at `f443449`; C committed on top (see git log).
+## ⭐ RESUME HERE — DECISION: go straight to IMPLEMENTATION
+- **Adopt variant C** (validated; beat A across bull+bear — see "C RESULT"). Use `build_system_prompt("C")`
+  everywhere in the backend. A/B/C live in `prompts.py`; A=`f443449` revert point, C=`57b8347`.
+- **DECISION (2026-06-24): build the backend + UI now (design-spec tasks 5–14), MANUAL-alert only.**
+  The two validation gates are **DEFERRED to live paper-trading**, not done offline:
+  1. Non-determinism — observe decision stability live; add majority-vote later only if it's a problem.
+  2. Real option P&L — measured live from the paper book (the page logs every suggestion); index
+     direction ≠ option win-rate (the S7 trap) — so do NOT put capital behind it until the paper book
+     confirms real-premium profitability. Ship MANUAL-alert (suggestion only), never YOLO.
+- **Build order** (from `intraday-hunter-agent.md` §file map): table+migration → thesis.py (Call 1) →
+  decision.py (Call 2) → watcher.py → autorun (08:45 task + candle-close hook) → API → /intraday-hunter
+  page → validation logging → docs registries → simulated-mode E2E. Reuse the existing pure modules
+  (prompts/charts/context/llm_cli) — they're done and validated.
+
+## ⚠ PRODUCTION PREREQUISITES (do NOT forget — the LLM call won't work in prod without these)
+- The `claude` CLI must be **installed in the production backend container/VM** (it's only on the dev
+  machine today). Add it to the backend Docker image build (`infrastructure/docker/`) — pull the binary
+  from github.com/anthropics or `npm i -g @anthropic-ai/claude-code` in the image.
+- `CLAUDE_CODE_OAUTH_TOKEN` must be present as a **container env var in prod**, sourced from a **GitHub
+  Actions secret** (the deploy pipeline injects it). Generate via `claude setup-token` on a browser
+  machine; it draws on the Pro/Max subscription (not API credits). Rotate the dev token in
+  `scripts/claude_oauth_test.py` (gitignored) — never ship it.
+- `llm_cli.py` already reads `CLAUDE_CODE_OAUTH_TOKEN` from env and drops `ANTHROPIC_API_KEY`. mplfinance
+  must also be in the image (added to `backend/pyproject.toml`? — verify; it was pip-installed in dev).
+- Deploy BEFORE market open (no backend restarts during 9:15–15:30 IST market hours).
 
 ## C RESULT (2026-06-20) — the 2 fixes worked, adopt C
 Graded by "right side" = the side that actually paid (from his verified result), 2-hour hold window.
