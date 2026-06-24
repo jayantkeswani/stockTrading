@@ -19,6 +19,26 @@ is the continuity reference — read it + `intraday-hunter-agent.md` to resume a
   page → validation logging → docs registries → simulated-mode E2E. Reuse the existing pure modules
   (prompts/charts/context/llm_cli) — they're done and validated.
 
+## IMPLEMENTATION CHECKLIST (new session: recreate this as your own TaskList via TaskCreate)
+Task numbers from the prior session were ephemeral; this is the canonical, durable list. Build in order;
+reuse the DONE pure modules (prompts.py, charts.py, context.py, llm_cli.py — validated, variant C is final).
+1. `intraday_hunter_runs` table + Alembic migration (schema in `intraday-hunter-agent.md` §Data model).
+2. `thesis.py` — Call 1 (~08:45): build context (per-index prev-day structure, multi-day structural memory
+   from prior run rows, India VIX, calendar/expiry) → render prev-day charts → call Claude (variant C) → persist.
+3. `decision.py` — Call 2: live open/gap/first-candles + prior decisions → opening chart → call Claude →
+   parse full-plan JSON → persist (append call2_history).
+4. `watcher.py` — 09:18 start, WAIT→recheck 1–2 min capped 09:30, prior decisions fed back, single-direction basket.
+5. Autorun — 08:45 scheduled task + hook the watcher into the existing 1m candle-close loop (no cron; respect
+   simulated-mode + market-open gates).
+6. API — GET /today, GET /history, POST /run-call1, POST /run-call2, GET /chart/{run_id}/{which} + schemas +
+   frontend api.ts/types.ts.
+7. `/intraday-hunter` Next.js page + components (Today view: status chip, Call 1 thesis, Call 2 decision with
+   confidence/basket/excluded/rationale/charts; + history timeline). Polled REST ~15–30s. Sidebar nav link.
+8. Validation logging — every Call 2 persisted; outcome scored later from the live paper book.
+9. Docs (MANDATORY) — backend/CLAUDE.md + frontend/CLAUDE.md + ARCHITECTURE.md registries; flip
+   `intraday-hunter-agent.md` status DESIGN→BUILT.
+10. End-to-end test in simulated mode (local DB 5433 + market simulator). `make test`.
+
 ## ⚠ PRODUCTION PREREQUISITES (do NOT forget — the LLM call won't work in prod without these)
 - The `claude` CLI must be **installed in the production backend container/VM** (it's only on the dev
   machine today). Add it to the backend Docker image build (`infrastructure/docker/`) — pull the binary
