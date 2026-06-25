@@ -59,6 +59,10 @@ from app.tasks.nse_bhav_copy_task import start_nse_bhav_copy_scheduler, stop_nse
 from app.tasks.fo_ban_list_task import start_fo_ban_list_scheduler, stop_fo_ban_list_scheduler
 from app.tasks.sector_update_task import start_sector_update_scheduler, stop_sector_update_scheduler
 from app.tasks.signal_expiry_task import start_signal_expiry_scheduler, stop_signal_expiry_scheduler
+from app.tasks.intraday_hunter_task import (
+    start_intraday_hunter_scheduler,
+    stop_intraday_hunter_scheduler,
+)
 from app.agent.agent_runner import agent_runner
 from app.agent.telegram_bot import start_telegram_bot, stop_telegram_bot
 from app.services import trading_config as _trading_config_svc
@@ -336,6 +340,9 @@ async def lifespan(app: FastAPI):
     await start_sector_update_scheduler()
     task_registry.register("sector_update_scheduler", TaskType.SCHEDULER, metadata={"schedule": "daily 07:00 IST"})
 
+    await start_intraday_hunter_scheduler()
+    task_registry.register("intraday_hunter_scheduler", TaskType.SCHEDULER, metadata={"schedule": "Call 1 thesis 08:45 IST"})
+
     # --- Telegram bot (inbound command polling — lightweight, stays before yield) ---
     t_tg = start_telegram_bot()
     if t_tg:
@@ -385,6 +392,9 @@ async def lifespan(app: FastAPI):
 
     await stop_sector_update_scheduler()
     task_registry.update_status("sector_update_scheduler", TaskStatus.STOPPED)
+
+    await stop_intraday_hunter_scheduler()
+    task_registry.update_status("intraday_hunter_scheduler", TaskStatus.STOPPED)
 
     await ws_manager.disconnect_all()
     print("StockTrading backend stopped.")

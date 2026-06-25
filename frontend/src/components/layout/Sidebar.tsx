@@ -8,6 +8,7 @@ const navItems = [
   { href: "/", label: "Dashboard", icon: "grid" },
   { href: "/intraday-futures", label: "Futures", icon: "trending" },
   { href: "/options", label: "Options", icon: "options" },
+  { href: "/intraday-hunter", label: "Hunter", icon: "target" },
   { href: "/research", label: "Research", icon: "search" },
   { href: "/trades", label: "Trades", icon: "list" },
   { href: "/signals", label: "Signals", icon: "zap" },
@@ -49,6 +50,13 @@ const icons: Record<string, ReactNode> = {
   options: (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  ),
+  target: (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <circle cx={12} cy={12} r={8} strokeWidth={1.5} />
+      <circle cx={12} cy={12} r={3.5} strokeWidth={1.5} />
+      <path strokeLinecap="round" strokeWidth={1.5} d="M12 2v3M12 19v3M2 12h3M19 12h3" />
     </svg>
   ),
   settings: (

@@ -519,3 +519,86 @@ export interface S5SetupPerformance {
     trades: number;
   };
 }
+
+// ── Intraday Hunter agent ────────────────────────────────────────────────────
+// The Call 1/Call 2 payloads are the (free-form) LLM JSON; known fields typed, extras allowed.
+export interface IHLeg {
+  index: string;
+  strike?: string;
+  option_type?: "CE" | "PE";
+  side?: string;
+}
+
+export interface IHExcludedIndex {
+  index: string;
+  reason?: string;
+}
+
+export interface IHCall1 {
+  trapped_side?: string;
+  thesis?: string;
+  regime_lean?: string;
+  preferred_action_lean?: string;
+  conditional_plan?: { if_gap_down?: string; if_flat_or_gap_up?: string };
+  trigger_levels?: Record<string, number>;
+  invalidation?: Record<string, number>;
+  expected_range_note?: string;
+  is_expiry?: boolean;
+  expiry_index?: string | null;
+  notes?: string;
+  error?: string;
+  [k: string]: unknown;
+}
+
+export interface IHCall2 {
+  decision?: "ENTER" | "WAIT" | "SKIP";
+  regime?: string;
+  direction?: "CE" | "PE" | null;
+  trapped_side?: string;
+  thesis?: string;
+  legs?: IHLeg[];
+  excluded_indices?: IHExcludedIndex[];
+  entry_trigger?: string;
+  invalidation_level?: number;
+  target?: string;
+  is_expiry?: boolean;
+  confidence?: number;
+  rationale?: string;
+  recheck_in_minutes?: number | null;
+  _at?: string;
+  note?: string;
+  [k: string]: unknown;
+}
+
+export interface IntradayHunterRun {
+  id: string | null;
+  trading_date: string;
+  status: string; // PENDING / THESIS_READY / WATCHING / ENTER / WAIT / SKIP
+  is_expiry: boolean;
+  expiry_index: string | null;
+  call1_json: IHCall1 | null;
+  call2_json: IHCall2 | null;
+  call2_history: IHCall2[];
+  decision: string | null;
+  direction: string | null;
+  confidence: number | null;
+  outcome_played_out: boolean | null;
+  realized_outcome_note: string | null;
+  chart_urls: { prevday: Record<string, string>; opening: Record<string, string> };
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface IntradayHunterHistoryItem {
+  trading_date: string;
+  status: string;
+  decision: string | null;
+  direction: string | null;
+  confidence: number | null;
+  is_expiry: boolean;
+  expiry_index: string | null;
+  trapped_side: string | null;
+  thesis: string | null;
+  outcome_played_out: boolean | null;
+  realized_outcome_note: string | null;
+}

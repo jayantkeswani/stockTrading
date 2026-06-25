@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     # NOTE: fire_confidence_threshold removed — now per-strategy as min_confidence_to_persist
     # in strategy_configs.parameters JSONB (see services/strategy_params.py)
 
+    # Intraday Hunter agent (discretionary index-options trade SUGGESTER, MANUAL-alert only).
+    # Autorun = an 08:45 IST Call 1 (thesis) scheduled task + a Call 2 watcher hooked into the
+    # 1m candle-close loop (09:18-09:30). Off → neither fires (the /intraday-hunter page + the
+    # manual run-call1/run-call2 endpoints still work). The LLM call uses the `claude` CLI on
+    # CLAUDE_CODE_OAUTH_TOKEN (subscription, not API credits) — when absent the calls SKIP safely.
+    intraday_hunter_enabled: bool = True
+    intraday_hunter_variant: str = "C"  # validated prompt variant (build_system_prompt)
+
     # Market Mode
     market_mode: str = "live"  # "live" | "simulated"
     simulator_url: str = "http://localhost:8787"

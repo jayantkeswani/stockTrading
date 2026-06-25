@@ -69,3 +69,6 @@ scripts/intraday_hunter/data/
 infrastructure/terraform/.terraform/
 infrastructure/terraform/.terraform.lock.hcl
 infrastructure/terraform/terraform.tfstate*
+
+# scratch: holds a Claude OAuth token, never commit
+scripts/claude_oauth_test.py

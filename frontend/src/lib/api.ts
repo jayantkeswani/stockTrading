@@ -1,10 +1,15 @@
-import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance, IntradayBias } from "./types";
+import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance, IntradayBias, IntradayHunterRun, IntradayHunterHistoryItem } from "./types";
 
 function getApiBase(): string {
   if (typeof window === "undefined") return "http://localhost:8080";
   const { hostname, port, protocol } = window.location;
   if (port === "3000") return `http://${hostname}:8080`;
   return `${protocol}//${hostname}`;
+}
+
+/** Absolute URL for a backend path (e.g. for <img src> chart images). */
+export function apiUrl(path: string): string {
+  return `${getApiBase()}${path}`;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -423,5 +428,26 @@ export const api = {
       `/api/v1/trades/margin-analysis`,
       { method: "POST", body: JSON.stringify({ trade_ids: tradeIds }) }
     ),
+
+  // Intraday Hunter agent
+  getIntradayHunterToday: () =>
+    request<IntradayHunterRun>(`/api/v1/intraday-hunter/today`),
+  getIntradayHunterHistory: (limit = 30) =>
+    request<IntradayHunterHistoryItem[]>(`/api/v1/intraday-hunter/history?limit=${limit}`),
+  runIntradayHunterCall1: (runDate?: string) =>
+    request<IntradayHunterRun>(
+      `/api/v1/intraday-hunter/run-call1${runDate ? `?run_date=${runDate}` : ""}`,
+      { method: "POST" }
+    ),
+  runIntradayHunterCall2: (opts: { runDate?: string; at?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (opts.runDate) params.set("run_date", opts.runDate);
+    if (opts.at) params.set("at", opts.at);
+    const qs = params.toString();
+    return request<IntradayHunterRun>(
+      `/api/v1/intraday-hunter/run-call2${qs ? `?${qs}` : ""}`,
+      { method: "POST" }
+    );
+  },
 
 };
