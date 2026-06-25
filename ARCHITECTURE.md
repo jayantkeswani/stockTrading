@@ -326,6 +326,30 @@ Strategy 5 uses dynamic symbols (Redis watchlist, not DB config).
 get_auto_strategies_for_symbol() calls strategy.get_symbols() for dynamic matching.
 ```
 
+### 4c. Intraday Hunter Agent (discretionary index-options SUGGESTER — MANUAL-alert only)
+```
+A human-like LLM agent that reasons like the @IntradayHunter trader (stop-loss-hunting /
+trapped-trader framework) and SUGGESTS a CE/PE basket (or SKIP) near the open. It NEVER
+auto-executes — it only writes intraday_hunter_runs rows and surfaces them on /intraday-hunter.
+
+08:45 AM  — Call 1 (pre-open thesis): intraday_hunter_task.py → thesis.run_call1()
+             Builds per-index prev-day structure + multi-day STRUCTURAL memory (no P&L) +
+             India VIX + expiry calendar → renders mplfinance prev-day charts → calls Claude
+             (variant C, claude CLI on CLAUDE_CODE_OAUTH_TOKEN, inline base64 charts) →
+             persists call1_json (status THESIS_READY).
+09:18–09:30 — Call 2 (decision): IntradayHunterWatcher hooks the NIFTY 1m candle-close in
+             feed_manager._emit_candle → decision.run_call2(). Live open/gap/first-candles +
+             prior decisions + opening charts → Claude → ENTER/WAIT/SKIP + single-direction
+             basket. ENTER/SKIP finalizes the day; WAIT reschedules (recheck 1-2m) capped 09:30;
+             09:30 backstop finalizes. Every Call 2 appended to call2_history (validation log).
+
+LLM transport: `claude -p --input-format stream-json` single-turn with inline base64 chart
+images (no API credits — subscription OAuth). Returns None → treated as SKIP (fail-safe).
+Gated by settings.intraday_hunter_enabled. Fully exercisable in MARKET_MODE=simulated +
+via POST /run-call1 / /run-call2. Validation (index direction ≠ option win-rate) deferred to
+the live paper book — no capital until real-premium profit is confirmed. Spec: docs/ai/intraday-hunter-agent.md.
+```
+
 ### 5. Fyers Authentication Flow
 ```
 Option A (Manual): User visits /api/v1/auth/fyers/login → Fyers OAuth → callback → token stored in Redis

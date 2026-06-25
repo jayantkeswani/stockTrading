@@ -1,7 +1,22 @@
 # Intraday Hunter Agent — Design Spec
 
-**Status:** DESIGN (not yet built). This document is the blueprint a fresh session implements from.
-**Last updated:** 2026-06-19
+**Status:** BUILT (2026-06-24) — live as a MANUAL-alert suggester; the two validation gates
+(non-determinism, real-option P&L) are deferred to live paper-trading. This document is the
+blueprint; the implementation matches it (see the File map below for the shipped files).
+**Last updated:** 2026-06-24
+
+> **As-built notes (where the implementation refines this spec):**
+> - Prompt: **variant C** is the validated baseline used everywhere (`build_system_prompt("C")`,
+>   `settings.intraday_hunter_variant`). The Call 2 schema fields are `legs[]` (index/strike/option_type/side)
+>   + `excluded_indices[]` (not `basket`); the Call 1 schema adds `regime_lean`/`preferred_action_lean`.
+> - Autorun: Call 1 = an 08:45 IST scheduled task (`app/tasks/intraday_hunter_task.py`); Call 2 = the
+>   `IntradayHunterWatcher` hooked into the NIFTY 1m candle-close in `feed_manager._emit_candle`.
+>   Gated by `settings.intraday_hunter_enabled`. The watcher lazily runs Call 1 if the 08:45 task missed.
+> - Data model: chart paths are stored as dicts (`call1_chart_paths={index:path}`,
+>   `call2_chart_paths={prevday:{idx:path}, opening:{idx:path}}`); the chart API key is `prevday_{INDEX}` / `opening_{INDEX}`.
+> - Every Call 2 (incl. failures) is appended to `call2_history` with `_at` + per-index `_decision_price`
+>   — the engine-independent validation log for live scoring.
+> - The OAuth-token security item below is resolved (token is env/secret-only; `scripts/claude_oauth_test.py` gitignored).
 **Goal:** A discretionary, human-like AI agent that reasons the way the @IntradayHunter trader does — reads the previous day's structure, forms a "who is trapped" thesis, then at the open decides whether to buy CE or PE (or skip) across the NIFTY/BANKNIFTY/SENSEX index-options basket. It **suggests** a full trade plan for a human to execute. It is **not** a mechanical strategy and is **not** auto-executed.
 
 > **Why an agent and not a rule:** the independent validation in `docs/strategies/intraday-hunter-study.md` §Phase 4 showed his *setups* mostly don't carry a mechanical edge (only the −2% gap-down reversal survives), yet he is plausibly profitable — because his edge is in the *discretionary reading and execution*, not a formula. So we replicate his judgment process, with discipline guardrails, and validate the suggestions honestly.

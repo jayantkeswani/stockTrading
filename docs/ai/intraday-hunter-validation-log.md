@@ -1,14 +1,16 @@
 # Intraday Hunter Agent — Validation Log (session memory)
 
-**Status:** Agent prototyped + heavily backtested. **Variant C (the 2 calibration fixes) VALIDATED as
-the new baseline** — adopt C. NOT wired into the backend yet (design-spec tasks 5–14 pending). This doc
-is the continuity reference — read it + `intraday-hunter-agent.md` to resume after summarization.
-**Last updated:** 2026-06-20
+**Status:** **BUILT (2026-06-24)** — the live feature (backend services + autorun + API + `/intraday-hunter`
+page) is implemented; variant C is the baseline (`build_system_prompt("C")`). The two validation gates
+(non-determinism, real-option P&L) are DEFERRED to live paper — every Call 2 is logged to
+`intraday_hunter_runs.call2_history` for scoring. This doc + `intraday-hunter-agent.md` (As-built notes)
+are the continuity reference. The IMPLEMENTATION CHECKLIST below is DONE (kept for history).
+**Last updated:** 2026-06-24
 
 ## ⭐ RESUME HERE — DECISION: go straight to IMPLEMENTATION
 - **Adopt variant C** (validated; beat A across bull+bear — see "C RESULT"). Use `build_system_prompt("C")`
   everywhere in the backend. A/B/C live in `prompts.py`; A=`f443449` revert point, C=`57b8347`.
-- **DECISION (2026-06-24): build the backend + UI now (design-spec tasks 5–14), MANUAL-alert only.**
+- **DECISION (2026-06-24): build the backend + UI now (design-spec), MANUAL-alert only.**
   The two validation gates are **DEFERRED to live paper-trading**, not done offline:
   1. Non-determinism — observe decision stability live; add majority-vote later only if it's a problem.
   2. Real option P&L — measured live from the paper book (the page logs every suggestion); index

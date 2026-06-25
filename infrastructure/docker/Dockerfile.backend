@@ -16,8 +16,13 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 curl && \
+    libpq5 curl ca-certificates nodejs npm && \
     rm -rf /var/lib/apt/lists/*
+
+# Claude Code CLI — the Intraday Hunter agent calls Claude via `claude -p` on the
+# CLAUDE_CODE_OAUTH_TOKEN (subscription, not API credits). Installed globally → /usr/local/bin/claude
+# (on PATH; shutil.which("claude") in llm_cli.py resolves it). Without the token the agent SKIPs safely.
+RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
 COPY --from=builder /install /usr/local
 COPY backend/ /app/

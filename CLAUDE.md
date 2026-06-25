@@ -317,7 +317,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 - `shadow-agent.md` — shadow executor design, isolation guarantees
 - `signal-confidence-agent.md` — LLM confidence overlay design
-- `intraday-hunter-agent.md` — **DESIGN spec** (not yet built) for the discretionary @IntradayHunter-style index-options agent: two-call flow (pre-open thesis → at-open ENTER/WAIT/SKIP decision), 9:15–9:30 watcher, single-direction variable basket, mplfinance charts via the `claude` CLI (OAuth), multi-day structural memory (no P&L), autorun via the backend scheduler, and a `/intraday-hunter` UI page (replaces Telegram). Full prompt templates + JSON schemas + 6 contrasting few-shot exemplars inside
+- `intraday-hunter-agent.md` — **BUILT** (live, MANUAL-alert SUGGESTER — never auto-executes) discretionary @IntradayHunter-style index-options agent: two-call flow (08:45 pre-open thesis → 09:18–09:30 watcher ENTER/WAIT/SKIP), single-direction variable basket, mplfinance charts via the `claude` CLI (subscription OAuth, variant C), multi-day structural memory (no P&L), autorun (scheduler + candle-close hook), `/intraday-hunter` UI page. Code: `backend/app/services/intraday_hunter/` (thesis/decision/watcher/store/data + prompts/charts/context/llm_cli) + `intraday_hunter_task.py` + `intraday_hunter_runs` table. Validation (index direction ≠ option win-rate) deferred to live paper — no capital until real-premium profit confirmed
 
 ### docs/backtest/
 

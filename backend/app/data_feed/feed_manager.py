@@ -204,6 +204,16 @@ class FeedManager:
             name=f"strategy_eval:{symbol}",
         )
 
+        # Drive the Intraday Hunter Call 2 watcher (09:18-09:30 IST window). Only the lead
+        # index (NIFTY) ticks it — one fire per minute — and only inside a real session.
+        if symbol == "NIFTY" and is_market_open(ts):
+            from app.services.intraday_hunter.watcher import intraday_hunter_watcher
+
+            asyncio.create_task(
+                intraday_hunter_watcher.on_candle_close(symbol, ts),
+                name="intraday_hunter_watcher",
+            )
+
     async def _persist_candle(self, symbol: str, candle: dict):
         """Save a completed 1m candle to the MarketData1m table.
 

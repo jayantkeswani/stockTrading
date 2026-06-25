@@ -11,7 +11,7 @@
 
 ## Module Map
 
-### `src/app/` - Pages (App Router, 10 pages)
+### `src/app/` - Pages (App Router, 11 pages)
 All pages use `'use client'` directive.
 
 - `layout.tsx` — Root layout with AppShell wrapper. Exports `viewport` (`width=device-width, initialScale=1, maximumScale=1`) so the responsive shell triggers on phones. Sets `data-theme="dark"` on `<html>` — the whole-app default (so desktop + pre-mount render dark with no flash); the mobile light theme overrides it on the MobileShell subtree only.
@@ -24,6 +24,7 @@ All pages use `'use client'` directive.
 - `chart/page.tsx` — Full TradingView chart page. Symbol tab row (all 5 indices + watchlist items).
 - `options/page.tsx` — Strategy 2 (VWAP Pullback) dedicated page. DayStatusBar-style header + window state badge. AgentLog in col-span-8.
 - `intraday-futures/page.tsx` — Strategy 5 dedicated page. Fixed DayStatusBar, fixed-height two-column grid (`h-[calc(100vh-96px)]`) with per-column `overflow-y-auto`. 8-col left (Watchlist + PermanentWatchlist), 4-col right (AgentLog, SetupPerformance, GlobalCues). Config managed via Settings page. ChartModal overlay pattern.
+- `intraday-hunter/page.tsx` — Discretionary index-options trade SUGGESTER (suggestions only, never auto-executed). Polls `api.getIntradayHunterToday()` + `api.getIntradayHunterHistory(30)` every 20s. Status bar: title, "SUGGEST only · manual exec" chip, StatusChip, expiry badge, last-updated, "Run Call 1"/"Force Call 2" manual test buttons. Disclaimer line ("index direction ≠ option win-rate — no capital until the paper book confirms"). Grid: 8-col left (ThesisCard + DecisionCard), 4-col right (HistoryTimeline).
 
 ### `src/components/` - React Components (by domain)
 
@@ -32,7 +33,7 @@ All pages use `'use client'` directive.
 - `Header.tsx` — Thin status bar (36px): IST clock, market status, VIX, Tasks/Fyers/Agent/WS indicators, "STARTING…" pulse when `data_feed_ready=false` (polls health every 3s until ready). Polls `getAllPrices()` + market status every 10s. Uses `useShallow` selector (no price-tick re-renders). `BiasIndicator` sub-component uses scoped `(s) => s.intradayBias` selector (always full-strength — no staleness dimming, identical to the mobile status bar). Hydrates `intradayBias` once on mount via `api.getIntradayBias()` (covers a cold load and after-close display; the persisted store value covers refreshes; WS `market:bias_update` keeps it live).
 - `TasksPopup.tsx` — Background tasks popup (click-to-open). Shows all registered tasks with status dots, type badges, schedule/description, timestamps, errors. Polls every 5s while open.
 - `AgentPopup.tsx` — Agent control popup: start/stop, SEMI/YOLO toggle, positions monitored, pending confirmations, uptime. Profit Cap section shows per-profile cap status with current P&L vs cap for each active profile. Reads Zustand store, writes via API. Click-outside to close.
-- `Sidebar.tsx` — Narrow icon rail (48px): Dashboard → Futures (trending-up) → Options (bar chart) → Research → Trades → Signals (zap) → Agent → Settings.
+- `Sidebar.tsx` — Narrow icon rail (48px): Dashboard → Futures (trending-up) → Options (bar chart) → Hunter (target / crosshair SVG) → Research → Trades → Signals (zap) → Agent → Settings.
 
 **charts/**
 - `PriceChart.tsx` — TradingView candlestick chart (1m/5m/15m/1h/1D). Active timeframe stored in Zustand. Refresh button re-fetches without recreating chart. Live updates via scoped `(s) => s.prices[s.selectedSymbol]` selector (re-renders only on selected symbol's price change, not all ticks). IST display: `localization.timeFormatter` (crosshair label) AND `timeScale.tickMarkFormatter` (bottom-axis tick labels) both add `IST_OFFSET` (19800s) — backend timestamps are fed as UTC unix seconds, do NOT shift them; both formatters are needed because `timeFormatter` covers only the crosshair, while the axis ticks default to UTC unless `tickMarkFormatter` is set. `fitContent()` always called after data load; `rightOffset: 5` reserves space. OHLC legend via `subscribeCrosshairMove`. Three-effect architecture: create/destroy chart, load data, live ticks. **Light-theme TODO** (full-app pass): chart colors are hardcoded for dark — it needs a `data-theme`-aware `layout`/`grid`/`crosshair` config before the light theme reaches any chart surface.
@@ -81,6 +82,12 @@ All pages use `'use client'` directive.
 - `SetupPerformance.tsx` — Collapsible per-setup win rate bars, W/L counts, P&L. Fetches via `getIntradayFuturesSetupPerformance()`.
 - `GlobalCues.tsx` — Collapsible morning briefing + global market cues. Manual `↻ refresh` button passes `force=true` to bypass Redis cache. Shows: overnight bias badge, global score bar (BiasBar), Nifty Gap, Nifty/S&P/Nasdaq/Dow Futures/Crude/USD-INR/DXY/India VIX/US VIX. `preopen_reassessed` shown as `pre-open ✓` badge.
 
+**intraday-hunter/**
+- `badges.tsx` — `StatusChip` (color-maps PENDING/THESIS_READY/WATCHING/ENTER/WAIT/SKIP), `DirectionBadge` (CE green / PE red), `confidenceColor(conf)` helper. Used by: intraday-hunter/page, DecisionCard, HistoryTimeline.
+- `ThesisCard.tsx` — Renders Call 1 thesis: trapped side, regime/action lean chips, thesis line, conditional plan (if_gap_down / if_flat_or_gap_up), per-index trigger/invalidation levels table, expected-range note, notes. Handles error stub and null state.
+- `DecisionCard.tsx` — Renders Call 2 decision: big decision word + DirectionBadge + confidence, basket legs, excluded indices, entry/invalidation/target cells, rationale, and a `ChartStrip` (opening/prev-day toggle; renders per-index chart PNGs via `apiUrl(run.chart_urls[kind][idx])`).
+- `HistoryTimeline.tsx` — Prior-day rows: date, expiry badge, direction/confidence/decision, thesis (line-clamp-2), trapped side, outcome_played_out (✓/✗), realized_outcome_note.
+
 **positions/**
 - `ActivePositions.tsx` — Dense table of open positions: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy, Close button. `P` badge on permanent watchlist positions (open) and closed-today trades. Expanded detail: Opened time + fill latency, Strategy, Expiry, Lots/Qty, Stop Loss, Target, Margin (`pos.margin_required` coerced via `Number()`). Closed Today section shows fill latency from `signal_snapshot.generated_at`. Watchlist button resolves symbol via `api.searchSymbols()`. Confidence filter from store. Source pills `[Manual | <profile1> | … | Shadow]` driven by `yoloProfiles` store — for profile mode, filters positions by `yolo_profile_id`; for manual mode, filters by `source === "MANUAL"`. Direction-aware P/L and SL distance via shared `livePositionPnl` (`lib/positionPnl.ts`) — direction is read from the backend's `unrealized_pnl` sign (immune to a stale `target_price`), so long PE/CE options never invert. Trailing SL and INVALIDATION exit reasons shown in amber. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks.
 
@@ -99,7 +106,7 @@ All pages use `'use client'` directive.
 ### `src/lib/` - Utilities
 
 #### lib/api.ts
-All API calls go through this module via a single `request()` helper (parses error responses — string/array/other `detail` shapes). Environment-aware base URL: port 3000 → `:8080`, otherwise same host.
+All API calls go through this module via a single `request()` helper (parses error responses — string/array/other `detail` shapes). Environment-aware base URL: port 3000 → `:8080`, otherwise same host. Exports `apiUrl(path)` — returns the absolute backend URL for a given path (used for `<img src>` chart image URLs, e.g. in `DecisionCard`'s `ChartStrip`).
 
 **Market**
 - `api.health()` — `GET /api/v1/health`. Returns `data_feed_ready` (bool) and `startup_error` (str|null) in addition to version/deployed_at. Used by: Header
@@ -192,6 +199,12 @@ All API calls go through this module via a single `request()` helper (parses err
 - `api.getOptionsWindowState()` — returns `{window_state, market_open}`. Used by: options/page
 - `api.getOptionsAgentLog(date?, offset?, limit?)` — returns `{entries, total}`. Used by: options/AgentLog
 
+**Intraday Hunter**
+- `api.getIntradayHunterToday()` — `GET /api/v1/intraday-hunter/today` → `IntradayHunterRun`. Used by: intraday-hunter/page
+- `api.getIntradayHunterHistory(limit=30)` — `GET /api/v1/intraday-hunter/history` → `IntradayHunterHistoryItem[]`. Used by: intraday-hunter/page
+- `api.runIntradayHunterCall1(runDate?)` — `POST /api/v1/intraday-hunter/run-call1`. Used by: intraday-hunter/page
+- `api.runIntradayHunterCall2({runDate?, at?})` — `POST /api/v1/intraday-hunter/run-call2`. Used by: intraday-hunter/page
+
 **Tasks**
 - `api.getTasks()` — `GET /api/v1/tasks` → `{tasks: BackgroundTask[]}`. Used by: TasksPopup
 
@@ -261,6 +274,12 @@ Shared open-position P&L math (used by `ActivePositions`, `PnLCard`, `MobilePosi
 - `PerTradeHoldResult` — `{trade_id, hold_exit_price, hold_pnl, hold_net_pnl, hold_charges_json, hold_exit_time, hold_outcome, data_found}`
 - `HoldAnalysisResponse` — `{results: PerTradeHoldResult[]}`
 - `HoldResultMap` — `Map<string, { hold_exit_price, hold_pnl, hold_net_pnl, hold_charges_json, hold_exit_time, hold_outcome }>` — populated from API response in `trades/page.tsx`
+- `IntradayHunterRun` — `{id, trading_date, status, is_expiry, expiry_index, call1_json: IHCall1|null, call2_json: IHCall2|null, call2_history, decision, direction, confidence, outcome_played_out, realized_outcome_note, chart_urls: {prevday: Record<string,string>, opening: Record<string,string>}, created_at, updated_at}`
+- `IntradayHunterHistoryItem` — compact prior-day row for `HistoryTimeline`: date, status, direction, confidence, decision, thesis_line, trapped_side, outcome_played_out, realized_outcome_note, is_expiry, expiry_index
+- `IHCall1` — free-form LLM thesis payload: trapped_side, regime_lean, action_lean, thesis_line, conditional_plan (if_gap_down / if_flat_or_gap_up), per_index_levels (trigger/invalidation per index), expected_range_note, notes
+- `IHCall2` — free-form LLM decision payload: decision (ENTER/WAIT/SKIP), direction (CE/PE), confidence, basket (IHLeg[]), excluded_indices (IHExcludedIndex[]), entry_note, invalidation_note, target_note, rationale
+- `IHLeg` — `{index, direction, rationale?}` — one basket leg in the Call 2 decision
+- `IHExcludedIndex` — `{index, reason}` — index excluded from the basket
 
 ---
 

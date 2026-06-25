@@ -110,6 +110,7 @@ Pydantic Settings loading from `.env`. Key groups:
 - **AI**: `GOOGLE_API_KEY` (AI Studio), `GCP_PROJECT_ID` (Vertex AI, takes precedence), `VERTEX_AI_LOCATION` (default "global"), `RESEARCH_LLM_MODEL` (flash), `RESEARCH_LLM_MODEL_PRO` (pro — for briefing, Stage 3, synthesis), `AI_CONFIDENCE_ENABLED`, `AI_CONFIDENCE_TIMEOUT_SECONDS` (25), `AI_CONFIDENCE_MIN_CONFIDENCE` (50 — skip the overlay below this raw confidence), `AI_CONFIDENCE_MAX_CONCURRENCY` (6 — cap simultaneous overlay LLM calls; sized below the observed ~11-concurrent Vertex DSQ saturation point)
 - **Telegram**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_IDS` (comma-separated), `TELEGRAM_ENABLED` (set False to disable all Telegram I/O — single kill switch for local dev alongside production). `settings.telegram_chat_id_set` property parses into a `set[str]`
 - **Market Simulator**: `MARKET_MODE` (`"live"` default, `"simulated"` for offline testing), `SIMULATOR_URL` (`http://localhost:8787`)
+- **Intraday Hunter**: `INTRADAY_HUNTER_ENABLED` (bool, default True — toggles the autorun: 08:45 thesis + the candle-close watcher), `INTRADAY_HUNTER_VARIANT` (str, default `"C"` — the validated prompt variant; A/B/C). `CLAUDE_CODE_OAUTH_TOKEN` is read directly from env by `llm_cli.py` (not a Pydantic field — subscription OAuth token used by the Claude CLI wrapper, not Anthropic API credits)
 - **Version**: `APP_VERSION` (semver tag set by deploy pipeline), `DEPLOYED_AT`
 - `model_config = extra="ignore"` — unrecognized `.env` vars (Telegram MTProto keys, etc.) don't crash startup
 
@@ -125,7 +126,7 @@ Pydantic Settings loading from `.env`. Key groups:
 
 1. `ensure_seeded()` — insert singleton `trading_config` row if absent
 2. Start config listener pubsub (`start_config_listener()`) + start profile listener pubsub (`start_profile_listener()`)
-3. Start all schedulers: Fyers login, symbol master, OI snapshot, fundamental data, daily summary, global market, morning workflow, bhav copy, F&O ban list, signal expiry, sector update
+3. Start all schedulers: Fyers login, symbol master, OI snapshot, fundamental data, daily summary, global market, morning workflow, bhav copy, F&O ban list, signal expiry, sector update, intraday hunter (Call 1 thesis 08:45)
 4. Start Telegram bot polling (`start_telegram_bot()`)
 5. Launch `_background_startup()` as fire-and-forget asyncio task
 
@@ -214,7 +215,7 @@ All window/deadline helpers accept optional `as_of: datetime | None` (defaults t
 
 ---
 
-### `app/models/` — SQLAlchemy ORM (17 tables)
+### `app/models/` — SQLAlchemy ORM (18 tables)
 
 All models extend `BaseModel` (UUID PK, `created_at`/`updated_at` TIMESTAMPTZ).
 
@@ -238,6 +239,7 @@ All models extend `BaseModel` (UUID PK, `created_at`/`updated_at` TIMESTAMPTZ).
 | `ResearchReport`       | `research_reports`        | AI research report: recommendation, confidence, report_json/markdown                                                                                                                                                                                                                                                                                          |
 | `ResearchAgentRun`     | `research_agent_runs`     | Per-agent run findings, summary, duration, data sources. FK cascade delete                                                                                                                                                                                                                                                                                    |
 | `YoloProfile`          | `yolo_profiles`           | `name`, `profit_cap` (INR), `is_active`, `sort_order`, `invalidation_persist` (INT, NULL/0 = thesis-invalidation exit disabled), `invalidation_quorum` (BOOL), `invalidation_strong_only` (BOOL, default true), `strategies` (JSONB list) + `setups` (JSONB list) — execution-side filters, empty = act on all, `min_confidence_for_execution` (Numeric, NULL = inherit the global trading_config.min_confidence_for_execution), `min_bias_strength` (String, NULL = no gate; "WEAK"/"MODERATE"/"STRONG" gates execution to signals whose stored stock intraday_bias.strength meets the bar — effectively S5-only), `min_adr` (Numeric, NULL = no filter; ADR% execution floor — only execute signals whose indicators.adr_pct ≥ this), `loss_cap` (Numeric, NULL/0 = no cap; per-profile DAILY loss cap magnitude, the symmetric twin of profit_cap), `per_lot_loss_stop` (Numeric, NULL/0 = off; per-position per-lot MTM loss stop magnitude). Multiple profiles run simultaneously — each signal creates one Trade+Position per active uncapped profile **that subscribes to it** (strategy + setup + bias + ADR filter). Trade monitor checks profit/loss caps per profile independently, runs the per-lot loss stop per open position, and when `invalidation_persist > 0` runs the S5/S6 thesis-invalidation exit per profile                                                                                                                                          |
+| `IntradayHunterRun`    | `intraday_hunter_runs`    | `trading_date` (Date, UNIQUE), `status` (PENDING/THESIS_READY/WATCHING/ENTER/WAIT/SKIP), `is_expiry` (Bool), `expiry_index` (str), `call1_json` (JSONB thesis from Claude Call 1), `call1_chart_paths` (JSONB `{index: path}`), `call2_json` (JSONB latest Call 2 decision), `call2_history` (JSONB array — every Call 2, the validation audit log), `call2_chart_paths` (JSONB `{prevday:{idx:path}, opening:{idx:path}}`), `decision`/`direction`/`confidence` (denormalized from latest Call 2), `outcome_played_out` (Bool, post-hoc, for memory snapshot), `realized_outcome_note` (Text, UI-only, never fed to prompts). Migration: `alembic/versions/f3d9a2c14e88_add_intraday_hunter_runs.py` (down_revision `e2b1c7d4f309`) |
 
 
 **Helper function** (module-level, `models/trade.py`):
@@ -257,10 +259,11 @@ Key additions (other schemas are standard CRUD):
 - `risk.py`: `RiskDashboardResponse(notional, risk, margin_utilized, is_profit_capped, closed_pnl, total_pnl, drawdown_pct, profiles: list[ProfileRiskSummary])`. `ProfileRiskSummary(id, name, profit_cap, current_pnl, is_capped)`. `is_profit_capped` = True when all active profiles are capped
 - `position.py`: `PositionResponse` includes `margin_required`, `signal_confidence`, `signal_generated_at`, `unrealized_pnl`, `current_price`, `is_permanent_watchlist`, `yolo_profile_id: UUID | None`
 - `yolo_profile.py`: `YoloProfileCreate(name, profit_cap, strategies=[], setups=[], min_confidence_for_execution: float|None, min_bias_strength: str|None, min_adr: float|None, loss_cap: float|None, per_lot_loss_stop: float|None)`, `YoloProfileUpdate(name?, profit_cap?, is_active?, sort_order?, invalidation_persist?, invalidation_quorum?, invalidation_strong_only?, strategies?, setups?, min_confidence_for_execution: float|None, min_bias_strength: str|None, min_adr: float|None, loss_cap: float|None, per_lot_loss_stop: float|None)`, `YoloProfileResponse(id, name, profit_cap, is_active, sort_order, is_capped_today: bool, invalidation_persist: int|None, invalidation_quorum: bool, invalidation_strong_only: bool, strategies: list[str], setups: list[str], min_confidence_for_execution: float|None, min_bias_strength: str|None, min_adr: float|None, loss_cap: float|None, per_lot_loss_stop: float|None)`. NOTE: the PATCH endpoint drops `None` via `exclude_none`, so the client sends `invalidation_persist=0` (not null) to disable, an empty list `[]` (not null) to clear a `strategies`/`setups` filter back to "all", a **negative value** (e.g. -1) to clear `min_confidence_for_execution` back to "inherit the global default", an empty string `""` (not null) to clear `min_bias_strength` back to "no gate", and **0** to clear `min_adr`/`loss_cap`/`per_lot_loss_stop` back to "off"
+- `intraday_hunter.py`: `IntradayHunterRunResponse` (full run + computed `chart_urls`; class methods `from_run(run)` → populated response, `pending_stub()` → placeholder for today with no run yet). `IntradayHunterHistoryItem` (compact prior-day row; `from_run(run)`)
 
 ---
 
-### `app/api/v1/` — REST API (16 routers, all under `/api/v1/`)
+### `app/api/v1/` — REST API (17 routers, all under `/api/v1/`)
 
 
 | Router           | File                                     | Key Endpoints                                                                                                                                                                                                                                                                                                               |
@@ -280,6 +283,7 @@ Key additions (other schemas are standard CRUD):
 | Tasks            | `tasks.py`                               | `GET /tasks` (all registered background tasks)                                                                                                                                                                                                                                                                              |
 | Auth             | `auth.py`                                | Fyers OAuth: login redirect + callback + token storage                                                                                                                                                                                                                                                                      |
 | Research         | `research.py`                            | `POST /start`, `GET /reports`, `GET /reports/{id}`, `DELETE /reports/{id}`                                                                                                                                                                                                                                                  |
+| Intraday Hunter  | `intraday_hunter.py`                     | `GET /intraday-hunter/today`, `GET /intraday-hunter/history?limit=N`, `POST /intraday-hunter/run-call1?run_date=`, `POST /intraday-hunter/run-call2?run_date=&at=HH:MM` (manual triggers; inline LLM call), `GET /intraday-hunter/chart/{run_id}/{which}` (serves rendered PNG; `which` = `prevday_{INDEX}` / `opening_{INDEX}`; path-restricted to `CHART_DIR`) |
 
 
 **Key router behaviors**:
@@ -440,6 +444,58 @@ All three backfill from Fyers historical API + persist via `ON CONFLICT DO NOTHI
 - `get_setup_performance(end_date, days=5) -> dict` — queries trades JOIN signals for setup_type; per-setup win rate / net PnL. Used by: intraday_futures API
 
 **Redis key prefix**: all S5 keys use `strat5:*` with 90-day TTL.
+
+#### `intraday_hunter/`
+
+Discretionary index-options trade SUGGESTER (MANUAL-alert only — never auto-executes). Two-call flow: pre-open thesis (Call 1, 08:45) → at-open ENTER/WAIT/SKIP decision (Call 2, 09:18–09:30). Uses Claude via the `claude` CLI OAuth token (subscription credits, not API key). Structural multi-day memory; no rupee P&L fed to prompts. Indices: NIFTY, BANKNIFTY, SENSEX.
+
+- `prompts.py` — system prompt (variants A/B/C; **variant C is the validated baseline**), 7 few-shot exemplars, Call 1/Call 2 templates, output schemas.
+  - `build_system_prompt(variant="A") -> str` — selects the system prompt variant. Used by: thesis, decision
+  - `build_call1_prompt(context) -> str` — pre-open thesis prompt with prior-day structure + calendar. Used by: thesis
+  - `build_call2_prompt(call1_output, live, prior_decisions) -> str` — at-open decision prompt with live gap/first-candle data + prior Call 2 history. Used by: decision
+  - `render_few_shot() -> str` — renders the 7 calibrated exemplars into the system prompt. Used by: build_system_prompt
+
+- `charts.py` — headless mplfinance renderers (Agg backend; no display).
+  - `render_prev_day_chart(index_name, candles, levels, out_dir, trading_date) -> str` — renders and saves prior-day OHLC+VWAP+key-levels chart; returns file path. Used by: thesis, decision
+  - `render_opening_chart(index_name, candles, levels, out_dir, trading_date) -> str` — renders opening-window candles (9:15–9:30 window); returns file path. Used by: decision
+
+- `context.py` — pure context builders (no DB I/O).
+  - `prev_day_structure(candles, index_name) -> dict` — computes OHLC, VWAP, key levels, gap from prior candles. Used by: thesis, decision
+  - `compute_levels(candles, index_name) -> dict` — PDH/PDL/VWAP/CPR/swing levels. Used by: prev_day_structure
+  - `build_call1_context(per_index_prev, multi_day_memory, calendar, india_vix=None) -> dict` — assembles the full JSON context for Call 1. Used by: thesis
+  - `build_call2_live(per_index_open, per_index_prev, per_index_opening_candles, now_hhmm, minutes_since_open, india_vix=None) -> dict` — assembles live context for Call 2 (gap, first-candle momentum, VIX). Used by: decision
+  - `expected_range(spot, vix)` — estimates expected daily range from VIX. Used by: build_call1_context, build_call2_live
+  - `gap_pct(today_open, prev_close)` — gap % helper. Used by: build_call2_live
+  - `INDICES` — tuple of tracked index names: `(NIFTY, BANKNIFTY, SENSEX)`
+
+- `llm_cli.py` — Claude CLI wrapper (single-turn `claude -p --input-format stream-json`).
+  - `call_claude_json(prompt, *, image_paths=None, required_keys=(), token=None, model=MODEL, timeout_s=300) -> dict | None` — embeds chart images as inline base64, calls Claude on the `CLAUDE_CODE_OAUTH_TOKEN` (reads from env directly), returns parsed JSON or None on any failure; caller treats None as SKIP. Used by: thesis, decision
+  - `MODEL = "claude-opus-4-8"` — default model constant
+
+- `data.py` — async-session DB helpers and calendar.
+  - `fetch_day(session, symbol, d) -> list[dict]` — fetches in-session 1m candles for a symbol on date `d` (timestamps as IST ISO strings). Used by: thesis, decision, API
+  - `prev_trading_date(session, symbol, d) -> date | None` — most recent trading date before `d` with candle data. Used by: thesis, decision
+  - `fetch_vix(session, d, upto=None) -> float | None` — reads India VIX from `market_data_1m` for date `d` (optionally up to `upto` timestamp). Used by: thesis, decision
+  - `compute_calendar(d) -> dict` — derives expiry flags: NIFTY weekly Tue / SENSEX weekly Thu; returns `{is_expiry, expiry_index, days_to_expiry}`. Used by: thesis
+  - `CHART_DIR` — chart output directory; env `INTRADAY_HUNTER_CHART_DIR`, default `/tmp/intraday_hunter_charts`. Used by: thesis, decision, API
+
+- `store.py` — persistence and multi-day structural memory.
+  - `get_run(session, trading_date) -> IntradayHunterRun | None` — fetch today's run row. Used by: thesis, decision, watcher, API
+  - `get_or_create_run(session, trading_date) -> IntradayHunterRun` — idempotent; creates PENDING row if absent. Used by: thesis, decision
+  - `recent_runs(session, before_date, limit=3) -> list[IntradayHunterRun]` — last N completed runs before a date (for multi-day memory). Used by: thesis
+  - `history(session, limit=30) -> list[IntradayHunterRun]` — all runs newest-first. Used by: API
+  - `build_memory_snapshot(runs) -> list[dict]` — converts runs to `[{date, trapped_side, direction, thesis_played_out}]` oldest-first; structural-only (NO rupee P&L fed to prompts). Used by: thesis
+
+- `thesis.py` — Call 1 (pre-open thesis, run at 08:45).
+  - `prepare_prev_day(session, trading_date) -> (per_index_prev, chart_paths)` — fetches prior-day candles + renders prev-day charts for all indices; shared with `decision.py`. Used by: run_call1, decision.run_call2
+  - `run_call1(session, trading_date, *, variant="C", model=llm_cli.MODEL, token=None) -> IntradayHunterRun` — builds full Call 1 context (prev-day structure + multi-day memory + VIX + calendar) → renders charts → calls Claude → persists `call1_json` + sets status `THESIS_READY`; on failure finalizes the day as `SKIP`. Used by: intraday_hunter_task (08:45), watcher (lazy if no thesis), API
+
+- `decision.py` — Call 2 (at-open ENTER/WAIT/SKIP, 09:18–09:30).
+  - `run_call2(session, trading_date, *, now=None, variant="C", model=llm_cli.MODEL, token=None) -> IntradayHunterRun | None` — builds live context (open gap, first candles, prior Call 2 decisions) → renders opening charts → calls Claude → persists latest `call2_json`, **appends** to `call2_history` (audit log), denormalizes `decision`/`direction`/`confidence` onto the run, sets status; LLM/parse failure writes `SKIP` record. Used by: watcher, API
+
+- `watcher.py` — singleton `IntradayHunterWatcher intraday_hunter_watcher` driven by candle closes.
+  - `on_candle_close(symbol, candle_ts)` — feed_manager hook; acts only on the NIFTY symbol during market hours; dispatches to `maybe_run` as a fire-and-forget task. Used by: feed_manager._emit_candle
+  - `maybe_run(today, now_t, *, variant=None)` — cadence: arm → `WATCHING` at open, fire Call 2 from 09:18, `WAIT` reschedules `recheck_in_minutes` (1–2 min) capped at 09:30, 09:30 backstop finalizes; single-flight guard prevents concurrent runs; re-derives finalization from persisted status (restart-safe); lazily runs Call 1 if no thesis exists. Used by: on_candle_close
 
 #### `strategy_runner.py`
 
@@ -779,6 +835,8 @@ Class: `FeedManager`
 
 **Market hours guard**: `_run_auto_strategy_evaluation` returns early when `is_market_open()` is False — prevents GATE log spam from REST quote fetches outside market hours. `_emit_candle` also guards DB persistence via `is_market_open(ts)`: only in-session candles (trading day, 09:15–15:30 IST) are written to `market_data_1m`; pre-open auction, post-close, and holiday/weekend ticks are still published to Redis/WS for display but never persisted. This stops stray off-hours rows from polluting `_query_previous_day` — a 17:44 IST holiday tick once did, blocking Strategy 2 for a full day (see `docs/s2-prevday-holiday-outage-2026-05-29.md`).
 
+**Intraday Hunter watcher hook**: `_emit_candle` also fires `intraday_hunter_watcher.on_candle_close(symbol, candle_ts)` (lazy import, fire-and-forget `asyncio.create_task`) on every NIFTY 1m candle close during market hours. This drives the Call 2 cadence (arm at open → fire from 09:18 → finalize at 09:30) without a separate polling loop. See `app/services/intraday_hunter/watcher.py`.
+
 ---
 
 ### `app/research/` — AI Research Agent System
@@ -948,6 +1006,7 @@ Phone-friendly card format (no monospace blocks). Futures show LONG/SHORT via `_
 | `morning_workflow_task.py` | 8:00 AM, 8:30 AM, 9:08 AM, 9:31 AM, 3:15 PM IST                                                            | Strategy 5 daily workflow: briefing → screener → pre-open reassessment → ORB level logging → EOD summary. Trade queries exclude shadow and scope to the default YOLO profile + MANUAL via `default_profile_trade_filter()`. Telegram hooks wrapped in try/except. All idempotent per day, skip non-trading days.                                                                                                                                                                            |
 | `fo_ban_list_task.py`      | 7:00 AM IST daily; once on startup                                                                         | Fetches and caches NSE F&O ban list to `nse:fo_ban_list:{date}` (24h TTL). JSON primary source, CSV fallback. Returns empty set on failure (graceful degradation).                                                                                                                                                                                                                                                |
 | `signal_expiry_task.py`    | 3:30 PM IST daily                                                                                          | Bulk-expires ALL remaining PENDING intraday strategy signals (`_INTRADAY_STRATEGIES`: VWAP Pullback, Intraday Futures, ORB, Gamma Scalping). No date filter — cleans up stale signals from prior days too. Positional strategies (CAN SLIM) exempt. Only runs on trading days.                                                                                                                                    |
+| `intraday_hunter_task.py`  | 8:45 AM IST daily                                                                                          | Runs Intraday Hunter Call 1 (pre-open thesis) via `thesis.run_call1()`. Gated on `settings.intraday_hunter_enabled` + trading day. Builds prior-day structure + multi-day memory + VIX + calendar context, renders prev-day mplfinance charts, calls Claude (variant C), persists `call1_json` + sets status `THESIS_READY`. Exports `start_intraday_hunter_scheduler()` / `stop_intraday_hunter_scheduler()`.   |
 
 
 ---
