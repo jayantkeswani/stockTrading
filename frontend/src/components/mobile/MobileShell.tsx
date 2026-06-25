@@ -9,16 +9,18 @@ import { MobileSignals } from "./MobileSignals";
 import { MobilePositions } from "./MobilePositions";
 import { MobileWatchlist } from "./MobileWatchlist";
 import { MobileTrades } from "./MobileTrades";
+import { MobileHunter } from "./MobileHunter";
 import { MobileChartModal } from "./MobileChartModal";
 import { MobileStatusBar } from "./MobileStatusBar";
 
-type Tab = "signals" | "positions" | "watchlist" | "trades";
+type Tab = "signals" | "positions" | "watchlist" | "trades" | "hunter";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "watchlist", label: "Watchlist", icon: "👁" },
   { key: "signals", label: "Signals", icon: "⚡" },
   { key: "positions", label: "Positions", icon: "◈" },
   { key: "trades", label: "Trades", icon: "▤" },
+  { key: "hunter", label: "Hunter", icon: "🎯" },
 ];
 
 /**
@@ -122,6 +124,7 @@ export function MobileShell() {
         {tab === "positions" && <MobilePositions refreshKey={refreshKey} />}
         {tab === "watchlist" && <MobileWatchlist refreshKey={refreshKey} onOpenChart={openChart} />}
         {tab === "trades" && <MobileTrades refreshKey={refreshKey} />}
+        {tab === "hunter" && <MobileHunter refreshKey={refreshKey} />}
       </main>
 
       {/* Bottom tab bar */}
@@ -136,7 +139,7 @@ export function MobileShell() {
               className="flex-1 flex flex-col items-center py-1"
             >
               <span
-                className={`flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg transition-colors ${
+                className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg transition-colors ${
                   active ? "bg-accent/10 text-accent" : "text-text-muted"
                 }`}
               >

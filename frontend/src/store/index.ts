@@ -189,8 +189,8 @@ interface AppState {
   setMobileTheme: (t: "dark" | "light") => void;
 
   // Mobile active tab (persisted) — restored on refresh
-  mobileTab: "signals" | "positions" | "watchlist" | "trades";
-  setMobileTab: (t: "signals" | "positions" | "watchlist" | "trades") => void;
+  mobileTab: "signals" | "positions" | "watchlist" | "trades" | "hunter";
+  setMobileTab: (t: "signals" | "positions" | "watchlist" | "trades" | "hunter") => void;
 
   // Mobile Watchlist active pill (persisted)
   watchlistFilter: "personal" | "screened" | "pinned";
