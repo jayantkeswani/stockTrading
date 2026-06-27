@@ -27,7 +27,9 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 COPY --from=builder /install /usr/local
 COPY backend/ /app/
 
-RUN mkdir -p /app/logs
+# /app/logs + /app/intraday_hunter_charts are mounted as named volumes in prod
+# (see docker-compose.prod.yml) so they survive container recreation on deploy.
+RUN mkdir -p /app/logs /app/intraday_hunter_charts
 
 WORKDIR /app
 

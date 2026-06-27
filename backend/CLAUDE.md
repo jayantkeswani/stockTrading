@@ -477,7 +477,7 @@ Discretionary index-options trade SUGGESTER (MANUAL-alert only — never auto-ex
   - `prev_trading_date(session, symbol, d) -> date | None` — most recent trading date before `d` with candle data. Used by: thesis, decision
   - `fetch_vix(session, d, upto=None) -> float | None` — reads India VIX from `market_data_1m` for date `d` (optionally up to `upto` timestamp). Used by: thesis, decision
   - `compute_calendar(d) -> dict` — derives expiry flags: NIFTY weekly Tue / SENSEX weekly Thu; returns `{is_expiry, expiry_index, days_to_expiry}`. Used by: thesis
-  - `CHART_DIR` — chart output directory; env `INTRADAY_HUNTER_CHART_DIR`, default `/tmp/intraday_hunter_charts`. Used by: thesis, decision, API
+  - `CHART_DIR` — chart output directory; env `INTRADAY_HUNTER_CHART_DIR`, default `/tmp/intraday_hunter_charts`. **In prod set to `/app/intraday_hunter_charts`, backed by the `st_ih_charts` named volume** (`docker-compose.prod.yml`) so chart history survives container recreation on deploy — the default `/tmp` is on the ephemeral container layer and every deploy wipes it. Used by: thesis, decision, API
 
 - `store.py` — persistence and multi-day structural memory.
   - `get_run(session, trading_date) -> IntradayHunterRun | None` — fetch today's run row. Used by: thesis, decision, watcher, API

@@ -52,7 +52,7 @@ Single GCE VM deployment on Google Cloud Platform. All services run as Docker co
 | Container | Image | Port | Volume | Restart |
 |-----------|-------|------|--------|---------|
 | `st-nginx` | nginx:alpine | 80→80 | nginx.conf (bind); DNS re-resolution via `resolver 127.0.0.11 valid=5s` | unless-stopped |
-| `st-backend` | ghcr.io/.../backend (Python 3.11) | 8080 (internal) | backend_logs; healthcheck: `curl /api/v1/tasks` (60s start_period) | unless-stopped |
+| `st-backend` | ghcr.io/.../backend (Python 3.11) | 8080 (internal) | backend_logs; st_ih_charts (Intraday Hunter chart PNGs at `/app/intraday_hunter_charts` via `INTRADAY_HUNTER_CHART_DIR` — persists chart history across deploys); healthcheck: `curl /api/v1/tasks` (60s start_period) | unless-stopped |
 | `st-frontend` | ghcr.io/.../frontend (Node 20) | 3000 (internal) | — | unless-stopped |
 | `st-postgres` | postgres:16-alpine | 5432 (internal) | st_postgres_data | unless-stopped |
 | `st-redis` | redis:7-alpine | 6379 (internal) | st_redis_data | unless-stopped |
