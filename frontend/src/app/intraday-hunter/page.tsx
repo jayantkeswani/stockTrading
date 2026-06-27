@@ -8,12 +8,14 @@ import { StatusChip } from "@/components/intraday-hunter/badges";
 import { ThesisCard } from "@/components/intraday-hunter/ThesisCard";
 import { DecisionCard } from "@/components/intraday-hunter/DecisionCard";
 import { HistoryTimeline } from "@/components/intraday-hunter/HistoryTimeline";
+import { HistoryDetailModal } from "@/components/intraday-hunter/HistoryDetailModal";
 
 const POLL_MS = 20000;
 
 export default function IntradayHunterPage() {
   const [run, setRun] = useState<IntradayHunterRun | null>(null);
   const [history, setHistory] = useState<IntradayHunterHistoryItem[]>([]);
+  const [historyDate, setHistoryDate] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -112,9 +114,13 @@ export default function IntradayHunterPage() {
           {run && <DecisionCard run={run} />}
         </div>
         <div className="col-span-12 lg:col-span-4">
-          <HistoryTimeline items={history} />
+          <HistoryTimeline items={history} onSelect={setHistoryDate} />
         </div>
       </div>
+
+      {historyDate && (
+        <HistoryDetailModal date={historyDate} onClose={() => setHistoryDate(null)} />
+      )}
     </div>
   );
 }

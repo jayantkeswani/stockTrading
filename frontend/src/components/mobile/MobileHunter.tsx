@@ -8,6 +8,7 @@ import { StatusChip } from "@/components/intraday-hunter/badges";
 import { ThesisCard } from "@/components/intraday-hunter/ThesisCard";
 import { DecisionCard } from "@/components/intraday-hunter/DecisionCard";
 import { HistoryTimeline } from "@/components/intraday-hunter/HistoryTimeline";
+import { HistoryDetailModal } from "@/components/intraday-hunter/HistoryDetailModal";
 
 const POLL_MS = 20000;
 
@@ -22,6 +23,7 @@ const POLL_MS = 20000;
 export function MobileHunter({ refreshKey }: { refreshKey?: number }) {
   const [run, setRun] = useState<IntradayHunterRun | null>(null);
   const [history, setHistory] = useState<IntradayHunterHistoryItem[]>([]);
+  const [historyDate, setHistoryDate] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -114,7 +116,11 @@ export function MobileHunter({ refreshKey }: { refreshKey?: number }) {
 
       <ThesisCard call1={run?.call1_json ?? null} generatedAt={run?.created_at} />
       {run && <DecisionCard run={run} />}
-      <HistoryTimeline items={history} />
+      <HistoryTimeline items={history} onSelect={setHistoryDate} />
+
+      {historyDate && (
+        <HistoryDetailModal date={historyDate} onClose={() => setHistoryDate(null)} />
+      )}
     </div>
   );
 }
