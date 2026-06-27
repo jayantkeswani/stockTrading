@@ -39,8 +39,13 @@ services:
       DATABASE_URL: postgresql+asyncpg://trader:${DB_PASSWORD:-trader_dev_123}@postgres:5432/stocktrading
       DATABASE_URL_SYNC: postgresql://trader:${DB_PASSWORD:-trader_dev_123}@postgres:5432/stocktrading
       REDIS_URL: redis://redis:6379/0
+      # Persist Intraday Hunter chart PNGs on a named volume — without this the
+      # default /tmp lives on the container's ephemeral layer and every deploy
+      # (docker compose up recreates st-backend) wipes the chart history.
+      INTRADAY_HUNTER_CHART_DIR: /app/intraday_hunter_charts
     volumes:
       - backend_logs:/app/logs
+      - st_ih_charts:/app/intraday_hunter_charts
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/tasks"]
       interval: 10s
@@ -80,3 +85,4 @@ volumes:
   st_postgres_data:
   st_redis_data:
   backend_logs:
+  st_ih_charts:
