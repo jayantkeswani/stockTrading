@@ -46,6 +46,18 @@ async def get_history(
     return [IntradayHunterHistoryItem.from_run(r) for r in runs]
 
 
+@router.get("/run/{run_date}", response_model=IntradayHunterRunResponse)
+async def get_run_by_date(run_date: date, db: AsyncSession = Depends(get_db)):
+    """Full run for a specific past trading date (thesis + decision + chart URLs). 404 if none.
+
+    Backs the History timeline's expand-to-popup detail view.
+    """
+    run = await store.get_run(db, run_date)
+    if run is None:
+        raise HTTPException(status_code=404, detail="no run for that date")
+    return IntradayHunterRunResponse.from_run(run)
+
+
 @router.post("/run-call1", response_model=IntradayHunterRunResponse)
 async def run_call1_endpoint(
     run_date: date | None = Query(None, description="trading date (default today)"),

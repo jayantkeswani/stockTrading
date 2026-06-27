@@ -434,6 +434,8 @@ export const api = {
     request<IntradayHunterRun>(`/api/v1/intraday-hunter/today`),
   getIntradayHunterHistory: (limit = 30) =>
     request<IntradayHunterHistoryItem[]>(`/api/v1/intraday-hunter/history?limit=${limit}`),
+  getIntradayHunterRun: (date: string) =>
+    request<IntradayHunterRun>(`/api/v1/intraday-hunter/run/${date}`),
   runIntradayHunterCall1: (runDate?: string) =>
     request<IntradayHunterRun>(
       `/api/v1/intraday-hunter/run-call1${runDate ? `?run_date=${runDate}` : ""}`,
