@@ -116,6 +116,17 @@ async def emit_signals_for_enter(session, run, live: dict) -> list[str]:
                            index, opt_type, spot)
             continue
 
+        # Subscribe the contract to the WS feed so live ticks flow into Redis BEFORE the
+        # shadow/YOLO trade opens — the trade monitor reads LTP from Redis for SL/target/MTM.
+        # IH bypasses strategy_runner._resolve_option (which normally does this), so we must
+        # subscribe here or the position would never get live prices (stale-data / no exits).
+        try:
+            from app.data_feed.fyers_ws_client import fyers_ws_client
+            await fyers_ws_client.subscribe_symbols([resolution.fyers_option_symbol])
+        except Exception:  # noqa: BLE001 — never block the signal on a subscribe hiccup
+            logger.warning("intraday_hunter: could not subscribe %s to WS",
+                           resolution.fyers_option_symbol)
+
         premium = float(resolution.option_premium)
         # Clamp the premium stop to a sane band, then set the target 1:1 on premium.
         raw_sl_frac = (premium - float(resolution.sl_price)) / premium if premium > 0 else IH_PREMIUM_SL_FALLBACK
