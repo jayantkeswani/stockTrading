@@ -243,8 +243,8 @@ Shared open-position P&L math (used by `ActivePositions`, `PnLCard`, `MobilePosi
 
 #### lib/constants.ts
 - `SYMBOLS` — `["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "MIDCPNIFTY"]` as const. Used by: SymbolSelector, PriceChart, ChartModal
-- `STRATEGY_LABELS` — `Record<string, string>`: `orb` → "ORB", `vwap_pullback` → "VWAP Pullback", `gamma_scalping` → "Gamma Scalp", `can_slim` → "CAN SLIM", `intraday_futures` → "Intraday Futures", `breakout_retest` → "Breakout Retest". Used by: ScannerHeader, signal cards, trade rows
-- `STRATEGY_SETUPS` — `Record<string, string[]>` mapping each filterable strategy → its setup_types (e.g. `breakout_retest` → `["ORB_RETEST","PDH_PDL_RETEST","SWING_RETEST"]`); `FILTERABLE_STRATEGIES` = its keys. Drive the per-profile strategy/setup execution filter in Settings → YOLO Profiles. Used by: settings/page
+- `STRATEGY_LABELS` — `Record<string, string>`: `orb` → "ORB", `vwap_pullback` → "VWAP Pullback", `gamma_scalping` → "Gamma Scalp", `can_slim` → "CAN SLIM", `intraday_futures` → "Intraday Futures", `breakout_retest` → "Breakout Retest", `vwap_reclaim` → "VWAP Reclaim", `intraday_hunter` → "Intraday Hunter". Used by: ScannerHeader, signal cards, trade rows
+- `STRATEGY_SETUPS` — `Record<string, string[]>` mapping each filterable strategy → its setup_types (e.g. `breakout_retest` → `["ORB_RETEST","PDH_PDL_RETEST","SWING_RETEST"]`); `FILTERABLE_STRATEGIES` = its keys. Option strategies (`vwap_pullback`, `vwap_reclaim`, `can_slim`, `intraday_hunter`) have no setups (`[]`) → a strategy chip with no setup sub-chips. Drive the per-profile strategy/setup execution filter in Settings → YOLO Profiles. Used by: settings/page
 - `STATUS_COLORS` — `Record<string, string>` Tailwind classes per signal/trade status (OPEN/CLOSED/PENDING/EXECUTED/REJECTED/EXPIRED). Used by: signal and trade status badges
 - `getWsUrl()` — environment-aware WS URL: port 3000 → `ws://{host}:8080/ws`, otherwise `ws://{host}/ws`. Used by: useWebSocket
 - `Timeframe` — type `"1m" | "5m" | "15m" | "1h" | "1D"`. Used by: PriceChart, store
