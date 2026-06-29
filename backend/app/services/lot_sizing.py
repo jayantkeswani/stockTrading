@@ -14,6 +14,11 @@ from app.services.trading_config import get_trading_config
 
 logger = logging.getLogger(__name__)
 
+# Intraday Hunter fixed basket size (lots per index) — replicates the discretionary
+# trader's basket; not capital-risk-scaled. Shadow still uses 1 lot.
+_IH_FIXED_LOTS = {"BANKNIFTY": 4, "NIFTY": 2, "SENSEX": 2}
+_IH_FIXED_LOTS_DEFAULT = 2
+
 
 async def compute_lots_for_yolo(
     signal,
@@ -54,6 +59,11 @@ async def compute_lots_for_yolo(
             },
             indicators=indicators,
         )
+    elif signal.strategy_name == "intraday_hunter":
+        # Intraday Hunter trades a FIXED-size index-options basket (replicating the
+        # discretionary trader's basket), NOT capital-risk-scaled. Fixed lots per index;
+        # `signal.symbol` is the index short name (NIFTY/BANKNIFTY/SENSEX).
+        lots = _IH_FIXED_LOTS.get(signal.symbol, _IH_FIXED_LOTS_DEFAULT)
     else:
         lots = calculate_lots(
             capital=cfg.capital,

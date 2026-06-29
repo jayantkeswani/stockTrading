@@ -2010,6 +2010,7 @@ class StrategyRunner:
         StrategyName.INTRADAY_FUTURES.value,
         StrategyName.ORB.value,
         StrategyName.GAMMA_SCALPING.value,
+        StrategyName.INTRADAY_HUNTER.value,
     })
 
     async def _is_dedup_skip(self, signal: StrategySignal) -> bool:

@@ -1,8 +1,10 @@
 # Intraday Hunter Agent — Design Spec
 
-**Status:** BUILT (2026-06-24) — live as a MANUAL-alert suggester; the two validation gates
-(non-determinism, real-option P&L) are deferred to live paper-trading. This document is the
-blueprint; the implementation matches it (see the File map below for the shipped files).
+**Status:** BUILT (2026-06-24); **extended 2026-06-29 to generate tradeable signals** — on a
+Call 2 ENTER it now emits one `intraday_hunter` OPTION signal per basket leg into the shared
+pipeline (shadow always + a fixed-qty paper YOLO profile), no longer suggester-only. All paper;
+the real-option-P&L gate is now *measured* by that shadow+YOLO book. This document is the
+blueprint; the implementation matches it (see the File map below + §Signal generation).
 **Last updated:** 2026-06-29
 
 > **As-built notes (where the implementation refines this spec):**
@@ -201,6 +203,51 @@ and D is safe + better-aligned to the real trader, fixing the exact Jun-25 over-
 validation gate still applies:** the decisive test is **real option P&L** on the divergence days,
 tracked live. Variant C is retained byte-identical so the A/B can be re-run / reverted at any time
 (`INTRADAY_HUNTER_VARIANT=C`).
+
+---
+
+## Signal generation + YOLO execution (2026-06-29)
+
+The agent feeds the existing signal/execution pipeline so the basket is paper-traded automatically
+(shadow + a fixed-qty YOLO profile) — the real-option-P&L validation gate, run live rather than
+deferred. It remains a discretionary LLM agent, **not** a candle-evaluated `BaseStrategy`.
+
+**Flow:** `decision.run_call2` → on `ENTER` calls `signals.emit_signals_for_enter(session, run, live)`
+(isolated; an emission failure never undoes the decision record). For each basket leg it:
+1. reads the decision-time index spot from the Call 2 live context;
+2. derives an **index-anchored 1:1** stop/target: `index_sl = spot × (1 ∓ IH_STOP_PCT)` (default
+   `IH_STOP_PCT = 0.4%`), `index_target` symmetric (1:1 in index points);
+3. `option_resolver.resolve_option_details(...)` → real strike (ATM, ITM fallback) + expiry +
+   **current premium** + premium SL/target via the delta approximation (0.50 ATM / 0.60 ITM);
+4. **clamps** the premium stop to `[IH_PREMIUM_SL_MIN, IH_PREMIUM_SL_MAX] = [20%, 35%]` of premium
+   (the resolver itself does not clamp), then sets the target **1:1 on premium**;
+5. builds an OPTION `StrategySignal` (`strategy_name=intraday_hunter`, `confidence`=Call 2 conf,
+   `fyers_option_symbol` set, `index_sl`/`index_target` in `indicators`) and hands it to
+   `strategy_runner._handle_signal(signal, executable=True)` (dedup → persist → broadcast → shadow
+   + `on_new_signal`/YOLO). Idempotent per day (skips if an `intraday_hunter` signal already exists).
+
+**Why a single per-leg index `stop_pct`, not the LLM `invalidation_level`:** Call 2 emits *one*
+`invalidation_level`, but the basket spans three indices at very different price scales (NIFTY ~24k,
+BANKNIFTY ~58k, SENSEX ~80k), so one number can't anchor all three. v1 derives each leg's stop from
+the fixed index `stop_pct` (≈30% premium at ATM, inside the clamp). A later iteration can have Call 2
+emit per-leg levels for tighter grounding; honoring the basket's BN ATM+1-OTM strike (the resolver
+currently selects ATM/ITM only) is likewise a later refinement.
+
+**Sizing — fixed basket, not capital-risk-scaled:** `lot_sizing.compute_lots_for_yolo` returns
+`_IH_FIXED_LOTS = {BANKNIFTY: 4, NIFTY: 2, SENSEX: 2}` for `intraday_hunter` (keyed on `signal.symbol`);
+shadow stays 1 lot.
+
+**Wiring / seeds** (migration `a1c2e3f40b91`): a `strategy_configs` row (`intraday_hunter`,
+`shadow_enabled`/`yolo_enabled` true, `is_active`/`auto_mode` false — not candle-evaluated) and the
+`IntradayHunter` YOLO profile (`strategies=["intraday_hunter"]`, `min_confidence_for_execution=40` since
+IH confidence runs ~60, `profit_cap=100000` ≈ non-binding so per-leg 1:1 targets do the booking,
+`sort_order=100` to stay off the protected default slot — tune profit/loss caps in Settings → YOLO
+Profiles). `intraday_hunter` is added to the `_INTRADAY_STRATEGIES` sets (strategy_runner today-scoped
+dedup + `signal_expiry_task` 3:30 PM expiry).
+
+**Validation caveat stands:** index direction ≠ option win-rate (the S7 lesson). The shadow book
+(clean 1-lot real-premium P&L) + the fixed-qty YOLO book are how we now *measure* whether the agent's
+baskets are actually profitable on premium before any capital.
 
 ---
 
