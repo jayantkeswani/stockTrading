@@ -142,4 +142,17 @@ async def run_call2(
         "intraday_hunter: Call 2 @ %s for %s -> %s %s (conf=%s)",
         hhmm, ds, decision, run.direction or "", run.confidence,
     )
+
+    # On ENTER, emit tradeable option signals (shadow + paper-YOLO pick them up). A failure
+    # here must never undo the decision record, so it is isolated.
+    if decision == "ENTER":
+        try:
+            from app.services.intraday_hunter.signals import emit_signals_for_enter
+            emitted = await emit_signals_for_enter(session, run, live)
+            if emitted:
+                logger.info("intraday_hunter: emitted %d signal(s) for %s: %s",
+                            len(emitted), ds, ", ".join(emitted))
+        except Exception:  # noqa: BLE001
+            logger.exception("intraday_hunter: signal emission failed for %s (decision stands)", ds)
+
     return run

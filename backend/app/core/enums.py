@@ -64,6 +64,7 @@ class StrategyName(StrEnum):
     INTRADAY_FUTURES = "intraday_futures"
     BREAKOUT_RETEST = "breakout_retest"
     VWAP_RECLAIM = "vwap_reclaim"
+    INTRADAY_HUNTER = "intraday_hunter"  # LLM agent (Call 2 ENTER) — emits index-option signals, not candle-evaluated
 
 
 class PositionType(StrEnum):
