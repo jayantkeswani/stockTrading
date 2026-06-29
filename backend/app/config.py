@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     # manual run-call1/run-call2 endpoints still work). The LLM call uses the `claude` CLI on
     # CLAUDE_CODE_OAUTH_TOKEN (subscription, not API credits) — when absent the calls SKIP safely.
     intraday_hunter_enabled: bool = True
-    intraday_hunter_variant: str = "C"  # validated prompt variant (build_system_prompt)
+    intraday_hunter_variant: str = "D"  # promoted prompt variant (build_system_prompt); D = C + VIX-regime fix
 
     # Market Mode
     market_mode: str = "live"  # "live" | "simulated"

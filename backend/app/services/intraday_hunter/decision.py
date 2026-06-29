@@ -1,7 +1,7 @@
 """Call 2 — the at-open decision (watcher-triggered, 09:15-09:30 IST).
 
 Takes the Call 1 thesis (verbatim) + the live open/gap/first-candles + this session's prior
-decisions, renders the live opening chart per index, calls Claude (variant C), parses the
+decisions, renders the live opening chart per index, calls Claude (variant D), parses the
 full-plan JSON, and persists it onto the day's run row (latest decision + audit history +
 denormalized decision/direction/confidence). A parse/LLM failure is treated as SKIP.
 
@@ -55,7 +55,7 @@ async def run_call2(
     trading_date: date,
     *,
     now: time | None = None,
-    variant: str = "C",
+    variant: str = "D",
     model: str = llm_cli.MODEL,
     token: str | None = None,
 ) -> IntradayHunterRun | None:

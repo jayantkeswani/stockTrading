@@ -288,6 +288,49 @@ FIX_ADDENDUM_C = dedent(
 ).strip()
 
 
+# Variant D: variant C's two fixes PLUS a VIX-regime recalibration. Live paper (Jun 2026,
+# India VIX ~12-13) showed the core "low VIX -> no edge -> SKIP" clause firing as a STANDALONE
+# skip gate: the agent skipped clean low-VIX mornings the real trader took (Jun 23/25) and
+# cited "VIX gives only ~0.8% expected move -> no room for theta" — a misread, since a ~0.5%
+# intraday move fits comfortably inside a 0.8% FULL-DAY 1-sigma, and VIX 12-14 is the trader's
+# normal, profitable regime (the agent's own Jun 24 CE win was at VIX 13). D reframes VIX from
+# an ENTRY gate into an EXECUTION-management input; SKIP stays TAPE-driven. C is kept byte-
+# identical (no edit to SYSTEM_PROMPT_CORE / the schema / context) so D can be A/B'd vs C and
+# reverted. Validation: scripts/intraday_hunter/simulate.py --variant D vs --variant C.
+VIX_REGIME_FIX_D = dedent(
+    """
+    3. LOW VIX IS THE NORMAL REGIME — NOT A SKIP REASON BY ITSELF. India VIX ~12-14 is the
+       current, ordinary regime, and this trader makes his money in exactly it. Do NOT skip
+       merely because VIX is low or the "expected daily move" figure prints small: that number
+       is a FULL-DAY 1-sigma, and the ~0.5% directional move you need in the first 1-2 hours
+       fits comfortably inside even a 0.7-0.8% daily expected move. A clean directional open at
+       VIX 12-13 is a BUY, not a skip. What low VIX changes is EXECUTION, not participation:
+       take a modest profit fast, keep the target tight, cut the loser quickly — the premium
+       bleeds, so the move must come SOON. Treat volatility as a skip reason ONLY at a genuinely
+       exceptional low (VIX well under ~11) AND a dead, directionless open. Otherwise the SKIP
+       decision is driven by the TAPE — two-sided chop / no net directional thrust after ~5-6
+       candles — NEVER by the VIX number or expiry-day theta alone. (This does not license the
+       dead-drift error: a flat ±0.2% chop with no thrust is still a SKIP — but for the tape,
+       not the VIX.)
+
+    4. WHEN YOU ENTER ON A LOW-VIX / SMALL-EXPECTED-MOVE DAY, MANAGE IT AS A SCALP AND SAY SO
+       IN YOUR OUTPUT. The option premium will travel only a little, so: set a TIGHT, quickly-
+       reachable `target` (a modest R or a near level — not a far structural one), and write the
+       booking discipline explicitly into the `rationale` for the human, e.g. "Low VIX: expect a
+       SMALL option move — book the profit early on a decent gain, keep the stop tight, cut fast,
+       do NOT hold for a big swing." Also add an `execution_note` field to the JSON (in addition
+       to the schema fields) carrying that same one-line guidance. This is how this trader takes
+       a small-but-real profit on a quiet day — he still buys CE/PE and books a modest gain —
+       instead of either skipping or over-holding a bought option into theta.
+    """
+).strip()
+
+# D = C's calibration fixes (1: take the clean direction either way; 2: gap-down is not always
+# a CE-reversal) + fix 3 above. Composed from FIX_ADDENDUM_C so the diff is exactly "C + one
+# more numbered fix" and C never drifts.
+FIX_ADDENDUM_D = FIX_ADDENDUM_C + "\n" + VIX_REGIME_FIX_D
+
+
 def build_system_prompt(variant: str = "A") -> str:
     """The full, frozen system prompt = core rules + worked examples (+ variant addendum)."""
     base = f"{SYSTEM_PROMPT_CORE}\n{render_few_shot()}"
@@ -296,6 +339,8 @@ def build_system_prompt(variant: str = "A") -> str:
         base += "\n\n" + ACTIVATION_ADDENDUM_B
     elif v == "C":
         base += "\n\n" + FIX_ADDENDUM_C
+    elif v == "D":
+        base += "\n\n" + FIX_ADDENDUM_D
     return base
 
 
