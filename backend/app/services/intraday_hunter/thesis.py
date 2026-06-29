@@ -1,8 +1,8 @@
 """Call 1 — the pre-open thesis (~08:45 IST).
 
 Builds the per-index previous-day structure + multi-day STRUCTURAL memory + India VIX +
-calendar, renders one prev-day chart per index, calls Claude (variant C, the validated
-baseline), and persists the thesis onto the day's `intraday_hunter_runs` row.
+calendar, renders one prev-day chart per index, calls Claude (variant D, the promoted
+baseline = C + the VIX-regime fix), and persists the thesis onto the day's `intraday_hunter_runs` row.
 
 This is the backend-session twin of `scripts/intraday_hunter/prototype_agent.py`'s Call 1
 block — same context builders, same prompts, same chart renderers, same llm_cli wrapper.
@@ -65,7 +65,7 @@ async def run_call1(
     session: AsyncSession,
     trading_date: date,
     *,
-    variant: str = "C",
+    variant: str = "D",
     model: str = llm_cli.MODEL,
     token: str | None = None,
 ) -> IntradayHunterRun:

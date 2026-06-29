@@ -3,12 +3,15 @@
 **Status:** BUILT (2026-06-24) — live as a MANUAL-alert suggester; the two validation gates
 (non-determinism, real-option P&L) are deferred to live paper-trading. This document is the
 blueprint; the implementation matches it (see the File map below for the shipped files).
-**Last updated:** 2026-06-24
+**Last updated:** 2026-06-29
 
 > **As-built notes (where the implementation refines this spec):**
-> - Prompt: **variant C** is the validated baseline used everywhere (`build_system_prompt("C")`,
->   `settings.intraday_hunter_variant`). The Call 2 schema fields are `legs[]` (index/strike/option_type/side)
+> - Prompt: **variant D** is the promoted live baseline everywhere (`settings.intraday_hunter_variant`,
+>   default `"D"` in `config.py`; prod does not pin the env var, so the config default governs prod).
+>   D = variant C's two calibration fixes **+** the VIX-regime fix (`FIX_ADDENDUM_D = FIX_ADDENDUM_C + VIX_REGIME_FIX_D`,
+>   so C stays byte-identical for A/B). The Call 2 schema fields are `legs[]` (index/strike/option_type/side)
 >   + `excluded_indices[]` (not `basket`); the Call 1 schema adds `regime_lean`/`preferred_action_lean`.
+>   See the **VIX-regime calibration (variant D)** section below for the rationale + the June A/B that promoted it.
 > - Autorun: Call 1 = an 08:45 IST scheduled task (`app/tasks/intraday_hunter_task.py`); Call 2 = the
 >   `IntradayHunterWatcher` hooked into the NIFTY 1m candle-close in `feed_manager._emit_candle`.
 >   Gated by `settings.intraday_hunter_enabled`. The watcher lazily runs Call 1 if the 08:45 task missed.
@@ -154,6 +157,50 @@ Chosen to teach the *principle*, not a template: both directions, a win **and** 
 | 6 | Apr 22 | unclear / gap opposite to plan | — | SKIP | No trade | Skipping is the correct move |
 
 Each exemplar is rendered in the prompt as a compact block: `previous_day_structure → thesis (trapped side) → actual gap → decision + direction + basket → what happened`. Exact per-day JSON to be lifted from the Phase-3 section when implementing.
+
+---
+
+## VIX-regime calibration (variant D) — promoted to live default 2026-06-29
+
+**Symptom (from the first ~4 live paper days):** the agent (variant C) skipped clean low-VIX
+mornings the real trader took. The Call 2 rationales cited the VIX number directly — e.g. Jun 25:
+*"India VIX 12.95 gives only a ~0.82% expected move, so there is no room for a bought option to
+recover from theta."*
+
+**Root cause:** the **core** system prompt told the model that *"genuinely low India VIX → no buy
+edge → SKIP"*, and `context.py` surfaces `expected_daily_move_pct = VIX/15.87` prominently in both
+calls. At VIX ~13 that prints 0.82%, which the model read as "no room" — a misread, because that is
+a **full-day 1-sigma** and a ~0.5% intraday move fits comfortably inside it. VIX 12–14 is the
+trader's normal, profitable regime (the agent's own Jun 24 CE win was at VIX 13).
+
+**The fix (variant D):** `VIX_REGIME_FIX_D` (appended only in variant D, so C is byte-identical:
+`FIX_ADDENDUM_D = FIX_ADDENDUM_C + VIX_REGIME_FIX_D`) reframes VIX from an **entry gate** into an
+**execution-management input** — low VIX is the normal/tradable regime; SKIP stays **tape-driven**
+(two-sided chop / no thrust after ~5–6 candles), never the VIX number alone. Point 4 adds book-early
+discipline: on a low-VIX/small-expected-move entry, set a tight target and tell the human in the
+`rationale` (+ an `execution_note`) to *expect a small option move, book early, cut fast* — mirroring
+how the real trader takes a small CE/PE profit on a quiet day rather than skipping or over-holding
+into theta.
+
+**June A/B (offline, engine-independent index first-touch / ≥0.5% favorable in the 2h hold —
+`scripts/intraday_hunter/simulate.py --variant C` vs `--variant D` over Jun 1–29, 20 trading days,
+both 19/19+ clean):**
+
+- **Faithful harness:** sim-C reproduced the live decisions on Jun 22–25 exactly (ENTER, SKIP, ENTER, SKIP).
+- **Surgically safe:** D made the **same decision as C on 17/20 days** — the fix is dormant above ~VIX 15.
+- **D differs on exactly 3 low-VIX days, all C-SKIP → D-ENTER-CE:** Jun 11 (correct side, +0.48% scalp),
+  Jun 25 (correct side, +0.23% scalp — matched the real trader), **Jun 29 (WRONG side, index fell
+  −0.66% — a real loss C avoided).** Behaviorally D commits at the **first checkpoint (09:18)** on these
+  days while C waits and skips by 09:20–09:28.
+- **Honest read:** D's three extra trades = 2 correct-side scalps + 1 wrong-side loss → roughly
+  neutral-to-slightly-negative on the *index proxy*, and the scalp value is the one thing the index
+  gate **cannot** measure (index direction ≠ option P&L — the standing caveat that killed S7).
+
+**Decision:** promoted D to the live default anyway (it is a paper SUGGESTER — no capital at risk —
+and D is safe + better-aligned to the real trader, fixing the exact Jun-25 over-skip). **The standing
+validation gate still applies:** the decisive test is **real option P&L** on the divergence days,
+tracked live. Variant C is retained byte-identical so the A/B can be re-run / reverted at any time
+(`INTRADAY_HUNTER_VARIANT=C`).
 
 ---
 

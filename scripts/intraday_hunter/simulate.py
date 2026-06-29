@@ -201,6 +201,7 @@ VARIANT_CFG = {
     "A": {"start": CALL2_START, "collapse": False},      # baseline: 09:18 start, recheck loop
     "B": {"start": time(9, 21), "collapse": True},        # activated: 5-6 candle read, collapsed wait
     "C": {"start": CALL2_START, "collapse": False},       # A harness + the 2 calibration fixes (prompt only)
+    "D": {"start": CALL2_START, "collapse": False},       # C harness + the VIX-regime fix (prompt only)
 }
 
 
@@ -269,8 +270,9 @@ def main() -> None:
     p.add_argument("--end", required=True)
     p.add_argument("--model", default="claude-opus-4-8")
     p.add_argument("--refresh", action="store_true", help="ignore cache, recompute LLM calls")
-    p.add_argument("--variant", default="A", choices=["A", "B", "C", "a", "b", "c"],
-                   help="A=baseline; B=activated (09:21, collapsed wait); C=A harness + 2 calibration fixes")
+    p.add_argument("--variant", default="A", choices=["A", "B", "C", "D", "a", "b", "c", "d"],
+                   help="A=baseline; B=activated (09:21, collapsed wait); C=A harness + 2 calibration "
+                        "fixes; D=C + the VIX-regime fix (low VIX is not a standalone skip reason)")
     p.add_argument("--tag", default=None, help="cache/output namespace (default = variant)")
     a = p.parse_args()
     asyncio.run(run(datetime.strptime(a.start, "%Y-%m-%d").date(),

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.database import get_db
 from app.core.utils import now_ist
 from app.schemas.intraday_hunter import (
@@ -65,7 +66,7 @@ async def run_call1_endpoint(
 ):
     """Manually (re)run Call 1 (pre-open thesis). Makes the LLM call inline — may take ~40s."""
     d = run_date or now_ist().date()
-    run = await thesis.run_call1(db, d)
+    run = await thesis.run_call1(db, d, variant=settings.intraday_hunter_variant)
     await db.commit()
     return IntradayHunterRunResponse.from_run(run)
 
@@ -84,7 +85,7 @@ async def run_call2_endpoint(
             now_t = datetime.strptime(at, "%H:%M").time()
         except ValueError:
             raise HTTPException(status_code=400, detail="`at` must be HH:MM (e.g. 09:18)")
-    run = await decision_svc.run_call2(db, d, now=now_t)
+    run = await decision_svc.run_call2(db, d, now=now_t, variant=settings.intraday_hunter_variant)
     await db.commit()
     if run is None:
         raise HTTPException(
