@@ -72,6 +72,25 @@ def select_strike(
     return atm, itm
 
 
+def select_strike_at_itm_depth(
+    index_price: float,
+    signal_type: SignalType,
+    strike_gap: int,
+    depth: int,
+) -> float:
+    """Strike `depth` strikes in-the-money for the given direction (depth 0 = ATM).
+
+    A CE moves DOWN to go ITM, a PE moves UP. Used by callers that want a specific
+    moneyness (e.g. the Intraday Hunter basket: BANKNIFTY ITM-2 + ITM-1).
+    """
+    atm = round(index_price / strike_gap) * strike_gap
+    if depth <= 0:
+        return float(atm)
+    if signal_type == SignalType.BUY_CE:
+        return float(atm - depth * strike_gap)
+    return float(atm + depth * strike_gap)
+
+
 # ---------------------------------------------------------------------------
 # Expiry selection
 # ---------------------------------------------------------------------------
@@ -278,6 +297,7 @@ async def resolve_option_details(
     rr_multiplier: float = 1.5,
     index_sl: float | None = None,
     index_target: float | None = None,
+    itm_offsets: tuple[int, ...] | None = None,
 ) -> OptionResolution | None:
     """Resolve an index-level signal into a specific option contract with premium-based SL/target.
 
@@ -289,6 +309,10 @@ async def resolve_option_details(
         rr_multiplier: Risk-reward multiplier for target (fallback)
         index_sl: Index-level stop-loss from market structure (e.g. VWAP lower band)
         index_target: Index-level target from market structure (e.g. PDH)
+        itm_offsets: Optional ITM depths to try in order (0 = ATM, 1 = ITM-1, 2 = ITM-2).
+            When given, overrides the default ATM→ITM-1 search — used by the Intraday
+            Hunter basket to pin a specific strike (e.g. BANKNIFTY ITM-2). Falls through
+            the list until a contract with a live premium resolves.
 
     Returns:
         OptionResolution if successful, None if premium unavailable
@@ -300,26 +324,32 @@ async def resolve_option_details(
 
     option_type = "CE" if signal_type == SignalType.BUY_CE else "PE"
 
-    # 1. Select strike
-    atm_strike, itm_strike = select_strike(index_price, signal_type, strike_gap)
+    # 1. Build the ordered list of (strike, delta-label) attempts.
+    if itm_offsets is not None:
+        attempts: list[tuple[float, str]] = [
+            (select_strike_at_itm_depth(index_price, signal_type, strike_gap, d),
+             "ATM" if d <= 0 else "ITM")
+            for d in itm_offsets
+        ]
+    else:
+        atm_strike, itm_strike = select_strike(index_price, signal_type, strike_gap)
+        attempts = [(atm_strike, "ATM"), (itm_strike, "ITM")]
 
     # 2. Select expiry
     expiry = select_expiry(symbol)
 
-    # 3. Try ATM first, then ITM
-    resolution = await _try_strike(
-        symbol, atm_strike, expiry, option_type, sl_pct, rr_multiplier, "ATM",
-        index_price=index_price, index_sl=index_sl, index_target=index_target,
-    )
-    if resolution is not None:
-        return resolution
-
-    resolution = await _try_strike(
-        symbol, itm_strike, expiry, option_type, sl_pct, rr_multiplier, "ITM",
-        index_price=index_price, index_sl=index_sl, index_target=index_target,
-    )
-    if resolution is not None:
-        return resolution
+    # 3. Try each strike in order; first one with a live premium wins.
+    seen: set[float] = set()
+    for strike, label in attempts:
+        if strike in seen:
+            continue
+        seen.add(strike)
+        resolution = await _try_strike(
+            symbol, strike, expiry, option_type, sl_pct, rr_multiplier, label,
+            index_price=index_price, index_sl=index_sl, index_target=index_target,
+        )
+        if resolution is not None:
+            return resolution
 
     logger.warning(
         "Could not resolve option for %s %s at index price %.2f",

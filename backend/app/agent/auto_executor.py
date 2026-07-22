@@ -34,7 +34,7 @@ from app.services.yolo_profile_service import (
     signal_bias_strength,
 )
 from app.core.database import async_session_factory
-from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
+from app.core.enums import AgentActionType, SignalStatus, StrategyName, TradeSource, TradeStatus
 from app.core.utils import now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
@@ -157,7 +157,6 @@ async def auto_execute_signal(signal_id) -> list[dict]:
         if is_futures:
             option_type = None
             from app.strategies.registry import get_strategy
-            from app.core.enums import StrategyName
             try:
                 strat = get_strategy(StrategyName(signal.strategy_name))
                 position_type = getattr(strat, "holding_type", "INTRADAY") if strat else "INTRADAY"
@@ -228,13 +227,19 @@ async def auto_execute_signal(signal_id) -> list[dict]:
                     )
                     continue
 
-            # Position dedup scoped to this profile
+            # Position dedup scoped to this profile. Intraday Hunter trades MULTIPLE strikes
+            # per index (BANKNIFTY ITM-2 + ITM-1), so for it the dedup is strike-aware (keyed
+            # on fyers_option_symbol) — different strikes co-exist; others stay per-symbol.
             pos_query = select(Position).where(
                 Position.symbol == signal.symbol,
                 Position.is_shadow == False,  # noqa: E712
                 Position.yolo_profile_id == profile.id,
             )
-            if direction:
+            if signal.strategy_name == StrategyName.INTRADAY_HUNTER.value:
+                pos_query = pos_query.where(
+                    Position.fyers_option_symbol == signal.fyers_option_symbol
+                )
+            elif direction:
                 pos_query = pos_query.where(Position.option_type == direction)
             existing_pos = (await session.execute(pos_query)).scalar_one_or_none()
             if existing_pos:

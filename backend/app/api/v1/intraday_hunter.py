@@ -16,6 +16,7 @@ from app.config import settings
 from app.core.database import get_db
 from app.core.utils import now_ist
 from app.schemas.intraday_hunter import (
+    IntradayHunterBasketLeg,
     IntradayHunterHistoryItem,
     IntradayHunterRunResponse,
 )
@@ -93,6 +94,116 @@ async def run_call2_endpoint(
             detail="No thesis for this date — run Call 1 first (or no opening data yet).",
         )
     return IntradayHunterRunResponse.from_run(run)
+
+
+async def _live_ltp(symbol: str | None) -> float | None:
+    """Live LTP from Redis for a symbol (option contract or index short name)."""
+    if not symbol:
+        return None
+    from app.core.redis import get_cached_price
+
+    data = await get_cached_price(symbol)
+    ltp = data.get("ltp") if data else None
+    return float(ltp) if ltp and float(ltp) > 0 else None
+
+
+@router.get("/basket", response_model=list[IntradayHunterBasketLeg])
+async def get_basket(db: AsyncSession = Depends(get_db)):
+    """Today's Intraday Hunter basket legs (open + closed-today) for the manual close card.
+
+    Open legs carry the live option LTP + index spot vs the index SL/target (informational
+    only — each leg is actually exited by its own option-premium SL/target via the normal
+    per-position check); closed-today legs carry the realized P&L + exit reason. `position_id`
+    (open legs only) lets the UI close a leg.
+    """
+    from sqlalchemy import Date, cast, func, select
+
+    from app.core.enums import StrategyName, TradeSource, TradeStatus
+    from app.models.position import Position
+    from app.models.trade import Trade
+    from app.services.yolo_profile_service import get_all_profiles
+
+    today = now_ist().date()
+    profiles = await get_all_profiles()
+    name_by_id = {p.id: p.name for p in profiles}
+
+    def _book(is_shadow: bool, profile_id) -> str:
+        if is_shadow:
+            return "SHADOW"
+        return name_by_id.get(profile_id, "YOLO")
+
+    def _indicators(trade) -> dict:
+        snap = trade.signal_snapshot or {}
+        return (snap.get("indicators") or {}) if isinstance(snap, dict) else {}
+
+    legs: list[IntradayHunterBasketLeg] = []
+
+    # Open legs (positions exist only while open).
+    open_rows = (
+        await db.execute(
+            select(Position, Trade)
+            .join(Trade, Position.trade_id == Trade.id)
+            .where(Position.strategy_name == StrategyName.INTRADAY_HUNTER.value)
+        )
+    ).all()
+    for pos, trade in open_rows:
+        ind = _indicators(trade)
+        live_opt = await _live_ltp(pos.fyers_option_symbol)
+        legs.append(IntradayHunterBasketLeg(
+            position_id=pos.id,
+            trade_id=pos.trade_id,
+            book=_book(pos.is_shadow, pos.yolo_profile_id),
+            is_shadow=bool(pos.is_shadow),
+            index=pos.symbol,
+            option_type=pos.option_type,
+            strike=float(pos.strike_price) if pos.strike_price is not None else None,
+            itm_depth=ind.get("ih_itm_depth"),
+            fyers_option_symbol=pos.fyers_option_symbol,
+            lots=pos.lots,
+            entry_price=float(pos.entry_price) if pos.entry_price is not None else None,
+            current_price=live_opt if live_opt is not None else (
+                float(pos.current_price) if pos.current_price is not None else None),
+            unrealized_pnl=float(pos.unrealized_pnl) if pos.unrealized_pnl is not None else None,
+            status="OPEN",
+            index_sl=ind.get("index_sl"),
+            index_target=ind.get("index_target"),
+            index_spot=await _live_ltp(pos.symbol),
+        ))
+
+    # Closed-today legs (the exit cue) — positions are deleted on close, so read from trades.
+    closed_rows = (
+        await db.execute(
+            select(Trade).where(
+                Trade.strategy_name == StrategyName.INTRADAY_HUNTER.value,
+                Trade.status == TradeStatus.CLOSED.value,
+                cast(func.timezone("Asia/Kolkata", Trade.entry_time), Date) == today,
+            )
+        )
+    ).scalars().all()
+    for trade in closed_rows:
+        ind = _indicators(trade)
+        is_shadow = trade.source == TradeSource.SHADOW.value
+        legs.append(IntradayHunterBasketLeg(
+            trade_id=trade.id,
+            book=_book(is_shadow, trade.yolo_profile_id),
+            is_shadow=is_shadow,
+            index=trade.symbol,
+            option_type=trade.option_type,
+            strike=float(trade.strike_price) if trade.strike_price is not None else None,
+            itm_depth=ind.get("ih_itm_depth"),
+            fyers_option_symbol=trade.fyers_option_symbol,
+            lots=trade.lots,
+            entry_price=float(trade.entry_price) if trade.entry_price is not None else None,
+            current_price=float(trade.exit_price) if trade.exit_price is not None else None,
+            realized_pnl=float(trade.net_pnl) if trade.net_pnl is not None else (
+                float(trade.pnl) if trade.pnl is not None else None),
+            status="CLOSED",
+            exit_reason=trade.exit_reason,
+            index_sl=ind.get("index_sl"),
+            index_target=ind.get("index_target"),
+        ))
+
+    return legs
 
 
 def _resolve_chart_path(run, which: str) -> str | None:

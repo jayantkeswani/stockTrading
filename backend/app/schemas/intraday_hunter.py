@@ -73,6 +73,36 @@ class IntradayHunterRunResponse(BaseModel):
         return cls(trading_date=trading_date, status="PENDING")
 
 
+class IntradayHunterBasketLeg(BaseModel):
+    """One live/closed Intraday Hunter basket leg, for the page's manual close card.
+
+    Surfaces each leg's index spot vs its index_sl/index_target as informational context —
+    the monitor actually exits each leg on its own option-premium stop_loss/target_price via
+    the normal per-position check. `position_id` is set for OPEN legs (so the UI can close
+    them); closed-today legs carry the realized P&L + exit reason.
+    """
+
+    position_id: uuid.UUID | None = None
+    trade_id: uuid.UUID | None = None
+    book: str  # "SHADOW" or the YOLO profile name
+    is_shadow: bool = False
+    index: str
+    option_type: str | None = None
+    strike: float | None = None
+    itm_depth: int | None = None
+    fyers_option_symbol: str | None = None
+    lots: int | None = None
+    entry_price: float | None = None
+    current_price: float | None = None
+    unrealized_pnl: float | None = None
+    realized_pnl: float | None = None
+    status: str  # "OPEN" | "CLOSED"
+    exit_reason: str | None = None
+    index_sl: float | None = None
+    index_target: float | None = None
+    index_spot: float | None = None
+
+
 class IntradayHunterHistoryItem(BaseModel):
     """Compact prior-day row for the history timeline."""
 

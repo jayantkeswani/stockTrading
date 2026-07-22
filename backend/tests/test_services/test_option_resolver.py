@@ -14,7 +14,26 @@ from app.services.option_resolver import (
     resolve_option_details,
     select_expiry,
     select_strike,
+    select_strike_at_itm_depth,
 )
+
+
+class TestSelectStrikeAtItmDepth:
+
+    def test_ce_depths(self):
+        """CE goes DOWN to be ITM; depth 0 = ATM (BANKNIFTY gap 100, 55230 -> ATM 55200)."""
+        assert select_strike_at_itm_depth(55230, SignalType.BUY_CE, 100, 0) == 55200
+        assert select_strike_at_itm_depth(55230, SignalType.BUY_CE, 100, 1) == 55100
+        assert select_strike_at_itm_depth(55230, SignalType.BUY_CE, 100, 2) == 55000
+
+    def test_pe_depths(self):
+        """PE goes UP to be ITM."""
+        assert select_strike_at_itm_depth(55230, SignalType.BUY_PE, 100, 0) == 55200
+        assert select_strike_at_itm_depth(55230, SignalType.BUY_PE, 100, 1) == 55300
+        assert select_strike_at_itm_depth(55230, SignalType.BUY_PE, 100, 2) == 55400
+
+    def test_negative_depth_clamps_to_atm(self):
+        assert select_strike_at_itm_depth(24030, SignalType.BUY_CE, 50, -1) == 24050
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +306,52 @@ class TestResolveOptionDetails:
         from app.core.constants import STRIKE_GAPS
 
         assert STRIKE_GAPS.get("UNKNOWN") is None
+
+    @pytest.mark.asyncio
+    @patch("app.services.option_resolver.fetch_option_premium")
+    @patch("app.services.option_resolver.find_option_symbol")
+    @patch("app.services.option_resolver.now_ist")
+    async def test_itm_offsets_pins_specific_strike(self, mock_now, mock_find, mock_premium):
+        """itm_offsets=(2,) resolves the ITM-2 strike (Intraday Hunter BANKNIFTY deep leg)."""
+        from datetime import datetime
+        from app.core.constants import IST
+
+        mock_now.return_value = datetime(2026, 4, 16, 10, 0, tzinfo=IST)
+        mock_find.return_value = "NSE:BANKNIFTY26APR55000CE"
+        mock_premium.return_value = 400.0
+
+        result = await resolve_option_details(
+            symbol="BANKNIFTY",
+            index_price=55230,
+            signal_type=SignalType.BUY_CE,
+            sl_pct=0.30,
+            itm_offsets=(2,),
+        )
+        assert result is not None
+        assert result.strike_price == 55000  # ATM 55200 - 2*100
+
+    @pytest.mark.asyncio
+    @patch("app.services.option_resolver.fetch_option_premium")
+    @patch("app.services.option_resolver.find_option_symbol")
+    @patch("app.services.option_resolver.now_ist")
+    async def test_itm_offsets_falls_back_in_order(self, mock_now, mock_find, mock_premium):
+        """itm_offsets=(2,1): ITM-2 not found → falls back to ITM-1."""
+        from datetime import datetime
+        from app.core.constants import IST
+
+        mock_now.return_value = datetime(2026, 4, 16, 10, 0, tzinfo=IST)
+        mock_find.side_effect = [None, "NSE:BANKNIFTY26APR55100CE"]  # ITM-2 miss, ITM-1 hit
+        mock_premium.return_value = 350.0
+
+        result = await resolve_option_details(
+            symbol="BANKNIFTY",
+            index_price=55230,
+            signal_type=SignalType.BUY_CE,
+            sl_pct=0.30,
+            itm_offsets=(2, 1),
+        )
+        assert result is not None
+        assert result.strike_price == 55100  # fell back to ITM-1
 
 
 # ---------------------------------------------------------------------------

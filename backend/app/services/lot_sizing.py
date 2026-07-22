@@ -14,9 +14,10 @@ from app.services.trading_config import get_trading_config
 
 logger = logging.getLogger(__name__)
 
-# Intraday Hunter fixed basket size (lots per index) — replicates the discretionary
-# trader's basket; not capital-risk-scaled. Shadow still uses 1 lot.
-_IH_FIXED_LOTS = {"BANKNIFTY": 4, "NIFTY": 2, "SENSEX": 2}
+# Intraday Hunter fixed basket size (lots PER LEG) — replicates the discretionary trader's
+# basket; not capital-risk-scaled. Shadow still uses 1 lot. BANKNIFTY trades two legs
+# (ITM-2 + ITM-1), so 2 lots/leg = 4 lots total; NIFTY/SENSEX a single ITM-1 leg of 2 lots.
+_IH_FIXED_LOTS = {"BANKNIFTY": 2, "NIFTY": 2, "SENSEX": 2}
 _IH_FIXED_LOTS_DEFAULT = 2
 
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { IntradayHunterRun } from "@/lib/types";
+import type { IntradayHunterRun, IHCall2 } from "@/lib/types";
 import { apiUrl } from "@/lib/api";
 import { DirectionBadge, confidenceColor } from "./badges";
 
@@ -90,7 +90,50 @@ export function DecisionCard({ run }: { run: IntradayHunterRun }) {
         </>
       )}
 
+      <DecisionLog history={run.call2_history} />
+
       <ChartStrip run={run} />
+    </div>
+  );
+}
+
+/** Every Call 2 this session (WAIT→…→ENTER/SKIP) — preserves each re-run, not just the latest. */
+function DecisionLog({ history }: { history?: IHCall2[] }) {
+  const items = history ?? [];
+  if (items.length === 0) return null;
+  const last = items.length - 1;
+  return (
+    <div className="space-y-1">
+      <div className={SECTION_HDR}>Decision Log · {items.length} {items.length === 1 ? "check" : "checks"}</div>
+      <div className="border border-border rounded divide-y divide-border">
+        {items.map((c, i) => {
+          const dec = (c.decision || "—").toUpperCase();
+          const cls = DECISION_CLS[dec] ?? "text-text-secondary";
+          return (
+            <div
+              key={i}
+              className={`flex items-start gap-2 px-2 py-1 text-[11px] font-mono ${
+                i === last ? "bg-bg-tertiary/40" : ""
+              }`}
+            >
+              <span className="text-text-muted w-10 shrink-0">{c._at || "—"}</span>
+              <span className={`${cls} font-medium w-12 shrink-0`}>{dec}</span>
+              <DirectionBadge direction={c.direction} />
+              {c.confidence != null && (
+                <span className={`${confidenceColor(c.confidence)} w-8 shrink-0`}>{c.confidence}</span>
+              )}
+              {dec === "WAIT" && c.recheck_in_minutes != null && (
+                <span className="text-text-muted shrink-0">↻{c.recheck_in_minutes}m</span>
+              )}
+              {c.rationale && (
+                <span className="text-text-secondary line-clamp-2 flex-1" title={c.rationale}>
+                  {c.rationale}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

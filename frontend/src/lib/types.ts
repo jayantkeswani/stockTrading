@@ -602,3 +602,28 @@ export interface IntradayHunterHistoryItem {
   outcome_played_out: boolean | null;
   realized_outcome_note: string | null;
 }
+
+// One live/closed Intraday Hunter basket leg — drives the page's exit-cue card. Each leg is
+// actually exited on its own option-premium stop_loss/target_price via the normal per-position
+// check; index_sl/index_target/index_spot are informational display only, not the exit trigger.
+export interface IntradayHunterBasketLeg {
+  position_id: string | null;
+  trade_id: string | null;
+  book: string; // "SHADOW" or the YOLO profile name
+  is_shadow: boolean;
+  index: string;
+  option_type: string | null;
+  strike: number | null;
+  itm_depth: number | null;
+  fyers_option_symbol: string | null;
+  lots: number | null;
+  entry_price: number | null;
+  current_price: number | null;
+  unrealized_pnl: number | null;
+  realized_pnl: number | null;
+  status: string; // "OPEN" | "CLOSED"
+  exit_reason: string | null;
+  index_sl: number | null;
+  index_target: number | null;
+  index_spot: number | null;
+}

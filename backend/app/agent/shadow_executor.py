@@ -17,7 +17,7 @@ import logging
 from app.core.constants import LOT_SIZES
 from app.core.database import async_session_factory
 from app.services.lot_sizing import compute_lots_for_shadow
-from app.core.enums import AgentActionType, SignalStatus, TradeSource, TradeStatus
+from app.core.enums import AgentActionType, SignalStatus, StrategyName, TradeSource, TradeStatus
 from app.core.utils import is_past_close_deadline, now_ist
 from app.models.agent_log import AgentLog
 from app.models.position import Position
@@ -81,14 +81,20 @@ async def _do_shadow_execute(signal_id) -> None:
             logger.debug("Shadow execute: open shadow trade already exists for signal %s, skipping", signal_id)
             return
 
-        # Skip if an open shadow position already exists for this symbol + strategy
-        existing_symbol_shadow = await session.execute(
-            select(Position.id).where(
-                Position.symbol == signal.symbol,
-                Position.strategy_name == signal.strategy_name,
-                Position.is_shadow == True,  # noqa: E712
-            ).limit(1)
+        # Skip if an open shadow position already exists for this symbol + strategy.
+        # Intraday Hunter trades MULTIPLE strikes per index (BANKNIFTY ITM-2 + ITM-1), so for
+        # it the guard is strike-aware (keyed on fyers_option_symbol) — different strikes on the
+        # same index must co-exist; other strategies stay one-per-symbol+strategy.
+        symbol_shadow_query = select(Position.id).where(
+            Position.symbol == signal.symbol,
+            Position.strategy_name == signal.strategy_name,
+            Position.is_shadow == True,  # noqa: E712
         )
+        if signal.strategy_name == StrategyName.INTRADAY_HUNTER.value:
+            symbol_shadow_query = symbol_shadow_query.where(
+                Position.fyers_option_symbol == signal.fyers_option_symbol
+            )
+        existing_symbol_shadow = await session.execute(symbol_shadow_query.limit(1))
         if existing_symbol_shadow.scalar_one_or_none() is not None:
             logger.debug(
                 "Shadow skip: open shadow position already exists for %s / %s, skipping signal %s",
@@ -155,7 +161,6 @@ async def _do_shadow_execute(signal_id) -> None:
 
         if is_futures:
             option_type = None
-            from app.core.enums import StrategyName
             from app.strategies.registry import get_strategy
             try:
                 strat = get_strategy(StrategyName(signal.strategy_name))
