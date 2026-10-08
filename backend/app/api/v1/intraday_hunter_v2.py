@@ -61,6 +61,7 @@ async def v2_run_call1(run_date: date | None = Query(None), db: AsyncSession = D
 
     run = await thesis.run_call1(db, run_date or now_ist().date())
     await db.commit()
+    await db.refresh(run)  # server-generated timestamps (avoid a lazy load in the serializer)
     return IntradayHunterRunResponse.from_run(run)
 
 
@@ -81,6 +82,7 @@ async def v2_run_call2(
     await db.commit()
     if run is None:
         raise HTTPException(status_code=409, detail="no opening data yet for that date/time")
+    await db.refresh(run)
     return IntradayHunterRunResponse.from_run(run)
 
 
@@ -200,6 +202,7 @@ async def v2_grade_now(run_date: date | None = Query(None), db: AsyncSession = D
     if row is None:
         raise HTTPException(status_code=409, detail="no index candles for that date")
     await db.commit()
+    await db.refresh(row)
     return IhDayGradeResponse.from_row(row)
 
 

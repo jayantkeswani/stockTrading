@@ -33,6 +33,18 @@ class TestLevelFacts:
         assert f["nearest_ahead"]["CE"]["price"] == 25100.0
         assert levels.pdh_pdl_break_side(f) == "CE"
 
+    def test_holding_vs_swept(self):
+        cs = [c("09:15", 24950, 24960, 24890, 24940)]  # dips below PDL 24900, closes back above
+        f = levels.level_facts("NIFTY", PREV, cs)
+        pdl = next(x for x in f["levels"] if x["name"] == "pdl")
+        assert pdl["broken"] and pdl["holding"] is False
+        assert any("swept" in ln for ln in levels.describe_facts(f))
+        cs2 = [c("09:15", 24950, 24960, 24880, 24885)]
+        pdl2 = next(x for x in levels.level_facts("NIFTY", PREV, cs2)["levels"] if x["name"] == "pdl")
+        assert pdl2["holding"] is True
+        unb = next(x for x in levels.level_facts("NIFTY", PREV, cs2)["levels"] if x["name"] == "pdh")
+        assert unb["holding"] is None
+
     def test_gap_open_above_pdh_counts_as_broken_at_open(self):
         f = levels.level_facts("NIFTY", PREV, [c("09:15", 25100, 25120, 25090, 25110)])
         pdh = next(x for x in f["levels"] if x["name"] == "pdh")

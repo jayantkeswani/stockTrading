@@ -15,6 +15,8 @@ Semantics (documented in docs/ai/intraday-hunter-v2.md §Level facts):
 - Every other level is *broken* when price crosses it relative to the open: a level above the
   open breaks UP on the first high >= level, a level below the open breaks DOWN on the first
   low <= level. A level exactly at the open is not broken by the open itself.
+- A broken level is *holding* while price stays beyond it; otherwise it was swept and reclaimed
+  (a failed break — the one case where fading, not riding, can apply).
 - Breaking a level UP takes the stops resting above it (shorts' stops → fuel for CE); breaking
   DOWN takes the stops below (longs' stops → fuel for PE). "Riding the break" = trading WITH it.
 """
@@ -96,6 +98,13 @@ def opening_range(candles: list[dict], end: time = OPENING_RANGE_END) -> dict | 
 
 def _level(name: str, price: float, last: float, broken: bool, at, direction) -> dict:
     dist = price - last
+    # For a broken pool: is price still beyond it (the break is HOLDING) or back through it
+    # (swept-and-reclaimed — a failed break)? None while unbroken.
+    holding = None
+    if broken and direction == "up":
+        holding = last > price
+    elif broken and direction == "down":
+        holding = last < price
     return {
         "name": name,
         "price": round(price, 2),
@@ -105,6 +114,7 @@ def _level(name: str, price: float, last: float, broken: bool, at, direction) ->
         "broken": broken,
         "broken_at": at,
         "broken_dir": direction,
+        "holding": holding,
     }
 
 
@@ -245,8 +255,12 @@ def describe_facts(facts: dict) -> list[str]:
     for lv in facts["levels"]:
         if lv["name"].startswith("session_"):
             continue
-        state = (f"BROKEN {lv['broken_dir']} at {lv['broken_at']}" if lv["broken"]
-                 else "not broken")
+        if lv["broken"]:
+            state = (f"BROKEN {lv['broken_dir']} at {lv['broken_at']}, "
+                     + ("break HOLDING (price still beyond it)" if lv["holding"]
+                        else "price back through it (swept / failed break)"))
+        else:
+            state = "not broken"
         out.append(f"  {lv['name']} {lv['price']}: {abs(lv['dist_pts']):.0f} pts "
                    f"({abs(lv['dist_pct']):.2f}%) {lv['side']} price, {state}.")
     for side in ("CE", "PE"):
