@@ -27,6 +27,7 @@ _INTRADAY_STRATEGIES = (
     StrategyName.ORB.value,
     StrategyName.GAMMA_SCALPING.value,
     StrategyName.INTRADAY_HUNTER.value,
+    StrategyName.INTRADAY_HUNTER_V2.value,
 )
 
 

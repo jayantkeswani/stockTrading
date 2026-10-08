@@ -97,6 +97,10 @@ class FeedManager:
             "change_pct": tick_data.get("change_pct", 0),
             "timestamp": timestamp,
         }
+        # Order-flow fields (stock/derivative ticks only; indices don't carry them).
+        for k in ("tot_buy_qty", "tot_sell_qty", "bid_size", "ask_size"):
+            if tick_data.get(k) is not None:
+                price_data[k] = tick_data[k]
 
         # Cache in Redis under internal name
         await cache_price(symbol, price_data)
@@ -111,6 +115,14 @@ class FeedManager:
         # Also broadcast under Fyers alias so watchlist subscribers get updates
         if fyers_alias:
             await ws_manager.broadcast_price(fyers_alias, alias_data)
+
+        # IH v2 order-flow tracker (per-minute aggregates for tracked symbols only; cheap
+        # dict work, failure-isolated so it can never break the price path).
+        try:
+            from app.services.intraday_hunter_v2.orderflow import orderflow_tracker
+            orderflow_tracker.on_tick(symbol, tick_data, self._last_tick_at)
+        except Exception:  # noqa: BLE001
+            logger.debug("orderflow tracker error for %s", symbol, exc_info=True)
 
         # Aggregate into candles (always under internal name for DB consistency)
         await self._aggregate_candle(symbol, ltp, tick_data.get("volume", 0))
@@ -213,6 +225,18 @@ class FeedManager:
                 intraday_hunter_watcher.on_candle_close(symbol, ts),
                 name="intraday_hunter_watcher",
             )
+
+            # Intraday Hunter v2 (parallel paper): its own Call 2 cadence (09:16→09:25) and the
+            # per-minute learning-dataset writer. Separate fire-and-forget tasks — failure-isolated
+            # from v1 and from the candle loop.
+            try:
+                from app.services.intraday_hunter_v2.minute_log import log_minute
+                from app.services.intraday_hunter_v2.watcher import ih_v2_watcher
+
+                asyncio.create_task(ih_v2_watcher.on_candle_close(symbol, ts), name="ih_v2_watcher")
+                asyncio.create_task(log_minute(ts), name="ih_v2_minute_log")
+            except Exception:  # noqa: BLE001 — v2 must never break the candle path
+                logger.exception("IH v2 candle hook failed to schedule")
 
     async def _persist_candle(self, symbol: str, candle: dict):
         """Save a completed 1m candle to the MarketData1m table.

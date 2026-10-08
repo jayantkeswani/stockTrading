@@ -32,8 +32,10 @@ class TestSelectStrikeAtItmDepth:
         assert select_strike_at_itm_depth(55230, SignalType.BUY_PE, 100, 1) == 55300
         assert select_strike_at_itm_depth(55230, SignalType.BUY_PE, 100, 2) == 55400
 
-    def test_negative_depth_clamps_to_atm(self):
-        assert select_strike_at_itm_depth(24030, SignalType.BUY_CE, 50, -1) == 24050
+    def test_negative_depth_is_otm(self):
+        # depth -1 = OTM-1 (IH v2 basket: BANKNIFTY ATM + 1 OTM): CE one strike up, PE one down.
+        assert select_strike_at_itm_depth(24030, SignalType.BUY_CE, 50, -1) == 24100
+        assert select_strike_at_itm_depth(24030, SignalType.BUY_PE, 50, -1) == 24000
 
 
 # ---------------------------------------------------------------------------

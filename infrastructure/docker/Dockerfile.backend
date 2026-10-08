@@ -15,8 +15,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# ffmpeg + tesseract-ocr: Intraday Hunter v2 teacher ingestion (keyframes / 2s frame sampling of
+# the teacher's videos, OCR of the taskbar clock + positions strip). yt-dlp comes from pyproject.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 curl ca-certificates nodejs npm && \
+    libpq5 curl ca-certificates nodejs npm ffmpeg tesseract-ocr && \
     rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI — the Intraday Hunter agent calls Claude via `claude -p` on the

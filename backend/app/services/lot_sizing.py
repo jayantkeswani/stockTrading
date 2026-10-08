@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # Intraday Hunter fixed basket size (lots PER LEG) — replicates the discretionary trader's
 # basket; not capital-risk-scaled. Shadow still uses 1 lot. BANKNIFTY trades two legs
 # (ITM-2 + ITM-1), so 2 lots/leg = 4 lots total; NIFTY/SENSEX a single ITM-1 leg of 2 lots.
+# Intraday Hunter v2 uses the SAME fixed 2 lots/leg (comparable books; BN ATM + OTM = 4 total).
 _IH_FIXED_LOTS = {"BANKNIFTY": 2, "NIFTY": 2, "SENSEX": 2}
 _IH_FIXED_LOTS_DEFAULT = 2
 
@@ -60,7 +61,7 @@ async def compute_lots_for_yolo(
             },
             indicators=indicators,
         )
-    elif signal.strategy_name == "intraday_hunter":
+    elif signal.strategy_name in ("intraday_hunter", "intraday_hunter_v2"):
         # Intraday Hunter trades a FIXED-size index-options basket (replicating the
         # discretionary trader's basket), NOT capital-risk-scaled. Fixed lots per index;
         # `signal.symbol` is the index short name (NIFTY/BANKNIFTY/SENSEX).

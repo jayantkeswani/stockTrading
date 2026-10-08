@@ -1,0 +1,7 @@
+{"side": "CE",
+ "legs": [{"index": "BANKNIFTY", "strike": "56800", "option_type": "CE", "qty": 60, "avg": "310.5", "pnl": 4500.0},
+          {"index": "BANKNIFTY", "strike": 56700, "option_type": "CE", "qty": 60, "avg": 360.0, "pnl": 5250.5}],
+ "entry_clock": "$ 81:60", "exit_clock": "10:42", "total_pnl": 9750.5,
+ "index_prices_entry": {"BANKNIFTY": "56,810.2", "NIFTY": 25120},
+ "index_prices_exit": {"BANKNIFTY": 57010.0},
+ "frame_times": {"entry_t": 31, "exit_t": 600, "closed_t": 602}}

@@ -35,6 +35,9 @@ dependencies = [
     "yfinance>=0.2.36",
     "google-genai>=1.0.0",
     "telethon>=1.36.0",
+    # Intraday Hunter v2 teacher ingestion (YouTube plan/live videos). Deliberately a floor, not a
+    # pin: YouTube breaks old yt-dlp builds, so every image rebuild should pick up the latest.
+    "yt-dlp>=2026.6.9",
 ]
 
 [project.optional-dependencies]
