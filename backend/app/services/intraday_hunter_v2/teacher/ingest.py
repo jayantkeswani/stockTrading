@@ -139,7 +139,7 @@ async def plan_missing_check(trading_date: date) -> bool:
 
 
 async def run_live_job(trading_date: date, attempt: str) -> IhTeacherDay | None:
-    """Fetch + store the teacher's live trade for trading_date (attempt '13:00'|'15:00'|'manual')."""
+    """Fetch + store the teacher's live trade for trading_date (attempt '15:45'|'17:30'|'manual')."""
     job = f"live@{attempt}"
     if not _enabled():
         return None
@@ -148,7 +148,7 @@ async def run_live_job(trading_date: date, attempt: str) -> IhTeacherDay | None:
         if row is not None and row.live:
             return row
     workdir = _workdir(trading_date, "live")
-    final = attempt in ("15:00", "manual")
+    final = attempt in ("17:30", "manual")
     try:
         live, vid = await build_live(trading_date, workdir)
     except TeacherIngestError as e:

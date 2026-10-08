@@ -1,16 +1,15 @@
 """Live-trade extraction: screen-recorded Kite positions -> entry/exit clock, legs, P&L.
 
-Pipeline: sample the video every 2s, OCR the taskbar clock + top strip to find when positions
-are open / all closed (heuristics — need calibration on real samples), then Claude vision on the
-entry frame and the closed-screen frame for exact numbers.
+Pipeline: sample frames every 5s, find the Kite positions screens with a cheap PIL detector (his
+positions table sits behind a large blue disclosure card; charts are white), Claude vision reads
+the clock / open-closed state / legs / totals / index prices on a few representative frames, then
+the teaser-aware entry/exit rule picks the entry and closed frames. (Tesseract was dropped: the
+recordings are only served at 360p via the bot-check-safe client, too small for OCR.)
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import os
-import re
 from datetime import date
 
 from app.services.intraday_hunter.llm_cli import call_claude_json
@@ -21,7 +20,6 @@ from app.services.intraday_hunter_v2.teacher.youtube import TeacherIngestError
 
 logger = logging.getLogger(__name__)
 
-_LEG_RE = re.compile(r"(BANKNIFTY|NIFTY|SENSEX|FINNIFTY|MIDCPNIFTY)\w*?\s*(\d{4,6})?\s*(CE|PE)", re.I)
 
 
 # ---------------------------------------------------------------- pure helpers
@@ -58,27 +56,6 @@ def sum_check(legs: list[dict], total: float | None, tol: float = 1.0) -> bool:
     return abs(sum(pnls) - float(total)) <= tol
 
 
-def classify_positions_text(text: str) -> tuple[bool | None, bool | None]:
-    """Heuristic (positions_open, all_closed) from OCR of the top strip (PURE).
-
-    Looks for option-leg rows (INDEX ... CE/PE). A row with qty 0 and Avg 0.00 is closed.
-    Returns (None, None) when no leg rows are visible. Needs calibration on real frames.
-    """
-    rows = [ln for ln in (text or "").splitlines() if _LEG_RE.search(ln)]
-    if not rows:
-        return None, None
-    open_rows = closed_rows = 0
-    for ln in rows:
-        nums = re.findall(r"-?\d[\d,]*\.\d+|-?\d[\d,]*", _LEG_RE.sub(" ", ln))
-        zero_avg = any(re.fullmatch(r"0\.00", n) for n in nums)
-        zero_qty = any(n == "0" for n in nums[:2])
-        if zero_avg or zero_qty:
-            closed_rows += 1
-        else:
-            open_rows += 1
-    return open_rows > 0, (open_rows == 0 and closed_rows > 0)
-
-
 def normalize_live(raw: dict) -> dict:
     """Coerce a raw live dict (LLM or pushed) into the canonical shape (PURE)."""
     raw = raw if isinstance(raw, dict) else {}
@@ -94,6 +71,7 @@ def normalize_live(raw: dict) -> dict:
             "qty": to_float(l.get("qty")),
             "avg": to_float(l.get("avg")),
             "pnl": to_float(l.get("pnl")),
+            "entry_clock": decode_clock(str(l.get("entry_clock") or "")),
         })
     side = str(raw.get("side") or "").upper()
     if side not in ("CE", "PE"):
@@ -120,89 +98,186 @@ def normalize_live(raw: dict) -> dict:
     }
 
 
-# ---------------------------------------------------------------- OCR (tesseract)
-async def ocr_text(path: str, rotate: bool = False, psm: int = 6) -> str:
-    """Run tesseract on an image (optionally rotated 180 degrees first); '' on empty output.
+# ---------------------------------------------------------------- frame selection (PIL)
+POSITIONS_SCORE_MIN = 0.4  # blue-card share of the lower frame; positions screens score ~0.68, charts ~0
 
-    Raises TeacherIngestError(TOOL_MISSING) if tesseract is absent.
+
+def positions_score(image_path: str) -> float:
+    """Share of saturated-blue pixels in the lower 45% of a frame.
+
+    The teacher shows his Kite positions table behind a large blue risk-disclosure card; chart
+    screens are white. Real frames separate cleanly (~0.68 vs 0.0). Cheap — no OCR.
     """
-    exe = yt.require_tool("tesseract")
-    src = path
-    if rotate:
-        src = os.path.splitext(path)[0] + "_rot.png"
-        await yt.run_cmd([yt.require_tool("ffmpeg"), "-y", "-v", "error", "-i", path,
-                          "-vf", "hflip,vflip", src], 30)
-    rc, out, _ = await yt.run_cmd([exe, src, "stdout", "--psm", str(psm)], 30)
-    return out if rc == 0 else ""
+    from PIL import Image
+
+    im = Image.open(image_path).convert("RGB").resize((160, 90))
+    w, h = im.size
+    px = [im.getpixel((x, y)) for y in range(int(h * 0.55), h) for x in range(w)]
+    blue = sum(1 for r, g, b in px if b > 120 and b > r + 40 and b > g + 20)
+    return blue / len(px) if px else 0.0
 
 
-async def _read_one(t: float, clock_img: str, strip_img: str, sem: asyncio.Semaphore) -> dict:
-    """OCR one sampled instant into a detect_entry_exit read."""
-    async with sem:
-        clock_raw = await ocr_text(clock_img, psm=7)
-        clock = decode_clock(clock_raw)
-        if clock is None:
-            clock = decode_clock(await ocr_text(clock_img, rotate=True, psm=7))
-        opened, closed = classify_positions_text(await ocr_text(strip_img))
-    return {"t": t, "clock": clock, "positions_open": opened, "all_closed": closed}
+def positions_segments(scored: list[tuple[float, float]], threshold: float = POSITIONS_SCORE_MIN
+                       ) -> list[list[float]]:
+    """Group consecutive positions-screen sample times into segments (PURE).
+
+    `scored` = [(t, score)] in time order; a single low frame inside a segment does not split it.
+    """
+    segs: list[list[float]] = []
+    cur: list[float] = []
+    gap = 0
+    for t, sc in scored:
+        if sc >= threshold:
+            cur.append(t)
+            gap = 0
+        elif cur:
+            gap += 1
+            if gap > 1:
+                segs.append(cur)
+                cur, gap = [], 0
+    if cur:
+        segs.append(cur)
+    return segs
 
 
-LIVE_SCHEMA = {
-    "side": "CE | PE",
-    "legs": [{"index": "BANKNIFTY", "strike": 0, "option_type": "CE|PE", "qty": 0, "avg": 0.0, "pnl": 0.0}],
-    "entry_clock": "HH:MM (taskbar clock on the ENTRY frame)",
-    "exit_clock": "HH:MM (taskbar clock on the CLOSED frame)",
-    "total_pnl": 0.0,
-    "index_prices_entry": {"NIFTY": 0.0, "BANKNIFTY": 0.0, "SENSEX": 0.0},
-    "index_prices_exit": {"NIFTY": 0.0, "BANKNIFTY": 0.0, "SENSEX": 0.0},
+def pick_frames(segments: list[list[float]], stride_s: float = 20.0, cap: int = 14) -> list[float]:
+    """Representative times: each segment's first + last + every `stride_s` between (PURE)."""
+    picks: list[float] = []
+    for seg in segments:
+        sel = [seg[0]]
+        for t in seg[1:-1]:
+            if t - sel[-1] >= stride_s:
+                sel.append(t)
+        if seg[-1] != sel[-1]:
+            sel.append(seg[-1])
+        picks.extend(sel)
+    if len(picks) > cap:  # keep the ends of every segment, thin the middles
+        step = len(picks) / cap
+        picks = [picks[int(i * step)] for i in range(cap - 1)] + [picks[-1]]
+    return sorted(set(picks))
+
+
+def merge_live(open_reads: list[dict], closed: dict) -> dict:
+    """Combine the OPEN-position reads (earliest first: per-leg qty/avg + entry clock + index
+    prices) with the CLOSED read (final per-leg P&L, total, exit clock + prices) (PURE).
+
+    Each leg's qty/avg come from the first read in which THAT leg shows a non-zero qty — legs are
+    often added over a few minutes (e.g. BANKNIFTY first, NIFTY/SENSEX later) — and its
+    `entry_clock` is that read's clock. The basket entry clock is the earliest open read's.
+    """
+    def key(l):
+        return (str(l.get("index") or "").upper(), to_float(l.get("strike")),
+                str(l.get("option_type") or "").upper())
+
+    first_open: dict = {}
+    for r in open_reads:
+        for l in r.get("legs") or []:
+            if isinstance(l, dict) and (to_float(l.get("qty")) or 0) > 0 and key(l) not in first_open:
+                first_open[key(l)] = (l, r.get("clock"))
+    legs = []
+    for l in closed.get("legs") or []:
+        if not isinstance(l, dict):
+            continue
+        e, clk = first_open.get(key(l), ({}, None))
+        legs.append({"index": l.get("index"), "strike": l.get("strike"),
+                     "option_type": l.get("option_type"),
+                     "qty": to_float(e.get("qty")) or to_float(l.get("qty")),
+                     "avg": e.get("avg") if e else l.get("avg"), "pnl": l.get("pnl"),
+                     "entry_clock": clk})
+    first = open_reads[0] if open_reads else {}
+    return {"legs": legs, "total_pnl": closed.get("total_pnl"),
+            "entry_clock": first.get("clock"), "exit_clock": closed.get("clock"),
+            "index_prices_entry": first.get("index_prices") or {},
+            "index_prices_exit": closed.get("index_prices") or {}}
+
+
+FRAMES_SCHEMA = {
+    "frames": [{
+        "image": 1,
+        "clock": "HH:MM — the Windows taskbar clock, bottom-right (may be upside down)",
+        "positions_open": "true if any leg row shows a NON-ZERO Qty",
+        "all_closed": "true if every leg row shows Qty 0 and Avg 0.00",
+        "total_pnl": 0.0,
+        "legs": [{"index": "BANKNIFTY|NIFTY|SENSEX", "strike": 0, "option_type": "CE|PE",
+                  "qty": 0, "avg": 0.0, "pnl": 0.0}],
+        "index_prices": {"NIFTY": 0.0, "BANKNIFTY": 0.0, "SENSEX": 0.0},
+    }]
 }
 
 
-def build_live_prompt(trading_date: date, entry_clock, exit_clock) -> str:
-    """Vision prompt: image 1 = entry frame, image 2 = closed-screen frame."""
+def build_frames_prompt(trading_date: date, n: int) -> str:
+    """Vision prompt: read each of `n` positions-screen frames into a structured record."""
     return (
-        f"Screen recording of an Indian options trader on {trading_date.isoformat()}. "
-        "Image 1 is the moment positions are first open (Kite positions table, browser tabs with "
-        "index prices at top). Image 2 is the moment ALL legs are closed (qty 0, Avg 0.00) showing "
-        f"each leg's realized P&L and the Total P&L. OCR guess of clocks: entry {entry_clock}, "
-        f"exit {exit_clock} (the Windows clock is bottom-right and may look upside down; 6 and 9 "
-        "swap when rotated). Read EXACT numbers: for every traded leg give index, strike, "
-        "option_type, qty (the entered quantity, from image 1 if image 2 shows 0), avg entry price, "
-        "final per-leg P&L, and the Total P&L; legs' P&L must sum to the total. Also read the index "
-        "prices shown in the browser tabs on each image. Reply with ONLY JSON of this shape:\n"
-        + json.dumps(LIVE_SCHEMA, indent=2)
+        f"These {n} images are frames (in order, image 1..{n}) from an Indian options trader's "
+        f"screen recording on {trading_date.isoformat()}. Each shows his Zerodha Kite POSITIONS "
+        "table (Instrument, Qty, Avg, LTP, P&L, and a Total P&L row) partly behind a blue "
+        "disclosure card. Browser tabs at the very top show NIFTY / BANKNIFTY / SENSEX prices. "
+        "For EVERY image read: the Windows taskbar clock (bottom-right, HH:MM; if it looks upside "
+        "down read it rotated — 6 and 9 swap), whether any leg is open (non-zero Qty) or all are "
+        "closed (Qty 0, Avg 0.00), the Total P&L, each leg (index, strike, CE/PE, qty, avg, P&L — "
+        "Indian digit grouping like 1,78,881.25 = 178881.25; negatives are losses) and the three "
+        "index prices from the tabs. Read exact numbers; use null when unreadable. Reply with "
+        "ONLY JSON of this shape:\n" + json.dumps(FRAMES_SCHEMA, indent=2)
     )
 
 
-async def extract_live(video_path: str, trading_date: date) -> dict:
-    """Full live-video extraction -> normalized live dict (see normalize_live).
+async def _read_frames(paths: list[str], trading_date: date) -> list[dict]:
+    """Claude vision over the chosen frames (batches of 6). Missing replies → empty reads."""
+    out: list[dict] = []
+    for i in range(0, len(paths), 6):
+        batch = paths[i:i + 6]
+        raw = await call_claude_json(build_frames_prompt(trading_date, len(batch)),
+                                     image_paths=batch, required_keys=("frames",))
+        frames = (raw or {}).get("frames") or []
+        by_img = {int(f.get("image", j + 1)): f for j, f in enumerate(frames) if isinstance(f, dict)}
+        out.extend(by_img.get(k + 1, {}) for k in range(len(batch)))
+    return out
 
-    Raises TeacherIngestError: TOOL_MISSING (tesseract/ffmpeg), PARSE_FAILED (no entry/exit
-    found or Claude unavailable/unusable).
+
+async def extract_live(video_path: str, trading_date: date, every_s: int = 5) -> dict:
+    """Full live-video extraction → normalized live dict (see normalize_live).
+
+    1. sample a frame every `every_s` s (scaled to 1280x720), score each for the positions screen
+       (PIL blue-card detector — the 360p recordings are too small for tesseract);
+    2. group into positions segments and pick representative frames;
+    3. Claude vision reads clock / open-closed / legs / totals / index prices per frame;
+    4. entry = earliest clock with positions open, exit = first all-closed clock after it
+       (teaser-aware, `detect_entry_exit`); legs merged from the entry + closed frames.
+    Raises TeacherIngestError: TOOL_MISSING (ffmpeg), PARSE_FAILED.
     """
-    yt.require_tool("tesseract")
-    clocks = await yt.sample_crops(video_path, yt.CLOCK_CROP, 2, "clock", scale=3)
-    strips = await yt.sample_crops(video_path, yt.TOP_STRIP_CROP, 2, "strip", scale=2)
-    sem = asyncio.Semaphore(4)
-    reads = await asyncio.gather(*[_read_one(t, c, s, sem)
-                                   for (t, c), (_, s) in zip(clocks, strips)])
-    det = detect_entry_exit(list(reads))
+    frames = await yt.sample_frames(video_path, every_s)
+    scored = []
+    for t, p in frames:
+        try:
+            scored.append((t, positions_score(p)))
+        except Exception:  # noqa: BLE001 — an unreadable frame just doesn't count
+            scored.append((t, 0.0))
+    segs = positions_segments(scored)
+    if not segs:
+        raise TeacherIngestError("PARSE_FAILED", "no positions-screen frames found")
+    by_t = dict(frames)
+    picks = pick_frames(segs)
+    reads_raw = await _read_frames([by_t[t] for t in picks], trading_date)
+    if not any(reads_raw):
+        raise TeacherIngestError("PARSE_FAILED", "Claude vision returned no frame reads")
+    reads = []
+    for t, r in zip(picks, reads_raw):
+        reads.append({"t": t, "clock": decode_clock(str(r.get("clock") or "")),
+                      "positions_open": bool(r.get("positions_open")),
+                      "all_closed": bool(r.get("all_closed")), "_raw": r})
+    det = detect_entry_exit(reads)
     if det["entry_t"] is None or det["closed_frame_t"] is None:
-        raise TeacherIngestError("PARSE_FAILED", f"entry/exit not found in OCR reads: {det}")
-    base = os.path.splitext(video_path)[0]
-    entry_png = await yt.extract_frame(video_path, det["entry_t"] + 2, f"{base}_entry.png")
-    closed_png = await yt.extract_frame(video_path, det["closed_frame_t"], f"{base}_closed.png")
-    raw = await call_claude_json(build_live_prompt(trading_date, det["entry_clock"], det["exit_clock"]),
-                                 image_paths=[entry_png, closed_png], required_keys=("legs", "total_pnl"))
-    if raw is None:
-        raise TeacherIngestError("PARSE_FAILED", "Claude vision extraction returned nothing")
-    raw.setdefault("entry_clock", det["entry_clock"])
-    raw.setdefault("exit_clock", det["exit_clock"])
-    # OCR-derived clocks are authoritative when the model's own reading is not a session time.
-    if not is_session_time(decode_clock(str(raw.get("entry_clock") or ""))):
-        raw["entry_clock"] = det["entry_clock"]
-    if not is_session_time(decode_clock(str(raw.get("exit_clock") or ""))):
-        raw["exit_clock"] = det["exit_clock"]
-    raw["frame_times"] = {"entry_t": det["entry_t"], "exit_t": det["exit_t"],
-                          "closed_t": det["closed_frame_t"]}
-    return normalize_live(raw)
+        raise TeacherIngestError("PARSE_FAILED", f"entry/exit not found in frame reads: {det}")
+    open_reads = sorted(
+        ({**r["_raw"], "clock": r["clock"]} for r in reads
+         if r["positions_open"] and r["clock"] and det["entry_clock"] <= r["clock"] <= det["exit_clock"]),
+        key=lambda x: x["clock"],
+    )
+    closed_raw = next(r["_raw"] for r in reads if r["t"] == det["closed_frame_t"])
+    merged = merge_live(open_reads, {**closed_raw, "clock": det["exit_clock"]})
+    merged["frame_times"] = {"entry_t": det["entry_t"], "exit_t": det["exit_t"],
+                             "closed_t": det["closed_frame_t"]}
+    live = normalize_live(merged)
+    live["frames_read"] = [{"t": r["t"], "clock": r["clock"], "open": r["positions_open"],
+                            "closed": r["all_closed"]} for r in reads]
+    return live

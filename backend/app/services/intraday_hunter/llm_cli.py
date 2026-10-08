@@ -36,11 +36,21 @@ def _resolve_token() -> str | None:
     return os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or None
 
 
-def _child_env(token: str) -> dict:
-    """Force the OAuth token; drop the API key so it can't override subscription auth."""
+def _cli_login_allowed() -> bool:
+    """Dev-only: IH_ALLOW_CLI_LOGIN=1 lets a call with no OAuth token use the `claude` CLI's own
+    local login (a developer Mac). Never set in prod — there the token is required as before."""
+    return os.environ.get("IH_ALLOW_CLI_LOGIN") == "1"
+
+
+def _child_env(token: str | None) -> dict:
+    """Force the OAuth token; drop the API key so it can't override subscription auth.
+
+    `token=None` (only reachable with IH_ALLOW_CLI_LOGIN=1) keeps the CLI's own login.
+    """
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
-    env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    if token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     return env
 
 
@@ -134,7 +144,7 @@ async def call_claude_json(
     failure (-> None -> SKIP).
     """
     tok = token or _resolve_token()
-    if not tok:
+    if not tok and not _cli_login_allowed():
         logger.error("intraday_hunter: no CLAUDE_CODE_OAUTH_TOKEN; cannot call Claude")
         return None
     claude_bin = shutil.which("claude")
@@ -151,6 +161,7 @@ async def call_claude_json(
         "--model", model,
         "--allowed-tools", "",
     ]
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -164,6 +175,12 @@ async def call_claude_json(
         )
     except asyncio.TimeoutError:
         logger.error("intraday_hunter: claude CLI timed out after %ss", timeout_s)
+        if proc is not None and proc.returncode is None:  # never leave an orphan claude process
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
         return None
     except Exception:  # noqa: BLE001 — never let an LLM call crash the loop
         logger.exception("intraday_hunter: claude CLI invocation failed")

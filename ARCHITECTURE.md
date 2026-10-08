@@ -371,12 +371,14 @@ NIFTY 1m candle close (feed_manager._emit_candle, wrapped, fire-and-forget):
    └── minute_log: ih_minute_log row per index (09:15–10:45 + while in position): features + arms
          (rule_a, plan_side, oi_flow_side, v1_state, v2_llm, gates, jev)
 Ticks: fyers_ws_client keeps tot_buy_qty/tot_sell_qty/bid_size/ask_size → Redis + orderflow_tracker
-trade_monitor (500ms): _check_ih_v2_baskets BEFORE the per-position loop — per (day, book):
+trade_monitor (500ms): _check_ih_v2_baskets in a SAVEPOINT, BEFORE the per-position loop —
+   per (day, book); stale/missing leg ticks (>60s) fall back to a throttled REST quote:
    bid-valued basket MTM vs ±T (0.20×cost) → close ALL legs (BASKET_TARGET/STOP), round-number
    hold (0.9T, giveback 0.75T, 5 min), 11:30 BASKET_TIME; per-leg checks bypassed for v2
    (15:25 last-resort fallback); "Close v2 basket" → MANUAL_BASKET (shadow left as counterfactual)
-09:30   alert if v1 or v2 has no decision · 09:20+ alert on missing/stale index candles
-13:00/15:00  teacher live trade (frames → tesseract clock/positions → Claude) → ih_teacher_days
+09:34   alert if v1 or v2 has no decision · 09:20–15:20 alert on missing/stale index candles
+15:45/17:30  teacher live trade (5s frames → PIL positions-screen detector → Claude vision on a
+        few frames → teaser-aware entry/exit + per-leg merge) → ih_teacher_days (after hours)
 16:00   grade → ih_day_grades (market first-touch labels, teacher, v1/v2 real P&L, every arm's
         counterfactual basket replayed on the captured premium candles, gate what-ifs, lesson)
         + v1 outcome_played_out; lessons feed tomorrow's v2 Call 1; GET /v2/ledger

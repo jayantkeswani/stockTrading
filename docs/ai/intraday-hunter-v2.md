@@ -56,6 +56,7 @@ Open v2 legs are grouped per **(trading day, book)**, where the book is the YOLO
 | MTM ≥ +T → close all legs | `BASKET_TARGET` |
 | **Round-number hold**: at MTM ≥ 0.9T, if a strict majority of the traded indices sit within `round_hold_points` (NIFTY 10, BN/SENSEX 30) of the next round number (NIFTY 100s, BN/SENSEX 500s) **in the trade direction**, hold for the touch. Exit on the first touch, OR a giveback to 0.75T, OR after 5 min. One activation per basket; activation and result are logged as `IH_V2_ROUND_HOLD` agent logs | `BASKET_TARGET` (sub-reason `round_touch` / `round_giveback` / `round_timeout`) |
 | Backstop at `basket_time_exit` (11:30) | `BASKET_TIME` |
+| (Quotes) A leg whose WS tick is missing or older than 60s is valued from a Fyers REST LTP (throttled to one call per 5s per symbol), so MTM is never blank because of one missing tick | — |
 | Last resort: if the basket check raises (logged, Telegram once per day), v2 legs still close at 15:25 | `TIME_EXIT` |
 | User emergency close of the YOLO basket. The **shadow basket keeps running** under the system rules and is the counterfactual. The system's view at the close (MTM, T, round-hold state) goes into a `MANUAL_BASKET_CLOSE` log | `MANUAL_BASKET` |
 
@@ -81,7 +82,7 @@ Also computed:
 
 The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle minute + 1**.
 
-- **Single-flight:** if a call is still in flight when the next minute arrives, that minute is skipped. The exception is the deadline: a deadline call then runs as soon as the in-flight call returns, so a day never ends on WAIT.
+- **Single-flight:** if a call is still in flight when the next minute arrives, that minute is skipped. The exception is the deadline: a deadline call then runs as soon as the in-flight call returns, so a day never ends on WAIT. The lazy background Call 1 is also single-flight per day.
 - **Normalization:**
   - An LLM failure is WAIT before the deadline and `SKIP/OTHER` at it.
   - ENTER without CE/PE becomes WAIT.
@@ -112,14 +113,17 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
   - Finds "Prediction For <date>" on `@IntradayHunter/videos` with yt-dlp, using `player_client=web_embedded` to pass YouTube's bot check (with an optional cookies fallback via `IH_YTDLP_COOKIES`).
   - Fetches the Hindi auto-subs and grabs 30/60/90% keyframes with ffmpeg.
   - Claude (vision) returns `{gap_up_side, flat_side, gap_down_side ∈ CE|PE|none, bias, levels_onscreen, levels_audio, summary}`.
-- **Live job** (13:00 / 15:00):
-  - Finds the day's "Live Bank Nifty Option Trading" video and samples a frame every 2s.
-  - Tesseract reads the taskbar clock (often 180° rotated, so "81:60" → 09:18) and the positions strip.
+- **Live job** (15:45, retry 17:30, so it never competes with the feed or monitor during market hours):
+  - Finds the day's "Live Bank Nifty Option Trading" video by title plus `upload_date`. The bot-check-safe client returns no `timestamp`.
+  - Samples a frame every 5s, normalized to 1280×720. The recordings are only served at **360p**, which is too small for tesseract, so OCR was dropped.
+  - A cheap **PIL detector** finds the Kite positions screens: the table sits behind a large blue disclosure card, and real frames score about 0.68 vs 0 for charts. These frames are grouped into segments.
+  - **Claude vision** reads about 14 representative frames, 6 per call: the taskbar clock (`decode_clock` handles 180°-rotated readings, so "81:60" → 09:18), open/closed state, legs, Total P&L, and the index prices in the tabs.
   - Entry = the earliest clock with positions open (the video opens with a teaser). Exit = the first all-closed clock after entry.
-  - Claude vision reads the leg and total P&L, which are sum-checked.
+  - Each leg's qty/avg come from the first frame where *that* leg is open, since legs are often added over a few minutes, and are stored with a per-leg `entry_clock`. The leg P&Ls are sum-checked against the total.
+  - **Validated on the real 2026-10-08 video:** PE basket (BN 54800/54700 PE, SENSEX 72500 PE, NIFTY 22550 PE), entry 09:19, exit 09:47, total +₹1,78,881.25, sum check OK.
 - **Storage and alerts:** results go to `ih_teacher_days`. Every failure (video not found, blocked/429/403, parse failed, tool missing) is Telegram-alerted with the job, date and error type.
 - **Mac fallback:** `scripts/intraday_hunter/teacher_ingest_local.py --date D [--plan] [--live] [--whisper] --push URL` runs the same pipeline locally and POSTs to `POST /api/v1/intraday-hunter/teacher/ingest` (body `{trading_date, plan, plan_video_id, live, live_video_id}`).
-- **Runtime image:** ffmpeg + tesseract-ocr (apt) and yt-dlp (pyproject floor).
+- **Runtime image:** ffmpeg (apt) and yt-dlp (pyproject floor). Locally, `IH_ALLOW_CLI_LOGIN=1` (dev only) lets `llm_cli` use the logged-in `claude` CLI when no `CLAUDE_CODE_OAUTH_TOKEN` is set. In prod the token is required, as before.
 
 ## Learning loop
 
@@ -139,7 +143,9 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
 
 ## Reliability alerts
 
-- 09:30: Telegram if v1 or v2 has no ENTER/SKIP decision.
+- 09:34: Telegram if v1 or v2 has no ENTER/SKIP **status**. 09:34 rather than 09:30 so the check never races v1's 09:30 backstop call.
+- A v2 ENTER that emits zero legs → status `ENTER_RETRY` plus a Telegram alert. Each later minute re-tries the emission (not a new LLM call) up to the deadline. Signal emission stops only on an **explicit** kill (`v2_active(fail_closed=False)`), so a transient DB error cannot drop a decided basket.
+- Basket check failure → it runs inside a SAVEPOINT (rolled back, so it is never half-committed), Telegram once per day, and legs fall back to the 15:25 close.
 - 09:20 and then every 30 min: Telegram if an index has no candles, or stale ones, for the session (the 2 Sep gap).
 - Each alert fires once per day per key and is always logged (`IH v2 ALERT [...]`). That is visible locally with `TELEGRAM_ENABLED=false`.
 

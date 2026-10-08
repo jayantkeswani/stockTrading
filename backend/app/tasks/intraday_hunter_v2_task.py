@@ -5,10 +5,12 @@
   08:45                  v2 Call 1 (thesis)
   09:05                  reset the order-flow tracker for the day
   09:10 / 09:16          ATM±2 CE/PE capture (counterfactual premium paths), re-centred after the open
-  09:20, then every 30m  index-candle presence check → alert once per index per day (the 2 Sep gap)
-  09:30                  Call 2 decision check for v1 AND v2 → alert if either has no ENTER/SKIP
+  09:20, then :20/:50    index-candle presence check to 15:20 → alert once per index per day (the 2 Sep gap)
+  09:34                  Call 2 decision check for v1 AND v2 → alert if either has no ENTER/SKIP
+                         (09:34, not 09:30, so it never races v1's 09:30 backstop call)
                          (these two reliability checks ignore the v2 kill switch — they also guard v1)
-  13:00 / 15:00          teacher live-trade ingest; a success re-grades the day (→ FINAL)
+  15:45 / 17:30          teacher live-trade ingest — AFTER market hours so the download + ffmpeg
+                         never competes with the feed/monitor; a success re-grades the day (→ FINAL)
   16:00                  nightly grade (PRELIM until the teacher's live trade lands)
   Sat 10:00              weekly review (proposal only — nothing auto-applied)
 The 1-minute 09:15-09:45 OI window lives with the other OI jobs (oi_snapshot_task). Call 2 is
@@ -20,7 +22,7 @@ the strategy_configs.is_active runtime kill switch).
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import time, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -29,36 +31,22 @@ from app.config import settings
 from app.core.constants import IST
 from app.core.database import async_session_factory
 from app.core.utils import is_trading_day, now_ist
+from app.services.intraday_hunter_v2.alerts import alert
 
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone=IST)
-_alerted: set[tuple] = set()  # (date, kind, key) — one alert per kind per day
 
 JOB_SCHEDULE = {
     "ih_v2_plan_0000": "00:00", "ih_v2_plan_0600": "06:00", "ih_v2_plan_0800": "08:00",
     "ih_v2_plan_missing_0830": "08:30", "ih_v2_call1_0845": "08:45",
     "ih_v2_orderflow_reset_0905": "09:05",
     "ih_v2_capture_0910": "09:10", "ih_v2_capture_0916": "09:16:30",
-    "ih_v2_candle_check": "09:20 + every 30m to 15:20",
-    "ih_v2_call2_check_0930": "09:30",
-    "ih_v2_live_1300": "13:00", "ih_v2_live_1500": "15:00",
+    "ih_v2_candle_check": "09:20 + :20/:50 to 15:20",
+    "ih_v2_call2_check_0934": "09:34",
+    "ih_v2_live_1545": "15:45", "ih_v2_live_1730": "17:30",
     "ih_v2_grade_1600": "16:00", "ih_v2_weekly_review": "Sat 10:00",
 }
-
-
-async def alert(kind: str, message: str, key: str = "") -> None:
-    """Log + Telegram an operational alert, at most once per (day, kind, key)."""
-    k = (now_ist().date(), kind, key)
-    if k in _alerted:
-        return
-    _alerted.add(k)
-    logger.warning("IH v2 ALERT [%s] %s", kind, message)
-    try:
-        from app.agent.notification import send_telegram
-        await send_telegram(f"⚠️ <b>IH v2</b> {message}")
-    except Exception:  # noqa: BLE001
-        logger.exception("IH v2 alert Telegram failed")
 
 
 async def _enabled_today() -> bool:
@@ -100,7 +88,7 @@ async def live_job(attempt: str) -> None:
         await alert("teacher_live", f"live job {attempt} crashed: {type(e).__name__}: {e}", attempt)
         return
     if row is not None and getattr(row, "live", None) and now_ist().hour >= 16:
-        await grade_job()  # grade already ran — finalize it now that the live trade landed
+        await grade_job()  # the 16:00 grade already ran — finalize it now that the live trade landed
 
 
 # ── trading-day jobs ──
@@ -137,6 +125,8 @@ async def candle_check_job() -> None:
     """Alert when an index has no recent 1m candles in the current session (the 2 Sep gap)."""
     if not (settings.intraday_hunter_v2_enabled and is_trading_day(now_ist().date())):
         return
+    if now_ist().time() > time(15, 20):  # the cron's 15:50 slot is after the close — never alert
+        return
     from sqlalchemy import text
     now = now_ist()
     async with async_session_factory() as session:
@@ -160,7 +150,7 @@ async def candle_check_job() -> None:
 
 
 async def call2_check_job() -> None:
-    """09:30: every variant must have a final Call 2 decision (ENTER/SKIP) by now."""
+    """09:34: every variant must have a final Call 2 decision (status ENTER/SKIP) by now."""
     if not (settings.intraday_hunter_v2_enabled and is_trading_day(now_ist().date())):
         return
     from app.services.intraday_hunter import store
@@ -172,9 +162,9 @@ async def call2_check_job() -> None:
             if not enabled:
                 continue
             run = await store.get_run(session, d, variant)
-            if run is None or (run.decision or "").upper() not in ("ENTER", "SKIP"):
+            if run is None or (run.status or "").upper() not in ("ENTER", "SKIP"):
                 state = "no run row" if run is None else f"status={run.status} decision={run.decision}"
-                await alert("call2_missing", f"{variant} Call 2 has no decision by 09:30 on {d} "
+                await alert("call2_missing", f"{variant} Call 2 has no decision by 09:34 on {d} "
                                              f"({state})", variant)
 
 
@@ -224,9 +214,9 @@ async def start_intraday_hunter_v2_scheduler() -> None:
     add(capture_job, cron(hour=9, minute=16, second=30), args=["09:16 recentre"],
         id="ih_v2_capture_0916", replace_existing=True)
     add(candle_check_job, cron(hour="9-15", minute="20,50"), id="ih_v2_candle_check", replace_existing=True)
-    add(call2_check_job, cron(hour=9, minute=30), id="ih_v2_call2_check_0930", replace_existing=True)
-    add(live_job, cron(hour=13, minute=0), args=["13:00"], id="ih_v2_live_1300", replace_existing=True)
-    add(live_job, cron(hour=15, minute=0), args=["15:00"], id="ih_v2_live_1500", replace_existing=True)
+    add(call2_check_job, cron(hour=9, minute=34), id="ih_v2_call2_check_0934", replace_existing=True)
+    add(live_job, cron(hour=15, minute=45), args=["15:45"], id="ih_v2_live_1545", replace_existing=True)
+    add(live_job, cron(hour=17, minute=30), args=["17:30"], id="ih_v2_live_1730", replace_existing=True)
     add(grade_job, cron(hour=16, minute=0), id="ih_v2_grade_1600", replace_existing=True)
     add(weekly_review_job, cron(day_of_week="sat", hour=10, minute=0),
         id="ih_v2_weekly_review", replace_existing=True)

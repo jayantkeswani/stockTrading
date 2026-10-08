@@ -38,14 +38,27 @@ def build_plan_prompt(subs_text: str, trading_date: date) -> str:
     )
 
 
+_NEG = r"(?:no|not|avoid|avoiding|don'?t|dont|never|skip|without)\s+(?:buy(?:ing)?\s+)?"
+_CE_TOK = r"(?:ce|calls?)"
+_PE_TOK = r"(?:pe|puts?)"
+
+
 def _side(v) -> str:
-    """Coerce free text to 'CE' | 'PE' | 'none'."""
+    """Coerce free text to 'CE' | 'PE' | 'none' (PURE).
+
+    Explicit tokens win, negated mentions don't count ("PE, avoid calls" → PE; "no CE" → none),
+    and a text naming BOTH sides un-negated is ambiguous → 'none'.
+    """
     s = str(v or "").strip().lower()
-    if not s:
+    if not s or s in ("none", "no trade", "skip", "null", "-"):
         return "none"
-    if s in ("ce", "call", "calls") or "buy ce" in s or "call" in s or re.search(r"\bce\b", s):
+    neg_ce = re.search(_NEG + _CE_TOK + r"\b", s) is not None
+    neg_pe = re.search(_NEG + _PE_TOK + r"\b", s) is not None
+    ce = re.search(r"\b" + _CE_TOK + r"\b", s) is not None and not neg_ce
+    pe = re.search(r"\b" + _PE_TOK + r"\b", s) is not None and not neg_pe
+    if ce and not pe:
         return "CE"
-    if s in ("pe", "put", "puts") or "buy pe" in s or "put" in s or re.search(r"\bpe\b", s):
+    if pe and not ce:
         return "PE"
     return "none"
 

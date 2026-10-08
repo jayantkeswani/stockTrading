@@ -4,7 +4,8 @@ The candle stamped 09:15 closes at ~09:16:00, so decision time = candle minute +
   - 09:16 (the 09:15 candle close): first Call 2.
   - every minute after: re-check while the decision is WAIT.
   - 09:25 (`call2_deadline`): last call; a WAIT there becomes SKIP.
-ENTER / SKIP finalize the day. Single-flight: if a call is still running when the next minute
+ENTER / SKIP (status) finalize the day. A decided ENTER whose emission produced no legs is
+ENTER_RETRY: each later minute re-tries the emission (no new LLM call) up to the deadline. Single-flight: if a call is still running when the next minute
 arrives, that minute is skipped — unless it is the deadline, in which case a final deadline call
 runs as soon as the in-flight call returns (so a day can never end in WAIT). Finalization is
 re-derived from the persisted run status, so a restart never re-decides a finalized day.
@@ -38,6 +39,7 @@ class V2Watcher:
         self._done = False
         self._running = False
         self._pending_deadline: time | None = None
+        self._deadline = time(9, 25)
 
     def _reset(self, d: date) -> None:
         self._day, self._done, self._running, self._pending_deadline = d, False, False, None
@@ -58,6 +60,7 @@ class V2Watcher:
             return
         params = await v2_params_async()
         first, deadline = parse_hhmm(params["call2_first"]), parse_hhmm(params["call2_deadline"])
+        self._deadline = deadline
         if now < first or now > deadline:
             return
         if self._running:
@@ -82,20 +85,32 @@ class V2Watcher:
             if run and run.status in _TERMINAL:
                 self._done = True
                 return
+            if run and run.status == "ENTER_RETRY":  # decided ENTER, emission failed → re-emit
+                run = await decision.retry_emission(session, d, now)
+                await session.commit()
+                if run and (run.status in _TERMINAL or now >= self._deadline):
+                    self._done = True
+                return
             if run is None:  # create the row first so the lazy Call 1 can't race an insert
                 run = await store.get_or_create_run(session, d, VARIANT)
                 await session.commit()
-            if not run.call1_json:
+            if not run.call1_json and _lazy_call1_inflight.get(d) is None:
                 # Lazy Call 1 is too slow for the open (Opus + charts) — run it in the background
-                # and decide on live facts now; later checks pick up the thesis.
-                asyncio.create_task(_lazy_call1(d), name="ih_v2_lazy_call1")
+                # and decide on live facts now; later checks pick up the thesis. Single-flight per
+                # day: never a second Opus call while one is running.
+                _lazy_call1_inflight[d] = asyncio.create_task(_lazy_call1(d), name="ih_v2_lazy_call1")
             run = await decision.run_call2(session, d, now=now, t_hook=t_hook)
             await session.commit()
-        if run is not None and (run.decision or "").upper() in _TERMINAL:
+        # Final only on a terminal STATUS: an ENTER whose emission failed is ENTER_RETRY.
+        if run is not None and (run.status or "").upper() in _TERMINAL:
             self._done = True
 
 
+_lazy_call1_inflight: dict[date, asyncio.Task] = {}
+
+
 async def _lazy_call1(d: date) -> None:
+    """Background v2 Call 1 when 08:45 didn't produce one. Single-flight per day (see above)."""
     try:
         async with async_session_factory() as session:
             run = await store.get_run(session, d, VARIANT)
@@ -105,6 +120,8 @@ async def _lazy_call1(d: date) -> None:
             await session.commit()
     except Exception:  # noqa: BLE001
         logger.exception("ih_v2: lazy Call 1 failed")
+    # The task entry stays for the day once it finished: a completed Call 1 always writes
+    # call1_json (thesis or error), so no further lazy run is wanted.
 
 
 ih_v2_watcher = V2Watcher()

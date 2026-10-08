@@ -8,7 +8,7 @@ import pytest
 from app.core.constants import IST
 from app.services.intraday_hunter_v2.teacher.clock import decode_clock, is_session_time
 from app.services.intraday_hunter_v2.teacher.live import (
-    classify_positions_text, detect_entry_exit, normalize_live, sum_check)
+    detect_entry_exit, merge_live, normalize_live, pick_frames, positions_segments, sum_check)
 from app.services.intraday_hunter_v2.teacher.plan import normalize_plan
 from app.services.intraday_hunter_v2.teacher.youtube import (
     classify_ytdlp_error, find_live_video, find_plan_video, vtt_to_text)
@@ -132,9 +132,58 @@ def test_detect_entry_exit_empty_and_no_exit():
     assert r["entry_clock"] == "09:20" and r["exit_clock"] is None
 
 
-def test_classify_positions_text():
-    assert classify_positions_text("nothing here") == (None, None)
-    open_txt = "BANKNIFTY 56800 CE 60 310.50 4500"
-    assert classify_positions_text(open_txt) == (True, False)
-    closed_txt = "BANKNIFTY 56800 CE 0 0.00 4500\nBANKNIFTY 56700 CE 0 0.00 5250"
-    assert classify_positions_text(closed_txt) == (False, True)
+def test_parse_meta_line_and_upload_date_fallback():
+    """web_embedded yt-dlp prints timestamp=NA; live matching falls back to upload_date."""
+    from datetime import date as _d
+
+    from app.services.intraday_hunter_v2.teacher.youtube import find_live_video, parse_meta_line
+
+    assert parse_meta_line("NA|20261008") == (None, _d(2026, 10, 8))
+    assert parse_meta_line("1790006126|20260921")[0] == 1790006126
+    assert parse_meta_line("garbage") == (None, None)
+    vids = [{"id": "p", "title": "Prediction For 09 OCT 2026", "timestamp": None},
+            {"id": "x", "title": "Live Bank Nifty Option Trading 📈 | Intraday Trading by Intraday Hunter",
+             "timestamp": None, "upload_date": _d(2026, 10, 8)}]
+    assert find_live_video(vids, _d(2026, 10, 8))["id"] == "x"
+    assert find_live_video(vids, _d(2026, 10, 7)) is None
+
+
+def test_positions_segments_and_pick_frames():
+    """Blue-card scores (0.68 positions / 0 charts) → segments → representative frames."""
+    scored = [(0, 0), (5, 0), (10, .68), (15, .68), (20, .53), (25, 0), (30, .68), (35, 0), (40, 0),
+              (45, .68), (50, .68)] + [(55 + 5 * i, .68) for i in range(10)]
+    segs = positions_segments(scored)
+    assert segs[0] == [10, 15, 20, 30]  # one low frame inside a segment does not split it
+    assert segs[1][0] == 45 and segs[1][-1] == 100
+    picks = pick_frames(segs, stride_s=20)
+    assert picks[0] == 10 and 30 in picks and 45 in picks and 100 in picks
+    assert pick_frames([[1.0]]) == [1.0]
+
+
+def test_merge_live_real_oct8_shape():
+    """Shape of the real 2026-10-08 video: entry frame has qty/avg, closed frame has qty 0 + P&L."""
+    entry = [{"clock": "09:19", "index_prices": {"NIFTY": 22533.6},
+              "legs": [{"index": "BANKNIFTY", "strike": 54800, "option_type": "PE", "qty": 1170, "avg": 666.35},
+                       {"index": "NIFTY", "strike": 22550, "option_type": "PE", "qty": 0, "avg": 0}]},
+             {"clock": "09:24", "index_prices": {"NIFTY": 22540.0},
+              "legs": [{"index": "BANKNIFTY", "strike": 54800, "option_type": "PE", "qty": 1170, "avg": 666.35},
+                       {"index": "NIFTY", "strike": 22550, "option_type": "PE", "qty": 1430, "avg": 148.35}]}]
+    closed = {"clock": "09:48", "total_pnl": 178881.25 - 0, "index_prices": {"NIFTY": 22449.0},
+              "legs": [{"index": "BANKNIFTY", "strike": 54800, "option_type": "PE", "qty": 0, "avg": 0, "pnl": 116032.5},
+                       {"index": "NIFTY", "strike": 22550, "option_type": "PE", "qty": 0, "avg": 0, "pnl": 62848.75}]}
+    live = normalize_live(merge_live(entry, closed))
+    assert live["side"] == "PE" and live["entry_clock"] == "09:19" and live["exit_clock"] == "09:48"
+    assert [l["qty"] for l in live["legs"]] == [1170, 1430] and live["legs"][0]["avg"] == 666.35
+    assert [l["entry_clock"] for l in live["legs"]] == ["09:19", "09:24"]  # legs added later
+    assert live["legs_sum_ok"] and live["index_prices_entry"]["NIFTY"] == 22533.6
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("PE, avoid calls", "PE"), ("CE", "CE"), ("buy puts", "PE"), ("no CE", "none"),
+    ("call", "CE"), ("CE or PE", "none"), ("don't buy PE; calls only", "CE"), ("none", "none"),
+    ("", "none"), ("PUT", "PE"),
+])
+def test_plan_side_negations(raw, expected):
+    from app.services.intraday_hunter_v2.teacher.plan import _side
+
+    assert _side(raw) == expected

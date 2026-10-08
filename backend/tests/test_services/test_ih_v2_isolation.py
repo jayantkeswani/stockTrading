@@ -50,6 +50,16 @@ def _db_returning_trade():
     return db
 
 
+
+
+def _savepoint_db(db):
+    """Give a mock session a real async-context begin_nested() (savepoint) like AsyncSession."""
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=None)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    db.begin_nested = MagicMock(return_value=cm)
+    return db
+
 @pytest.mark.asyncio
 @patch("app.agent.trade_monitor.ws_manager")
 @patch("app.agent.trade_monitor.notify_sl_hit", new_callable=AsyncMock)
@@ -97,7 +107,7 @@ async def test_v2_leg_falls_back_to_1525_close_when_basket_check_throws(mock_pri
     res = MagicMock()
     res.scalars.return_value.all.return_value = [leg]
     res.scalar_one_or_none.return_value = _db_returning_trade().execute.return_value.scalar_one_or_none()
-    db = AsyncMock()
+    db = _savepoint_db(AsyncMock())
     db.execute = AsyncMock(return_value=res)
     db.add = MagicMock()
     trade_monitor._ih_v2_basket_alerted.clear()
@@ -150,7 +160,7 @@ async def test_v2_basket_crash_never_stops_the_monitor():
     v1 = _pos(StrategyName.INTRADAY_HUNTER.value)
     res = MagicMock()
     res.scalars.return_value.all.return_value = [v1]
-    db = AsyncMock()
+    db = _savepoint_db(AsyncMock())
     db.execute = AsyncMock(return_value=res)
     with patch.object(trade_monitor, "_check_pnl_caps", new=AsyncMock(return_value=None)), \
          patch.object(trade_monitor, "_check_ih_v2_baskets", new=AsyncMock(side_effect=RuntimeError("boom"))), \
@@ -274,3 +284,34 @@ async def test_dedup_isolated_and_v2_strike_aware(dbf):
         assert await strategy_runner._dedup_signal(_strategy_signal(v2, "NSE:ZZ56100CE", 120.0), now, True, None) is None
         # the same v2 contract re-firing identically is noise
         assert await strategy_runner._dedup_signal(_strategy_signal(v2, "NSE:ZZ56000CE"), now, True, None) == "skip"
+
+
+@pytest.mark.asyncio
+async def test_basket_db_error_rolls_back_savepoint_and_monitor_continues(dbf):
+    """A DB error mid basket-check rolls back its writes and leaves the session usable."""
+    from sqlalchemy import func, select, text
+
+    from app.agent import trade_monitor
+    from app.models.agent_log import AgentLog
+
+    marker = f"ih_v2_savepoint_test_{uuid.uuid4().hex[:8]}"
+
+    async def broken_basket_check(db):
+        db.add(AgentLog(action_type="IH_V2_ROUND_HOLD", details={"marker": marker}))
+        await db.flush()
+        await db.execute(text("SELECT * FROM no_such_table_ih_v2"))  # real DB error
+
+    async with dbf() as s:
+        await _add_position(s, StrategyName.INTRADAY_HUNTER.value, "NSE:ZZ56000CE")
+    async with dbf() as db:
+        with patch.object(trade_monitor, "_check_pnl_caps", new=AsyncMock(return_value=None)), \
+             patch.object(trade_monitor, "_check_ih_v2_baskets", side_effect=broken_basket_check), \
+             patch.object(trade_monitor, "_alert_ih_v2_basket_failure", new=AsyncMock()) as alert, \
+             patch.object(trade_monitor, "_check_position", new=AsyncMock(return_value=None)) as chk:
+            await trade_monitor.monitor_positions(db, yolo_mode=True)
+            await db.commit()
+        alert.assert_awaited_once()
+        assert chk.await_count >= 1  # the per-position monitor still ran on the same session
+        n = (await db.execute(select(func.count(AgentLog.id)).where(
+            AgentLog.details["marker"].astext == marker))).scalar()
+        assert n == 0  # the half-done basket write was rolled back

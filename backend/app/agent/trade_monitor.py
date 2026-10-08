@@ -76,12 +76,16 @@ async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[d
 
     # Intraday Hunter v2 — basket-level exits (all legs of a basket close together). Isolated:
     # a failure here must never stop the per-position monitor for every other strategy.
+    # The check runs inside a SAVEPOINT: any error (incl. a DB error mid-basket) rolls back every
+    # leg it touched — a basket is never committed half-closed — and leaves the session usable.
     try:
-        basket_actions = await _check_ih_v2_baskets(db)
+        async with db.begin_nested():
+            basket_actions = await _check_ih_v2_baskets(db)
         if basket_actions:
+            await db.commit()
             actions.extend(basket_actions)
     except Exception as e:  # noqa: BLE001
-        logger.exception("IH v2 basket check failed")
+        logger.exception("IH v2 basket check failed (rolled back to savepoint)")
         await _alert_ih_v2_basket_failure(e)
 
     result = await db.execute(select(Position))
@@ -537,19 +541,65 @@ async def _ih_v2_open_baskets(db: AsyncSession) -> dict[tuple, list[tuple[Positi
     return groups
 
 
+_IH_V2_TICK_MAX_AGE_S = 60
+_IH_V2_REST_TTL_S = 5.0  # the monitor polls every 500ms — throttle REST fallbacks per symbol
+_ih_v2_rest_cache: dict[str, tuple[float, float]] = {}
+
+
+async def _ih_v2_rest_ltp(symbol: str) -> float | None:
+    """REST LTP for a stale/missing leg, cached ~5s per symbol (rate-limit safe)."""
+    import time as _t
+
+    hit = _ih_v2_rest_cache.get(symbol)
+    if hit and _t.monotonic() - hit[0] < _IH_V2_REST_TTL_S:
+        return hit[1]
+    rest = await _fetch_option_price_rest(symbol)
+    try:
+        ltp = float((rest or {}).get("ltp") or 0)
+    except (TypeError, ValueError):
+        ltp = 0.0
+    if ltp > 0:
+        _ih_v2_rest_cache[symbol] = (_t.monotonic(), ltp)
+        return ltp
+    return None
+
+
+def _tick_is_fresh(pd: dict, now: datetime) -> bool:
+    """True when the cached tick has an LTP and its timestamp is <= 60s old."""
+    try:
+        if not pd or float(pd.get("ltp") or 0) <= 0:
+            return False
+        ts = datetime.fromisoformat(str(pd.get("timestamp")))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=IST)
+        return (now - ts).total_seconds() <= _IH_V2_TICK_MAX_AGE_S
+    except (TypeError, ValueError):
+        return False
+
+
 async def _ih_v2_quotes(legs: list[tuple[Position, Trade]]):
-    """LegQuotes (LTP + bid from the Redis tick cache) + the traded indices' live spots."""
+    """LegQuotes (LTP + bid from the Redis tick cache) + the traded indices' live spots.
+
+    A leg with no tick, or a tick older than 60s, falls back to a Fyers REST quote (LTP only —
+    the basket then values that leg at LTP), so a missing WS tick never blanks the basket MTM.
+    """
     from app.services.intraday_hunter_v2.basket import LegQuote
 
+    def _num(v):
+        try:
+            return float(v) if v is not None and float(v) > 0 else None
+        except (TypeError, ValueError):
+            return None
+
+    now = now_ist()
     quotes, spots = [], {}
     for pos, _trade in legs:
-        pd = await get_cached_price(pos.fyers_option_symbol or pos.symbol) or {}
-
-        def _num(v):
-            try:
-                return float(v) if v is not None and float(v) > 0 else None
-            except (TypeError, ValueError):
-                return None
+        sym = pos.fyers_option_symbol or pos.symbol
+        pd = await get_cached_price(sym) or {}
+        if not _tick_is_fresh(pd, now) and pos.fyers_option_symbol:
+            rest_ltp = await _ih_v2_rest_ltp(pos.fyers_option_symbol)
+            if rest_ltp:
+                pd = {"ltp": rest_ltp}  # REST quote: LTP only, no (stale) bid
 
         quotes.append(LegQuote(
             index=pos.symbol, qty=int(pos.quantity), entry_price=float(pos.entry_price),
@@ -650,9 +700,7 @@ async def _check_ih_v2_baskets(db: AsyncSession) -> list[dict] | None:
             except Exception:  # noqa: BLE001
                 logger.warning("IH v2 basket close Telegram failed")
 
-    if all_actions:
-        await db.commit()
-    return all_actions or None
+    return all_actions or None  # the caller commits (savepoint in monitor_positions)
 
 
 async def close_ih_v2_basket_manual(db: AsyncSession, include_shadow: bool = False) -> dict:

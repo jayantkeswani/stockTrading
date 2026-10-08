@@ -165,3 +165,27 @@ class TestWatcherCadence:
              patch.object(w, "_run_once", new=AsyncMock()) as ro:
             await w.maybe_run(date(2026, 10, 9), time(9, 16))
         ro.assert_not_called()
+
+
+class TestLlmCliLoginOptIn:
+    """llm_cli default is unchanged: no token → no call. IH_ALLOW_CLI_LOGIN=1 (dev only) uses
+    the CLI's own login and never injects an empty token."""
+
+    @pytest.mark.asyncio
+    async def test_default_requires_token(self, monkeypatch):
+        from app.services.intraday_hunter import llm_cli
+
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+        monkeypatch.delenv("IH_ALLOW_CLI_LOGIN", raising=False)
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock()) as spawn:
+            assert await llm_cli.call_claude_json("hi") is None
+        spawn.assert_not_called()
+
+    def test_opt_in_keeps_cli_login(self, monkeypatch):
+        from app.services.intraday_hunter import llm_cli
+
+        monkeypatch.setenv("IH_ALLOW_CLI_LOGIN", "1")
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+        assert llm_cli._cli_login_allowed()
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in llm_cli._child_env(None)
+        assert llm_cli._child_env("tok")["CLAUDE_CODE_OAUTH_TOKEN"] == "tok"

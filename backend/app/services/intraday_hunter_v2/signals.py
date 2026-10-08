@@ -67,7 +67,7 @@ async def emit_signals_for_enter(session, run, spots: dict[str, float], params: 
     if direction not in ("CE", "PE"):
         logger.warning("ih_v2: ENTER without a CE/PE direction — nothing to emit")
         return []
-    if not await v2_active():
+    if not await v2_active(fail_closed=False):  # stop only on an explicit kill
         logger.warning("ih_v2: kill switch is OFF (strategy_configs.is_active=false) — no signals")
         return []
     if await already_emitted_today(session, run.trading_date):

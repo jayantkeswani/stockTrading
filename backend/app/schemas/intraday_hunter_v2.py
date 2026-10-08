@@ -6,7 +6,7 @@ shape, `variant='v2'`). LLM / grading payloads are free-form JSONB surfaced as `
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class IhV2Leg(BaseModel):
@@ -78,9 +78,9 @@ class IhTeacherIngestRequest(BaseModel):
 
     trading_date: date
     plan: dict | None = None
-    plan_video_id: str | None = None
+    plan_video_id: str | None = Field(None, max_length=32)  # ih_teacher_days varchar(32)
     live: dict | None = None
-    live_video_id: str | None = None
+    live_video_id: str | None = Field(None, max_length=32)
 
 
 class IhDayGradeResponse(BaseModel):

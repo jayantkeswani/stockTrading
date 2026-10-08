@@ -203,16 +203,48 @@ async def run_call2(
     )
 
     if out["decision"] == "ENTER":
-        try:
-            from app.services.intraday_hunter_v2.signals import emit_signals_for_enter
-            spots = {}
-            for i, f in facts.items():
-                spots[i] = (await _live_spot(i)) or f["last"]
-            emitted = await emit_signals_for_enter(session, run, spots, params)
-            run.call2_json = {**run.call2_json, "_emitted": emitted}
-            logger.info("ih_v2: emitted %d leg(s) for %s: %s", len(emitted), d, ", ".join(emitted))
-        except Exception:  # noqa: BLE001 — never undo the decision record
-            logger.exception("ih_v2: signal emission failed for %s (decision stands)", d)
+        await emit_or_retry(session, d, run, params, at_deadline=at_deadline,
+                            fallback_spots={i: f["last"] for i, f in facts.items()})
+    return run
+
+
+async def emit_or_retry(session: AsyncSession, d: date, run: IntradayHunterRun, params: dict,
+                        *, at_deadline: bool, fallback_spots: dict | None = None) -> list[str]:
+    """Emit the basket for a decided ENTER. Zero legs emitted → status ENTER_RETRY + an alert, so
+    the watcher re-tries emission (not a new LLM call) each minute up to the deadline; at the
+    deadline a failed emission stays ENTER_RETRY (final, alerted). Never raises."""
+    from app.services.intraday_hunter_v2.alerts import alert
+    from app.services.intraday_hunter_v2.signals import emit_signals_for_enter
+
+    emitted: list[str] = []
+    try:
+        spots = {}
+        for i in (fallback_spots or {}) or levels.INDICES:
+            spots[i] = (await _live_spot(i)) or (fallback_spots or {}).get(i)
+        emitted = await emit_signals_for_enter(session, run, spots, params)
+    except Exception:  # noqa: BLE001 — never undo the decision record
+        logger.exception("ih_v2: signal emission failed for %s (decision stands)", d)
+    tries = int((run.call2_json or {}).get("_emit_tries") or 0) + 1
+    run.call2_json = {**(run.call2_json or {}), "_emitted": emitted, "_emit_tries": tries}
+    if emitted:
+        run.status = "ENTER"
+        logger.info("ih_v2: emitted %d leg(s) for %s: %s", len(emitted), d, ", ".join(emitted))
+    else:
+        run.status = "ENTER_RETRY"
+        await alert("emit_failed", f"v2 ENTER {run.direction} on {d} emitted NO legs "
+                    f"(try {tries}{', deadline — giving up' if at_deadline else ', retrying next minute'})",
+                    f"try{tries}")
+    return emitted
+
+
+async def retry_emission(session: AsyncSession, d: date, now: time) -> IntradayHunterRun | None:
+    """Watcher path for status ENTER_RETRY: re-emit the already-decided basket."""
+    params = await v2_params_async()
+    run = await store.get_run(session, d, VARIANT)
+    if run is None or run.status != "ENTER_RETRY":
+        return run
+    await emit_or_retry(session, d, run, params,
+                        at_deadline=now >= parse_hhmm(params["call2_deadline"]))
     return run
 
 

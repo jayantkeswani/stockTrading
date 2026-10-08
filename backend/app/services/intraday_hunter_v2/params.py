@@ -98,8 +98,12 @@ _ACTIVE_TTL_S = 15.0
 _active_cache: tuple[float, bool] | None = None
 
 
-async def v2_active() -> bool:
-    """True when v2 may act now (env flag AND strategy_configs.is_active, 15s TTL)."""
+async def v2_active(fail_closed: bool = True) -> bool:
+    """True when v2 may act now (env flag AND strategy_configs.is_active, 15s TTL).
+
+    `fail_closed=False` (signal emission after a decided ENTER) stops only on an EXPLICIT off:
+    on a DB error it returns the last known value (True if none) instead of False.
+    """
     global _active_cache
     import time as _t
 
@@ -121,7 +125,9 @@ async def v2_active() -> bool:
                 select(StrategyConfig.is_active).where(StrategyConfig.strategy_name == STRATEGY)
             )).scalar_one_or_none()
         active = bool(val)
-    except Exception:  # noqa: BLE001 — fail closed
+    except Exception:  # noqa: BLE001
+        if not fail_closed:
+            return _active_cache[1] if _active_cache else True
         active = False
     _active_cache = (now, active)
     return active

@@ -16,9 +16,6 @@ logger = logging.getLogger(__name__)
 
 CHANNEL_VIDEOS_URL = "https://www.youtube.com/@IntradayHunter/videos"
 LIVE_TITLE_MARKER = "live bank nifty option trading"
-# Clock crop: 110x28 at (1165,688) in a 1280x720 frame; top strip: 1280x300 at (0,0).
-CLOCK_CROP = (110, 28, 1165, 688)
-TOP_STRIP_CROP = (1280, 300, 0, 0)
 
 _MONTHS = {m: i + 1 for i, m in enumerate(
     ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"])}
@@ -109,13 +106,33 @@ async def list_channel_videos(limit: int = 40) -> list[dict]:
 
 
 async def resolve_timestamp(video_id: str) -> int | None:
-    """Fetch a single video's upload epoch timestamp (like tools/meta.sh)."""
-    out = await _ytdlp(["--skip-download", "--print", "%(timestamp)s",
-                        f"https://www.youtube.com/watch?v={video_id}"], timeout_s=60)
+    """Fetch a single video's upload epoch timestamp (like tools/meta.sh). Often None with the
+    `web_embedded` player client — use `resolve_upload_day` for matching."""
+    day = await resolve_upload_day(video_id)
+    return day[0]
+
+
+def parse_meta_line(line: str) -> tuple[int | None, date | None]:
+    """'<timestamp>|<upload_date YYYYMMDD>' → (epoch|None, date|None). yt-dlp prints NA (PURE)."""
+    ts_s, _, ud_s = (line or "").strip().partition("|")
     try:
-        return int(float(out.strip().splitlines()[-1]))
-    except (ValueError, IndexError):
-        return None
+        ts = int(float(ts_s))
+    except ValueError:
+        ts = None
+    try:
+        ud = datetime.strptime(ud_s.strip(), "%Y%m%d").date()
+    except ValueError:
+        ud = None
+    return ts, ud
+
+
+async def resolve_upload_day(video_id: str) -> tuple[int | None, date | None]:
+    """(timestamp, upload_date) for one video. The web_embedded client returns timestamp=NA
+    but still gives upload_date, which is what live-video matching falls back to."""
+    out = await _ytdlp(["--skip-download", "--print", "%(timestamp)s|%(upload_date)s",
+                        f"https://www.youtube.com/watch?v={video_id}"], timeout_s=60)
+    lines = [ln for ln in out.strip().splitlines() if "|" in ln]
+    return parse_meta_line(lines[-1]) if lines else (None, None)
 
 
 def find_plan_video(videos: list[dict], trading_date: date) -> dict | None:
@@ -142,11 +159,14 @@ def _ist_date(ts) -> date | None:
 def find_live_video(videos: list[dict], trading_date: date) -> dict | None:
     """'Live Bank Nifty Option Trading' video uploaded on trading_date (IST) (PURE).
 
-    Videos lacking a timestamp never match; use `find_live_video_resolved` to fetch them.
+    Matches on the IST date of `timestamp`, else on `upload_date` (a `date`) when the timestamp
+    is unavailable. Videos lacking both never match; use `find_live_video_resolved` to fetch them.
     """
     for v in videos:
-        if LIVE_TITLE_MARKER in (v.get("title") or "").lower() \
-                and _ist_date(v.get("timestamp")) == trading_date:
+        if LIVE_TITLE_MARKER not in (v.get("title") or "").lower():
+            continue
+        day = _ist_date(v.get("timestamp")) or v.get("upload_date")
+        if day == trading_date:
             return v
     return None
 
@@ -159,14 +179,15 @@ async def find_live_video_resolved(videos: list[dict], trading_date: date,
         return hit
     n = 0
     for v in videos:
-        if LIVE_TITLE_MARKER not in (v.get("title") or "").lower() or v.get("timestamp"):
+        if LIVE_TITLE_MARKER not in (v.get("title") or "").lower() \
+                or v.get("timestamp") or v.get("upload_date"):
             continue
         if n >= max_lookups:
             break
         n += 1
-        ts = await resolve_timestamp(v["id"])
-        v["timestamp"] = ts
-        if _ist_date(ts) == trading_date:
+        ts, ud = await resolve_upload_day(v["id"])
+        v["timestamp"], v["upload_date"] = ts, ud
+        if (_ist_date(ts) or ud) == trading_date:
             return v
     return None
 
@@ -251,7 +272,9 @@ async def sample_crops(path: str, crop: tuple[int, int, int, int] | None, every_
     """Sample frames every `every_s` s, optionally cropped (w,h,x,y) and upscaled, -> [(t, path)]."""
     outdir = os.path.splitext(path)[0] + f"_{tag}"
     os.makedirs(outdir, exist_ok=True)
-    vf = [f"fps=1/{every_s}"]
+    # Normalize to 1280x720 first: crop coordinates are defined in that frame, and the
+    # bot-check-safe player client often only serves 640x360.
+    vf = [f"fps=1/{every_s}", "scale=1280:720"]
     if crop:
         w, h, x, y = crop
         vf.append(f"crop={w}:{h}:{x}:{y}")
@@ -266,22 +289,3 @@ async def sample_crops(path: str, crop: tuple[int, int, int, int] | None, every_
     return [(i * float(every_s), f) for i, f in enumerate(files)]
 
 
-async def crop_image(src: str, dst: str, crop: tuple[int, int, int, int], scale: int = 1) -> str:
-    """Crop (w,h,x,y) a single image with ffmpeg (optionally upscaled)."""
-    w, h, x, y = crop
-    vf = f"crop={w}:{h}:{x}:{y}" + (f",scale=iw*{scale}:ih*{scale}" if scale > 1 else "")
-    rc, _, err = await run_cmd([require_tool("ffmpeg"), "-y", "-v", "error", "-i", src,
-                                "-vf", vf, dst], 30)
-    if rc != 0:
-        raise TeacherIngestError("PARSE_FAILED", f"ffmpeg crop: {err.strip()[:200]}")
-    return dst
-
-
-async def crop_top_strip(src: str, dst: str) -> str:
-    """Crop the top 300px strip (browser tabs / index prices / positions)."""
-    return await crop_image(src, dst, TOP_STRIP_CROP)
-
-
-async def crop_clock(src: str, dst: str) -> str:
-    """Crop the taskbar clock region (upscaled 3x for OCR)."""
-    return await crop_image(src, dst, CLOCK_CROP, scale=3)
