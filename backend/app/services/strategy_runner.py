@@ -16,7 +16,7 @@ import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
-from sqlalchemy import Time, and_, cast, func, select
+from sqlalchemy import Time, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
@@ -1992,6 +1992,19 @@ class StrategyRunner:
                     Position.symbol == signal.symbol,
                     Position.is_shadow == False,  # noqa: E712
                 )
+                v2 = StrategyName.INTRADAY_HUNTER_V2.value
+                if signal.strategy_name.value == v2:
+                    # IH v2 is isolated: only its OWN open leg on the same contract blocks it
+                    # (its basket holds BANKNIFTY ATM + OTM on the same index/direction).
+                    query = query.where(
+                        Position.strategy_name == v2,
+                        Position.fyers_option_symbol == signal.fyers_option_symbol,
+                    )
+                else:
+                    # ...and v2's positions never block any other strategy (incl. v1).
+                    query = query.where(
+                        or_(Position.strategy_name.is_(None), Position.strategy_name != v2)
+                    )
                 if direction:
                     query = query.where(Position.option_type == direction)
                 result = await session.execute(query.limit(1))
@@ -2011,6 +2024,7 @@ class StrategyRunner:
         StrategyName.ORB.value,
         StrategyName.GAMMA_SCALPING.value,
         StrategyName.INTRADAY_HUNTER.value,
+        StrategyName.INTRADAY_HUNTER_V2.value,
     })
 
     async def _is_dedup_skip(self, signal: StrategySignal) -> bool:
@@ -2117,6 +2131,9 @@ class StrategyRunner:
                 if signal.strategy_name.value in self._INTRADAY_STRATEGIES:
                     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
                     filters.append(Signal.generated_at >= today_start)
+                if signal.strategy_name == StrategyName.INTRADAY_HUNTER_V2:
+                    # Strike-aware: BANKNIFTY's ATM and OTM legs are distinct signals.
+                    filters.append(Signal.fyers_option_symbol == signal.fyers_option_symbol)
 
                 result = await session.execute(
                     select(Signal).where(and_(*filters))

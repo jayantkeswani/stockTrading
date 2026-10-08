@@ -285,6 +285,19 @@ class FyersWSClient:
             except Exception:
                 logger.exception("Failed to subscribe to additional symbols")
 
+    async def subscribe_depth(self, symbols: list[str]) -> None:
+        """Subscribe 5-level DepthUpdate for `symbols` (IH v2 order-flow, behind a flag).
+
+        Depth messages are routed to the order-flow tracker in `_on_message`, never to prices.
+        """
+        if not (self._ws and self._connected and symbols):
+            return
+        try:
+            self._ws.subscribe(symbols=list(symbols), data_type="DepthUpdate")
+            logger.info("Subscribed DepthUpdate for %d symbols", len(symbols))
+        except Exception:
+            logger.exception("Failed to subscribe DepthUpdate")
+
     def _on_message(self, message):
         """Callback from Fyers SDK (runs in Fyers' thread).
 
@@ -307,6 +320,19 @@ class FyersWSClient:
                 if not internal_symbol:
                     continue
 
+                # 5-level DepthUpdate messages carry bid_price1.. and no LTP — they must never
+                # reach the price path (ltp would read 0). Route them to the IH v2 order-flow
+                # tracker only (subscribed only when IH_V2_DEPTH_ENABLED).
+                if "bid_price1" in tick and "ltp" not in tick:
+                    try:
+                        from app.services.intraday_hunter_v2.orderflow import orderflow_tracker
+                        self._loop.call_soon_threadsafe(
+                            orderflow_tracker.on_depth, internal_symbol, dict(tick),
+                        )
+                    except Exception:  # noqa: BLE001 — depth capture must never break ticks
+                        logger.debug("IH v2 depth routing failed", exc_info=True)
+                    continue
+
                 tick_data = {
                     "ltp": tick.get("ltp", 0),
                     # Fyers full-mode SymbolUpdate field names are bid_price/ask_price
@@ -321,6 +347,13 @@ class FyersWSClient:
                     "low": tick.get("low_price", 0),
                     "open": tick.get("open_price", 0),
                     "prev_close": tick.get("prev_close_price", 0),
+                    # Order-flow fields (Fyers full-mode SymbolUpdate names, per the SDK's
+                    # map.json data_val list). Absent on index ticks → None. Cached in Redis and
+                    # aggregated per minute by the IH v2 order-flow tracker.
+                    "tot_buy_qty": tick.get("tot_buy_qty"),
+                    "tot_sell_qty": tick.get("tot_sell_qty"),
+                    "bid_size": tick.get("bid_size"),
+                    "ask_size": tick.get("ask_size"),
                 }
 
                 # Pass fyers_alias so feed_manager can cache under both names.
@@ -547,6 +580,11 @@ class FyersWSClient:
                         fyers_sym = f"NSE:{sym}-EQ"
                         extra.append(fyers_sym)
                         self._reverse_map[fyers_sym] = sym
+
+            # Intraday Hunter v2 counterfactual capture (ATM±2 CE/PE per index, set ~09:10)
+            ih_raw = await r.get(f"ih_v2:capture:{today}")
+            if ih_raw:
+                extra.extend(json.loads(ih_raw).get("symbols", []))
 
             # Dashboard watchlist (keys are Fyers symbols)
             items = await r.hgetall("watchlist:items")

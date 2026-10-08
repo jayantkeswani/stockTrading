@@ -232,6 +232,7 @@ If both Redis and REST return no price (or `ltp=0`), the monitor checks the posi
 
 Once a valid price is obtained:
 
+0. **Intraday Hunter v2 baskets** (`_check_ih_v2_baskets`, before the per-position loop) — open `intraday_hunter_v2` legs are grouped per (trading day, book = YOLO profile | SHADOW) and exited TOGETHER on basket-level rules: bid-valued basket MTM ≥ +T → `BASKET_TARGET`, ≤ −T → `BASKET_STOP` (T = 0.20 × basket cost), a round-number hold near +T, and an 11:30 `BASKET_TIME` backstop. v2 legs skip every per-leg check below (a 15:25 `TIME_EXIT` remains as a last-resort fallback). See `docs/ai/intraday-hunter-v2.md`.
 1. **Per-profile profit cap** (`_check_profit_cap`) — iterates each active YOLO profile. For each, computes realized + unrealized net PnL scoped to that profile. If PnL >= profile's `profit_cap`, closes only that profile's open positions with `ExitReason.PROFIT_CAP` and sends a per-profile Telegram notification. Other profiles continue trading.
 2. **SL hit** — direction-aware. Uses `ExitReason.TRAILING_SL` if stop_loss was trailed (differs from original), else `ExitReason.AGENT_SL`. Auto-closes in all modes (MANUAL, SEMI, YOLO).
 3. **Target hit** — YOLO/shadow: auto-close with `ExitReason.AGENT_PROFIT`. SEMI: request user confirmation via Telegram.

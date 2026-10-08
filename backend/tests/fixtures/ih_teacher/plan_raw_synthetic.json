@@ -1,0 +1,5 @@
+{"gap_up_side": "buy CE", "flat_side": "none", "gap_down_side": "Put",
+ "bias": "bullish above 25,150",
+ "levels_onscreen": {"NIFTY": ["25,150", 25230, "n/a"], "BANKNIFTY": [56800.5], "SENSEX": []},
+ "levels_audio": {"NIFTY": [25100], "Bank Nifty": ["56,700"]},
+ "summary": "Buy CE on gap up above 25150; buy PE on gap down."}

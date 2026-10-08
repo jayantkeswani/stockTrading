@@ -15,8 +15,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# ffmpeg: Intraday Hunter v2 teacher ingestion (plan keyframes + 5s frame sampling of the live
+# recordings; Claude vision reads the chosen frames). yt-dlp comes from pyproject.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 curl ca-certificates nodejs npm && \
+    libpq5 curl ca-certificates nodejs npm ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI — the Intraday Hunter agent calls Claude via `claude -p` on the

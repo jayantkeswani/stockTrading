@@ -10,10 +10,11 @@ import { DecisionCard } from "@/components/intraday-hunter/DecisionCard";
 import { BasketCard } from "@/components/intraday-hunter/BasketCard";
 import { HistoryTimeline } from "@/components/intraday-hunter/HistoryTimeline";
 import { HistoryDetailModal } from "@/components/intraday-hunter/HistoryDetailModal";
+import { V2Panel } from "@/components/intraday-hunter/v2/V2Panel";
 
 const POLL_MS = 20000;
 
-export default function IntradayHunterPage() {
+function IntradayHunterV1() {
   const [run, setRun] = useState<IntradayHunterRun | null>(null);
   const [history, setHistory] = useState<IntradayHunterHistoryItem[]>([]);
   const [basket, setBasket] = useState<IntradayHunterBasketLeg[]>([]);
@@ -126,6 +127,45 @@ export default function IntradayHunterPage() {
       {historyDate && (
         <HistoryDetailModal date={historyDate} onClose={() => setHistoryDate(null)} />
       )}
+    </div>
+  );
+}
+
+const TAB_KEY = "ih_tab";
+type Tab = "v1" | "v2";
+
+export default function IntradayHunterPage() {
+  const [tab, setTab] = useState<Tab>("v1");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(TAB_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate persisted tab after mount (SSR-safe)
+      if (saved === "v1" || saved === "v2") setTab(saved);
+    } catch { /* storage unavailable */ }
+  }, []);
+
+  const select = (t: Tab) => {
+    setTab(t);
+    try { localStorage.setItem(TAB_KEY, t); } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-1">
+        {(["v1", "v2"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => select(t)}
+            className={`text-xs font-mono px-3 py-1 rounded border ${
+              tab === t ? "border-accent text-accent bg-accent/10" : "border-border text-text-muted hover:text-text-secondary"
+            }`}
+          >
+            {t === "v1" ? "v1" : "v2"}
+          </button>
+        ))}
+      </div>
+      {tab === "v1" ? <IntradayHunterV1 /> : <V2Panel />}
     </div>
   );
 }

@@ -15,6 +15,7 @@ from app.models.market_data_daily import MarketDataDaily
 from app.models.signal_history import SignalHistory
 from app.models.yolo_profile import YoloProfile
 from app.models.intraday_hunter_run import IntradayHunterRun
+from app.models.ih_v2 import IhDayGrade, IhMinuteLog, IhTeacherDay, IhWeeklyReview
 
 __all__ = [
     "Base",
@@ -36,4 +37,8 @@ __all__ = [
     "SignalHistory",
     "YoloProfile",
     "IntradayHunterRun",
+    "IhMinuteLog",
+    "IhTeacherDay",
+    "IhDayGrade",
+    "IhWeeklyReview",
 ]

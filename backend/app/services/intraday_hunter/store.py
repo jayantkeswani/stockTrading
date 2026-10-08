@@ -1,6 +1,8 @@
 """Persistence helpers for the Intraday Hunter agent — the `intraday_hunter_runs` row.
 
-One row per trading day. Call 1 fills the thesis; each Call 2 updates the latest decision
+One row per (trading day, variant) — v1 owns `variant='v1'` (the default everywhere here);
+Intraday Hunter v2 (services/intraday_hunter_v2/) reuses these helpers with `variant='v2'`.
+Call 1 fills the thesis; each Call 2 updates the latest decision
 and appends to the audit history. Also builds the multi-day STRUCTURAL memory snapshot fed
 into Call 1 (trapped side / direction / whether the thesis played out — never rupee P&L).
 """
@@ -14,33 +16,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.intraday_hunter_run import IntradayHunterRun
 
 
-async def get_run(session: AsyncSession, trading_date: date) -> IntradayHunterRun | None:
-    """The run row for `trading_date`, or None."""
+async def get_run(
+    session: AsyncSession, trading_date: date, variant: str = "v1"
+) -> IntradayHunterRun | None:
+    """The `variant` run row for `trading_date`, or None."""
     res = await session.execute(
-        select(IntradayHunterRun).where(IntradayHunterRun.trading_date == trading_date)
+        select(IntradayHunterRun).where(
+            IntradayHunterRun.trading_date == trading_date,
+            IntradayHunterRun.variant == variant,
+        )
     )
     return res.scalar_one_or_none()
 
 
 async def get_or_create_run(
-    session: AsyncSession, trading_date: date
+    session: AsyncSession, trading_date: date, variant: str = "v1"
 ) -> IntradayHunterRun:
-    """Fetch the run for `trading_date`, creating a PENDING row if absent (idempotent)."""
-    run = await get_run(session, trading_date)
+    """Fetch the `variant` run for `trading_date`, creating a PENDING row if absent (idempotent)."""
+    run = await get_run(session, trading_date, variant)
     if run is None:
-        run = IntradayHunterRun(trading_date=trading_date, status="PENDING")
+        run = IntradayHunterRun(trading_date=trading_date, status="PENDING", variant=variant)
         session.add(run)
         await session.flush()
     return run
 
 
 async def recent_runs(
-    session: AsyncSession, before_date: date, limit: int = 3
+    session: AsyncSession, before_date: date, limit: int = 3, variant: str = "v1"
 ) -> list[IntradayHunterRun]:
-    """The `limit` most recent run rows strictly before `before_date` (newest first)."""
+    """The `limit` most recent `variant` run rows strictly before `before_date` (newest first)."""
     res = await session.execute(
         select(IntradayHunterRun)
-        .where(IntradayHunterRun.trading_date < before_date)
+        .where(
+            IntradayHunterRun.trading_date < before_date,
+            IntradayHunterRun.variant == variant,
+        )
         .order_by(IntradayHunterRun.trading_date.desc())
         .limit(limit)
     )
@@ -48,11 +58,12 @@ async def recent_runs(
 
 
 async def history(
-    session: AsyncSession, limit: int = 30
+    session: AsyncSession, limit: int = 30, variant: str = "v1"
 ) -> list[IntradayHunterRun]:
-    """The `limit` most recent run rows (newest first) for the UI history list."""
+    """The `limit` most recent `variant` run rows (newest first) for the UI history list."""
     res = await session.execute(
         select(IntradayHunterRun)
+        .where(IntradayHunterRun.variant == variant)
         .order_by(IntradayHunterRun.trading_date.desc())
         .limit(limit)
     )

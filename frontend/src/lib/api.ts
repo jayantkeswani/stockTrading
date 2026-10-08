@@ -1,4 +1,4 @@
-import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance, IntradayBias, IntradayHunterRun, IntradayHunterHistoryItem, IntradayHunterBasketLeg } from "./types";
+import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance, IntradayBias, IntradayHunterRun, IntradayHunterHistoryItem, IntradayHunterBasketLeg, IhV2Basket, IhV2CloseResult, IhV2Ledger, IhV2Grade, IhTeacher } from "./types";
 
 function getApiBase(): string {
   if (typeof window === "undefined") return "http://localhost:8080";
@@ -453,5 +453,16 @@ export const api = {
   },
   getIntradayHunterBasket: () =>
     request<IntradayHunterBasketLeg[]>(`/api/v1/intraday-hunter/basket`),
+  // Intraday Hunter v2 (parallel paper strategy)
+  getIhV2Today: () => request<IntradayHunterRun>(`/api/v1/intraday-hunter/v2/today`),
+  getIhV2History: (limit = 30) =>
+    request<IntradayHunterHistoryItem[]>(`/api/v1/intraday-hunter/v2/history?limit=${limit}`),
+  getIhV2Run: (date: string) => request<IntradayHunterRun>(`/api/v1/intraday-hunter/v2/run/${date}`),
+  getIhV2Basket: () => request<IhV2Basket>(`/api/v1/intraday-hunter/v2/basket`),
+  closeIhV2Basket: () =>
+    request<IhV2CloseResult>(`/api/v1/intraday-hunter/v2/basket/close`, { method: "POST" }),
+  getIhV2Ledger: () => request<IhV2Ledger>(`/api/v1/intraday-hunter/v2/ledger`),
+  getIhV2Grades: (limit = 20) => request<IhV2Grade[]>(`/api/v1/intraday-hunter/v2/grades?limit=${limit}`),
+  getIhTeacher: (date: string) => request<IhTeacher>(`/api/v1/intraday-hunter/teacher/${date}`),
 
 };

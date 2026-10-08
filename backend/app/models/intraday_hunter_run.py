@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import Boolean, Date, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, Date, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -9,7 +9,10 @@ from app.models.base import Base, TimestampMixin, generate_uuid
 
 
 class IntradayHunterRun(Base, TimestampMixin):
-    """One row per trading day for the Intraday Hunter agent.
+    """One row per (trading day, variant) for the Intraday Hunter agent.
+
+    `variant` is 'v1' (the original agent) or 'v2' (Intraday Hunter v2, the parallel paper
+    strategy — services/intraday_hunter_v2/). Unique on (trading_date, variant).
 
     Updated in place as the day progresses: PENDING -> THESIS_READY (Call 1 done) ->
     WATCHING (open) -> ENTER/WAIT/SKIP (latest Call 2 decision). Stores the full Call 1
@@ -25,7 +28,10 @@ class IntradayHunterRun(Base, TimestampMixin):
     __tablename__ = "intraday_hunter_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=generate_uuid)
-    trading_date: Mapped[date] = mapped_column(Date, nullable=False, unique=True)
+    trading_date: Mapped[date] = mapped_column(Date, nullable=False)
+    variant: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="v1", server_default=text("'v1'")
+    )
 
     # PENDING / THESIS_READY / WATCHING / ENTER / WAIT / SKIP
     status: Mapped[str] = mapped_column(
@@ -60,4 +66,7 @@ class IntradayHunterRun(Base, TimestampMixin):
 
     __table_args__ = (
         Index("idx_intraday_hunter_runs_trading_date", "trading_date"),
+        UniqueConstraint(
+            "trading_date", "variant", name="uq_intraday_hunter_runs_date_variant"
+        ),
     )

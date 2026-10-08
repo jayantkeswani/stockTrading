@@ -80,11 +80,13 @@ def select_strike_at_itm_depth(
 ) -> float:
     """Strike `depth` strikes in-the-money for the given direction (depth 0 = ATM).
 
-    A CE moves DOWN to go ITM, a PE moves UP. Used by callers that want a specific
-    moneyness (e.g. the Intraday Hunter basket: BANKNIFTY ITM-2 + ITM-1).
+    A CE moves DOWN to go ITM, a PE moves UP. A NEGATIVE depth is out-of-the-money
+    (-1 = OTM-1: a CE one strike UP, a PE one strike DOWN). Used by callers that want a
+    specific moneyness (Intraday Hunter v1 basket: BANKNIFTY ITM-2 + ITM-1; v2: BANKNIFTY
+    ATM + OTM-1).
     """
     atm = round(index_price / strike_gap) * strike_gap
-    if depth <= 0:
+    if depth == 0:
         return float(atm)
     if signal_type == SignalType.BUY_CE:
         return float(atm - depth * strike_gap)
@@ -309,7 +311,8 @@ async def resolve_option_details(
         rr_multiplier: Risk-reward multiplier for target (fallback)
         index_sl: Index-level stop-loss from market structure (e.g. VWAP lower band)
         index_target: Index-level target from market structure (e.g. PDH)
-        itm_offsets: Optional ITM depths to try in order (0 = ATM, 1 = ITM-1, 2 = ITM-2).
+        itm_offsets: Optional ITM depths to try in order (0 = ATM, 1 = ITM-1, 2 = ITM-2,
+            negative = OTM, e.g. -1 = OTM-1).
             When given, overrides the default ATM→ITM-1 search — used by the Intraday
             Hunter basket to pin a specific strike (e.g. BANKNIFTY ITM-2). Falls through
             the list until a contract with a live premium resolves.

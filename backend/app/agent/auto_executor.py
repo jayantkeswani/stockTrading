@@ -235,7 +235,9 @@ async def auto_execute_signal(signal_id) -> list[dict]:
                 Position.is_shadow == False,  # noqa: E712
                 Position.yolo_profile_id == profile.id,
             )
-            if signal.strategy_name == StrategyName.INTRADAY_HUNTER.value:
+            if signal.strategy_name in (
+                StrategyName.INTRADAY_HUNTER.value, StrategyName.INTRADAY_HUNTER_V2.value
+            ):
                 pos_query = pos_query.where(
                     Position.fyers_option_symbol == signal.fyers_option_symbol
                 )

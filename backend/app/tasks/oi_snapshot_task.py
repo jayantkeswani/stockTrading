@@ -79,6 +79,35 @@ async def fetch_oi_snapshots():
         logger.info("OI snapshot: persisted %d rows across %d symbols", total_rows, len(OI_SYMBOLS))
 
 
+# Intraday Hunter v2 opening OI flow needs 1-minute chain snapshots across the open.
+OI_HF_SYMBOLS = ("NIFTY", "BANKNIFTY", "SENSEX")
+
+
+async def fetch_oi_snapshots_hf():
+    """High-frequency (every 1 min, 09:15-09:45 IST) option-chain snapshots for the IH v2 indices.
+
+    Same nearest-expiry chain + `oi_snapshots` rows as the 3-minute job (which keeps running all
+    day); a minute both jobs hit is de-duplicated by `uq_oi_snapshot`. 3 calls/min, run serially
+    with the shared inter-request delay — well inside Fyers' rate limits.
+    """
+    if not is_market_open():
+        return
+    from app.core.redis import get_redis
+
+    token = await get_redis().get("fyers:access_token")
+    if not token and settings.market_mode != "simulated":
+        logger.warning("No Fyers token — cannot fetch HF OI data")
+        return
+    total = 0
+    for symbol in OI_HF_SYMBOLS:
+        try:
+            total += await _fetch_and_persist_oi(token, symbol)
+        except Exception:
+            logger.exception("HF OI fetch failed for %s", symbol)
+        await asyncio.sleep(FYERS_INTER_REQUEST_DELAY)
+    logger.info("OI HF snapshot: persisted %d rows (%s)", total, ", ".join(OI_HF_SYMBOLS))
+
+
 async def _fetch_and_persist_oi(token: str, symbol: str) -> int:
     """Fetch option chain for a single symbol and insert into oi_snapshots.
 
@@ -658,6 +687,13 @@ async def start_oi_snapshot_scheduler():
         replace_existing=True,
     )
     _scheduler.add_job(
+        fetch_oi_snapshots_hf,
+        trigger=CronTrigger(hour=9, minute="15-45", timezone=IST),
+        id="oi_snapshot_hf_fetch",
+        name="Fetch OI snapshots every 1 min 09:15-09:45 (IH v2 opening flow)",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
         fetch_stock_futures_oi,
         trigger=CronTrigger(hour=15, minute=25, timezone=IST),
         id="stock_futures_oi_fetch",
@@ -673,6 +709,7 @@ async def start_oi_snapshot_scheduler():
     )
     _scheduler.start()
     logger.info("OI snapshot scheduler started (every %d minutes)", OI_FETCH_INTERVAL_MINUTES)
+    logger.info("OI HF snapshot scheduler started (every 1 min 09:15-09:45 IST, %s)", ", ".join(OI_HF_SYMBOLS))
     logger.info("Stock futures OI scheduler started (daily at 15:25 IST)")
     logger.info("S5 watchlist OI scheduler started (every 10 min from 9:20 IST)")
 

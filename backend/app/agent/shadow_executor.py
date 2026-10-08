@@ -90,7 +90,9 @@ async def _do_shadow_execute(signal_id) -> None:
             Position.strategy_name == signal.strategy_name,
             Position.is_shadow == True,  # noqa: E712
         )
-        if signal.strategy_name == StrategyName.INTRADAY_HUNTER.value:
+        if signal.strategy_name in (
+            StrategyName.INTRADAY_HUNTER.value, StrategyName.INTRADAY_HUNTER_V2.value
+        ):
             symbol_shadow_query = symbol_shadow_query.where(
                 Position.fyers_option_symbol == signal.fyers_option_symbol
             )
@@ -141,9 +143,12 @@ async def _do_shadow_execute(signal_id) -> None:
             )
             return
 
-        # Confidence gate — skip shadow trades for low-confidence signals
+        # Confidence gate — skip shadow trades for low-confidence signals. Intraday Hunter v2 is
+        # exempt: its ENTER is the decision (confidence is logged for later calibration, never a
+        # gate), so the shadow book must mirror every v2 basket the IH-v2 YOLO profile opens.
         min_shadow_conf = cfg.min_confidence_for_shadow
-        if signal.confidence is not None:
+        if (signal.confidence is not None
+                and signal.strategy_name != StrategyName.INTRADAY_HUNTER_V2.value):
             if float(signal.confidence) < min_shadow_conf:
                 logger.debug(
                     "Shadow skip: confidence %.0f < shadow threshold %.0f for %s",

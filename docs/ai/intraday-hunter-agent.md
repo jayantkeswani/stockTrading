@@ -392,11 +392,11 @@ Built from the stored run rows. Powers the "trapped side already fled / Nth reve
 
 ## Data model
 
-New table `intraday_hunter_runs` (one row per trading day, updated as the day progresses):
+Table `intraday_hunter_runs` (one row per trading day **per variant**, updated as the day progresses). This agent owns `variant='v1'`; Intraday Hunter v2 (`docs/ai/intraday-hunter-v2.md`) owns `variant='v2'` rows in the same table:
 
 | Column | Notes |
 |--------|-------|
-| `id`, `trading_date` (unique), `created_at`, `updated_at` | |
+| `id`, `trading_date` + `variant` (unique together; v1 = `'v1'`), `created_at`, `updated_at` | |
 | `status` | `PENDING / THESIS_READY / WATCHING / ENTER / WAIT / SKIP` |
 | `is_expiry`, `expiry_index` | |
 | `call1_json` | Call 1 output (thesis/plan/levels) |
@@ -405,7 +405,7 @@ New table `intraday_hunter_runs` (one row per trading day, updated as the day pr
 | `call2_history` | array of all Call 2 outputs that day (audit) |
 | `call2_chart_paths` | prev-day + opening chart paths |
 | `decision`, `direction`, `confidence` | denormalized for fast list queries |
-| `outcome_played_out` | filled post-hoc by the validation job (structural; for the memory snapshot) |
+| `outcome_played_out` | filled post-hoc by the IH v2 nightly grade (`intraday_hunter_v2/grading.grade_day`): ENTER → its side == the market's clean side (first touch from 09:16, +0.25/−0.20%); SKIP → no clean side. Structural; feeds the v1 memory snapshot |
 | `realized_outcome_note` | human-facing P&L/outcome (UI only — NOT fed to prompts) |
 
 ---

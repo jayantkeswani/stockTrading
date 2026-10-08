@@ -76,6 +76,24 @@ class Settings(BaseSettings):
     intraday_hunter_enabled: bool = True
     intraday_hunter_variant: str = "D"  # promoted prompt variant (build_system_prompt); D = C + VIX-regime fix
 
+    # Intraday Hunter v2 (parallel PAPER strategy + learning-loop data capture; v1 untouched).
+    # Off → no v2 Call 1/Call 2, no minute log, no ATM±2 capture, no teacher/grade/review jobs.
+    # Tunables (basket exit, gates, cadence, Call 2 model) live in
+    # strategy_configs.parameters['intraday_hunter_v2'] — see services/intraday_hunter_v2/params.py.
+    intraday_hunter_v2_enabled: bool = True
+    # Default Call 2 model (text-only, latency target < 45s); the params row `call2_model` overrides.
+    intraday_hunter_v2_call2_model: str = "claude-sonnet-5-5"
+    # Teacher ingestion runs yt-dlp/ffmpeg/tesseract in-process; off → the scheduled jobs no-op
+    # (ingestion can still be pushed from a Mac via POST /intraday-hunter/teacher/ingest).
+    ih_teacher_ingest_enabled: bool = True
+    # Jev (TypeSafe AI decision model via OpenRouter) — a SHADOW-ONLY arm logged into
+    # ih_minute_log.arms.jev; it never trades. Needs OPENROUTER_API_KEY. Never commit the key.
+    jev_enabled: bool = False
+    jev_model: str = "typesafe/jev-1.13"
+    openrouter_api_key: str = ""
+    # Optional 5-level DepthUpdate capture for the order-flow features (index futures + ATM CE/PE).
+    ih_v2_depth_enabled: bool = False
+
     # Market Mode
     market_mode: str = "live"  # "live" | "simulated"
     simulator_url: str = "http://localhost:8787"
