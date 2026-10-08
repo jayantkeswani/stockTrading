@@ -7,9 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev && \
     rm -rf /var/lib/apt/lists/*
 
-COPY backend/pyproject.toml backend/
+COPY backend/pyproject.toml backend/constraints.txt backend/
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --prefix=/install backend/
+    pip install --prefix=/install -c backend/constraints.txt backend/
 
 FROM python:3.11-slim
 
@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Claude Code CLI — the Intraday Hunter agent calls Claude via `claude -p` on the
 # CLAUDE_CODE_OAUTH_TOKEN (subscription, not API credits). Installed globally → /usr/local/bin/claude
 # (on PATH; shutil.which("claude") in llm_cli.py resolves it). Without the token the agent SKIPs safely.
-RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
+RUN npm install -g @anthropic-ai/claude-code@2.1.217 && npm cache clean --force
 
 COPY --from=builder /install /usr/local
 COPY backend/ /app/
