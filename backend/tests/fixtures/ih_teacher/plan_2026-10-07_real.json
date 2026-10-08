@@ -1,0 +1,47 @@
+{
+ "trading_date": "2026-10-07",
+ "plan_video_id": "wnqjnhbuDfI",
+ "plan": {
+  "gap_up_side": "CE",
+  "flat_side": "CE",
+  "gap_down_side": "CE",
+  "bias": "bullish — buy-side setups across all three indices after strong positive momentum",
+  "levels_onscreen": {
+   "NIFTY": [
+    22800.0,
+    22650.0
+   ],
+   "BANKNIFTY": [
+    55560.0,
+    55360.0,
+    54880.0
+   ],
+   "SENSEX": [
+    73700.0,
+    73450.0,
+    72700.0
+   ]
+  },
+  "levels_audio": {
+   "NIFTY": [
+    22650.0,
+    22580.0,
+    22800.0,
+    22850.0
+   ],
+   "BANKNIFTY": [
+    54880.0,
+    54650.0,
+    55360.0,
+    55560.0
+   ],
+   "SENSEX": [
+    72700.0,
+    72400.0,
+    73450.0,
+    73700.0
+   ]
+  },
+  "summary": "After strong continued positive momentum in NIFTY and SENSEX (BANKNIFTY laggy with a small rejection), the teacher is firmly bullish and plans to identify buying-side (CE) setups in flat-to-gap-up opens on all three indices. He expects no gap-down after such positive charts, but says if one occurs it would likely trap sellers, so his plan stays the same — look to buy. No downside/target plan is given for the existing buyers; levels are the marked supports and resistances per index."
+ }
+}

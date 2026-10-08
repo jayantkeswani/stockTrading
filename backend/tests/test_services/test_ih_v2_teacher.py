@@ -187,3 +187,44 @@ def test_plan_side_negations(raw, expected):
     from app.services.intraday_hunter_v2.teacher.plan import _side
 
     assert _side(raw) == expected
+
+
+# ── real-sample fixtures (extracted from the teacher's actual YouTube videos, 2026-10-07..09) ──
+_FIX = __import__("pathlib").Path(__file__).resolve().parents[1] / "fixtures" / "ih_teacher"
+
+
+@pytest.mark.parametrize("d", ["2026-10-07", "2026-10-08", "2026-10-09"])
+def test_real_plan_fixtures_normalize_stably(d):
+    import json
+
+    from app.services.intraday_hunter_v2.teacher.plan import normalize_plan
+
+    raw = json.loads((_FIX / f"plan_{d}_real.json").read_text())
+    plan = normalize_plan(raw["plan"])
+    assert plan == raw["plan"]  # already canonical → normalization is a fixed point
+    assert {plan["gap_up_side"], plan["flat_side"], plan["gap_down_side"]} <= {"CE", "PE", "none"}
+    assert all(isinstance(v, float) for lv in plan["levels_onscreen"].values() for v in lv)
+
+
+def test_real_plan_oct9_sides():
+    import json
+
+    from app.services.intraday_hunter_v2.gates import plan_side_for_opening
+
+    plan = json.loads((_FIX / "plan_2026-10-09_real.json").read_text())["plan"]
+    assert plan_side_for_opening(plan, "gap_up") == "PE"
+    assert plan_side_for_opening(plan, "gap_down") == "CE"
+
+
+@pytest.mark.parametrize("d,side,entry,exit_,total", [
+    ("2026-10-07", "CE", "09:23", "10:13", 220571.25),
+    ("2026-10-08", "PE", "09:19", "09:47", 178881.25),  # spot-checked vs the video frame at 645s
+])
+def test_real_live_fixtures(d, side, entry, exit_, total):
+    import json
+
+    raw = json.loads((_FIX / f"live_{d}_real.json").read_text())["live"]
+    live = normalize_live(raw)
+    assert (live["side"], live["entry_clock"], live["exit_clock"]) == (side, entry, exit_)
+    assert live["total_pnl"] == total and live["legs_sum_ok"]
+    assert len(live["legs"]) == 4 and {l["index"] for l in live["legs"]} == {"BANKNIFTY", "NIFTY", "SENSEX"}

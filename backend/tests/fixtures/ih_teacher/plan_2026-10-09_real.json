@@ -1,0 +1,51 @@
+{
+ "trading_date": "2026-10-09",
+ "plan_video_id": "ZVOpBDyGpNQ",
+ "plan": {
+  "gap_up_side": "PE",
+  "flat_side": "CE",
+  "gap_down_side": "CE",
+  "bias": "bearish — continuous selling, sellers in control; fade with trend on gap-up, hunt seller SLs (buy) on flat/gap-down",
+  "levels_onscreen": {
+   "NIFTY": [
+    22340.0,
+    22420.0,
+    22140.0,
+    22000.0
+   ],
+   "BANKNIFTY": [
+    55400.0,
+    55000.0,
+    54000.0,
+    53700.0
+   ],
+   "SENSEX": [
+    72220.0,
+    71900.0,
+    71000.0,
+    70750.0
+   ]
+  },
+  "levels_audio": {
+   "NIFTY": [
+    22340.0,
+    22420.0,
+    22140.0,
+    22000.0
+   ],
+   "BANKNIFTY": [
+    55400.0,
+    55000.0,
+    54000.0,
+    53700.0
+   ],
+   "SENSEX": [
+    72220.0,
+    71900.0,
+    71000.0,
+    70750.0
+   ]
+  },
+  "summary": "The teacher sees continuous selling across NIFTY, BANKNIFTY and SENSEX with sellers firmly in control. On a flat or gap-down open he plans to hunt the trapped sellers' stop-losses by identifying buying-side (CE) setups; on a gap-up open he will flow with the trend and look for selling-side (PE) setups since seller SLs won't be available. Key levels: NIFTY R 22340/22420, S 22140/22000; BANKNIFTY R 55400/55000, S 54000/53700; SENSEX R 72220/71900, S 71000/70750."
+ }
+}

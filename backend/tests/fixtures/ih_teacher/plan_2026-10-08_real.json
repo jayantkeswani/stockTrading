@@ -1,0 +1,49 @@
+{
+ "trading_date": "2026-10-08",
+ "plan_video_id": "FPaMrMLkxIw",
+ "plan": {
+  "gap_up_side": "PE",
+  "flat_side": "PE",
+  "gap_down_side": "PE",
+  "bias": "bearish, weakness across all three indices, selling setups below resistance",
+  "levels_onscreen": {
+   "NIFTY": [
+    22760.0,
+    22540.0,
+    22420.0
+   ],
+   "BANKNIFTY": [
+    56000.0,
+    55560.0,
+    54650.0,
+    54200.0
+   ],
+   "SENSEX": [
+    73500.0,
+    72400.0,
+    72000.0
+   ]
+  },
+  "levels_audio": {
+   "NIFTY": [
+    22720.0,
+    22800.0,
+    22540.0,
+    22420.0
+   ],
+   "BANKNIFTY": [
+    55560.0,
+    56000.0,
+    54650.0,
+    54200.0
+   ],
+   "SENSEX": [
+    73000.0,
+    73450.0,
+    72400.0,
+    72000.0
+   ]
+  },
+  "summary": "The teacher is bearish on all three indices — the market tried to recover but could not sustain, and weakness is reappearing. In a flat or small gap-up open he plans to identify selling-side (PE) setups below resistance; in a gap-down he keeps the same bearish plan but warns sellers won't have clean stop-losses, so expect some retracement. He trades puts in all three scenarios."
+ }
+}
