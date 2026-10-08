@@ -164,3 +164,23 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
 - `ih_teacher_days`: trading_date PK, plan, live, video ids, fetched_at, status, source, errors.
 - `ih_day_grades`: trading_date PK, status PRELIM|FINAL, market, teacher, v1, v2, arms, gates, lesson.
 - `ih_weekly_reviews`: week_ending, ledger, proposal, calibration, summary, status.
+
+## Simulator E2E (wall-clock, MARKET_MODE=simulated)
+
+The backend runs on wall-clock time, so the E2E runs live from 09:05 to 11:40 IST against the Market Simulator. The simulator's `data/symbol_master/` holds the real public Fyers `NSE_FO`/`BSE_FO` CSVs, so current contracts resolve.
+
+- **Before the run:**
+  1. Stage the previous trading day's index and `*_FUT` candles into the local DB.
+  2. Start the backend with `MARKET_MODE=simulated IH_ALLOW_CLI_LOGIN=1`.
+  3. Push the teacher plan via `POST /teacher/ingest`.
+- **During the run:** `scripts/intraday_hunter/v2_sim_driver.py` injects the index tape (a gap through the PDL/PDH pool, then a ride) and model premiums for every captured contract.
+- **What it checks:**
+  - ATM±2 subscription and premium candles
+  - 1-min `oi_snapshots` from 09:15 to 09:45
+  - `ih_minute_log` rows every minute
+  - Call 2 first at 09:16, with latency logged
+  - IH-v2 YOLO and shadow positions opening together
+  - the basket closing together
+  - a forced `POST /v2/grade` producing an `ih_day_grades` row
+  - `IH v2 ALERT` log lines (with `TELEGRAM_ENABLED=false`)
+

@@ -131,6 +131,7 @@ stockTrading/
 - `audit_screener_data.py` — read-only freshness check for S5 morning screener data
 - `audit_vwap_data.py` — read-only freshness check for S2 VWAP Pullback data (10 checks)
 - `intraday_hunter/teacher_ingest_local.py` — run IH v2 teacher ingestion on the Mac (`--date --plan --live --whisper --push URL`) and POST to `/api/v1/intraday-hunter/teacher/ingest` when the server IP is blocked by YouTube. See `docs/ai/intraday-hunter-v2.md`
+- `intraday_hunter/v2_sim_driver.py` — IH v2 simulator E2E driver: scripts an index tape through a stop pool + model option premiums for the ATM±2 capture into the Market Simulator (`--prev --direction --gap-pct --trend-pct --until`); run live 09:05–11:40 IST with `MARKET_MODE=simulated`. See `docs/ai/intraday-hunter-v2.md` §Simulator E2E
 - `intraday_hunter/validate_setups.py` — independent validation of the @IntradayHunter setups as mechanical INDEX hypotheses, scored engine-independent (first-touch + forward-direction vs base rate, train/test split) over local 1m index candles (`--gap1/--gap-min/--stop-pct/--rr/--indices`). Run with DATABASE_URL=local. Verdict + findings in `docs/strategies/intraday-hunter-study.md` §Phase 4
 - `telegram/` — MTProto client (Telethon) + signal parser + verifier + setup analyzer. Scripts: `list_dialogs.py`, `fetch_history.py`, `parse_signals.py`, `probe_fyers_history.py`, `verify_signals.py`, `analyze_setups.py`, `analyze_edge.py`. Session files + data/ gitignored. Uses TELEGRAM_API_ID/API_HASH/PHONE/SESSION_NAME from .env
 
