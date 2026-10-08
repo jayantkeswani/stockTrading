@@ -217,6 +217,10 @@ APScheduler (every 3 minutes during market hours):
     │   ├── Parse CE/PE OI per strike
     │   └── INSERT into oi_snapshots (ON CONFLICT DO NOTHING)
     │
+    │
+    ├── + every 1 minute 09:15–09:45 (fetch_oi_snapshots_hf, NIFTY/BANKNIFTY/SENSEX only) —
+    │     same rows; feeds the IH v2 opening OI flow (09:16→09:19 ΔPE−ΔCE, nearest expiry)
+    │
     └── Strategy runner reads latest snapshot on each evaluation:
         strategy_runner._get_oi_analysis(symbol)
           → SELECT from oi_snapshots WHERE symbol AND max(timestamp)
@@ -348,6 +352,36 @@ images (no API credits — subscription OAuth). Returns None → treated as SKIP
 Gated by settings.intraday_hunter_enabled. Fully exercisable in MARKET_MODE=simulated +
 via POST /run-call1 / /run-call2. Validation (index direction ≠ option win-rate) deferred to
 the live paper book — no capital until real-premium profit is confirmed. Spec: docs/ai/intraday-hunter-agent.md.
+(v1 rows are intraday_hunter_runs.variant='v1'.)
+```
+
+### 4d. Intraday Hunter v2 (parallel PAPER strategy + learning loop — v1 untouched)
+```
+Kill switch: strategy_configs.is_active('intraday_hunter_v2') (≤15s, fails closed) · env INTRADAY_HUNTER_V2_ENABLED
+00:00/06:00/08:00  teacher plan (yt-dlp → Hindi subs + keyframes → Claude) → ih_teacher_days
+                   (08:30 alert if missing; Mac fallback: POST /intraday-hunter/teacher/ingest)
+08:45   v2 Call 1 (Opus + prev-day charts + teacher plan + stop pools + graded lessons) → run(variant='v2')
+09:10   ATM±2 CE/PE subscribe (re-centred 09:16:30) → feed_manager persists premium 1m candles
+09:15–09:45  1-min option chain → oi_snapshots (opening OI flow)
+NIFTY 1m candle close (feed_manager._emit_candle, wrapped, fire-and-forget):
+   ├── ih_v2_watcher: Call 2 at candle+1 → 09:16 first, every minute, 09:25 deadline
+   │     text-only facts (levels.py stop pools, OI flow, order flow, teacher side) → Sonnet-class
+   │     ENTER → signals.py: BN ATM+OTM-1, NIFTY ATM, SENSEX ATM → strategy_runner._handle_signal
+   │            → shadow (1 lot) + YOLO profile IH-v2 (2 lots/leg) — strike-aware, isolated from v1
+   └── minute_log: ih_minute_log row per index (09:15–10:45 + while in position): features + arms
+         (rule_a, plan_side, oi_flow_side, v1_state, v2_llm, gates, jev)
+Ticks: fyers_ws_client keeps tot_buy_qty/tot_sell_qty/bid_size/ask_size → Redis + orderflow_tracker
+trade_monitor (500ms): _check_ih_v2_baskets BEFORE the per-position loop — per (day, book):
+   bid-valued basket MTM vs ±T (0.20×cost) → close ALL legs (BASKET_TARGET/STOP), round-number
+   hold (0.9T, giveback 0.75T, 5 min), 11:30 BASKET_TIME; per-leg checks bypassed for v2
+   (15:25 last-resort fallback); "Close v2 basket" → MANUAL_BASKET (shadow left as counterfactual)
+09:30   alert if v1 or v2 has no decision · 09:20+ alert on missing/stale index candles
+13:00/15:00  teacher live trade (frames → tesseract clock/positions → Claude) → ih_teacher_days
+16:00   grade → ih_day_grades (market first-touch labels, teacher, v1/v2 real P&L, every arm's
+        counterfactual basket replayed on the captured premium candles, gate what-ifs, lesson)
+        + v1 outcome_played_out; lessons feed tomorrow's v2 Call 1; GET /v2/ledger
+Sat 10:00  weekly review (Claude proposal → ih_weekly_reviews + Telegram; nothing auto-applied)
+Spec: docs/ai/intraday-hunter-v2.md
 ```
 
 ### 5. Fyers Authentication Flow

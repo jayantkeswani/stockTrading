@@ -130,6 +130,7 @@ stockTrading/
 - `sim_s5_riskcap.py` — simulates the curated S5 SHADOW book (`--setups ORB,PDH_PDL --min-adr 2.8 --confidence 40`) under two risk overlays: a per-trade `--per-trade-cap` ₹/lot MTM stop + a `--daily-stop` realized-loss day breaker. Stages prod shadow trades into bt table `s5_shadow` (real fills + signal snapshot). Applies overlays to REAL outcomes (faithful: keep `net_pnl`, override to −cap only when the trade's real MAE breached the floor — brackets WICK vs CLOSE basis) alongside a re-sim ladder; a wrong-instrument guard drops the `BSE`→BANKEX mis-resolution (index-scale entry vs stock candles). Finding (`docs/backtest/s5-riskcap-overlay-study.md`): the 8K/lot cap is net-NEGATIVE (filters already removed big losers, so it only chops dip-and-recover winners); the −20K daily breaker is the value-add. Run with DATABASE_URL=bt
 - `audit_screener_data.py` — read-only freshness check for S5 morning screener data
 - `audit_vwap_data.py` — read-only freshness check for S2 VWAP Pullback data (10 checks)
+- `intraday_hunter/teacher_ingest_local.py` — run IH v2 teacher ingestion on the Mac (`--date --plan --live --whisper --push URL`) and POST to `/api/v1/intraday-hunter/teacher/ingest` when the server IP is blocked by YouTube. See `docs/ai/intraday-hunter-v2.md`
 - `intraday_hunter/validate_setups.py` — independent validation of the @IntradayHunter setups as mechanical INDEX hypotheses, scored engine-independent (first-touch + forward-direction vs base rate, train/test split) over local 1m index candles (`--gap1/--gap-min/--stop-pct/--rr/--indices`). Run with DATABASE_URL=local. Verdict + findings in `docs/strategies/intraday-hunter-study.md` §Phase 4
 - `telegram/` — MTProto client (Telethon) + signal parser + verifier + setup analyzer. Scripts: `list_dialogs.py`, `fetch_history.py`, `parse_signals.py`, `probe_fyers_history.py`, `verify_signals.py`, `analyze_setups.py`, `analyze_edge.py`. Session files + data/ gitignored. Uses TELEGRAM_API_ID/API_HASH/PHONE/SESSION_NAME from .env
 
@@ -299,7 +300,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 ## Test Coverage
 
-- **Backend**: ~1115 pytest tests in `backend/tests/`. Run: `make test`. See `backend/CLAUDE.md` for per-module coverage details.
+- **Backend**: ~1250 pytest tests in `backend/tests/`. Run: `make test`. See `backend/CLAUDE.md` for per-module coverage details.
 - **Frontend**: Vitest unit tests in `frontend/src/__tests__/`. Run: `cd frontend && npm test`. Tests pure logic functions copied verbatim from page files (not exported). Config: `frontend/vitest.config.ts`.
 
 ## Documentation Reference
@@ -317,6 +318,7 @@ Semver (`vMAJOR.MINOR.PATCH`). Run `git log v{last}..HEAD --oneline` before rele
 
 - `shadow-agent.md` — shadow executor design, isolation guarantees
 - `signal-confidence-agent.md` — LLM confidence overlay design
+- `intraday-hunter-v2.md` — **IH v2** (parallel PAPER strategy beside v1 + learning loop): stop-hunting text-only Call 2 09:16→09:25, teacher basket shape, basket-level 1:1 exits, ATM±2/1-min-OI/order-flow capture, `ih_minute_log` arms, teacher ingestion, nightly grades + ledger + lessons + weekly review. Kill switch = `strategy_configs.is_active` for `intraday_hunter_v2`
 - `intraday-hunter-agent.md` — **BUILT** (live) discretionary @IntradayHunter-style index-options agent: two-call flow (08:45 pre-open thesis → 09:18–09:30 watcher ENTER/WAIT/SKIP), single-direction basket, mplfinance charts via the `claude` CLI (subscription OAuth, **active prompt variant D** = C + the VIX-regime fix), multi-day structural memory (no P&L), autorun (scheduler + candle-close hook), `/intraday-hunter` UI page (full Call 2 decision log + a live Basket & Exits card with select-all/manual-close). **As of 2026-06-29 it also GENERATES SIGNALS** — on a Call 2 ENTER, `signals.py` emits `intraday_hunter` OPTION signals from the basket into the shared pipeline; strikes are fixed (**BANKNIFTY two legs ITM-2 + ITM-1; NIFTY/SENSEX ITM-1**), SL/target = **60%-of-premium 1:1** (widened from 30% — real premium paths showed the tighter stop chopped winners that ran well past target and stopped out before an adverse move exhausted), exited per-leg by the normal trade monitor SL/target check (the index spot vs index SL/target is informational display only, not an auto-exit trigger). A seeded fixed-qty `IntradayHunter` YOLO profile (2 lots/leg = BN 4 total / NIFTY 2 / SENSEX 2, conf≥40) + shadow paper-trade them — the real-option-P&L gate, measured live. Code: `backend/app/services/intraday_hunter/` (thesis/decision/signals/watcher/store/data + prompts/charts/context/llm_cli) + `intraday_hunter_task.py` + `intraday_hunter_runs` table + seed migration `a1c2e3f40b91`. Validation (index direction ≠ option win-rate) still on paper — no capital until real-premium profit confirmed
 
 ### docs/backtest/

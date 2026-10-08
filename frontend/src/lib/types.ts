@@ -627,3 +627,154 @@ export interface IntradayHunterBasketLeg {
   index_target: number | null;
   index_spot: number | null;
 }
+
+// ── Intraday Hunter v2 ─────────────────────────────────────────────────────
+export type IhGateVerdict = "AGREES" | "OPPOSES" | "NA";
+
+export interface IhV2Call2Entry extends IHCall2 {
+  pool_broken?: string | null;
+  next_pool_target?: string | number | null;
+  skip_reason_code?: string | null;
+  _model?: string;
+  _latency_ms?: number;
+  _hook_to_decision_ms?: number;
+  _opening_type?: string;
+  _gates?: { plan?: IhGateVerdict | string; oi?: IhGateVerdict | string; [k: string]: unknown };
+  _emitted?: unknown[];
+}
+
+export interface IhV2Call1 {
+  bias?: string;
+  thesis?: string;
+  key_pools?: Record<string, unknown[] | Record<string, unknown> | string>;
+  plan_by_opening?: { gap_up?: unknown; flat?: unknown; gap_down?: unknown };
+  teacher_alignment?: unknown;
+  lessons_applied?: unknown[] | string;
+  _latency_ms?: number;
+  _teacher_plan_missing?: boolean;
+  error?: string;
+  [k: string]: unknown;
+}
+
+export interface IhV2Leg {
+  position_id?: string | null;
+  trade_id?: string | null;
+  index: string;
+  leg?: string | null; // ATM | OTM-1
+  strike: number | null;
+  option_type?: string | null;
+  fyers_option_symbol?: string | null;
+  lots?: number | null;
+  quantity?: number | null;
+  entry_price: number | null;
+  ltp: number | null; // open: live LTP; closed: exit price
+  bid?: number | null;
+  pnl: number | null; // open: bid-valued unrealized; closed: realized net
+  status: string;
+  exit_reason?: string | null;
+}
+
+export interface IhV2Book {
+  book: string; // "SHADOW" or YOLO profile name
+  is_shadow?: boolean;
+  direction: string | null;
+  status: string; // OPEN | CLOSED
+  cost: number | null;
+  mtm: number | null;
+  T: number | null;
+  pct_of_T?: number | null;
+  round_hold_active?: boolean;
+  round_hold_targets?: Record<string, number>;
+  exit_reason?: string | null;
+  legs: IhV2Leg[];
+}
+
+export interface IhV2Basket {
+  trading_date: string;
+  basket_tp_sl_pct: number;
+  time_exit: string;
+  books: IhV2Book[];
+}
+
+export interface IhV2CloseResult {
+  closed_legs: number;
+  baskets: { book: string; mtm: number | null; T: number | null; [k: string]: unknown }[];
+}
+
+export interface IhV2LedgerArm {
+  n: number;
+  right_side_pct: number | null;
+  n_cf: number;
+  win_pct: number | null;
+  mean_cf_pnl: number | null;
+  t_stat: number | null;
+  first_half_mean: number | null;
+  second_half_mean: number | null;
+}
+
+export interface IhV2LedgerWindow {
+  _gates?: { v2_actual: number; plan_enforced: number; oi_enforced: number; both_enforced: number };
+  _window?: { days: number; from: string | null; to: string | null };
+  [arm: string]: IhV2LedgerArm | IhV2LedgerWindow["_gates"] | IhV2LedgerWindow["_window"] | undefined;
+}
+
+export interface IhV2Ledger {
+  last_20: IhV2LedgerWindow;
+  last_60: IhV2LedgerWindow;
+}
+
+export interface IhV2GradeArm {
+  side: string | null;
+  decision_at?: string | null;
+  right_side?: boolean | null;
+  cf?: { pnl?: number | null; exit_reason?: string | null; exit_time?: string | null } | null;
+}
+
+export interface IhV2Grade {
+  trading_date?: string;
+  date?: string;
+  status: string; // PRELIM | FINAL
+  market?: { clean_side?: string | null; opening?: string | null } | null;
+  v2?: { side?: string | null; decision?: string | null; yolo_net_pnl?: number | null } | null;
+  teacher?: { side?: string | null; pnl?: number | null } | null;
+  lesson?: { one_line_takeaway?: string | null } | null;
+  arms?: Record<string, IhV2GradeArm> | null;
+}
+
+export interface IhTeacherLeg {
+  [k: string]: unknown;
+}
+
+export interface IhTeacherError {
+  job?: string;
+  at?: string;
+  error_type?: string;
+  detail?: string;
+}
+
+export interface IhTeacher {
+  trading_date?: string;
+  status?: string;
+  source?: string | null;
+  plan_video_id?: string | null;
+  live_video_id?: string | null;
+  errors?: IhTeacherError[];
+  plan?: {
+    gap_up_side?: string | null;
+    flat_side?: string | null;
+    gap_down_side?: string | null;
+    bias?: string | null;
+    summary?: string | null;
+    levels_onscreen?: Record<string, unknown[]>;
+    levels_audio?: unknown;
+  } | null;
+  live?: {
+    side?: string | null;
+    entry_clock?: string | null;
+    exit_clock?: string | null;
+    total_pnl?: number | null;
+    legs_sum_ok?: boolean | null;
+    legs?: IhTeacherLeg[];
+    [k: string]: unknown;
+  } | null;
+}

@@ -24,7 +24,7 @@ All pages use `'use client'` directive.
 - `chart/page.tsx` — Full TradingView chart page. Symbol tab row (all 5 indices + watchlist items).
 - `options/page.tsx` — Strategy 2 (VWAP Pullback) dedicated page. DayStatusBar-style header + window state badge. AgentLog in col-span-8.
 - `intraday-futures/page.tsx` — Strategy 5 dedicated page. Fixed DayStatusBar, fixed-height two-column grid (`h-[calc(100vh-96px)]`) with per-column `overflow-y-auto`. 8-col left (Watchlist + PermanentWatchlist), 4-col right (AgentLog, SetupPerformance, GlobalCues). Config managed via Settings page. ChartModal overlay pattern.
-- `intraday-hunter/page.tsx` — Discretionary index-options trade SUGGESTER (suggestions only, never auto-executed). Polls `api.getIntradayHunterToday()` + `api.getIntradayHunterHistory(30)` + `api.getIntradayHunterBasket()` every 20s. Status bar: title, "SUGGEST only · manual exec" chip, StatusChip, expiry badge, last-updated, "Run Call 1"/"Force Call 2" manual test buttons. Disclaimer line ("index direction ≠ option win-rate — no capital until the paper book confirms"). Grid: 8-col left (ThesisCard + DecisionCard + BasketCard), 4-col right (HistoryTimeline). Clicking a History row opens `HistoryDetailModal` (full thesis + decision + charts for that day).
+- `intraday-hunter/page.tsx` — Discretionary index-options trade SUGGESTER (suggestions only, never auto-executed). Polls `api.getIntradayHunterToday()` + `api.getIntradayHunterHistory(30)` + `api.getIntradayHunterBasket()` every 20s. Status bar: title, "SUGGEST only · manual exec" chip, StatusChip, expiry badge, last-updated, "Run Call 1"/"Force Call 2" manual test buttons. Disclaimer line ("index direction ≠ option win-rate — no capital until the paper book confirms"). Grid: 8-col left (ThesisCard + DecisionCard + BasketCard), 4-col right (HistoryTimeline). Clicking a History row opens `HistoryDetailModal` (full thesis + decision + charts for that day). The default export is a **v1 / v2 tab switch** (selection remembered in `localStorage` key `ih_tab`, try/catch-wrapped); the v1 tab is the page content above (`IntradayHunterV1`), the v2 tab renders `v2/V2Panel`.
 
 ### `src/components/` - React Components (by domain)
 
@@ -89,6 +89,17 @@ All pages use `'use client'` directive.
 - `BasketCard.tsx` — Live Intraday Hunter basket + exits (from `api.getIntradayHunterBasket()`). Table of today's legs (open + closed-today): book chip (YOLO profile name / SHADOW), index·strike·CE/PE·ITM-depth, entry/LTP, P&L, and the live **index spot vs index SL/target** (informational context only — each leg is actually exited by its own option-premium SL/target via the normal per-position check, not this index comparison), plus status/exit reason. Open real-book legs carry a per-row checkbox + a select-all header checkbox + a "Close selected" button for a manual whole-basket close (`api.closePosition` per checked leg, then `onClosed`); shadow legs are read-only. Props `{ legs, onClosed }`. Used by: intraday-hunter/page, MobileHunter.
 - `HistoryTimeline.tsx` — Prior-day rows: date, expiry badge, direction/confidence/decision, thesis (line-clamp-2), trapped side, outcome_played_out (✓/✗), realized_outcome_note. Optional `onSelect(date)` makes each row a button that opens `HistoryDetailModal` (passed by both the desktop page and `MobileHunter`).
 - `HistoryDetailModal.tsx` — Full prior-day detail popup for a selected History row. Fetches the full run by date via `api.getIntradayHunterRun` and reuses `ThesisCard` (Call 1) + `DecisionCard` (Call 2 + charts) + the realized-outcome note. Modal overlay; Escape / click-outside / ✕ closes; `date` is fixed for the modal's lifetime. Used by: intraday-hunter/page, MobileHunter.
+
+**intraday-hunter/v2/** (Intraday Hunter v2 — parallel paper strategy; backend `/api/v1/intraday-hunter/v2/*` + `/teacher/{date}`)
+- `common.tsx` — `Section` card wrapper, `Empty`, `Val` (generic JSON renderer for LLM-shaped payloads), `pnlCls`. Used by: all v2 components.
+- `V2Panel.tsx` — v2 tab body. Polls `getIhV2Today` + `getIhV2History(30)` every 15s; status strip + 8/4 grid: PlanCard, DecisionLog, BasketCard, TeacherCard, LedgerCard, GradesCard (left), shared `HistoryTimeline` (right; a row opens `V2HistoryModal`). Used by: intraday-hunter/page.
+- `PlanCard.tsx` — Call 1 (`call1_json`): bias, thesis, key_pools per index, plan_by_opening (gap_up/flat/gap_down), teacher_alignment, lessons_applied, `_latency_ms`, "teacher plan missing" warning on `_teacher_plan_missing`. Empty state before Call 1 runs. Used by: V2Panel, V2HistoryModal.
+- `DecisionLog.tsx` — every Call 2 entry from `call2_history`, newest first: `_at`, decision/direction/confidence badges, pool_broken, next_pool_target, skip_reason_code, `_model`, latency (`formatLatency`), `_hook_to_decision_ms`, `_opening_type`, `_gates` plan/oi chips (AGREES green / OPPOSES amber / NA grey, labelled "shadow-only"), `_emitted` legs, expandable rationale. Used by: V2Panel, V2HistoryModal.
+- `BasketCard.tsx` — per-book (SHADOW + YOLO profile) basket from `getIhV2Basket`; self-polls every 3s only while any book is OPEN. Per book: direction, status, cost, MTM-vs-±T bar (`mtmBarPct`), round-hold state, exit_reason, legs table (index, ATM/OTM-1, strike, entry, ltp, bid, pnl, status). No per-leg close. One red "Close v2 basket" button (only when a non-shadow book is OPEN) with an inline Confirm/Cancel step → `closeIhV2Basket`; shows `{closed_legs, baskets}` and notes the shadow basket keeps running as the counterfactual. Used by: V2Panel.
+- `TeacherCard.tsx` — `getIhTeacher(date)` (404 → "no teacher data yet"): plan (gap_up/flat/gap_down sides, bias, summary, levels_onscreen, levels_audio), status, errors, and `live` (his side, entry/exit clocks, total_pnl, legs) with a "his trade vs ours" comparison against the v2 run's side/decision. Used by: V2Panel.
+- `LedgerCard.tsx` — `getIhV2Ledger`: per-arm table (rule_a, plan_side, oi_flow_side, v1, v2_llm, jev, teacher) with a 20d/60d toggle, window dates, and the gates what-if row (v2_actual / plan / oi / both enforced). Empty when `_window.days == 0`. Used by: V2Panel.
+- `GradesCard.tsx` — `getIhV2Grades(20)`: date, PRELIM/FINAL, market clean_side/opening, v2 side/decision/yolo_net_pnl, teacher side/pnl, lesson takeaway; click a row to expand the per-arm table (side, decision_at, right_side, cf pnl/exit). Used by: V2Panel.
+- `V2HistoryModal.tsx` — prior-day v2 run popup (`getIhV2Run`): PlanCard + DecisionLog. Escape/click-outside closes. Used by: V2Panel.
 
 **positions/**
 - `ActivePositions.tsx` — Dense table of open positions: Symbol, Strike, Entry, LTP, P&L, SL Dist, Strategy, Close button. `P` badge on permanent watchlist positions (open) and closed-today trades. Expanded detail: Opened time + fill latency, Strategy, Expiry, Lots/Qty, Stop Loss, Target, Margin (`pos.margin_required` coerced via `Number()`). Closed Today section shows fill latency from `signal_snapshot.generated_at`. Watchlist button resolves symbol via `api.searchSymbols()`. Confidence filter from store. Source pills `[Manual | <profile1> | … | Shadow]` driven by `yoloProfiles` store — for profile mode, filters positions by `yolo_profile_id`; for manual mode, filters by `source === "MANUAL"`. Direction-aware P/L and SL distance via shared `livePositionPnl` (`lib/positionPnl.ts`) — direction is read from the backend's `unrealized_pnl` sign (immune to a stale `target_price`), so long PE/CE options never invert. Trailing SL and INVALIDATION exit reasons shown in amber. `PositionRows` is a module-level component (not an inner function) to prevent React remount flickering on price ticks.
@@ -209,6 +220,14 @@ All API calls go through this module via a single `request()` helper (parses err
 - `api.getIntradayHunterBasket()` — `GET /api/v1/intraday-hunter/basket` → `IntradayHunterBasketLeg[]` (today's open + closed-today basket legs with live index-vs-SL/target). Used by: intraday-hunter/page, MobileHunter
 - `api.runIntradayHunterCall1(runDate?)` — `POST /api/v1/intraday-hunter/run-call1`. Used by: intraday-hunter/page
 - `api.runIntradayHunterCall2({runDate?, at?})` — `POST /api/v1/intraday-hunter/run-call2`. Used by: intraday-hunter/page
+- `api.getIhV2Today()` — `GET /intraday-hunter/v2/today` → `IntradayHunterRun` (v2 statuses PENDING/THESIS_READY/NO_THESIS/WAIT/ENTER/SKIP). Used by: V2Panel
+- `api.getIhV2History(limit=30)` — `GET /intraday-hunter/v2/history` → `IntradayHunterHistoryItem[]`. Used by: V2Panel
+- `api.getIhV2Run(date)` — `GET /intraday-hunter/v2/run/{date}` → `IntradayHunterRun`. Used by: V2HistoryModal
+- `api.getIhV2Basket()` — `GET /intraday-hunter/v2/basket` → `IhV2Basket` (`{trading_date, basket_tp_sl_pct, time_exit, books[]}`). Used by: v2/BasketCard
+- `api.closeIhV2Basket()` — `POST /intraday-hunter/v2/basket/close` → `IhV2CloseResult` (closes non-shadow books only). Used by: v2/BasketCard
+- `api.getIhV2Ledger()` — `GET /intraday-hunter/v2/ledger` → `IhV2Ledger` (`last_20`/`last_60` windows of per-arm stats + `_gates` + `_window`). Used by: v2/LedgerCard
+- `api.getIhV2Grades(limit=20)` — `GET /intraday-hunter/v2/grades` → `IhV2Grade[]`. Used by: v2/GradesCard
+- `api.getIhTeacher(date)` — `GET /intraday-hunter/teacher/{date}` → `IhTeacher` (404 when none). Used by: v2/TeacherCard
 
 **Tasks**
 - `api.getTasks()` — `GET /api/v1/tasks` → `{tasks: BackgroundTask[]}`. Used by: TasksPopup
@@ -370,7 +389,7 @@ Single store created with `create()` + `persist()` middleware. Storage key: `"sc
 
 Pure-logic unit tests for module-level functions that are not exported. Pattern: copy the function verbatim into the test file with a `// Copied from …` comment so the test is self-contained and refactoring doesn't silently break it.
 
-_(No unit tests currently — `applyHoldAnalysis.test.ts` was removed when `applyHoldAnalysis()` was deleted; hold P&L is now computed on the backend.)_
+- `ihV2.test.ts` — imports `lib/ihV2.ts` directly (exported pure helpers): `mtmBarPct` clamp/centre fallback, `formatLatency`, `gateChipClass`, `formatPnl`.
 
 ---
 
@@ -529,3 +548,14 @@ When adding or changing frontend code, update this file:
 3. Use a `makeTrade()` / `makeX()` helper for default fixture objects — avoids repeating required fields
 4. Run `npm test` to confirm all tests pass
 5. Add an entry to `src/__tests__/` section in this file
+
+
+## Intraday Hunter v2 helpers
+
+- `src/lib/ihV2.ts` — pure helpers: `mtmBarPct(mtm, T)` (0-100 marker position on a -T..+T bar, clamped, 50 if T missing), `formatLatency(ms)` ("15.3s"), `gateChipClass(verdict)`, `formatPnl(v)`. Used by: intraday-hunter/v2/*.
+- Types in `src/lib/types.ts`: `IhV2Call1`, `IhV2Call2Entry`, `IhV2Basket`/`IhV2Book`/`IhV2Leg`, `IhV2CloseResult`, `IhV2Ledger`/`IhV2LedgerWindow`/`IhV2LedgerArm`, `IhV2Grade`/`IhV2GradeArm`, `IhTeacher`.
+- `intraday_hunter_v2` is in `STRATEGY_LABELS` and `STRATEGY_SETUPS` (so it appears as a YOLO profile strategy chip in Settings).
+
+## Performance rule: price ticks
+
+Never subscribe to the whole `s.prices` map (`useStore((s) => s.prices)`) — it re-renders the component on every tick (~2x/sec). Use the scoped `usePrices(keys)` hook with only the symbols the view needs.

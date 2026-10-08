@@ -29,6 +29,7 @@ export const STRATEGY_LABELS: Record<string, string> = {
   breakout_retest: "Breakout Retest",
   vwap_reclaim: "VWAP Reclaim",
   intraday_hunter: "Intraday Hunter",
+  intraday_hunter_v2: "Intraday Hunter v2",
 };
 
 // Strategies a YOLO profile can be scoped to, and the setup_types each emits.
@@ -40,6 +41,7 @@ export const STRATEGY_SETUPS: Record<string, string[]> = {
   can_slim: [],
   intraday_futures: ["ORB", "PDH_PDL", "GAP_CONTINUATION", "VWAP_BOUNCE"],
   breakout_retest: ["ORB_RETEST", "PDH_PDL_RETEST", "SWING_RETEST"],
+  intraday_hunter_v2: [],  // parallel paper v2; same regime-only setup_type
   intraday_hunter: [],  // LLM-agent index-options basket; setup_type is a regime, no sub-filter chips
 };
 
