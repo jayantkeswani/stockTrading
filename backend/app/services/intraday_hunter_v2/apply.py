@@ -133,6 +133,24 @@ def _type_ok(default, value) -> bool:
     return value is None or isinstance(value, str)  # None defaults: model names
 
 
+def inert_keys(override: dict, champion: dict) -> list[str]:
+    """Override keys that have no effect under the merged champion+override params. Pure.
+
+    basket_tp_sl_pct is inert when the effective basket_t_mode is "rupees"; rupees_per_lot
+    when it is "pct"; any round_hold_* key (other than round_hold_enabled) when the effective
+    round_hold_enabled is false. Missing keys fall back to the v2 defaults.
+    """
+    eff = {**INTRADAY_HUNTER_V2_DEFAULTS, **champion, **override}
+    inert = []
+    if "basket_tp_sl_pct" in override and eff.get("basket_t_mode") == "rupees":
+        inert.append("basket_tp_sl_pct")
+    if "rupees_per_lot" in override and eff.get("basket_t_mode") == "pct":
+        inert.append("rupees_per_lot")
+    if not eff.get("round_hold_enabled"):
+        inert += [k for k in override if k.startswith("round_hold_") and k != "round_hold_enabled"]
+    return sorted(inert)
+
+
 def validate_plan(plan: dict | None, champion: dict) -> dict:
     """Deterministic gate on the apply agent's plan. Pure.
 
@@ -170,6 +188,9 @@ def validate_plan(plan: dict | None, champion: dict) -> dict:
     bad = sorted(k for k, v in override.items() if not _type_ok(INTRADAY_HUNTER_V2_DEFAULTS[k], v))
     if bad:
         return fail(f"wrong value type for {bad}")
+    inert = inert_keys(override, champion)
+    if inert:
+        return fail(f"{inert} have no effect under the effective basket_t_mode / round_hold_enabled")
     if all(champion.get(k) == v for k, v in override.items()):
         return fail("override is identical to the champion's params")
     mode = "counterfactual" if set(override) <= COUNTERFACTUAL_KEYS else "shadow_call2"
@@ -242,7 +263,10 @@ def build_apply_prompt(p: IhV2Proposal, ledger: dict, champion: dict, active: li
         "index direction; a single day is never evidence. If the ledger no longer supports the "
         "proposal (small n, t near 0, halves disagree), set evidence_holds=false and explain. "
         "Use ONLY keys listed in param_keys for params_override (exact names, same value types as "
-        "champion_params). A prompt change goes in prompt_addendum as concise instructions. "
+        "champion_params). Keys that are inert under the effective mode are rejected "
+        "(basket_tp_sl_pct needs basket_t_mode=pct, rupees_per_lot needs basket_t_mode=rupees, "
+        "round_hold_* tunables need round_hold_enabled=true — in champion_params or your override). "
+        "A prompt change goes in prompt_addendum as concise instructions. "
         "Anything needing new logic is kind=code with a build_brief and no override."
     )
     return (

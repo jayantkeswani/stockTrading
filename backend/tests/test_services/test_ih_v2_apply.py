@@ -67,6 +67,47 @@ class TestValidatePlan:
         assert apply.validate_plan(plan(kind="vibes", params_override={"basket_tp_sl_pct": 0.2}), CHAMP)["status"] == "NEEDS_REVIEW"
 
 
+RUPEES_CHAMP = dict(CHAMP, basket_t_mode="rupees")
+NO_HOLD_CHAMP = dict(CHAMP, round_hold_enabled=False)
+
+
+class TestInertOverrides:
+    """An override with no effect under the merged champion+override params → NEEDS_REVIEW."""
+
+    def test_pct_under_rupees_mode_is_inert(self):
+        v = apply.validate_plan(plan(params_override={"basket_tp_sl_pct": 0.12}), RUPEES_CHAMP)
+        assert v["status"] == "NEEDS_REVIEW" and "basket_tp_sl_pct" in v["reason"]
+
+    def test_rupees_per_lot_under_pct_mode_is_inert(self):
+        v = apply.validate_plan(plan(params_override={"rupees_per_lot": {"NIFTY": 2000}}), CHAMP)
+        assert v["status"] == "NEEDS_REVIEW" and "rupees_per_lot" in v["reason"]
+
+    def test_round_hold_tunables_inert_when_hold_disabled(self):
+        v = apply.validate_plan(plan(params_override={"round_hold_max_min": 8, "round_hold_activate_frac": 0.8}),
+                                NO_HOLD_CHAMP)
+        assert v["status"] == "NEEDS_REVIEW"
+        assert "round_hold_activate_frac" in v["reason"] and "round_hold_max_min" in v["reason"]
+
+    def test_override_disabling_hold_makes_its_tunables_inert(self):
+        v = apply.validate_plan(plan(params_override={"round_hold_enabled": False, "round_hold_max_min": 8}), CHAMP)
+        assert v["status"] == "NEEDS_REVIEW" and v["reason"].startswith("['round_hold_max_min']")
+
+    def test_mode_switch_with_pct_is_valid(self):
+        v = apply.validate_plan(plan(params_override={"basket_t_mode": "pct", "basket_tp_sl_pct": 0.12}),
+                                RUPEES_CHAMP)
+        assert v["ok"] and v["mode"] == "counterfactual"
+        assert v["override"] == {"basket_t_mode": "pct", "basket_tp_sl_pct": 0.12}
+
+    def test_enabling_hold_with_tunable_is_valid(self):
+        v = apply.validate_plan(plan(params_override={"round_hold_enabled": True, "round_hold_max_min": 8}),
+                                NO_HOLD_CHAMP)
+        assert v["ok"] and v["mode"] == "counterfactual"
+
+    def test_rupees_per_lot_under_rupees_mode_is_valid(self):
+        v = apply.validate_plan(plan(params_override={"rupees_per_lot": {"NIFTY": 2000}}), RUPEES_CHAMP)
+        assert v["ok"] and v["mode"] == "counterfactual"
+
+
 class TestTransitionsAndActions:
     def test_actions_by_status(self):
         assert apply.allowed_actions("PROPOSED", None) == ["approve", "reject"]
@@ -171,6 +212,7 @@ class TestPromptsAndText:
         txt = apply.build_apply_prompt(p, {"last_20": {}}, CHAMP, [])
         assert "basket_t_mode" in txt and "minute_log_end" in txt and "evidence_holds" in txt
         assert '"user_note": "go"' in txt
+        assert "inert under the effective mode are rejected" in txt
 
     def test_telegram_applied(self):
         p = SimpleNamespace(status="APPLIED", change="T to rupees", challenger_id="c1",
