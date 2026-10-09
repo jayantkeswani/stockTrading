@@ -631,6 +631,14 @@ export interface IntradayHunterBasketLeg {
 // ── Intraday Hunter v2 ─────────────────────────────────────────────────────
 export type IhGateVerdict = "AGREES" | "OPPOSES" | "NA";
 
+/** One shadow gate's result (backend gates.compute_gates). */
+export interface IhGateResult {
+  verdict: IhGateVerdict;
+  enforced: boolean;
+  ref_side: string | null;
+  would_block: boolean;
+}
+
 export interface IhV2Call2Entry extends IHCall2 {
   pool_broken?: string | null;
   next_pool_target?: string | number | null;
@@ -639,7 +647,7 @@ export interface IhV2Call2Entry extends IHCall2 {
   _latency_ms?: number;
   _hook_to_decision_ms?: number;
   _opening_type?: string;
-  _gates?: { plan?: IhGateVerdict | string; oi?: IhGateVerdict | string; [k: string]: unknown };
+  _gates?: { plan?: IhGateResult; oi?: IhGateResult; blocked?: boolean };
   _emitted?: unknown[];
 }
 

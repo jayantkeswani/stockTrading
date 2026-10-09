@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { IhV2Call2Entry } from "@/lib/types";
+import type { IhGateResult, IhV2Call2Entry } from "@/lib/types";
 import { formatLatency, gateChipClass } from "@/lib/ihV2";
 import { StatusChip, DirectionBadge, confidenceColor } from "../badges";
 import { Section, Empty, Val } from "./common";
@@ -12,10 +12,13 @@ function fmtAt(at?: string): string {
   return m ? m[1] : at;
 }
 
-function Gate({ label, verdict }: { label: string; verdict?: string }) {
+function Gate({ label, gate }: { label: string; gate?: IhGateResult }) {
+  const verdict = gate?.verdict ?? "NA";
+  const title = gate?.ref_side ? `reference side ${gate.ref_side}` : undefined;
   return (
-    <span className={`text-[9px] font-mono px-1 py-px rounded ${gateChipClass(verdict)}`}>
-      {label} {verdict ?? "NA"}
+    <span title={title} className={`text-[9px] font-mono px-1 py-px rounded ${gateChipClass(verdict)}`}>
+      {label} {verdict}
+      {gate?.would_block && " · would block"}
     </span>
   );
 }
@@ -58,8 +61,8 @@ export function DecisionLog({ history }: { history: IhV2Call2Entry[] }) {
                   {h.skip_reason_code && <span className="text-warning">skip: {h.skip_reason_code}</span>}
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <Gate label="plan" verdict={gates.plan as string | undefined} />
-                  <Gate label="oi" verdict={gates.oi as string | undefined} />
+                  <Gate label="plan" gate={gates.plan} />
+                  <Gate label="oi" gate={gates.oi} />
                   <span className="text-[9px] text-text-muted">shadow-only</span>
                 </div>
                 {h._emitted && h._emitted.length > 0 && (
