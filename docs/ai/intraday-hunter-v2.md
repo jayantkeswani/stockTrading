@@ -1,5 +1,7 @@
 # Intraday Hunter v2 — parallel paper strategy + learning loop
 
+Learning loop, weekly proposals and the change-approval procedure: see `docs/ai/intraday-hunter-v2-learning-loop.md`.
+
 **Status:** BUILT (paper only). Runs **beside** v1 (`docs/ai/intraday-hunter-agent.md`, unchanged) on its own run rows (`intraday_hunter_runs.variant='v2'`), its own strategy name `intraday_hunter_v2`, its own YOLO profile **`IH-v2`** and the shadow book. Code: `backend/app/services/intraday_hunter_v2/`, scheduler `backend/app/tasks/intraday_hunter_v2_task.py`, API `backend/app/api/v1/intraday_hunter_v2.py`, migration `c4d2e8f1a703`.
 
 ## Why v2 exists (evidence, 26 Jun – 1 Oct 2026, 67 trading days)
