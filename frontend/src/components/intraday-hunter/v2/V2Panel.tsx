@@ -11,11 +11,12 @@ import { BasketCard } from "./BasketCard";
 import { TeacherCard } from "./TeacherCard";
 import { LedgerCard } from "./LedgerCard";
 import { GradesCard } from "./GradesCard";
+import { WeeklyReviewCard } from "./WeeklyReviewCard";
 import { V2HistoryModal } from "./V2HistoryModal";
 
 const POLL_MS = 15000;
 
-/** Intraday Hunter v2 tab body: plan, decision log, basket, teacher, ledger, grades, history. Used by: intraday-hunter/page */
+/** Intraday Hunter v2 tab body: plan, decision log, basket, teacher, ledger, grades, weekly review, history. Used by: intraday-hunter/page */
 export function V2Panel() {
   const [run, setRun] = useState<IntradayHunterRun | null>(null);
   const [history, setHistory] = useState<IntradayHunterHistoryItem[]>([]);
@@ -62,6 +63,7 @@ export function V2Panel() {
           <TeacherCard date={date} run={run} />
           <LedgerCard />
           <GradesCard />
+          <WeeklyReviewCard />
         </div>
         <div className="col-span-12 lg:col-span-4">
           <HistoryTimeline items={history} onSelect={setHistDate} />

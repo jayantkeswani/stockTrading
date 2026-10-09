@@ -1,4 +1,4 @@
-import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance, IntradayBias, IntradayHunterRun, IntradayHunterHistoryItem, IntradayHunterBasketLeg, IhV2Basket, IhV2CloseResult, IhV2Ledger, IhV2Grade, IhTeacher } from "./types";
+import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance, IntradayBias, IntradayHunterRun, IntradayHunterHistoryItem, IntradayHunterBasketLeg, IhV2Basket, IhV2CloseResult, IhV2Ledger, IhV2Grade, IhTeacher, IhV2Proposal, IhV2ProposalAction, IhV2Review } from "./types";
 
 function getApiBase(): string {
   if (typeof window === "undefined") return "http://localhost:8080";
@@ -464,5 +464,12 @@ export const api = {
   getIhV2Ledger: () => request<IhV2Ledger>(`/api/v1/intraday-hunter/v2/ledger`),
   getIhV2Grades: (limit = 20) => request<IhV2Grade[]>(`/api/v1/intraday-hunter/v2/grades?limit=${limit}`),
   getIhTeacher: (date: string) => request<IhTeacher>(`/api/v1/intraday-hunter/teacher/${date}`),
+  getIhV2Reviews: (limit = 1) => request<IhV2Review[]>(`/api/v1/intraday-hunter/v2/reviews?limit=${limit}`),
+  getIhV2Proposals: (limit = 50) => request<IhV2Proposal[]>(`/api/v1/intraday-hunter/v2/proposals?limit=${limit}`),
+  actOnIhV2Proposal: (id: number | string, action: IhV2ProposalAction, note?: string) =>
+    request<IhV2Proposal>(`/api/v1/intraday-hunter/v2/proposals/${id}/${action}`, {
+      method: "POST",
+      body: JSON.stringify(note ? { note } : {}),
+    }),
 
 };

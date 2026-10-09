@@ -7,6 +7,7 @@ import { StatusChip, DirectionBadge, confidenceColor } from "../intraday-hunter/
 import { PlanCard } from "../intraday-hunter/v2/PlanCard";
 import { DecisionLog } from "../intraday-hunter/v2/DecisionLog";
 import { Section, Empty } from "../intraday-hunter/v2/common";
+import { WeeklyReviewCard } from "../intraday-hunter/v2/WeeklyReviewCard";
 import { MobileV2Basket } from "./MobileV2Basket";
 
 const POLL_MS = 15000;
@@ -108,6 +109,7 @@ export function MobileHunterV2({ refreshKey }: { refreshKey?: number }) {
       <DecisionLog history={(run?.call2_history ?? []) as IhV2Call2Entry[]} />
       <MobileV2Basket refreshKey={refreshKey} />
       <MobileTeacher date={date} />
+      <WeeklyReviewCard />
     </div>
   );
 }
