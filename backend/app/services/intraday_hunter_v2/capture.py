@@ -8,8 +8,9 @@ candles into `market_data_1m` (symbol = the Fyers option symbol), which lets gra
 arm's basket on REAL premiums. Fyers' WS limit is 5000 symbols — far above this.
 
 The day's list is stored in Redis `ih_v2:capture:{date}` (read back by `fyers_ws_client.
-_collect_dynamic_symbols` so it survives WS reconnects, and by grading). The ATM CE/PE and the
-index futures are also registered with the order-flow tracker.
+_collect_dynamic_symbols` so it survives WS reconnects, and by grading). Every captured
+contract and the index futures are registered with the order-flow tracker (the minute log reads
+the captured strike nearest the live spot); 5-level depth (flag) is subscribed for the ATM only.
 """
 from __future__ import annotations
 
@@ -67,6 +68,7 @@ async def capture_atm_ladder(reason: str = "scheduled") -> dict:
     cap = await load_capture(today)
     known = set(cap["symbols"])
     new_syms: list[str] = []
+    atm_syms: list[str] = []
 
     for index in INDICES:
         spot = await _spot(index)
@@ -88,10 +90,13 @@ async def capture_atm_ladder(reason: str = "scheduled") -> dict:
                         {"strike": strike, "type": opt, "symbol": sym, "expiry": expiry.isoformat()}
                     )
                 if strike == atm:
-                    orderflow_tracker.track([sym])
+                    atm_syms.append(sym)
         orderflow_tracker.track([f"{index}_FUT"])
 
     cap["symbols"] = sorted(known)
+    # Order flow covers the WHOLE captured ladder: the minute log reads the captured strike
+    # nearest the live spot, which drifts off the capture-time ATM within minutes.
+    orderflow_tracker.track(cap["symbols"])
     cap["updated_at"] = now_ist().isoformat()
     await get_redis().set(capture_key(today), json.dumps(cap), ex=_TTL)
     if new_syms:
@@ -99,7 +104,7 @@ async def capture_atm_ladder(reason: str = "scheduled") -> dict:
         from app.config import settings
         if settings.ih_v2_depth_enabled and hasattr(fyers_ws_client, "subscribe_depth"):
             await fyers_ws_client.subscribe_depth(
-                [s for s in new_syms if s in orderflow_tracker.tracked]
+                [s for s in new_syms if s in atm_syms]
             )
     logger.info("ih_v2 capture (%s): +%d contracts, %d total", reason, len(new_syms), len(known))
     return {"added": len(new_syms), "total": len(known), "symbols": cap["symbols"]}
