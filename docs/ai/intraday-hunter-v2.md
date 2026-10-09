@@ -168,12 +168,14 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
 
 ## Simulator E2E (wall-clock, MARKET_MODE=simulated)
 
-The backend runs on wall-clock time, so the E2E runs live from 09:05 to 11:40 IST against the Market Simulator. The simulator's `data/symbol_master/` holds the real public Fyers `NSE_FO`/`BSE_FO` CSVs, so current contracts resolve.
+The backend runs on wall-clock time, so the E2E runs live from 09:05 to 11:40 IST against the Market Simulator. The simulator rewrites `data/symbol_master/` with a **synthetic** master on every start, with option strikes ±20 around hardcoded index prices (`INDEX_SYMBOLS` / `BSE_INDEX_SYMBOLS` in `marketSimulator/app/engine/symbol_master_gen.py`: NIFTY 24500, BANKNIFTY 52000, SENSEX 80000). If the tape's prices fall outside that band, the ATM±2 capture resolves nothing (`capture_empty` alert).
 
 - **Before the run:**
   1. Stage the previous trading day's index and `*_FUT` candles into the local DB.
-  2. Start the backend with `MARKET_MODE=simulated IH_ALLOW_CLI_LOGIN=1`.
-  3. Push the teacher plan via `POST /teacher/ingest`.
+  2. Start the simulator, then regenerate its symbol master around the tape's prev closes (patch the generator's base prices, then call `write_all()`). Delete the backend's Redis cache (`symbols:master`, `symbols:master:updated_at`) so the backend downloads the new master.
+  3. Start the backend with `MARKET_MODE=simulated IH_ALLOW_CLI_LOGIN=1` before 08:45, so the scheduled Call 1 runs.
+  4. Push the teacher plan via `POST /teacher/ingest`.
+  5. Keep the Mac awake on AC power. On battery with the display off, macOS idle-sleeps and then returns to "Maintenance Sleep" after each DarkWake (`caffeinate -i` does not hold it), which freezes the stack and makes APScheduler skip jobs ("missed by …").
 - **During the run:** `scripts/intraday_hunter/v2_sim_driver.py` injects the index tape (a gap through the PDL/PDH pool, then a ride) and model premiums for every captured contract.
 - **What it checks:**
   - ATM±2 subscription and premium candles
@@ -183,5 +185,5 @@ The backend runs on wall-clock time, so the E2E runs live from 09:05 to 11:40 IS
   - IH-v2 YOLO and shadow positions opening together
   - the basket closing together
   - a forced `POST /v2/grade` producing an `ih_day_grades` row
-  - `IH v2 ALERT` log lines (with `TELEGRAM_ENABLED=false`)
+  - `IH v2 ALERT` log lines (with `TELEGRAM_ENABLED=false`). To force one, pause the tape (stop the driver and `POST /sim/clock/pause`; injection alone stopping is not enough, as the simulator keeps ticking) for more than 10 min before a `candle_check_job` slot.
 
