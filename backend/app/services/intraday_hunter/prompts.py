@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from textwrap import dedent
 
-MODEL = "claude-opus-4-8"
+MODEL = "claude-opus-5-5"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SYSTEM PROMPT — frozen persona + mental model + hard rules + output contract.
