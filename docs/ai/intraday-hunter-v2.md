@@ -146,6 +146,7 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
 - 09:34: Telegram if v1 or v2 has no ENTER/SKIP **status**. 09:34 rather than 09:30 so the check never races v1's 09:30 backstop call.
 - A v2 ENTER that emits zero legs → status `ENTER_RETRY` plus a Telegram alert. Each later minute re-tries the emission (not a new LLM call) up to the deadline. Signal emission stops only on an **explicit** kill (`v2_active(fail_closed=False)`), so a transient DB error cannot drop a decided basket.
 - Basket check failure → it runs inside a SAVEPOINT (rolled back, so it is never half-committed), Telegram once per day, and legs fall back to the 15:25 close.
+- ATM±2 capture (09:10, 09:16:30): Telegram if the job crashes (`capture`) or if any index ends with **no** contracts (`capture_empty` — spot missing or strikes absent from the symbol master), since grading would then have no premium paths for it.
 - 09:20 and then every 30 min: Telegram if an index has no candles, or stale ones, for the session (the 2 Sep gap).
 - Each alert fires once per day per key and is always logged (`IH v2 ALERT [...]`). That is visible locally with `TELEGRAM_ENABLED=false`.
 

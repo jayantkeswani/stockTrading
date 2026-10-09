@@ -114,11 +114,21 @@ async def orderflow_reset_job() -> None:
 async def capture_job(reason: str) -> None:
     if not await _enabled_today():
         return
-    from app.services.intraday_hunter_v2.capture import capture_atm_ladder
+    from app.services.intraday_hunter_v2.capture import INDICES, capture_atm_ladder, load_capture
     try:
-        await capture_atm_ladder(reason)
+        res = await capture_atm_ladder(reason)
     except Exception as e:  # noqa: BLE001
         await alert("capture", f"ATM±2 capture ({reason}) failed: {type(e).__name__}: {e}", reason)
+        return
+    if res.get("skipped"):
+        return
+    # An index with no resolvable contracts (spot missing / strikes absent from the symbol
+    # master) is silent otherwise — and grading then has no premium paths for it.
+    cap = await load_capture(now_ist().date())
+    missing = [i for i in INDICES if not (cap.get("contracts") or {}).get(i)]
+    if missing:
+        await alert("capture_empty", f"ATM±2 capture ({reason}) has NO contracts for "
+                                     f"{', '.join(missing)} on {now_ist().date()}", reason)
 
 
 async def candle_check_job() -> None:

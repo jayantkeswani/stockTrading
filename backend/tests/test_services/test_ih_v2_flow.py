@@ -189,3 +189,40 @@ class TestLlmCliLoginOptIn:
         assert llm_cli._cli_login_allowed()
         assert "CLAUDE_CODE_OAUTH_TOKEN" not in llm_cli._child_env(None)
         assert llm_cli._child_env("tok")["CLAUDE_CODE_OAUTH_TOKEN"] == "tok"
+
+
+class TestCaptureJobAlerts:
+    """capture_job alerts loudly when an index ends with no contracts (the silent-zero case)."""
+
+    async def _run(self, res, contracts):
+        from app.services.intraday_hunter_v2 import capture as cap_mod
+        from app.tasks import intraday_hunter_v2_task as task
+
+        alert = AsyncMock()
+        with patch.object(task, "_enabled_today", new=AsyncMock(return_value=True)), \
+             patch.object(task, "alert", new=alert), \
+             patch.object(cap_mod, "capture_atm_ladder", new=AsyncMock(return_value=res)), \
+             patch.object(cap_mod, "load_capture",
+                          new=AsyncMock(return_value={"symbols": [], "contracts": contracts})):
+            await task.capture_job("09:10")
+        return alert
+
+    @pytest.mark.asyncio
+    async def test_zero_contracts_alerts(self):
+        alert = await self._run({"added": 0, "total": 0}, {})
+        alert.assert_awaited_once()
+        assert alert.call_args.args[0] == "capture_empty"
+        assert "NIFTY, BANKNIFTY, SENSEX" in alert.call_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_one_index_missing_alerts_only_that_index(self):
+        row = [{"strike": 1, "type": "CE", "symbol": "X"}]
+        alert = await self._run({"added": 20, "total": 20}, {"NIFTY": row, "BANKNIFTY": row})
+        assert "SENSEX" in alert.call_args.args[1] and "NIFTY" not in alert.call_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_full_capture_and_kill_switch_are_quiet(self):
+        row = [{"strike": 1, "type": "CE", "symbol": "X"}]
+        full = {"NIFTY": row, "BANKNIFTY": row, "SENSEX": row}
+        (await self._run({"added": 30, "total": 30}, full)).assert_not_awaited()
+        (await self._run({"skipped": "kill switch off"}, {})).assert_not_awaited()
