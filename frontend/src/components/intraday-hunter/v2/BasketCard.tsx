@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { IhV2Basket, IhV2Book, IhV2CloseResult } from "@/lib/types";
-import { mtmBarPct, formatPnl } from "@/lib/ihV2";
+import { mtmBarPct, formatPnl, basketTLabel } from "@/lib/ihV2";
 import { DirectionBadge } from "../badges";
 import { Section, Empty, Val, pnlCls } from "./common";
 
 const POLL_MS = 3000;
 const num = (v: number | null | undefined, d = 2) => (v == null ? "—" : v.toFixed(d));
 
-function MtmBar({ mtm, T, pct }: { mtm: number | null; T: number | null; pct?: number | null }) {
+export function MtmBar({ mtm, T, pct }: { mtm: number | null; T: number | null; pct?: number | null }) {
   const pos = mtmBarPct(mtm, T);
   return (
     <div className="space-y-0.5">
@@ -133,7 +133,7 @@ export function BasketCard() {
         <>
           {data && (
             <span className="text-[10px] font-mono text-text-muted">
-              T ±{(data.basket_tp_sl_pct * 100).toFixed(0)}% · time exit {data.time_exit}
+              {basketTLabel(data)} · time exit {data.time_exit}
             </span>
           )}
           {realOpen && !confirming && (

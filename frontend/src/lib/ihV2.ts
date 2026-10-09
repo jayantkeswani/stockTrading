@@ -27,3 +27,11 @@ export function formatPnl(v: number | null | undefined): string {
   const r = Math.round(v);
   return `${r >= 0 ? "+" : "-"}${Math.abs(r).toLocaleString("en-IN")}`;
 }
+
+/** Basket header band label: "T ±15%" in pct mode, "T fixed ₹/lot" in rupees mode (each book's
+ *  rupee T is shown on its own bar). */
+export function basketTLabel(b: { basket_tp_sl_pct: number; basket_t_mode?: string } | null | undefined): string {
+  if (!b) return "T —";
+  if (b.basket_t_mode === "rupees") return "T fixed ₹/lot";
+  return `T ±${(b.basket_tp_sl_pct * 100).toFixed(0)}%`;
+}

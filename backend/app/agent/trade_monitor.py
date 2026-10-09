@@ -603,7 +603,7 @@ async def _ih_v2_quotes(legs: list[tuple[Position, Trade]]):
 
         quotes.append(LegQuote(
             index=pos.symbol, qty=int(pos.quantity), entry_price=float(pos.entry_price),
-            ltp=_num(pd.get("ltp")), bid=_num(pd.get("bid")),
+            ltp=_num(pd.get("ltp")), bid=_num(pd.get("bid")), lots=int(pos.lots or 1),
         ))
         if pos.symbol not in spots:
             sp = await get_cached_price(pos.symbol) or {}
@@ -636,7 +636,9 @@ async def _check_ih_v2_baskets(db: AsyncSession) -> list[dict] | None:
     On CLOSE every leg closes together (BASKET_TARGET / BASKET_STOP / BASKET_TIME). Round-hold
     activations and their results are logged as IH_V2_ROUND_HOLD agent logs.
     """
-    from app.services.intraday_hunter_v2.basket import RoundHoldState, basket_mtm, evaluate_basket
+    from app.services.intraday_hunter_v2.basket import (
+        RoundHoldState, basket_mtm, evaluate_basket, lots_by_index,
+    )
     from app.services.intraday_hunter_v2.params import v2_params
     from app.services.trading_config import get_trading_config_sync
 
@@ -661,6 +663,7 @@ async def _check_ih_v2_baskets(db: AsyncSession) -> list[dict] | None:
         dec = evaluate_basket(
             mtm=mtm, cost=cost, direction=direction, spots=spots,
             traded_indices=[q.index for q in quotes], now=now, state=state, params=params,
+            lots=lots_by_index(quotes),
         )
         book = key[1]
         if dec.event == "round_hold_activated":
@@ -711,7 +714,7 @@ async def close_ih_v2_basket_manual(db: AsyncSession, include_shadow: bool = Fal
     system's view at the moment of the close (MTM, T, round-hold state) is recorded in a
     MANUAL_BASKET_CLOSE agent log.
     """
-    from app.services.intraday_hunter_v2.basket import basket_mtm
+    from app.services.intraday_hunter_v2.basket import basket_mtm, basket_target, lots_by_index
     from app.services.intraday_hunter_v2.params import v2_params
 
     groups = await _ih_v2_open_baskets(db)
@@ -727,7 +730,7 @@ async def close_ih_v2_basket_manual(db: AsyncSession, include_shadow: bool = Fal
         snapshots.append({
             "book": key[1], "date": str(key[0]), "legs": len(legs),
             "mtm": None if mtm is None else round(mtm, 2), "cost": round(cost, 2),
-            "T": round(float(params["basket_tp_sl_pct"]) * cost, 2),
+            "T": round(basket_target(params, cost, lots_by_index(quotes)), 2),
             "round_hold_active": bool(state and getattr(state, "active", False)),
             "spots": spots,
             "counterfactual": "shadow basket left open — it follows the system rules",

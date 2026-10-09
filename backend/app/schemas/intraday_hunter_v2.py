@@ -49,6 +49,7 @@ class IhV2Book(BaseModel):
 class IhV2BasketResponse(BaseModel):
     trading_date: date
     basket_tp_sl_pct: float
+    basket_t_mode: str = "pct"  # "pct" (T = pct x cost) | "rupees" (T = lots x rupees_per_lot)
     time_exit: str
     books: list[IhV2Book]
 

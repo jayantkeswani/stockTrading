@@ -102,7 +102,7 @@ async def v2_basket(db: AsyncSession = Depends(get_db)):
     from app.core.enums import TradeSource, TradeStatus
     from app.core.redis import get_cached_price
     from app.models.trade import Trade
-    from app.services.intraday_hunter_v2.basket import basket_mtm
+    from app.services.intraday_hunter_v2.basket import basket_mtm, basket_target, lots_by_index
     from app.services.yolo_profile_service import get_all_profiles
 
     params = await v2_params_async()
@@ -115,7 +115,7 @@ async def v2_basket(db: AsyncSession = Depends(get_db)):
         quotes, _spots = await trade_monitor._ih_v2_quotes(legs)
         mtm, cost = basket_mtm(quotes)
         state = trade_monitor._ih_v2_basket_state.get(key)
-        T = pct * cost
+        T = basket_target(params, cost, lots_by_index(quotes))
         out_legs = []
         for (pos, trade), q in zip(legs, quotes):
             px = q.bid or q.ltp
@@ -147,10 +147,14 @@ async def v2_basket(db: AsyncSession = Depends(get_db)):
     for b, trades in by_book.items():
         cost = sum(float(t.entry_price) * t.quantity for t in trades)
         net = sum(float(t.net_pnl if t.net_pnl is not None else (t.pnl or 0)) for t in trades)
+        lots: dict[str, int] = {}
+        for t in trades:
+            lots[t.symbol] = lots.get(t.symbol, 0) + int(t.lots or 1)
+        T = basket_target(params, cost, lots)
         books.append(IhV2Book(
             book=b, is_shadow=b == "SHADOW", direction=trades[0].option_type, status="CLOSED",
-            cost=round(cost, 2), mtm=round(net, 2), T=round(pct * cost, 2),
-            pct_of_T=round(net / (pct * cost) * 100, 1) if cost else None,
+            cost=round(cost, 2), mtm=round(net, 2), T=round(T, 2),
+            pct_of_T=round(net / T * 100, 1) if T else None,
             exit_reason=trades[0].exit_reason,
             legs=[IhV2Leg(trade_id=t.id, index=t.symbol, option_type=t.option_type,
                           strike=float(t.strike_price) if t.strike_price is not None else None,
@@ -162,6 +166,7 @@ async def v2_basket(db: AsyncSession = Depends(get_db)):
                           status="CLOSED", exit_reason=t.exit_reason) for t in trades],
         ))
     return IhV2BasketResponse(trading_date=today, basket_tp_sl_pct=pct,
+                              basket_t_mode=str(params.get("basket_t_mode", "pct")),
                               time_exit=str(params["basket_time_exit"]), books=books)
 
 

@@ -15,9 +15,17 @@ VARIANT = "v2"
 
 INTRADAY_HUNTER_V2_DEFAULTS: dict = {
     # ── Basket-level exit (trade_monitor._check_ih_v2_baskets) ──
-    # Symmetric 1:1 on rupees: close ALL legs when basket MTM >= +T or <= -T,
-    # T = basket_tp_sl_pct x basket cost (sum entry premium x qty). Exit-side (bid) valuation.
+    # Symmetric 1:1 on rupees: close ALL legs when basket MTM >= +T or <= -T. Exit-side (bid)
+    # valuation. basket_t_mode picks T:
+    #   "pct"    T = basket_tp_sl_pct x basket cost (sum entry premium x qty)
+    #   "rupees" T = sum over the legs actually traded of lots x rupees_per_lot[index] — a fixed
+    #            rupee book like the teacher's (exit study: his rupee win/loss CV is half the %
+    #            CV). rupees_per_lot = 15% of one lot's cost in the 2026-10-09 prod basket
+    #            (BN ~870 x 30, NIFTY ~146 x 75, SENSEX ~575 x 10) → the 2-lot basket ≈ ₹20.7K,
+    #            the 1-lot shadow half.
     "basket_tp_sl_pct": 0.20,
+    "basket_t_mode": "pct",
+    "rupees_per_lot": {"BANKNIFTY": 3915, "NIFTY": 1640, "SENSEX": 862},
     "basket_time_exit": "11:30",          # backstop IST: close all legs if neither +T nor -T hit
     # Round-number hold: at MTM >= +0.9T with the majority of traded indices within
     # round_hold_points of a round number IN the trade direction, hold for the touch.

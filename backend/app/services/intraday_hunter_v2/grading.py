@@ -40,6 +40,7 @@ from app.services.intraday_hunter_v2.basket import (
     RoundHoldState,
     basket_mtm,
     evaluate_basket,
+    lots_by_index,
 )
 from app.services.intraday_hunter_v2.params import STRATEGY, parse_hhmm, v2_params_async
 
@@ -114,7 +115,8 @@ def simulate_basket(
 ) -> dict | None:
     """Replay v2's basket rules on 1m closes. Pure.
 
-    legs: [{index, qty, closes: {HH:MM: premium close}}]. Entry = close of candle (D-1).
+    legs: [{index, qty, closes: {HH:MM: premium close}, lots (default 1)}]. Entry = close of
+    candle (D-1).
     Returns {pnl, exit_reason, sub_reason, exit_time, entry_cost, round_hold} or None
     (no entry premium for some leg).
     """
@@ -125,7 +127,7 @@ def simulate_basket(
         if px is None or px <= 0:
             return None
         quotes.append({"index": leg["index"], "qty": int(leg["qty"]), "entry": float(px),
-                       "closes": leg["closes"]})
+                       "lots": int(leg.get("lots", 1)), "closes": leg["closes"]})
     if not quotes:
         return None
     minutes = sorted({m for q in quotes for m in q["closes"] if m >= decision_hhmm})
@@ -136,14 +138,14 @@ def simulate_basket(
         for q in quotes:
             if m in q["closes"]:
                 last_px[id(q)] = float(q["closes"][m])
-        lq = [LegQuote(index=q["index"], qty=q["qty"], entry_price=q["entry"], ltp=last_px[id(q)])
-              for q in quotes]
+        lq = [LegQuote(index=q["index"], qty=q["qty"], entry_price=q["entry"], ltp=last_px[id(q)],
+                       lots=q["lots"]) for q in quotes]
         mtm, cost = basket_mtm(lq, use_book=False)
         t_eval = datetime.combine(trading_date, parse_hhmm(_add_min(m, 1)), tzinfo=IST)
         spots = {i: c.get(m) for i, c in index_closes.items()}
         dec = evaluate_basket(mtm=mtm, cost=cost, direction=direction, spots=spots,
                               traded_indices=[q["index"] for q in quotes], now=t_eval,
-                              state=state, params=params)
+                              state=state, params=params, lots=lots_by_index(lq))
         if dec.event:
             round_events.append({"at": _add_min(m, 1), "event": dec.event})
         if dec.action == "CLOSE":

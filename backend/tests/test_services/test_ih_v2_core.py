@@ -266,6 +266,67 @@ class TestBasketExit:
 
 
 # ───────────────────────────── Call 2 normalization ─────────────────────────────
+class TestBasketTargetMode:
+    """basket_t_mode: "pct" (default) vs the fixed-rupee book "rupees"."""
+
+    RUPEES = {**INTRADAY_HUNTER_V2_DEFAULTS, "basket_t_mode": "rupees"}
+    # 2026-10-09 prod YOLO basket: BN ATM + OTM-1 (2 lots each), NIFTY 2, SENSEX 2.
+    YOLO = {"BANKNIFTY": 4, "NIFTY": 2, "SENSEX": 2}
+
+    def test_default_is_pct_of_cost(self):
+        assert INTRADAY_HUNTER_V2_DEFAULTS["basket_t_mode"] == "pct"
+        assert basket.basket_target({"basket_tp_sl_pct": 0.15}, 137690.0, self.YOLO) == pytest.approx(20653.5)
+
+    def test_rupees_seed_gives_about_20_7k_for_the_2_lot_basket(self):
+        T = basket.basket_target(self.RUPEES, 137690.0, self.YOLO)
+        assert T == 4 * 3915 + 2 * 1640 + 2 * 862 == 20664
+        assert T == pytest.approx(0.15 * 137690.0, rel=0.01)  # ≈15% of that day's cost
+
+    def test_rupees_shadow_one_lot_is_half(self):
+        shadow = {"BANKNIFTY": 2, "NIFTY": 1, "SENSEX": 1}
+        assert basket.basket_target(self.RUPEES, 1.0, shadow) == 20664 / 2
+
+    def test_rupees_independent_of_cost(self):
+        assert basket.basket_target(self.RUPEES, 1.0, self.YOLO) == basket.basket_target(self.RUPEES, 9e9, self.YOLO)
+
+    def test_excluded_index_contributes_nothing(self):
+        no_sensex = {"BANKNIFTY": 4, "NIFTY": 2}
+        assert basket.basket_target(self.RUPEES, 0.0, no_sensex) == 4 * 3915 + 2 * 1640
+
+    def test_lots_by_index_sums_bn_legs(self):
+        q = [basket.LegQuote(index="BANKNIFTY", qty=60, entry_price=900, lots=2),
+             basket.LegQuote(index="BANKNIFTY", qty=60, entry_price=840, lots=2),
+             basket.LegQuote(index="NIFTY", qty=150, entry_price=145, lots=2)]
+        assert basket.lots_by_index(q) == {"BANKNIFTY": 4, "NIFTY": 2}
+
+    def test_evaluate_uses_rupee_T(self):
+        kw = dict(cost=137690.0, direction="CE", spots={}, traded_indices=["BANKNIFTY", "NIFTY", "SENSEX"],
+                  now=at("09:40"), params=self.RUPEES, lots=self.YOLO)
+        hold = basket.evaluate_basket(mtm=20000.0, state=basket.RoundHoldState(), **kw)
+        assert hold.action == "HOLD" and hold.detail["T"] == 20664
+        hit = basket.evaluate_basket(mtm=20664.0, state=basket.RoundHoldState(), **kw)
+        assert hit.action == "CLOSE" and hit.exit_reason == "BASKET_TARGET"
+        stop = basket.evaluate_basket(mtm=-20664.0, state=basket.RoundHoldState(), **kw)
+        assert stop.exit_reason == "BASKET_STOP"
+
+    def test_grading_replay_uses_rupee_T(self):
+        # 1 lot NIFTY (qty 75): rupee T = 1640 → +22 premium (1650) hits; pct T would need +29.
+        closes = {"09:17": 145.0, "09:18": 160.0, "09:19": 167.0}
+        legs = [{"index": "NIFTY", "qty": 75, "lots": 1, "closes": closes}]
+        out = grading.simulate_basket("09:18", "CE", legs, {"NIFTY": {}}, self.RUPEES, D)
+        assert out["exit_reason"] == "BASKET_TARGET" and out["exit_time"] == "09:20"
+        pct = grading.simulate_basket("09:18", "CE", legs, {"NIFTY": {}}, INTRADAY_HUNTER_V2_DEFAULTS, D)
+        assert pct["exit_reason"] == "END_OF_DATA"
+
+    def test_errors(self):
+        with pytest.raises(ValueError):
+            basket.basket_target(self.RUPEES, 1.0, None)
+        with pytest.raises(ValueError):
+            basket.basket_target(self.RUPEES, 1.0, {"FINNIFTY": 1})
+        with pytest.raises(ValueError):
+            basket.basket_target({"basket_t_mode": "fixed"}, 1.0, self.YOLO)
+
+
 class TestCall2Normalize:
     def test_llm_failure_wait_then_skip_at_deadline(self):
         assert normalize_call2(None, at_deadline=False)["decision"] == "WAIT"
