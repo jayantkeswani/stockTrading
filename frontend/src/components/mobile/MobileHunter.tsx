@@ -10,8 +10,11 @@ import { DecisionCard } from "@/components/intraday-hunter/DecisionCard";
 import { BasketCard } from "@/components/intraday-hunter/BasketCard";
 import { HistoryTimeline } from "@/components/intraday-hunter/HistoryTimeline";
 import { HistoryDetailModal } from "@/components/intraday-hunter/HistoryDetailModal";
+import { MobileHunterV2 } from "./MobileHunterV2";
 
 const POLL_MS = 20000;
+const TAB_KEY = "ih_tab";
+type IhTab = "v1" | "v2";
 
 /**
  * Mobile Intraday Hunter tab: the phone equivalent of the desktop
@@ -22,6 +25,19 @@ const POLL_MS = 20000;
  * MobileShell.
  */
 export function MobileHunter({ refreshKey }: { refreshKey?: number }) {
+  const [tab, setTab] = useState<IhTab>("v1");
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(TAB_KEY);
+      if (saved === "v1" || saved === "v2") setTab(saved);
+    } catch {}
+  }, []);
+  const pick = (t: IhTab) => {
+    setTab(t);
+    try {
+      localStorage.setItem(TAB_KEY, t);
+    } catch {}
+  };
   const [run, setRun] = useState<IntradayHunterRun | null>(null);
   const [history, setHistory] = useState<IntradayHunterHistoryItem[]>([]);
   const [basket, setBasket] = useState<IntradayHunterBasketLeg[]>([]);
@@ -67,8 +83,32 @@ export function MobileHunter({ refreshKey }: { refreshKey?: number }) {
     [load]
   );
 
+  const switcher = (
+    <div className="flex rounded-lg border border-border bg-bg-secondary p-0.5 text-[12px] font-mono">
+      {(["v1", "v2"] as const).map((t) => (
+        <button
+          key={t}
+          onClick={() => pick(t)}
+          className={`flex-1 py-1 rounded ${tab === t ? "bg-bg-tertiary text-text-primary" : "text-text-muted"}`}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (tab === "v2") {
+    return (
+      <div className="p-3 space-y-3">
+        {switcher}
+        <MobileHunterV2 refreshKey={refreshKey} />
+      </div>
+    );
+  }
+
   return (
     <div className="p-3 space-y-3">
+      {switcher}
       {/* Status bar */}
       <div className="rounded-lg border border-border bg-bg-secondary px-3 py-2 space-y-2">
         <div className="flex flex-wrap items-center gap-2">

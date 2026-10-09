@@ -155,7 +155,7 @@ function ClosedTradeCard({ t }: { t: Trade }) {
     if (watchStatus !== "idle") return;
     setWatchStatus("adding");
     const ok = await addToPersonalWatchlist({
-      fyersSymbol: null,
+      fyersSymbol: t.fyers_option_symbol ?? null,
       symbol: t.symbol,
       optionType: t.option_type || null,
       strikePrice: t.strike_price,
