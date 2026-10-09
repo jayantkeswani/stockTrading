@@ -116,4 +116,4 @@ Every transition is appended to the row's `history` (status, time, note). The UI
 |---|---|---|---|
 | 2026-10-09 | `basket_tp_sl_pct` 0.20 → 0.15; `round_hold_enabled` → false | Teacher exit study, 72 days: rupee-amount 1:1 exits (median win ₹2.54L / loss ₹2.63L), exits at 97% of peak, no round-number waiting. Study in `~/Downloads/ih_research/exit_study/FINDINGS.md` | User (overnight go-ahead) |
 | 2026-10-09 | Jev shadow arm enabled in prod (`deploy.yml`) | Live API check: HTTP 200, ~600ms | User |
-| 2026-10-09 | `basket_t_mode` → `rupees` (planned right after the v1.34.2 deploy) | Same exit study | User |
+| 2026-10-09 | `basket_t_mode` → `rupees` (`rupees_per_lot` BN 3915 / NIFTY 1640 / SENSEX 862), applied ~15:50 IST after the v1.34.2 deploy as a direct PUT on the champion params (predates the approval flow) | Same exit study | User |
