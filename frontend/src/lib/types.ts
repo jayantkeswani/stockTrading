@@ -790,3 +790,73 @@ export interface IhTeacher {
     [k: string]: unknown;
   } | null;
 }
+
+export type IhV2ProposalAction = "approve" | "reject" | "analyse" | "promote" | "retire";
+
+export interface IhV2Review {
+  id: number | string;
+  week_ending: string;
+  status: string;
+  summary?: string | null;
+  proposal?: unknown;
+  calibration?: unknown;
+  created_at?: string | null;
+}
+
+export interface IhV2ApplyPlan {
+  evidence_holds?: boolean | null;
+  recheck?: string | null;
+  kind?: string | null;
+  params_override?: Record<string, unknown> | null;
+  prompt_addendum?: string | null;
+  build_brief?: string | null;
+  reasoning?: string | null;
+  _validation?: unknown;
+  _mode?: string | null;
+  _analysed_at?: string | null;
+}
+
+export interface IhV2ProposalStats {
+  days: number;
+  min_days: number;
+  challenger_total?: number | null;
+  champion_total?: number | null;
+  diff_total?: number | null;
+  diff_mean?: number | null;
+  diff_t?: number | null;
+  first_half_diff?: number | null;
+  second_half_diff?: number | null;
+  eligible?: boolean;
+  can_promote?: boolean;
+  can_retire?: boolean;
+}
+
+export interface IhV2ProposalHistoryEntry {
+  status: string;
+  at?: string | null;
+  note?: string | null;
+  [k: string]: unknown;
+}
+
+export interface IhV2Proposal {
+  id: number | string;
+  review_id: number | string;
+  week_ending: string;
+  idx: number;
+  change: string;
+  kind?: string | null;
+  evidence?: string | null;
+  expected_effect?: string | null;
+  risk?: string | null;
+  status: string;
+  user_note?: string | null;
+  apply_plan?: IhV2ApplyPlan | null;
+  challenger_id?: number | string | null;
+  challenger_mode?: "counterfactual" | "shadow_call2" | null;
+  params_override?: Record<string, unknown> | null;
+  started_on?: string | null;
+  ended_on?: string | null;
+  history: IhV2ProposalHistoryEntry[];
+  stats?: IhV2ProposalStats | null;
+  actions: string[];
+}

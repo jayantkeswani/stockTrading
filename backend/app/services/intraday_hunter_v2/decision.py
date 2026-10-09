@@ -141,17 +141,20 @@ async def build_live(session: AsyncSession, d: date, now: time, params: dict) ->
 
 async def run_call2(
     session: AsyncSession, d: date, *, now: time, t_hook: float | None = None,
-    token: str | None = None,
+    token: str | None = None, variant: str = VARIANT, params_override: dict | None = None,
+    emit: bool = True,
 ) -> IntradayHunterRun | None:
     """One v2 Call 2 at decision time `now` (IST wall clock). Returns the run (None: no data yet).
 
     `t_hook` = time.monotonic() at the candle-close hook, so the logged latency covers the
-    whole hook→decision path, not just the model call.
+    whole hook→decision path, not just the model call. A shadow-Call-2 challenger passes its own
+    `variant` (run rows `v2c1`…), `params_override` and `emit=False`: it reads the champion's
+    Call 1 thesis and never emits signals.
     """
-    params = await v2_params_async()
+    params = {**(await v2_params_async()), **(params_override or {})}
     deadline = parse_hhmm(params["call2_deadline"])
     at_deadline = now >= deadline
-    run = await store.get_or_create_run(session, d, VARIANT)
+    run = await store.get_or_create_run(session, d, variant)
     t_start = t_hook if t_hook is not None else _time.monotonic()
 
     live = await build_live(session, d, now, params)
@@ -167,9 +170,11 @@ async def run_call2(
     facts = live.pop("_facts")
     plan_side = live.pop("_plan_side")
 
-    call1 = run.call1_json if run.call1_json and not run.call1_json.get("error") else None
+    thesis_run = run if variant == VARIANT else await store.get_run(session, d, VARIANT)
+    c1 = thesis_run.call1_json if thesis_run else None
+    call1 = c1 if c1 and not c1.get("error") else None
     prior = [_slim(x) for x in (run.call2_history or [])]
-    prompt = prompts.SYSTEM_PROMPT_V2 + "\n\n" + prompts.build_call2_prompt(call1, live, prior)
+    prompt = prompts.SYSTEM_PROMPT_V2 + _addendum(params) + "\n\n" + prompts.build_call2_prompt(call1, live, prior)
     model = call2_model(params)
     t_llm = _time.monotonic()
     raw = await llm_cli.call_claude_json(
@@ -197,15 +202,21 @@ async def run_call2(
         out["decision"], out["direction"], out["skip_reason_code"] = "SKIP", None, "OTHER"
     _persist(run, out)
     logger.info(
-        "ih_v2: Call 2 @ %s for %s -> %s %s (conf=%s, model=%s, llm=%dms, hook→decision=%dms)",
-        out["_at"], d, out["decision"], out.get("direction") or "", out.get("confidence"),
+        "ih_v2: Call 2 [%s] @ %s for %s -> %s %s (conf=%s, model=%s, llm=%dms, hook→decision=%dms)",
+        variant, out["_at"], d, out["decision"], out.get("direction") or "", out.get("confidence"),
         model, out["_latency_ms"], out["_hook_to_decision_ms"],
     )
 
-    if out["decision"] == "ENTER":
+    if out["decision"] == "ENTER" and emit:
         await emit_or_retry(session, d, run, params, at_deadline=at_deadline,
                             fallback_spots={i: f["last"] for i, f in facts.items()})
     return run
+
+
+def _addendum(params: dict) -> str:
+    """The `call2_prompt_addendum` param as a system-prompt suffix ("" when unset). Pure."""
+    text = str(params.get("call2_prompt_addendum") or "").strip()
+    return f"\n\nADDITIONAL INSTRUCTIONS:\n{text}" if text else ""
 
 
 async def emit_or_retry(session: AsyncSession, d: date, run: IntradayHunterRun, params: dict,

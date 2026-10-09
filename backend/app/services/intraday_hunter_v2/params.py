@@ -40,6 +40,9 @@ INTRADAY_HUNTER_V2_DEFAULTS: dict = {
     "call2_deadline": "09:25",            # last possible decision; WAIT at the deadline -> SKIP
     "call2_model": None,                  # None -> settings.intraday_hunter_v2_call2_model
     "call2_timeout_s": 60,
+    # Extra system-prompt text appended to every Call 2 ("" = none). A prompt challenger
+    # (apply.py) carries its change here; promoting it copies the text to the champion.
+    "call2_prompt_addendum": "",
     "call1_model": None,                  # None -> llm_cli.MODEL (Opus, charts attached)
     # ── Gates: SHADOW-ONLY for the first 20 trading days (compute + log, never block) ──
     "enforce_plan_gate": False,
@@ -86,6 +89,17 @@ async def v2_params_async() -> dict:
 
     p = await get_strategy_params(STRATEGY)
     return {**INTRADAY_HUNTER_V2_DEFAULTS, **(p or {})}
+
+
+# Params a challenger can be scored on COUNTERFACTUALLY — re-running v2's own decision through
+# the basket exits / leg structure / enforced gates on the captured premiums (no new LLM call).
+# Any other key changes Call 2's inputs, so its challenger runs its own shadow Call 2.
+COUNTERFACTUAL_KEYS: frozenset[str] = frozenset({
+    "basket_tp_sl_pct", "basket_t_mode", "rupees_per_lot", "basket_time_exit",
+    "round_hold_enabled", "round_hold_activate_frac", "round_hold_giveback_frac",
+    "round_hold_max_min", "round_hold_points", "round_step", "leg_structure",
+    "enforce_plan_gate", "enforce_oi_gate",
+})
 
 
 def call2_model(params: dict) -> str:

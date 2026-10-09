@@ -51,3 +51,42 @@ describe("basketTLabel", () => {
   });
   it("handles a missing payload", () => expect(basketTLabel(null)).toBe("T —"));
 });
+
+import { proposalStatusClass, actionLabel, needsConfirm, isAgentPending, groupByWeek } from "@/lib/ihV2";
+
+describe("proposal helpers", () => {
+  it("status classes", () => {
+    expect(proposalStatusClass("APPLIED")).toContain("text-profit");
+    expect(proposalStatusClass("PROMOTED")).toContain("font-semibold");
+    expect(proposalStatusClass("NEEDS_REVIEW")).toContain("text-warning");
+    expect(proposalStatusClass("REJECTED")).toContain("text-text-muted");
+    expect(proposalStatusClass("APPROVED")).toContain("text-accent");
+    expect(proposalStatusClass("WAT")).toContain("text-text-muted");
+  });
+  it("action labels", () => {
+    expect(actionLabel("analyse")).toBe("Re-analyse");
+    expect(actionLabel("approve")).toBe("Approve");
+    expect(actionLabel("promote")).toBe("Promote");
+  });
+  it("needsConfirm", () => {
+    expect(needsConfirm("promote")).toBe(true);
+    expect(needsConfirm("retire")).toBe(true);
+    expect(needsConfirm("approve")).toBe(true);
+    expect(needsConfirm("reject")).toBe(false);
+    expect(needsConfirm("analyse")).toBe(false);
+  });
+  it("isAgentPending", () => {
+    expect(isAgentPending("APPROVED")).toBe(true);
+    expect(isAgentPending("ANALYSED")).toBe(false);
+  });
+  it("groupByWeek preserves order", () => {
+    const g = groupByWeek([
+      { week_ending: "2026-10-03", n: 1 },
+      { week_ending: "2026-10-03", n: 2 },
+      { week_ending: "2026-09-26", n: 3 },
+    ]);
+    expect(g.map((x) => x.week_ending)).toEqual(["2026-10-03", "2026-09-26"]);
+    expect(g[0].items.map((i) => i.n)).toEqual([1, 2]);
+    expect(groupByWeek([])).toEqual([]);
+  });
+});

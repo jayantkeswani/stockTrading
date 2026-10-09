@@ -6,13 +6,15 @@
 - `IhDayGrade`    — nightly grade per trading date: market labels, teacher, v1/v2, every arm's
                     counterfactual basket P&L on real premiums, gate what-ifs, the lesson.
 - `IhWeeklyReview`— Saturday proposal (evidence + suggested param/prompt changes). Never applied.
+- `IhV2Proposal`  — one row per proposal in a weekly review: the per-proposal approval status
+                    chain, the apply agent's plan, and (once APPLIED) the challenger it runs as.
 
 Design spec: docs/ai/intraday-hunter-v2.md §Data model.
 """
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Date, DateTime, Index, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -90,3 +92,42 @@ class IhWeeklyReview(Base, TimestampMixin):
     calibration: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(12), nullable=False, server_default=text("'PROPOSED'"))
+
+
+class IhV2Proposal(Base, TimestampMixin):
+    """One weekly-review proposal and its approval lifecycle (never applied without a click).
+
+    Status chain: PROPOSED → APPROVED | REJECTED → ANALYSED | NEEDS_REVIEW → APPLIED →
+    PROMOTED | RETIRED. A `code` change stops at ANALYSED with a build brief. Once APPLIED the
+    proposal IS a challenger (`challenger_id` c1, c2…): `counterfactual` mode re-scores v2's own
+    decision with `params_override` in the nightly grade; `shadow_call2` mode also runs its own
+    Call 2 (run rows variant `v2{challenger_id}`, no orders) — both appear as ledger arm
+    `ch_{challenger_id}`. Lifecycle: services/intraday_hunter_v2/apply.py.
+    """
+
+    __tablename__ = "ih_v2_proposals"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=generate_uuid)
+    review_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ih_weekly_reviews.id", ondelete="CASCADE"), nullable=False
+    )
+    idx: Mapped[int] = mapped_column(Integer, nullable=False)
+    change: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expected_effect: Mapped[str | None] = mapped_column(Text, nullable=True)
+    risk: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(14), nullable=False, server_default=text("'PROPOSED'"))
+    user_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    apply_plan: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    challenger_id: Mapped[str | None] = mapped_column(String(8), nullable=True, unique=True)
+    challenger_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    params_override: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    started_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ended_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    history: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+
+    __table_args__ = (
+        UniqueConstraint("review_id", "idx", name="uq_ih_v2_proposals_review_idx"),
+        Index("idx_ih_v2_proposals_status", "status"),
+    )
