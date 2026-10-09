@@ -5,7 +5,8 @@ on every 500ms poll) and grading's counterfactual replay (`grading.simulate_bask
 premium candle closes). The teacher enters and exits the WHOLE basket together and runs ~1:1 in
 rupees at the basket level, so:
 
-  T = basket_tp_sl_pct x basket cost            (cost = sum(entry premium x qty))
+  T = basket_tp_sl_pct x basket cost            (basket_t_mode "pct" — cost = sum(entry premium x qty))
+  T = sum(lots x rupees_per_lot[index])         (basket_t_mode "rupees" — over the legs traded)
   MTM = sum(leg exit-side value - entry) x qty  (exit side = BID for these long options, LTP
                                                  fallback — matches fill_model BID_ASK)
   CLOSE ALL when MTM <= -T (BASKET_STOP) or MTM >= +T (BASKET_TARGET).
@@ -35,6 +36,7 @@ class LegQuote:
     entry_price: float
     ltp: float | None = None
     bid: float | None = None
+    lots: int = 1
 
 
 @dataclass
@@ -120,6 +122,37 @@ def _touched(spots: dict[str, float], targets: dict[str, float], direction: str)
     return hit
 
 
+def lots_by_index(legs: list[LegQuote]) -> dict[str, int]:
+    """Total lots per index over the basket's legs (BANKNIFTY ATM + OTM-1 add up)."""
+    out: dict[str, int] = {}
+    for leg in legs:
+        out[leg.index] = out.get(leg.index, 0) + int(leg.lots)
+    return out
+
+
+def basket_target(params: dict, cost: float, lots: dict[str, int] | None) -> float:
+    """The basket's ±T in rupees (pure).
+
+    `basket_t_mode` "pct" (default): basket_tp_sl_pct x cost. "rupees": sum over the indices
+    actually traded of lots x rupees_per_lot[index] — an excluded index contributes nothing, and
+    the 1-lot shadow book gets half the 2-lot YOLO book's T. Raises ValueError for an unknown
+    mode, a rupees basket without lot counts, or an index missing from rupees_per_lot.
+    """
+    p = {**INTRADAY_HUNTER_V2_DEFAULTS, **(params or {})}
+    mode = p.get("basket_t_mode", "pct")
+    if mode == "pct":
+        return float(p["basket_tp_sl_pct"]) * float(cost)
+    if mode != "rupees":
+        raise ValueError(f"unknown basket_t_mode {mode!r}")
+    if not lots:
+        raise ValueError("basket_t_mode=rupees needs the basket's lots per index")
+    per_lot = p.get("rupees_per_lot") or {}
+    missing = [i for i in lots if i not in per_lot]
+    if missing:
+        raise ValueError(f"rupees_per_lot has no value for {missing}")
+    return float(sum(int(n) * float(per_lot[i]) for i, n in lots.items()))
+
+
 def evaluate_basket(
     *,
     mtm: float | None,
@@ -130,10 +163,14 @@ def evaluate_basket(
     now: datetime,
     state: RoundHoldState,
     params: dict,
+    lots: dict[str, int] | None = None,
 ) -> BasketDecision:
-    """One poll of the basket rules. Mutates `state` (round hold); returns the decision."""
+    """One poll of the basket rules. Mutates `state` (round hold); returns the decision.
+
+    `lots` (from `lots_by_index`) is required when `basket_t_mode` is "rupees".
+    """
     p = {**INTRADAY_HUNTER_V2_DEFAULTS, **(params or {})}
-    T = float(p["basket_tp_sl_pct"]) * float(cost)
+    T = basket_target(p, cost, lots)
     detail = {"mtm": None if mtm is None else round(mtm, 2), "T": round(T, 2), "cost": round(cost, 2)}
     time_exit = parse_hhmm(p["basket_time_exit"])
 

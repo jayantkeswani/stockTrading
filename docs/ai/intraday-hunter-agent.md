@@ -44,7 +44,7 @@ This document is the blueprint; the implementation matches it (see the File map 
 6. **Two chart images** per Call 2 (prev-day + live opening), rendered with **mplfinance**.
 7. **Multi-day memory fed as structure, not P&L** — last 2–3 days' `{trapped_side, direction, thesis_played_out}`, never rupee P&L (avoids revenge/timidity framing). Each day is independent.
 8. **No Telegram** (banned in India at time of writing) — the surface is a **new UI page** `/intraday-hunter`.
-9. **Transport:** the `claude` CLI on a subscription OAuth token (`CLAUDE_CODE_OAUTH_TOKEN`), model `claude-opus-4-8`. Prototyped by `scripts/claude_oauth_test.py`.
+9. **Transport:** the `claude` CLI on a subscription OAuth token (`CLAUDE_CODE_OAUTH_TOKEN`), model `claude-opus-5-5`. Prototyped by `scripts/claude_oauth_test.py`.
 10. **Autorun** via the backend asyncio scheduler (Call 1 at 08:45 IST) + the existing 1m candle-close loop (watcher/Call 2). No cron.
 
 ---
@@ -60,7 +60,7 @@ This document is the blueprint; the implementation matches it (see the File map 
             every decision stored + rendered on /intraday-hunter (polled REST)
 ```
 
-- **LLM call** = `asyncio` subprocess to `claude -p <prompt> --model claude-opus-4-8 --output-format json --allowed-tools Read` with `CLAUDE_CODE_OAUTH_TOKEN` set (and `ANTHROPIC_API_KEY` dropped so it can't override). Chart images are passed by path; the Read tool renders them.
+- **LLM call** = `asyncio` subprocess to `claude -p <prompt> --model claude-opus-5-5 --output-format json --allowed-tools Read` with `CLAUDE_CODE_OAUTH_TOKEN` set (and `ANTHROPIC_API_KEY` dropped so it can't override). Chart images are passed by path; the Read tool renders them.
 - **~1–2 LLM calls/day.** Latency of a few seconds is irrelevant at that volume.
 - Fully exercisable in `MARKET_MODE=simulated` outside market hours.
 
@@ -442,7 +442,7 @@ Keep it clean and crisp, matching the existing page/component conventions. Optio
 
 - Backend asyncio scheduled task → **Call 1 at ~08:45 IST**.
 - Watcher hooks the existing **1m candle-close evaluation loop** for Call 2 (9:15–9:30 + backstop).
-- LLM = `asyncio` subprocess to the `claude` CLI (`CLAUDE_CODE_OAUTH_TOKEN`, model `claude-opus-4-8`).
+- LLM = `asyncio` subprocess to the `claude` CLI (`CLAUDE_CODE_OAUTH_TOKEN`, model `claude-opus-5-5`).
 - **Prereqs on the prod VM:** `claude` CLI installed; OAuth token as a secret (run `claude setup-token` on a browser machine); deploy before market open (no backend restarts during market hours).
 - Testable in `MARKET_MODE=simulated`.
 

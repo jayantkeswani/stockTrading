@@ -27,7 +27,7 @@ import shutil
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-4-8"
+MODEL = "claude-opus-5-5"
 DEFAULT_TIMEOUT_S = 300
 
 

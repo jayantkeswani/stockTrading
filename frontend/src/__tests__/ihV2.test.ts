@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mtmBarPct, formatLatency, gateChipClass, formatPnl } from "@/lib/ihV2";
+import { mtmBarPct, formatLatency, gateChipClass, formatPnl, basketTLabel } from "@/lib/ihV2";
 
 describe("mtmBarPct", () => {
   it("centres at 0 MTM", () => expect(mtmBarPct(0, 100)).toBe(50));
@@ -39,4 +39,15 @@ describe("formatPnl", () => {
     expect(formatPnl(-250.4)).toBe("-250");
     expect(formatPnl(null)).toBe("—");
   });
+});
+
+describe("basketTLabel", () => {
+  it("pct mode shows the percent band (default when mode absent)", () => {
+    expect(basketTLabel({ basket_tp_sl_pct: 0.15 })).toBe("T ±15%");
+    expect(basketTLabel({ basket_tp_sl_pct: 0.2, basket_t_mode: "pct" })).toBe("T ±20%");
+  });
+  it("rupees mode says fixed per lot", () => {
+    expect(basketTLabel({ basket_tp_sl_pct: 0.15, basket_t_mode: "rupees" })).toBe("T fixed ₹/lot");
+  });
+  it("handles a missing payload", () => expect(basketTLabel(null)).toBe("T —"));
 });

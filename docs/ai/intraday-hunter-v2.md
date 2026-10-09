@@ -1,5 +1,7 @@
 # Intraday Hunter v2 — parallel paper strategy + learning loop
 
+Learning loop, weekly proposals and the change-approval procedure: see `docs/ai/intraday-hunter-v2-learning-loop.md`.
+
 **Status:** BUILT (paper only). Runs **beside** v1 (`docs/ai/intraday-hunter-agent.md`, unchanged) on its own run rows (`intraday_hunter_runs.variant='v2'`), its own strategy name `intraday_hunter_v2`, its own YOLO profile **`IH-v2`** and the shadow book. Code: `backend/app/services/intraday_hunter_v2/`, scheduler `backend/app/tasks/intraday_hunter_v2_task.py`, API `backend/app/api/v1/intraday_hunter_v2.py`, migration `c4d2e8f1a703`.
 
 ## Why v2 exists (evidence, 26 Jun – 1 Oct 2026, 67 trading days)
@@ -43,12 +45,15 @@
   - **Open v2 baskets are still exited** by the basket monitor.
   - The row is harmless to the candle evaluator: there is no registry class and `auto_mode=false`.
 - **Hard off:** env `INTRADAY_HUNTER_V2_ENABLED=false`.
-- **Tunables:** `strategy_configs.parameters['intraday_hunter_v2']`, with defaults in `params.INTRADAY_HUNTER_V2_DEFAULTS`. The keys are `basket_tp_sl_pct`, `basket_time_exit`, `round_hold_*`, `round_step`, `call2_first`, `call2_deadline`, `call2_model`, `call2_timeout_s`, `call1_model`, `enforce_plan_gate`, `enforce_oi_gate`, `oi_flow_deadband`, `opening_type_gap_pct`, `opening_range_end`, `leg_structure`, `minute_log_start/end`, `capture_strikes_each_side`, `lessons_n` and `grade_barriers`. They will be recalibrated from the exit-behaviour study.
-- **Jev arm:** `JEV_ENABLED` + `OPENROUTER_API_KEY` + `JEV_MODEL` (pinned `typesafe/jev-1.13`). It is shadow-only and never trades.
+- **Tunables:** `strategy_configs.parameters['intraday_hunter_v2']`, with defaults in `params.INTRADAY_HUNTER_V2_DEFAULTS`. The keys are `basket_tp_sl_pct`, `basket_t_mode`, `rupees_per_lot`, `basket_time_exit`, `round_hold_*`, `round_step`, `call2_first`, `call2_deadline`, `call2_model`, `call2_timeout_s`, `call1_model`, `enforce_plan_gate`, `enforce_oi_gate`, `oi_flow_deadband`, `opening_type_gap_pct`, `opening_range_end`, `leg_structure`, `minute_log_start/end`, `capture_strikes_each_side`, `lessons_n` and `grade_barriers`. They will be recalibrated from the exit-behaviour study.
+- **Jev arm:** `JEV_ENABLED` + `OPENROUTER_API_KEY` + `JEV_MODEL` (pinned `typesafe/jev-1.13`). **ON in production:** `deploy.yml` writes `OPENROUTER_API_KEY` (GH secret) and `JEV_ENABLED=true` into the prod `.env`. It is shadow-only and never trades. The client never raises: a non-200, timeout (3s) or unparseable reply is logged as `arms.jev = {error, latency_ms}` and the rest of the minute-log row is written as usual (`tests/test_services/test_ih_v2_jev.py`). Verified live against OpenRouter on 2026-10-09: HTTP 200 in ~600ms with parsed answers.
 
 ## Basket-level exit (`basket.py`, `trade_monitor._check_ih_v2_baskets`)
 
-Open v2 legs are grouped per **(trading day, book)**, where the book is the YOLO profile or SHADOW. `T = basket_tp_sl_pct × basket cost`, where cost = Σ entry premium × qty and the default pct is 0.20. MTM = Σ (exit-side value − entry) × qty, with the exit side being the **bid** under `fill_model=BID_ASK` (LTP fallback; LTP under the `LTP` fill model). A partial quote set never decides, except at the time backstop.
+Open v2 legs are grouped per **(trading day, book)**, where the book is the YOLO profile or SHADOW. ±T comes from `basket.basket_target`, picked by `basket_t_mode`:
+
+- **`pct`** (default): `T = basket_tp_sl_pct × basket cost`, where cost = Σ entry premium × qty (default pct 0.20).
+- **`rupees`** (config-gated, off by default): `T = Σ over the legs actually traded of lots × rupees_per_lot[index]`, a fixed rupee book like the teacher's. The exit study (72 days) found he books a fixed rupee amount ~1:1 (median win ₹2.54L, loss ₹2.63L; the rupee CV is half the % CV). `rupees_per_lot` is seeded at 15% of one lot's cost in the 2026-10-09 prod basket (BANKNIFTY ₹3,915, NIFTY ₹1,640, SENSEX ₹862), so the 2-lot YOLO basket gets ≈ ₹20.7K and the 1-lot shadow half. An excluded index contributes nothing. The live monitor, `/v2/basket`, the manual-close snapshot and grading's counterfactual replay all use the same function. MTM = Σ (exit-side value − entry) × qty, with the exit side being the **bid** under `fill_model=BID_ASK` (LTP fallback; LTP under the `LTP` fill model). A partial quote set never decides, except at the time backstop.
 
 | Rule | Exit reason |
 |---|---|
@@ -99,9 +104,9 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
   - Prod sees ~170 WS symbols against the Fyers cap of 5000.
 - **1-minute option chain 09:15–09:45** (`oi_snapshot_task.fetch_oi_snapshots_hf`) for NIFTY, BANKNIFTY and SENSEX into `oi_snapshots`. The 3-minute job is unchanged.
 - **Opening OI flow** (`oi_flow.py`): the per-index mean of ((ΔPE − ΔCE) / (CE+PE OI at 09:16)) from 09:16→09:19, nearest expiry. This reproduces the research `flow` column. Positive means CE.
-- **Order flow** (`orderflow.py`): `fyers_ws_client` keeps `tot_buy_qty`, `tot_sell_qty`, `bid_size` and `ask_size`. These are the Fyers SDK `map.json` names; a live-tick verification is pending.
+- **Order flow** (`orderflow.py`): `fyers_ws_client` keeps `tot_buy_qty`, `tot_sell_qty`, `bid_size` and `ask_size` (Fyers SDK `map.json` names; verified on live NSE and BSE option ticks 2026-10-09).
   - They go into the Redis price cache.
-  - Per-minute aggregates are computed for the index futures and the ATM CE/PE: buy/sell imbalance, average spread, bid/ask size imbalance, tick-rule volume delta, and depth imbalance when `IH_V2_DEPTH_ENABLED` is set. DepthUpdate messages are routed away from the price path.
+  - Per-minute aggregates are computed for the index futures and **every captured contract** (the whole ATM±2 ladder). The minute log reads the captured strike nearest the live spot, which drifts off the capture-time ATM within minutes; tracking only that ATM left `atm_ce`/`atm_pe` null whenever spot sat nearer another strike (SENSEX for most of 2026-10-09). The minute log also re-registers the day's capture each minute, so a mid-day restart resumes order flow. The aggregates are: buy/sell imbalance, average spread, bid/ask size imbalance, tick-rule volume delta, and depth imbalance when `IH_V2_DEPTH_ENABLED` is set (depth is subscribed for the ATM CE/PE only). DepthUpdate messages are routed away from the price path.
 - **`ih_minute_log`** (`minute_log.py`): one row per index per minute, 09:15–10:45, plus every minute while a v2 position is open. It is written from the NIFTY candle-close hook, after a ~4s settle so the other indices' candles persist.
   - `features`: OHLC, level facts, opening type, OI flow, order flow, VIX, the teacher's side for today's opening.
   - `arms`: `rule_a`, `plan_side`, `oi_flow_side`, `v1_state`, `v2_llm`, `gates` (for the v2 and rule_a sides), and `jev`.
@@ -146,6 +151,7 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
 - 09:34: Telegram if v1 or v2 has no ENTER/SKIP **status**. 09:34 rather than 09:30 so the check never races v1's 09:30 backstop call.
 - A v2 ENTER that emits zero legs → status `ENTER_RETRY` plus a Telegram alert. Each later minute re-tries the emission (not a new LLM call) up to the deadline. Signal emission stops only on an **explicit** kill (`v2_active(fail_closed=False)`), so a transient DB error cannot drop a decided basket.
 - Basket check failure → it runs inside a SAVEPOINT (rolled back, so it is never half-committed), Telegram once per day, and legs fall back to the 15:25 close.
+- ATM±2 capture (09:10, 09:16:30): Telegram if the job crashes (`capture`) or if any index ends with **no** contracts (`capture_empty` — spot missing or strikes absent from the symbol master), since grading would then have no premium paths for it.
 - 09:20 and then every 30 min: Telegram if an index has no candles, or stale ones, for the session (the 2 Sep gap).
 - Each alert fires once per day per key and is always logged (`IH v2 ALERT [...]`). That is visible locally with `TELEGRAM_ENABLED=false`.
 
@@ -167,12 +173,14 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
 
 ## Simulator E2E (wall-clock, MARKET_MODE=simulated)
 
-The backend runs on wall-clock time, so the E2E runs live from 09:05 to 11:40 IST against the Market Simulator. The simulator's `data/symbol_master/` holds the real public Fyers `NSE_FO`/`BSE_FO` CSVs, so current contracts resolve.
+The backend runs on wall-clock time, so the E2E runs live from 09:05 to 11:40 IST against the Market Simulator. The simulator rewrites `data/symbol_master/` with a **synthetic** master on every start, with option strikes ±20 around hardcoded index prices (`INDEX_SYMBOLS` / `BSE_INDEX_SYMBOLS` in `marketSimulator/app/engine/symbol_master_gen.py`: NIFTY 24500, BANKNIFTY 52000, SENSEX 80000). If the tape's prices fall outside that band, the ATM±2 capture resolves nothing (`capture_empty` alert).
 
 - **Before the run:**
   1. Stage the previous trading day's index and `*_FUT` candles into the local DB.
-  2. Start the backend with `MARKET_MODE=simulated IH_ALLOW_CLI_LOGIN=1`.
-  3. Push the teacher plan via `POST /teacher/ingest`.
+  2. Start the simulator, then regenerate its symbol master around the tape's prev closes (patch the generator's base prices, then call `write_all()`). Delete the backend's Redis cache (`symbols:master`, `symbols:master:updated_at`) so the backend downloads the new master.
+  3. Start the backend with `MARKET_MODE=simulated IH_ALLOW_CLI_LOGIN=1` before 08:45, so the scheduled Call 1 runs.
+  4. Push the teacher plan via `POST /teacher/ingest`.
+  5. Keep the Mac awake on AC power. On battery with the display off, macOS idle-sleeps and then returns to "Maintenance Sleep" after each DarkWake (`caffeinate -i` does not hold it), which freezes the stack and makes APScheduler skip jobs ("missed by …").
 - **During the run:** `scripts/intraday_hunter/v2_sim_driver.py` injects the index tape (a gap through the PDL/PDH pool, then a ride) and model premiums for every captured contract.
 - **What it checks:**
   - ATM±2 subscription and premium candles
@@ -182,5 +190,5 @@ The backend runs on wall-clock time, so the E2E runs live from 09:05 to 11:40 IS
   - IH-v2 YOLO and shadow positions opening together
   - the basket closing together
   - a forced `POST /v2/grade` producing an `ih_day_grades` row
-  - `IH v2 ALERT` log lines (with `TELEGRAM_ENABLED=false`)
+  - `IH v2 ALERT` log lines (with `TELEGRAM_ENABLED=false`). To force one, pause the tape (stop the driver and `POST /sim/clock/pause`; injection alone stopping is not enough, as the simulator keeps ticking) for more than 10 min before a `candle_check_job` slot.
 

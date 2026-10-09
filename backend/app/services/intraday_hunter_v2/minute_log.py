@@ -141,6 +141,9 @@ async def _log_minute(candle_ts: datetime, settle_s: float) -> int:
             arms["jev"] = None
 
         cap = await capture.load_capture(d)
+        # Re-assert tracking from the day's capture (idempotent) so a mid-day backend restart,
+        # which empties the in-memory tracker, resumes order flow from the next minute.
+        orderflow_tracker.track(list(cap.get("symbols") or []) + [f"{i}_FUT" for i in facts])
         hhmm = minute.strftime("%H:%M")
         rows = []
         for idx, f in facts.items():

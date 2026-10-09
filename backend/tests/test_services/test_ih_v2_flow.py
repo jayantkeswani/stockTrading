@@ -1,12 +1,12 @@
 """IH v2 flow: basket signal shape (his strikes), OTM strike selection, the runtime kill switch,
 and the Call 2 watcher cadence (09:16 first, every minute, 09:25 deadline, single-flight)."""
-from datetime import date, time
+from datetime import date, datetime, time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.constants import STRIKE_GAPS
+from app.core.constants import IST, STRIKE_GAPS
 from app.core.enums import SignalType, StrategyName
 from app.services.intraday_hunter_v2 import params as v2params
 from app.services.intraday_hunter_v2 import signals as v2sig
@@ -189,3 +189,95 @@ class TestLlmCliLoginOptIn:
         assert llm_cli._cli_login_allowed()
         assert "CLAUDE_CODE_OAUTH_TOKEN" not in llm_cli._child_env(None)
         assert llm_cli._child_env("tok")["CLAUDE_CODE_OAUTH_TOKEN"] == "tok"
+
+
+class TestCaptureJobAlerts:
+    """capture_job alerts loudly when an index ends with no contracts (the silent-zero case)."""
+
+    async def _run(self, res, contracts):
+        from app.services.intraday_hunter_v2 import capture as cap_mod
+        from app.tasks import intraday_hunter_v2_task as task
+
+        alert = AsyncMock()
+        with patch.object(task, "_enabled_today", new=AsyncMock(return_value=True)), \
+             patch.object(task, "alert", new=alert), \
+             patch.object(cap_mod, "capture_atm_ladder", new=AsyncMock(return_value=res)), \
+             patch.object(cap_mod, "load_capture",
+                          new=AsyncMock(return_value={"symbols": [], "contracts": contracts})):
+            await task.capture_job("09:10")
+        return alert
+
+    @pytest.mark.asyncio
+    async def test_zero_contracts_alerts(self):
+        alert = await self._run({"added": 0, "total": 0}, {})
+        alert.assert_awaited_once()
+        assert alert.call_args.args[0] == "capture_empty"
+        assert "NIFTY, BANKNIFTY, SENSEX" in alert.call_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_one_index_missing_alerts_only_that_index(self):
+        row = [{"strike": 1, "type": "CE", "symbol": "X"}]
+        alert = await self._run({"added": 20, "total": 20}, {"NIFTY": row, "BANKNIFTY": row})
+        assert "SENSEX" in alert.call_args.args[1] and "NIFTY" not in alert.call_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_full_capture_and_kill_switch_are_quiet(self):
+        row = [{"strike": 1, "type": "CE", "symbol": "X"}]
+        full = {"NIFTY": row, "BANKNIFTY": row, "SENSEX": row}
+        (await self._run({"added": 30, "total": 30}, full)).assert_not_awaited()
+        (await self._run({"skipped": "kill switch off"}, {})).assert_not_awaited()
+
+
+class TestCaptureOrderFlowTracking:
+    """Order flow covers the whole captured ladder (prod 2026-10-09: SENSEX ATM order flow was null
+    whenever spot sat nearer a strike that was not ATM at capture time, e.g. 71900)."""
+
+    @pytest.mark.asyncio
+    async def test_all_captured_contracts_tracked_depth_atm_only(self):
+        from app.services.intraday_hunter_v2 import capture as cap_mod
+        from app.services.intraday_hunter_v2.orderflow import OrderFlowTracker
+
+        tracker = OrderFlowTracker()
+        store: dict = {}
+        redis = MagicMock(get=AsyncMock(return_value=None),
+                          set=AsyncMock(side_effect=lambda k, v, ex=None: store.update({k: v})))
+        ws = MagicMock(subscribe_symbols=AsyncMock(), subscribe_depth=AsyncMock())
+        spots = {"NIFTY": 22330.0, "BANKNIFTY": 54790.0, "SENSEX": 71960.0}
+
+        async def find(index, strike, expiry, opt):
+            return f"X:{index}{int(strike)}{opt}"
+
+        with patch.object(cap_mod, "v2_active", new=AsyncMock(return_value=True)), \
+             patch.object(cap_mod, "v2_params_async", new=AsyncMock(return_value=dict(INTRADAY_HUNTER_V2_DEFAULTS))), \
+             patch.object(cap_mod, "get_redis", return_value=redis), \
+             patch.object(cap_mod, "_spot", new=AsyncMock(side_effect=lambda i: spots[i])), \
+             patch.object(cap_mod, "select_expiry", return_value=date(2026, 10, 13)), \
+             patch.object(cap_mod, "find_option_symbol", new=find), \
+             patch("app.services.intraday_hunter_v2.orderflow.orderflow_tracker", tracker), \
+             patch("app.data_feed.fyers_ws_client.fyers_ws_client", ws), \
+             patch("app.config.settings.ih_v2_depth_enabled", True):
+            res = await cap_mod.capture_atm_ladder("09:16")
+
+        assert res["total"] == 30
+        assert set(res["symbols"]) <= tracker.tracked                      # whole ladder
+        assert {"NIFTY_FUT", "BANKNIFTY_FUT", "SENSEX_FUT"} <= tracker.tracked
+        assert "X:SENSEX71900CE" in tracker.tracked                        # off-ATM strike
+        depth = set(ws.subscribe_depth.call_args.args[0])
+        assert depth == {"X:NIFTY22350CE", "X:NIFTY22350PE", "X:BANKNIFTY54800CE",
+                         "X:BANKNIFTY54800PE", "X:SENSEX72000CE", "X:SENSEX72000PE"}
+
+    def test_drifted_strike_gets_a_snapshot(self):
+        from app.services.intraday_hunter_v2.minute_log import _atm_contracts
+        from app.services.intraday_hunter_v2.orderflow import OrderFlowTracker
+
+        cap = {"contracts": {"SENSEX": [{"strike": k, "type": t, "symbol": f"S{int(k)}{t}"}
+                                        for k in (71900.0, 72000.0) for t in ("CE", "PE")]},
+               "symbols": ["S71900CE", "S71900PE", "S72000CE", "S72000PE"]}
+        tracker = OrderFlowTracker()
+        tracker.track(cap["symbols"])
+        atm = _atm_contracts(cap, "SENSEX", 71914.1)  # spot drifted off the 72000 capture ATM
+        assert atm["CE"] == "S71900CE"
+        ts = datetime(2026, 10, 9, 9, 20, 10, tzinfo=IST)
+        tracker.on_tick("S71900CE", {"tot_buy_qty": 300, "tot_sell_qty": 100, "ltp": 210,
+                                     "volume": 10}, ts)
+        assert tracker.snapshot("S71900CE", "09:20")["buy_sell_imbalance"] == 0.5

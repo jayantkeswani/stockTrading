@@ -7,6 +7,7 @@ import { usePrices } from "@/hooks/usePrices";
 import { formatINR, formatPercent, pnlColor } from "@/lib/formatters";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
+import { formatStrike, matchesContract, optionSearchQuery } from "@/lib/watchlistSearch";
 import { livePositionPnl, positionPriceKeys } from "@/lib/positionPnl";
 import type { Position, Trade } from "@/lib/types";
 
@@ -146,17 +147,15 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
 
-  const addToWatchlistById = async (id: string, fyersSymbol: string | null, symbol: string, optionType: string | null, strikePrice: number, expiryDate: string) => {
+  const addToWatchlistById = async (id: string, fyersSymbol: string | null, symbol: string, optionType: string | null, strikePrice: number | string, expiryDate: string) => {
     if (watchlistStatuses[id] && watchlistStatuses[id] !== "idle") return;
     setWatchlistStatuses((prev) => ({ ...prev, [id]: "adding" }));
     try {
       let fyers = fyersSymbol;
       if (!fyers) {
-        const isFut = !optionType;
-        const query = isFut ? symbol : `${symbol} ${strikePrice}${optionType}`;
-        const res = await api.searchSymbols(query);
+        const res = await api.searchSymbols(optionSearchQuery(symbol, strikePrice, optionType));
         const match = res.results?.find((r: { symbol: string }) =>
-          isFut ? r.symbol.includes("FUT") : r.symbol.includes(`${strikePrice}${optionType}`)
+          matchesContract(r.symbol, strikePrice, optionType)
         );
         fyers = match?.symbol ?? null;
       }
@@ -167,14 +166,15 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
       }
       const isFutures = !optionType;
       const segment = isFutures ? "FUT" : "OPT";
+      const strikeNum = Number(strikePrice);
       const display = isFutures
         ? `${symbol} FUT`
-        : `${symbol} ${strikePrice} ${optionType}`;
+        : `${symbol} ${formatStrike(strikePrice)} ${optionType}`;
       await api.addToWatchlist({
         symbol: fyers,
         display,
         segment,
-        strike: strikePrice > 0 ? strikePrice : null,
+        strike: strikeNum > 0 ? strikeNum : null,
         option_type: isFutures ? null : optionType,
         expiry: expiryDate,
       });
@@ -192,7 +192,7 @@ export function ActivePositions({ compact }: ActivePositionsProps) {
   };
 
   const handleTradeWatchlist = (t: Trade) => {
-    addToWatchlistById(t.id, null, t.symbol, t.option_type || null, t.strike_price, t.expiry_date);
+    addToWatchlistById(t.id, t.fyers_option_symbol ?? null, t.symbol, t.option_type || null, t.strike_price, t.expiry_date);
   };
 
   const rawPositions = isShadow

@@ -1,0 +1,150 @@
+{
+ "trading_date": "2026-10-08",
+ "live_video_id": "dG6ekT8_EtQ",
+ "live": {
+  "side": "PE",
+  "legs": [
+   {
+    "index": "BANKNIFTY",
+    "strike": 54800.0,
+    "option_type": "PE",
+    "qty": 1170.0,
+    "avg": 666.35,
+    "pnl": 2164.5,
+    "entry_clock": "09:19"
+   },
+   {
+    "index": "BANKNIFTY",
+    "strike": 54700.0,
+    "option_type": "PE",
+    "qty": 1170.0,
+    "avg": 625.5,
+    "pnl": -234.0,
+    "entry_clock": "09:19"
+   },
+   {
+    "index": "SENSEX",
+    "strike": 72500.0,
+    "option_type": "PE",
+    "qty": 900.0,
+    "avg": 263.42,
+    "pnl": 114102.0,
+    "entry_clock": "09:19"
+   },
+   {
+    "index": "NIFTY",
+    "strike": 22550.0,
+    "option_type": "PE",
+    "qty": 1430.0,
+    "avg": 148.35,
+    "pnl": 62848.75,
+    "entry_clock": "09:19"
+   }
+  ],
+  "entry_clock": "09:19",
+  "exit_clock": "09:47",
+  "total_pnl": 178881.25,
+  "legs_sum_ok": true,
+  "index_prices_entry": {
+   "NIFTY": 22536.25,
+   "BANKNIFTY": 54813.2,
+   "SENSEX": 72446.77
+  },
+  "index_prices_exit": {
+   "NIFTY": 22451.0,
+   "BANKNIFTY": 54806.7,
+   "SENSEX": 72208.33
+  },
+  "frame_times": {
+   "entry_t": 100.0,
+   "exit_t": 550.0,
+   "closed_t": 550.0
+  },
+  "frames_read": [
+   {
+    "t": 80.0,
+    "clock": "09:19",
+    "open": false,
+    "closed": false
+   },
+   {
+    "t": 100.0,
+    "clock": "09:19",
+    "open": true,
+    "closed": false
+   },
+   {
+    "t": 120.0,
+    "clock": "09:19",
+    "open": true,
+    "closed": false
+   },
+   {
+    "t": 135.0,
+    "clock": "09:20",
+    "open": true,
+    "closed": false
+   },
+   {
+    "t": 365.0,
+    "clock": "09:24",
+    "open": true,
+    "closed": false
+   },
+   {
+    "t": 405.0,
+    "clock": "09:24",
+    "open": true,
+    "closed": false
+   },
+   {
+    "t": 425.0,
+    "clock": "09:25",
+    "open": true,
+    "closed": false
+   },
+   {
+    "t": 445.0,
+    "clock": "09:25",
+    "open": true,
+    "closed": false
+   },
+   {
+    "t": 465.0,
+    "clock": "09:25",
+    "open": true,
+    "closed": false
+   },
+   {
+    "t": 485.0,
+    "clock": "09:26",
+    "open": true,
+    "closed": false
+   },
+   {
+    "t": 530.0,
+    "clock": "09:32",
+    "open": true,
+    "closed": false
+   },
+   {
+    "t": 550.0,
+    "clock": "09:47",
+    "open": false,
+    "closed": true
+   },
+   {
+    "t": 625.0,
+    "clock": "09:48",
+    "open": false,
+    "closed": true
+   },
+   {
+    "t": 650.0,
+    "clock": "09:48",
+    "open": false,
+    "closed": true
+   }
+  ]
+ }
+}
