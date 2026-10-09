@@ -33,6 +33,7 @@ from app.core.utils import now_ist
 from app.models.ih_v2 import IhDayGrade, IhMinuteLog
 from app.models.trade import Trade
 from app.services.intraday_hunter import store
+from app.services.intraday_hunter_v2 import apply as apply_mod
 from app.services.intraday_hunter_v2 import capture, levels
 from app.services.intraday_hunter_v2 import context as ctx_mod
 from app.services.intraday_hunter_v2.basket import (
@@ -471,6 +472,13 @@ async def grade_day(session: AsyncSession, d: date) -> IhDayGrade | None:
     v2_run = await store.get_run(session, d, "v2")
     if v2_run and v2_run.call2_json:
         v2_gates = v2_run.call2_json.get("_gates")
+
+    # ── challengers (apply.py): arm ch_{id}, scored like v2_llm with the challenger's params ──
+    for ch in await apply_mod.active_challengers(session, d):
+        arms[f"ch_{ch.challenger_id}"] = await _challenger_arm(
+            session, d, ch, params, entries.get("v2_llm"), v2_gates, market["clean_side"],
+            index_closes, contracts, prem,
+        )
     actual = float(v2.get("yolo_net_pnl") or 0)
     opp_plan = bool(v2_gates and v2_gates["plan"]["would_block"])
     opp_oi = bool(v2_gates and v2_gates["oi"]["would_block"])
@@ -500,6 +508,48 @@ async def grade_day(session: AsyncSession, d: date) -> IhDayGrade | None:
     logger.info("ih_v2 grade %s: %s clean=%s v2=%s arms=%s", d, row.status, market["clean_side"],
                 v2.get("side"), {a: (v.get("cf") or {}).get("pnl") for a, v in arms.items() if v.get("side")})
     return row
+
+
+def challenger_entry(mode: str, override: dict, v2_entry: dict | None, v2_gates: dict | None,
+                     own_run_side: str | None, own_run_at: str | None) -> tuple[dict | None, str | None]:
+    """The challenger's entry for the day → ({side, decision_at} | None, blocked_by). Pure.
+
+    counterfactual: v2's own decision, unless a gate the override ENFORCES would have blocked it.
+    shadow_call2: its own Call 2 decision (its gates were applied when it decided).
+    """
+    if mode == "shadow_call2":
+        if own_run_side in ("CE", "PE") and own_run_at:
+            return {"side": own_run_side, "decision_at": own_run_at}, None
+        return None, None
+    if not v2_entry:
+        return None, None
+    for gate, key in (("plan", "enforce_plan_gate"), ("oi", "enforce_oi_gate")):
+        if override.get(key) and ((v2_gates or {}).get(gate) or {}).get("would_block"):
+            return None, gate
+    return v2_entry, None
+
+
+async def _challenger_arm(session: AsyncSession, d: date, ch, params: dict, v2_entry: dict | None,
+                          v2_gates: dict | None, clean: str | None, index_closes: dict,
+                          contracts: dict, prem: dict) -> dict:
+    """One challenger's arm for `d`: its entry replayed with ITS params on the captured premiums."""
+    merged = {**params, **(ch.params_override or {})}
+    own = await store.get_run(session, d, f"v2{ch.challenger_id}") if ch.challenger_mode == "shadow_call2" else None
+    e, blocked = challenger_entry(
+        ch.challenger_mode, ch.params_override or {}, v2_entry, v2_gates,
+        own.direction if own and own.decision == "ENTER" else None,
+        (own.call2_json or {}).get("_at") if own else None,
+    )
+    base = {"challenger": ch.challenger_id, "mode": ch.challenger_mode}
+    if not e:
+        return {**base, "side": None, "blocked_by": blocked,
+                "decision": own.decision if own else None}
+    entry_m = _add_min(e["decision_at"], -1)
+    spots = {i: index_closes[i].get(entry_m) for i in index_closes}
+    legs = basket_legs_for(e["side"], spots, contracts, prem, merged.get("leg_structure") or {})
+    cf = simulate_basket(e["decision_at"], e["side"], legs, index_closes, merged, d) if legs else None
+    return {**base, "side": e["side"], "decision_at": e["decision_at"], "right_side": e["side"] == clean,
+            "cf": cf, "legs": [{k: l[k] for k in ("index", "strike", "symbol")} for l in legs]}
 
 
 async def ledger(session: AsyncSession, windows=(20, 60)) -> dict:

@@ -1,8 +1,9 @@
 """Saturday weekly review — Claude reads the ledger + recent grades and PROPOSES changes.
 
-Nothing is auto-applied. A proposal row is stored in `ih_weekly_reviews` and a Telegram summary
-is sent. Approved changes ship as a NEW challenger variant on a NEW paper profile; promotion needs
-the challenger to beat the champion over ≥20 trading days with both halves positive.
+Nothing is auto-applied. A review row is stored in `ih_weekly_reviews`, one `ih_v2_proposals` row
+per proposal (status PROPOSED — approve/reject per proposal in the UI, see `apply.py`), and a
+Telegram summary is sent. An approved change runs as a challenger beside the champion; promotion
+needs the challenger to be ahead over ≥20 trading days in both halves, and the user's click.
 
 Also (once there are ≥30 v2 trades) fits an isotonic map from v2 confidence → realised win rate
 and stores it on the review row — recorded only, NOT used for sizing.
@@ -18,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ih_v2 import IhDayGrade, IhWeeklyReview
 from app.services.intraday_hunter import llm_cli
-from app.services.intraday_hunter_v2 import grading
+from app.services.intraday_hunter_v2 import apply, grading
 from app.services.intraday_hunter_v2.params import v2_params_async
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,7 @@ async def run_weekly_review(session: AsyncSession, week_ending: date) -> IhWeekl
     row.summary = (proposal or {}).get("summary")
     row.status = "PROPOSED"
     await session.flush()
+    await apply.sync_proposals(session, row)
     return row
 
 
@@ -109,5 +111,5 @@ def telegram_summary(row: IhWeeklyReview) -> str:
         if a and a.get("n"):
             lines.append(f"• {arm}: n={a['n']} right={a['right_side_pct']}% "
                          f"meanCF={a['mean_cf_pnl']} t={a['t_stat']}")
-    lines.append("Nothing auto-applied — approve to run as a challenger profile.")
+    lines.append("Nothing auto-applied — approve / reject each proposal on the IH v2 tab.")
     return "\n".join(lines)

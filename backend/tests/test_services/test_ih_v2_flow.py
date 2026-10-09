@@ -281,3 +281,51 @@ class TestCaptureOrderFlowTracking:
         tracker.on_tick("S71900CE", {"tot_buy_qty": 300, "tot_sell_qty": 100, "ltp": 210,
                                      "volume": 10}, ts)
         assert tracker.snapshot("S71900CE", "09:20")["buy_sell_imbalance"] == 0.5
+
+
+class TestChallengerWatcher:
+    """shadow_call2 challengers decide on the champion's cadence with their own variant + params
+    and never emit; terminal decisions stop them; outside the window nothing runs."""
+
+    async def _drive(self, minutes, decisions, override=None):
+        import asyncio as aio
+        from types import SimpleNamespace as NS
+
+        from app.services.intraday_hunter_v2 import watcher as wmod
+
+        w = wmod.ChallengerWatcher()
+        calls = []
+
+        async def fake_call2(session, d, *, now, variant, params_override, emit, **kw):
+            calls.append((now.strftime("%H:%M"), variant, params_override, emit))
+            dec = decisions.get(now.strftime("%H:%M"), "WAIT")
+            return NS(status=dec)
+
+        ch = NS(challenger_id="c2", params_override=override or {"call2_prompt_addendum": "x"})
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=MagicMock(commit=AsyncMock()))
+        cm.__aexit__ = AsyncMock(return_value=False)
+        with patch.object(wmod, "v2_active", new=AsyncMock(return_value=True)), \
+             patch.object(wmod, "v2_params_async", new=AsyncMock(return_value=dict(INTRADAY_HUNTER_V2_DEFAULTS))), \
+             patch.object(wmod, "is_trading_day", return_value=True), \
+             patch.object(wmod, "async_session_factory", return_value=cm), \
+             patch.object(wmod.store, "get_run", new=AsyncMock(return_value=None)), \
+             patch.object(wmod.decision, "run_call2", new=fake_call2), \
+             patch("app.services.intraday_hunter_v2.apply.active_challengers", new=AsyncMock(return_value=[ch])):
+            for m in minutes:
+                await w.maybe_run(date(2026, 10, 12), time(9, m))
+                for _ in range(5):
+                    await aio.sleep(0)
+        return calls
+
+    @pytest.mark.asyncio
+    async def test_runs_own_variant_without_emitting(self):
+        calls = await self._drive(range(14, 28), {"09:19": "ENTER"})
+        assert [c[0] for c in calls] == ["09:16", "09:17", "09:18", "09:19"]
+        assert all(c[1] == "v2c2" and c[3] is False for c in calls)
+        assert calls[0][2] == {"call2_prompt_addendum": "x"}
+
+    @pytest.mark.asyncio
+    async def test_runs_to_deadline_while_waiting(self):
+        calls = await self._drive(range(15, 30), {})
+        assert [c[0] for c in calls] == [f"09:{m}" for m in range(16, 26)]

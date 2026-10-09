@@ -50,7 +50,10 @@ class V2Watcher:
             return
         t_hook = _time.monotonic()
         ts = candle_ts.astimezone(IST) if candle_ts.tzinfo else candle_ts
-        await self.maybe_run(ts.date(), decision.decision_time_for_candle(ts), t_hook=t_hook)
+        now = decision.decision_time_for_candle(ts)
+        # Shadow-Call-2 challengers decide in parallel — never delaying the champion's call.
+        _hold(asyncio.create_task(challenger_watcher.maybe_run(ts.date(), now), name="ih_v2_challengers"))
+        await self.maybe_run(ts.date(), now, t_hook=t_hook)
 
     async def maybe_run(self, d: date, now: time, *, t_hook: float | None = None) -> None:
         """Decide whether to fire a v2 Call 2 at decision time `now` (injectable for tests)."""
@@ -105,6 +108,68 @@ class V2Watcher:
         if run is not None and (run.status or "").upper() in _TERMINAL:
             self._done = True
 
+
+class ChallengerWatcher:
+    """Runs each live `shadow_call2` challenger's own Call 2 on the champion's cadence
+    (09:16 → every minute while WAIT → deadline). Run rows variant `v2{challenger_id}`, the
+    champion's Call 1, the challenger's params override, and NO signal emission — grading scores
+    its decision counterfactually (apply.py). Single-flight per challenger; never raises."""
+
+    def __init__(self) -> None:
+        self._day: date | None = None
+        self._done: set[str] = set()
+        self._running: set[str] = set()
+
+    async def maybe_run(self, d: date, now: time) -> None:
+        try:
+            if self._day != d:
+                self._day, self._done, self._running = d, set(), set()
+            if not is_trading_day(d) or not await v2_active():
+                return
+            params = await v2_params_async()
+            if not (parse_hhmm(params["call2_first"]) <= now <= parse_hhmm(params["call2_deadline"])):
+                return
+            from app.services.intraday_hunter_v2.apply import active_challengers
+            async with async_session_factory() as session:
+                live = await active_challengers(session, d, mode="shadow_call2")
+            for ch in live:
+                cid = ch.challenger_id
+                if cid in self._done or cid in self._running:
+                    continue
+                self._running.add(cid)
+                _hold(asyncio.create_task(self._run_one(d, now, cid, dict(ch.params_override or {})),
+                                          name=f"ih_v2_challenger_{cid}"))
+        except Exception:  # noqa: BLE001
+            logger.exception("ih_v2: challenger watcher failed")
+
+    async def _run_one(self, d: date, now: time, cid: str, override: dict) -> None:
+        variant = f"{VARIANT}{cid}"
+        try:
+            async with async_session_factory() as session:
+                run = await store.get_run(session, d, variant)
+                if run and run.status in _TERMINAL:
+                    self._done.add(cid)
+                    return
+                run = await decision.run_call2(session, d, now=now, variant=variant,
+                                               params_override=override, emit=False)
+                await session.commit()
+            if run is not None and (run.status or "").upper() in _TERMINAL:
+                self._done.add(cid)
+        except Exception:  # noqa: BLE001
+            logger.exception("ih_v2: challenger %s Call 2 failed", cid)
+        finally:
+            self._running.discard(cid)
+
+
+challenger_watcher = ChallengerWatcher()
+
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _hold(task: asyncio.Task) -> None:
+    """Keep a reference to a fire-and-forget task until it finishes (else it may be GC'd)."""
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 _lazy_call1_inflight: dict[date, asyncio.Task] = {}
 

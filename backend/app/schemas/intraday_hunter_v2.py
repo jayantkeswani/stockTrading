@@ -116,3 +116,44 @@ class IhWeeklyReviewResponse(BaseModel):
     def from_row(cls, r) -> "IhWeeklyReviewResponse":
         return cls(id=r.id, week_ending=r.week_ending, status=r.status, summary=r.summary,
                    proposal=r.proposal, calibration=r.calibration, created_at=r.created_at)
+
+
+class IhV2ProposalResponse(BaseModel):
+    """One weekly-review proposal with its lifecycle, apply plan and challenger stats."""
+
+    id: uuid.UUID
+    review_id: uuid.UUID
+    week_ending: date | None = None
+    idx: int
+    change: str
+    kind: str | None = None
+    evidence: str | None = None
+    expected_effect: str | None = None
+    risk: str | None = None
+    status: str
+    user_note: str | None = None
+    apply_plan: dict | None = None
+    challenger_id: str | None = None
+    challenger_mode: str | None = None  # counterfactual | shadow_call2
+    params_override: dict | None = None
+    started_on: date | None = None
+    ended_on: date | None = None
+    history: list = []
+    stats: dict | None = None  # apply.challenger_stats (challengers only)
+    actions: list[str] = []    # buttons the UI may offer now (apply.allowed_actions)
+
+    @classmethod
+    def from_row(cls, r, *, week_ending: date | None = None, stats: dict | None = None,
+                 actions: list[str] | None = None) -> "IhV2ProposalResponse":
+        return cls(id=r.id, review_id=r.review_id, week_ending=week_ending, idx=r.idx, change=r.change,
+                   kind=r.kind, evidence=r.evidence, expected_effect=r.expected_effect, risk=r.risk,
+                   status=r.status, user_note=r.user_note, apply_plan=r.apply_plan,
+                   challenger_id=r.challenger_id, challenger_mode=r.challenger_mode,
+                   params_override=r.params_override, started_on=r.started_on, ended_on=r.ended_on,
+                   history=r.history or [], stats=stats, actions=actions or [])
+
+
+class IhV2ProposalAction(BaseModel):
+    """Body for approve / reject / analyse / promote / retire."""
+
+    note: str | None = Field(None, max_length=2000)

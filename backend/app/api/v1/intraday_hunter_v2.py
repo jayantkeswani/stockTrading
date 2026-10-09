@@ -5,6 +5,7 @@ today / history / run/{date} / basket / emergency basket close / manual Call 1+2
 ledger / weekly reviews / minute log, and the teacher day + the teacher ingest push.
 """
 import logging
+import uuid
 from datetime import date, datetime, time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -21,6 +22,8 @@ from app.schemas.intraday_hunter_v2 import (
     IhV2BasketResponse,
     IhV2Book,
     IhV2Leg,
+    IhV2ProposalAction,
+    IhV2ProposalResponse,
     IhWeeklyReviewResponse,
 )
 from app.services.intraday_hunter import store
@@ -225,6 +228,79 @@ async def v2_reviews(limit: int = Query(10, ge=1, le=52), db: AsyncSession = Dep
 
     rows = (await db.execute(select(IhWeeklyReview).order_by(IhWeeklyReview.week_ending.desc()).limit(limit))).scalars().all()
     return [IhWeeklyReviewResponse.from_row(r) for r in rows]
+
+
+async def _proposal_out(db: AsyncSession, row) -> IhV2ProposalResponse:
+    from app.models.ih_v2 import IhWeeklyReview
+    from app.services.intraday_hunter_v2 import apply
+
+    review = await db.get(IhWeeklyReview, row.review_id)
+    stats = await apply.stats_for(db, row)
+    return IhV2ProposalResponse.from_row(
+        row, week_ending=review.week_ending if review else None, stats=stats,
+        actions=apply.allowed_actions(row.status, stats, apply.agent_running(row.id)),
+    )
+
+
+@router.get("/v2/proposals", response_model=list[IhV2ProposalResponse])
+async def v2_proposals(
+    review_id: uuid.UUID | None = Query(None), status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200), db: AsyncSession = Depends(get_db),
+):
+    """Weekly-review proposals (newest week first), each with its status chain, apply plan,
+    challenger stats and the actions the user may take now."""
+    from app.models.ih_v2 import IhV2Proposal, IhWeeklyReview
+
+    q = (select(IhV2Proposal).join(IhWeeklyReview, IhWeeklyReview.id == IhV2Proposal.review_id)
+         .order_by(IhWeeklyReview.week_ending.desc(), IhV2Proposal.idx).limit(limit))
+    if review_id:
+        q = q.where(IhV2Proposal.review_id == review_id)
+    if status:
+        q = q.where(IhV2Proposal.status == status.upper())
+    rows = (await db.execute(q)).scalars().all()
+    return [await _proposal_out(db, r) for r in rows]
+
+
+@router.post("/v2/proposals/{proposal_id}/{action}", response_model=IhV2ProposalResponse)
+async def v2_proposal_action(
+    proposal_id: uuid.UUID, action: str, body: IhV2ProposalAction | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """User click on a proposal: approve | reject | analyse | promote | retire.
+
+    approve (and analyse = re-run) start the apply agent in the background (Opus re-checks the
+    evidence and classifies the change; poll GET /v2/proposals). promote merges the challenger's
+    params into the champion; it and retire are refused until the challenger stats allow them.
+    """
+    from app.models.ih_v2 import IhV2Proposal
+    from app.services.intraday_hunter_v2 import apply
+
+    if action not in apply.TRANSITIONS:
+        raise HTTPException(404, f"unknown action {action}")
+    row = await db.get(IhV2Proposal, proposal_id)
+    if row is None:
+        raise HTTPException(404, "proposal not found")
+    note = body.note if body else None
+    if apply.agent_running(row.id):
+        raise HTTPException(409, "the apply agent is already running for this proposal")
+    try:
+        if action in ("approve", "reject"):
+            await apply.decide(db, row, action, note)
+        elif action == "analyse":
+            apply.check_transition(row, "analyse")
+            if row.status == "NEEDS_REVIEW":  # back to APPROVED so the UI shows the agent working
+                await apply.decide_reanalyse(db, row, note)
+        elif action == "promote":
+            await apply.promote(db, row, note)
+        else:
+            await apply.retire(db, row, note)
+    except apply.TransitionError as e:
+        raise HTTPException(409, str(e)) from e
+    await db.commit()
+    await db.refresh(row)
+    if action in ("approve", "analyse"):
+        apply.start_apply_agent(row.id)
+    return await _proposal_out(db, row)
 
 
 @router.get("/v2/minute-log")
