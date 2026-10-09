@@ -13,6 +13,7 @@ class TradeResponse(BaseModel):
     expiry_date: date
     strike_price: Decimal
     option_type: str | None = None
+    fyers_option_symbol: str | None = None  # exact contract (option or futures), stored at entry
     side: str
     quantity: int
     lots: int

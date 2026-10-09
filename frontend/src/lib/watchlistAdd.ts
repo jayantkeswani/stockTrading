@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import { useStore } from "@/store";
+import { formatStrike, matchesContract, optionSearchQuery } from "@/lib/watchlistSearch";
 
 /**
  * Resolve a Fyers symbol (searching when one isn't already known) and add it to
@@ -12,29 +13,29 @@ export async function addToPersonalWatchlist(params: {
   fyersSymbol: string | null;
   symbol: string;
   optionType: string | null;
-  strikePrice: number;
+  strikePrice: number | string;
   expiryDate: string | null;
 }): Promise<boolean> {
   const { fyersSymbol, symbol, optionType, strikePrice, expiryDate } = params;
   const isFut = !optionType;
   let fyers = fyersSymbol;
   if (!fyers) {
-    const query = isFut ? symbol : `${symbol} ${strikePrice}${optionType}`;
-    const res = await api.searchSymbols(query);
+    const res = await api.searchSymbols(optionSearchQuery(symbol, strikePrice, optionType));
     const match = res.results?.find((r: { symbol: string }) =>
-      isFut ? r.symbol.includes("FUT") : r.symbol.includes(`${strikePrice}${optionType}`)
+      matchesContract(r.symbol, strikePrice, optionType)
     );
     fyers = match?.symbol ?? null;
   }
   if (!fyers) return false;
 
   const segment = isFut ? "FUT" : "OPT";
-  const display = isFut ? `${symbol} FUT` : `${symbol} ${strikePrice} ${optionType}`;
+  const strikeNum = Number(strikePrice);
+  const display = isFut ? `${symbol} FUT` : `${symbol} ${formatStrike(strikePrice)} ${optionType}`;
   await api.addToWatchlist({
     symbol: fyers,
     display,
     segment,
-    strike: strikePrice > 0 ? strikePrice : null,
+    strike: strikeNum > 0 ? strikeNum : null,
     option_type: isFut ? null : optionType,
     expiry: expiryDate ?? undefined,
   });

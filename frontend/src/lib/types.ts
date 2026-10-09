@@ -91,6 +91,8 @@ export interface Trade {
   expiry_date: string;
   strike_price: number;
   option_type: "CE" | "PE";
+  /** Exact Fyers contract stored at entry (options + futures); null for legacy rows. */
+  fyers_option_symbol?: string | null;
   side: string;
   quantity: number;
   lots: number;
@@ -700,6 +702,8 @@ export interface IhV2Book {
 export interface IhV2Basket {
   trading_date: string;
   basket_tp_sl_pct: number;
+  /** "pct" = T is basket_tp_sl_pct x cost; "rupees" = fixed rupees per lot (per-book T). */
+  basket_t_mode?: "pct" | "rupees";
   time_exit: string;
   books: IhV2Book[];
 }
