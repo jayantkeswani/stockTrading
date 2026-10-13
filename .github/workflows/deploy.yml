@@ -13,6 +13,7 @@ on:
 env:
   BACKEND_IMAGE: ghcr.io/jayantkeswani/stocktrading/backend
   FRONTEND_IMAGE: ghcr.io/jayantkeswani/stocktrading/frontend
+  WARP_IMAGE: ghcr.io/jayantkeswani/stocktrading/warp
 
 jobs:
   retag:
@@ -49,6 +50,9 @@ jobs:
             docker buildx imagetools create \
               -t "${{ env.FRONTEND_IMAGE }}:${VERSION}" \
               "${{ env.FRONTEND_IMAGE }}:${SOURCE_TAG}"
+            docker buildx imagetools create \
+              -t "${{ env.WARP_IMAGE }}:${VERSION}" \
+              "${{ env.WARP_IMAGE }}:${SOURCE_TAG}"
             echo "image_tag=${VERSION}" >> $GITHUB_OUTPUT
             echo "deploy_version=${VERSION}" >> $GITHUB_OUTPUT
 
@@ -61,6 +65,9 @@ jobs:
             docker buildx imagetools create \
               -t "${{ env.FRONTEND_IMAGE }}:${VERSION}" \
               "${{ env.FRONTEND_IMAGE }}:latest"
+            docker buildx imagetools create \
+              -t "${{ env.WARP_IMAGE }}:${VERSION}" \
+              "${{ env.WARP_IMAGE }}:latest"
             echo "image_tag=${VERSION}" >> $GITHUB_OUTPUT
             echo "deploy_version=${VERSION}" >> $GITHUB_OUTPUT
 
@@ -142,6 +149,7 @@ jobs:
             echo "DEPLOYED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> .env
             echo "BACKEND_IMAGE=${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}" >> .env
             echo "FRONTEND_IMAGE=${{ env.FRONTEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}" >> .env
+            echo "WARP_IMAGE=${{ env.WARP_IMAGE }}:${{ needs.retag.outputs.image_tag }}" >> .env
 
             # Login to ghcr.io and pull images
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -149,6 +157,7 @@ jobs:
 
             docker pull "${{ env.BACKEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
             docker pull "${{ env.FRONTEND_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
+            docker pull "${{ env.WARP_IMAGE }}:${{ needs.retag.outputs.image_tag }}"
 
             # Ensure DB is up and healthy
             docker compose -f docker-compose.prod.yml up -d postgres redis

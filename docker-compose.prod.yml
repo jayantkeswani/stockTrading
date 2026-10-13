@@ -43,6 +43,9 @@ services:
       # default /tmp lives on the container's ephemeral layer and every deploy
       # (docker compose up recreates st-backend) wipes the chart history.
       INTRADAY_HUNTER_CHART_DIR: /app/intraday_hunter_charts
+      # IH v2 teacher ingestion: yt-dlp goes through the WARP container — YouTube blocks the
+      # VM's datacenter IP. Unset it to download direct (with the web_embedded client).
+      IH_YTDLP_PROXY: socks5h://warp:1080
     volumes:
       - backend_logs:/app/logs
       - st_ih_charts:/app/intraday_hunter_charts
@@ -57,6 +60,22 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Cloudflare WARP SOCKS5 proxy for the backend's YouTube downloads (IH v2 teacher ingestion).
+  # Reachable only on the compose network as warp:1080 — no host port. The backend does not
+  # depend on it: if it is down, only the teacher pulls fail (and alert on Telegram).
+  warp:
+    image: ${WARP_IMAGE:-ghcr.io/jayantkeswani/stocktrading/warp:latest}
+    container_name: st-warp
+    # WARP manages routes inside its own network namespace; without NET_ADMIN it never
+    # leaves "Connecting" (scoped to this container — the host network is untouched).
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - st_warp_data:/var/lib/cloudflare-warp
+    mem_limit: 384m
+    cpus: 0.5
     restart: unless-stopped
 
   frontend:
@@ -86,3 +105,4 @@ volumes:
   st_redis_data:
   backend_logs:
   st_ih_charts:
+  st_warp_data:

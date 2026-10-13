@@ -115,17 +115,18 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
 ## Teacher ingestion (`teacher/`)
 
 - **Plan job** (00:00 / 06:00 / 08:00):
-  - Finds "Prediction For <date>" on `@IntradayHunter/videos` with yt-dlp, using `player_client=web_embedded` to pass YouTube's bot check (with an optional cookies fallback via `IH_YTDLP_COOKIES`).
+  - Finds "Prediction For <date>" on `@IntradayHunter/videos` with yt-dlp.
   - Fetches the Hindi auto-subs and grabs 30/60/90% keyframes with ffmpeg.
   - Claude (vision) returns `{gap_up_side, flat_side, gap_down_side ∈ CE|PE|none, bias, levels_onscreen, levels_audio, summary}`.
 - **Live job** (15:45, retry 17:30, so it never competes with the feed or monitor during market hours):
-  - Finds the day's "Live Bank Nifty Option Trading" video by title plus `upload_date`. The bot-check-safe client returns no `timestamp`.
-  - Samples a frame every 5s, normalized to 1280×720. The recordings are only served at **360p**, which is too small for tesseract, so OCR was dropped.
+  - Finds the day's "Live Bank Nifty Option Trading" video by title plus IST `timestamp` date, else `upload_date`.
+  - Downloads ≤720p (in practice the 360p progressive mp4, ~5 MB) and samples a frame every 5s, normalized to 1280×720. 360p is too small for tesseract, so OCR was dropped.
   - A cheap **PIL detector** finds the Kite positions screens: the table sits behind a large blue disclosure card, and real frames score about 0.68 vs 0 for charts. These frames are grouped into segments.
   - **Claude vision** reads about 14 representative frames, 6 per call: the taskbar clock (`decode_clock` handles 180°-rotated readings, so "81:60" → 09:18), open/closed state, legs, Total P&L, and the index prices in the tabs.
   - Entry = the earliest clock with positions open (the video opens with a teaser). Exit = the first all-closed clock after entry.
   - Each leg's qty/avg come from the first frame where *that* leg is open, since legs are often added over a few minutes, and are stored with a per-leg `entry_clock`. The leg P&Ls are sum-checked against the total.
   - **Validated on the real 2026-10-08 video:** PE basket (BN 54800/54700 PE, SENSEX 72500 PE, NIFTY 22550 PE), entry 09:19, exit 09:47, total +₹1,78,881.25, sum check OK.
+- **YouTube access (`teacher/youtube.ytdlp_network_args`):** YouTube refuses the VM's datacenter IP outright — every player client gets "Sign in to confirm you're not a bot", subtitles included. In prod, yt-dlp goes through the **`st-warp` container** (Cloudflare WARP in proxy mode, `IH_YTDLP_PROXY=socks5h://warp:1080`, set in `docker-compose.prod.yml`). Behind the proxy the default player client is used: `web_embedded` (and mweb/ios/web_safari) return storyboard images only there ("Only images are available"), `tv` fails. Without a proxy (the Mac) the client stays `web_embedded`. `IH_YTDLP_PLAYER_CLIENT` overrides the client (`""` = yt-dlp default); `IH_YTDLP_COOKIES` adds `--cookies`. Every download stays inside yt-dlp: `--download-sections` hands the fetch to ffmpeg, which ignores `--proxy`.
 - **Storage and alerts:** results go to `ih_teacher_days`. Every failure (video not found, blocked/429/403, parse failed, tool missing) is Telegram-alerted with the job, date and error type.
 - **Mac fallback:** `scripts/intraday_hunter/teacher_ingest_local.py --date D [--plan] [--live] [--whisper] --push URL` runs the same pipeline locally and POSTs to `POST /api/v1/intraday-hunter/teacher/ingest` (body `{trading_date, plan, plan_video_id, live, live_video_id}`).
 - **Runtime image:** ffmpeg (apt) and yt-dlp (pyproject floor). Locally, `IH_ALLOW_CLI_LOGIN=1` (dev only) lets `llm_cli` use the logged-in `claude` CLI when no `CLAUDE_CODE_OAUTH_TOKEN` is set. In prod the token is required, as before.

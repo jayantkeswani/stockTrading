@@ -1,0 +1,28 @@
+# Cloudflare WARP SOCKS5 proxy (service `warp` in docker-compose.prod.yml).
+# The backend sends yt-dlp through it (IH_YTDLP_PROXY=socks5h://warp:1080) because YouTube
+# blocks the VM's datacenter IP. Official Cloudflare client from pkg.cloudflareclient.com.
+FROM ubuntu:22.04
+
+ARG WARP_VERSION=2026.8.2110.0
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates curl gpg dbus socat \
+    && curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
+        | gpg --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ jammy main" \
+        > /etc/apt/sources.list.d/cloudflare-client.list \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        "cloudflare-warp=${WARP_VERSION}" \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY infrastructure/docker/warp-entrypoint.sh /usr/local/bin/warp-entrypoint.sh
+RUN chmod +x /usr/local/bin/warp-entrypoint.sh
+
+EXPOSE 1080
+
+HEALTHCHECK --interval=60s --timeout=15s --start-period=60s --retries=3 \
+    CMD curl -sf -x socks5h://127.0.0.1:40000 https://www.cloudflare.com/cdn-cgi/trace | grep -q "warp=on" || exit 1
+
+ENTRYPOINT ["/usr/local/bin/warp-entrypoint.sh"]
