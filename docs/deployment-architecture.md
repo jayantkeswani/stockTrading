@@ -56,8 +56,9 @@ Single GCE VM deployment on Google Cloud Platform. All services run as Docker co
 | `st-frontend` | ghcr.io/.../frontend (Node 20) | 3000 (internal) | — | unless-stopped |
 | `st-postgres` | postgres:16-alpine | 5432 (internal) | st_postgres_data | unless-stopped |
 | `st-redis` | redis:7-alpine | 6379 (internal) | st_redis_data | unless-stopped |
+| `st-warp` | ghcr.io/.../warp (Cloudflare WARP client, `infrastructure/docker/Dockerfile.warp`) | 1080 (internal, SOCKS5) | st_warp_data (WARP registration); `cap_add: NET_ADMIN` (container namespace only — WARP never connects without it); 384 MB / 0.5 CPU cap; healthcheck: `warp=on` via the proxy | unless-stopped |
 
-In production, PostgreSQL and Redis are on container-internal ports only (not exposed to the host). The backend connects to them via Docker service names (`postgres:5432`, `redis:6379`).
+In production, PostgreSQL and Redis are on container-internal ports only (not exposed to the host). The backend connects to them via Docker service names (`postgres:5432`, `redis:6379`). `st-warp` is the backend's egress proxy for YouTube only (`IH_YTDLP_PROXY=socks5h://warp:1080` — YouTube blocks the VM's datacenter IP); WARP's own proxy listens on its localhost:40000 and `socat` re-exposes it on :1080 to the compose network. The backend does not depend on it — if it is down, only the IH v2 teacher pulls fail (Telegram-alerted).
 
 ## CI/CD Pipeline (Tag-Based Releases)
 
@@ -72,7 +73,8 @@ git push origin master
 GitHub Actions (ci.yml): build job
         ├── Docker Buildx + GitHub Actions cache (GHA)
         ├── Build backend → ghcr.io/.../backend:<sha> + :latest
-        └── Build frontend → ghcr.io/.../frontend:<sha> + :latest
+        ├── Build frontend → ghcr.io/.../frontend:<sha> + :latest
+        └── Build warp → ghcr.io/.../warp:<sha> + :latest
 ```
 
 ### Deploy (tag push — no rebuild) — `deploy.yml`
@@ -83,7 +85,7 @@ make release v=1.0.0   (creates + pushes tag)
         ▼
 GitHub Actions (deploy.yml): retag job
         ├── docker buildx imagetools create (registry-side, ~5s)
-        ├── Retag :<sha> as :v1.0.0 for both images
+        ├── Retag :<sha> as :v1.0.0 for all three images (backend, frontend, warp)
         │
         ▼
 GitHub Actions (deploy.yml): deploy job
@@ -173,6 +175,7 @@ All production containers use the `st-` prefix (defined in `docker-compose.prod.
 | `st-postgres` | PostgreSQL 16 |
 | `st-redis` | Redis 7 |
 | `st-nginx` | Nginx reverse proxy |
+| `st-warp` | Cloudflare WARP SOCKS5 proxy (YouTube downloads) |
 
 ### Viewing Logs
 

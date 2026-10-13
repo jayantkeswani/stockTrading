@@ -7,6 +7,7 @@ on:
 env:
   BACKEND_IMAGE: ghcr.io/jayantkeswani/stocktrading/backend
   FRONTEND_IMAGE: ghcr.io/jayantkeswani/stocktrading/frontend
+  WARP_IMAGE: ghcr.io/jayantkeswani/stocktrading/warp
 
 jobs:
   build:
@@ -50,3 +51,13 @@ jobs:
           build-args: DEPLOYMENT_ID=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Build and push warp
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.warp
+          push: true
+          tags: ${{ env.WARP_IMAGE }}:latest,${{ env.WARP_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=warp
+          cache-to: type=gha,mode=max,scope=warp

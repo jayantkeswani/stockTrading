@@ -11,7 +11,7 @@ from app.services.intraday_hunter_v2.teacher.live import (
     detect_entry_exit, merge_live, normalize_live, pick_frames, positions_segments, sum_check)
 from app.services.intraday_hunter_v2.teacher.plan import normalize_plan
 from app.services.intraday_hunter_v2.teacher.youtube import (
-    classify_ytdlp_error, find_live_video, find_plan_video, vtt_to_text)
+    classify_ytdlp_error, find_live_video, find_plan_video, vtt_to_text, ytdlp_network_args)
 
 FIX = Path(__file__).resolve().parents[1] / "fixtures" / "ih_teacher"
 
@@ -77,6 +77,22 @@ def test_classify_ytdlp_error_and_vtt():
     assert classify_ytdlp_error("Video unavailable") == "VIDEO_NOT_FOUND"
     text = vtt_to_text((FIX / "subs_synthetic.vtt").read_text())
     assert text.count("नमस्कार दोस्तों") == 1 and "निफ्टी आज" in text
+
+
+def test_ytdlp_network_args():
+    # No proxy (the Mac): web_embedded, as before.
+    assert ytdlp_network_args({}) == ["--extractor-args", "youtube:player_client=web_embedded"]
+    # Behind the WARP proxy: route through it and use yt-dlp's default client
+    # (web_embedded returns storyboard images only there).
+    assert ytdlp_network_args({"IH_YTDLP_PROXY": "socks5h://warp:1080"}) == [
+        "--proxy", "socks5h://warp:1080"]
+    # Explicit client override wins either way; "" means yt-dlp's default.
+    assert ytdlp_network_args({"IH_YTDLP_PROXY": "socks5h://warp:1080",
+                               "IH_YTDLP_PLAYER_CLIENT": "android"}) == [
+        "--proxy", "socks5h://warp:1080", "--extractor-args", "youtube:player_client=android"]
+    assert ytdlp_network_args({"IH_YTDLP_PLAYER_CLIENT": ""}) == []
+    assert ytdlp_network_args({"IH_YTDLP_PROXY": "", "IH_YTDLP_COOKIES": "/c.txt"}) == [
+        "--extractor-args", "youtube:player_client=web_embedded", "--cookies", "/c.txt"]
 
 
 def test_normalize_plan():

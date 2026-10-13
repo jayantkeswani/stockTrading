@@ -96,7 +96,7 @@ stockTrading/
 ├── README.md              # Setup and run instructions
 ├── Makefile               # Dev commands (make dev, make test, make migrate)
 ├── docker-compose.yml     # PostgreSQL (5433) + Redis (6380) — LOCAL dev only
-├── docker-compose.prod.yml # PRODUCTION: all 5 services (backend, frontend, postgres, redis, nginx)
+├── docker-compose.prod.yml # PRODUCTION: all 6 services (backend, frontend, postgres, redis, nginx, warp)
 ├── .env.example           # Environment template
 ├── .envrc                 # direnv: GCP project isolation
 ├── .github/workflows/     # CI/CD: ci.yml (build on master push), deploy.yml (tag-based release)

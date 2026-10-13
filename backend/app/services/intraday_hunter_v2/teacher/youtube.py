@@ -70,14 +70,35 @@ async def run_cmd(cmd: list[str], timeout_s: int = 120) -> tuple[int, str, str]:
     return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
 
+def ytdlp_network_args(env: dict) -> list[str]:
+    """yt-dlp proxy / player-client / cookie flags from the environment (PURE).
+
+    IH_YTDLP_PROXY (prod: socks5h://warp:1080, the Cloudflare WARP container) routes every
+    yt-dlp request through the proxy — YouTube blocks the VM's datacenter IP outright. Behind
+    the proxy the default player client is used: `web_embedded` returns only storyboard images
+    there. Without a proxy (the Mac) `web_embedded` stays the default. IH_YTDLP_PLAYER_CLIENT
+    overrides the client either way ("" = yt-dlp's default); IH_YTDLP_COOKIES adds --cookies.
+    """
+    proxy = env.get("IH_YTDLP_PROXY") or ""
+    client = env.get("IH_YTDLP_PLAYER_CLIENT", "" if proxy else "web_embedded")
+    extra: list[str] = []
+    if proxy:
+        extra += ["--proxy", proxy]
+    if client:
+        extra += ["--extractor-args", f"youtube:player_client={client}"]
+    if env.get("IH_YTDLP_COOKIES"):
+        extra += ["--cookies", env["IH_YTDLP_COOKIES"]]
+    return extra
+
+
 async def _ytdlp(args: list[str], timeout_s: int = 120) -> str:
-    """Run yt-dlp, raising a classified TeacherIngestError on failure; returns stdout."""
+    """Run yt-dlp, raising a classified TeacherIngestError on failure; returns stdout.
+
+    Every download goes through yt-dlp itself (never `--download-sections`, which hands the
+    fetch to ffmpeg — ffmpeg ignores --proxy and would hit YouTube from the blocked IP).
+    """
     exe = require_tool("yt-dlp")
-    # web_embedded avoids the datacenter/"Sign in to confirm" bot-check on most IPs (cookies:
-    # set IH_YTDLP_COOKIES=/path/cookies.txt as an additional fallback).
-    extra = ["--extractor-args", "youtube:player_client=web_embedded"]
-    if os.environ.get("IH_YTDLP_COOKIES"):
-        extra += ["--cookies", os.environ["IH_YTDLP_COOKIES"]]
+    extra = ytdlp_network_args(dict(os.environ))
     rc, out, err = await run_cmd([exe, "--no-update", *extra, *args], timeout_s)
     if rc != 0:
         raise TeacherIngestError(classify_ytdlp_error(err), err.strip()[-300:])
