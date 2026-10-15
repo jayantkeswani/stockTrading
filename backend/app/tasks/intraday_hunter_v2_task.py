@@ -1,6 +1,7 @@
 """Intraday Hunter v2 — every scheduled job (IST), on its own APScheduler.
 
-  00:00 / 06:00 / 08:00  teacher plan ingest ("Prediction For <date>")
+  21:00 / 23:00 (eve)    teacher plan ingest for the NEXT trading day (posted the evening before)
+  00:00 / 06:00 / 08:00  teacher plan ingest for today ("Prediction For <date>"); 08:00 is final
   08:30                  plan-missing check → Telegram alert, v2 runs flagged teacher_plan_missing
   08:45                  v2 Call 1 (thesis)
   09:05                  reset the order-flow tracker for the day
@@ -9,8 +10,11 @@
   09:34                  Call 2 decision check for v1 AND v2 → alert if either has no ENTER/SKIP
                          (09:34, not 09:30, so it never races v1's 09:30 backstop call)
                          (these two reliability checks ignore the v2 kill switch — they also guard v1)
-  15:45 / 17:30          teacher live-trade ingest — AFTER market hours so the download + ffmpeg
-                         never competes with the feed/monitor; a success re-grades the day (→ FINAL)
+  15:45 / 17:30 / 19:30 / 21:30  teacher live-trade ingest — AFTER market hours so the download +
+                         ffmpeg never competes with the feed/monitor; a success re-grades the day (→ FINAL)
+  07:30 (next morning)   live-trade catch-up for the PREVIOUS trading day (final attempt)
+  Teacher retries are spread over hours because YouTube's bot-check blocks on the server's egress
+  come and go for hours at a time; only the final attempt Telegram-alerts a failure.
   16:00                  nightly grade (PRELIM until the teacher's live trade lands)
   Sat 10:00              weekly review (proposal only — nothing auto-applied)
 The 1-minute 09:15-09:45 OI window lives with the other OI jobs (oi_snapshot_task). Call 2 is
@@ -22,7 +26,7 @@ the strategy_configs.is_active runtime kill switch).
 from __future__ import annotations
 
 import logging
-from datetime import time, timedelta
+from datetime import date, time, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -38,31 +42,61 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone=IST)
 
 JOB_SCHEDULE = {
+    "ih_v2_plan_eve_2100": "21:00 (next day)", "ih_v2_plan_eve_2300": "23:00 (next day)",
     "ih_v2_plan_0000": "00:00", "ih_v2_plan_0600": "06:00", "ih_v2_plan_0800": "08:00",
     "ih_v2_plan_missing_0830": "08:30", "ih_v2_call1_0845": "08:45",
     "ih_v2_orderflow_reset_0905": "09:05",
     "ih_v2_capture_0910": "09:10", "ih_v2_capture_0916": "09:16:30",
     "ih_v2_candle_check": "09:20 + :20/:50 to 15:20",
     "ih_v2_call2_check_0934": "09:34",
-    "ih_v2_live_1545": "15:45", "ih_v2_live_1730": "17:30",
+    "ih_v2_live_1545": "15:45", "ih_v2_live_1730": "17:30", "ih_v2_live_1930": "19:30",
+    "ih_v2_live_2130": "21:30", "ih_v2_live_catchup_0730": "07:30 (previous day)",
     "ih_v2_grade_1600": "16:00", "ih_v2_weekly_review": "Sat 10:00",
 }
 
 
 async def _enabled_today() -> bool:
     """Env flag + the runtime kill switch (strategy_configs.is_active) + a trading day."""
+    return await _enabled_for(now_ist().date())
+
+
+async def _enabled_for(d: date) -> bool:
+    """Env flag + the runtime kill switch + `d` is a trading day."""
     from app.services.intraday_hunter_v2.params import v2_active
-    return is_trading_day(now_ist().date()) and await v2_active()
+    return is_trading_day(d) and await v2_active()
+
+
+def next_trading_day(d: date) -> date:
+    """The first trading day strictly after `d`. Pure (calendar via is_trading_day)."""
+    x = d + timedelta(days=1)
+    for _ in range(14):
+        if is_trading_day(x):
+            return x
+        x += timedelta(days=1)
+    return x
+
+
+def prev_trading_day(d: date) -> date:
+    """The last trading day strictly before `d`. Pure (calendar via is_trading_day)."""
+    x = d - timedelta(days=1)
+    for _ in range(14):
+        if is_trading_day(x):
+            return x
+        x -= timedelta(days=1)
+    return x
 
 
 # ── teacher ──
-async def plan_job(attempt: str) -> None:
-    """Fetch the teacher's plan for today (posted the evening before)."""
-    if not await _enabled_today():
+async def plan_job(attempt: str, final: bool = False, evening: bool = False) -> None:
+    """Fetch the teacher's plan — today's, or (evening=True) the next trading day's, which he
+    posts the evening before. Only the `final` attempt Telegram-alerts a failure."""
+    today = now_ist().date()
+    target = next_trading_day(today) if evening else today
+    if not await _enabled_for(target):
         return
     from app.services.intraday_hunter_v2.teacher import ingest
     try:
-        await ingest.run_plan_job(now_ist().date(), attempt)
+        await ingest.run_plan_job(target, attempt, final=final)
     except Exception as e:  # noqa: BLE001
         await alert("teacher_plan", f"plan job {attempt} crashed: {type(e).__name__}: {e}", attempt)
 
@@ -77,18 +111,25 @@ async def plan_missing_job() -> None:
         logger.exception("IH v2 plan-missing check failed")
 
 
-async def live_job(attempt: str) -> None:
-    """Fetch the teacher's actual live trade for today; re-grade on success."""
-    if not await _enabled_today():
+async def live_job(attempt: str, final: bool = False, catchup: bool = False) -> None:
+    """Fetch the teacher's live trade — today's, or (catchup=True) the previous trading day's
+    when the evening attempts all failed. A success re-grades that day (→ FINAL)."""
+    today = now_ist().date()
+    d = prev_trading_day(today) if catchup else today
+    if not await _enabled_for(d):
         return
     from app.services.intraday_hunter_v2.teacher import ingest
+    async with async_session_factory() as session:
+        existing = await ingest.get_teacher_day(session, d)
+        if existing is not None and existing.live:
+            return
     try:
-        row = await ingest.run_live_job(now_ist().date(), attempt)
+        row = await ingest.run_live_job(d, attempt, final=final)
     except Exception as e:  # noqa: BLE001
         await alert("teacher_live", f"live job {attempt} crashed: {type(e).__name__}: {e}", attempt)
         return
-    if row is not None and getattr(row, "live", None) and now_ist().hour >= 16:
-        await grade_job()  # the 16:00 grade already ran — finalize it now that the live trade landed
+    if row is not None and getattr(row, "live", None) and (catchup or now_ist().hour >= 16):
+        await _grade(d)  # the 16:00 grade already ran — finalize it now that the live trade landed
 
 
 # ── trading-day jobs ──
@@ -179,10 +220,14 @@ async def call2_check_job() -> None:
 
 
 async def grade_job() -> None:
-    """Grade today (also usable for a past date via the API)."""
-    d = now_ist().date()
+    """Grade today (16:00)."""
     if not await _enabled_today():
         return
+    await _grade(now_ist().date())
+
+
+async def _grade(d: date) -> None:
+    """Grade trading date `d` (idempotent upsert); alerts on failure."""
     from app.services.intraday_hunter_v2 import grading
     try:
         async with async_session_factory() as session:
@@ -214,8 +259,11 @@ async def start_intraday_hunter_v2_scheduler() -> None:
         return CronTrigger(timezone=IST, **kw)
 
     add = scheduler.add_job
+    for hh in (21, 23):
+        add(plan_job, cron(hour=hh, minute=0), args=[f"{hh:02d}:00 eve", False, True],
+            id=f"ih_v2_plan_eve_{hh:02d}00", replace_existing=True)
     for hh in (0, 6, 8):
-        add(plan_job, cron(hour=hh, minute=0), args=[f"{hh:02d}:00"],
+        add(plan_job, cron(hour=hh, minute=0), args=[f"{hh:02d}:00", hh == 8],
             id=f"ih_v2_plan_{hh:02d}00", replace_existing=True)
     add(plan_missing_job, cron(hour=8, minute=30), id="ih_v2_plan_missing_0830", replace_existing=True)
     add(call1_job, cron(hour=8, minute=45), id="ih_v2_call1_0845", replace_existing=True)
@@ -225,8 +273,11 @@ async def start_intraday_hunter_v2_scheduler() -> None:
         id="ih_v2_capture_0916", replace_existing=True)
     add(candle_check_job, cron(hour="9-15", minute="20,50"), id="ih_v2_candle_check", replace_existing=True)
     add(call2_check_job, cron(hour=9, minute=34), id="ih_v2_call2_check_0934", replace_existing=True)
-    add(live_job, cron(hour=15, minute=45), args=["15:45"], id="ih_v2_live_1545", replace_existing=True)
-    add(live_job, cron(hour=17, minute=30), args=["17:30"], id="ih_v2_live_1730", replace_existing=True)
+    for hh, mm in ((15, 45), (17, 30), (19, 30), (21, 30)):
+        add(live_job, cron(hour=hh, minute=mm), args=[f"{hh:02d}:{mm:02d}"],
+            id=f"ih_v2_live_{hh:02d}{mm:02d}", replace_existing=True)
+    add(live_job, cron(hour=7, minute=30), args=["07:30 catch-up", True, True],
+        id="ih_v2_live_catchup_0730", replace_existing=True)
     add(grade_job, cron(hour=16, minute=0), id="ih_v2_grade_1600", replace_existing=True)
     add(weekly_review_job, cron(day_of_week="sat", hour=10, minute=0),
         id="ih_v2_weekly_review", replace_existing=True)

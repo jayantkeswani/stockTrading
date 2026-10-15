@@ -52,8 +52,9 @@ def _append_error(row: IhTeacherDay, job: str, err_type: str, detail: str) -> No
 
 
 async def _record_failure(trading_date: date, job: str, err_type: str, detail: str,
-                          status: str | None = None) -> None:
-    """Persist a failure on the day row (+ optional status) and alert via Telegram."""
+                          status: str | None = None, notify: bool = True) -> None:
+    """Persist a failure on the day row (+ optional status); Telegram only when `notify`
+    (the last scheduled attempt) — earlier attempts are retried later, so they stay silent."""
     try:
         async with async_session_factory() as session:
             row = await _get_or_create(session, trading_date)
@@ -63,7 +64,8 @@ async def _record_failure(trading_date: date, job: str, err_type: str, detail: s
             await session.commit()
     except Exception:  # noqa: BLE001 — alerting must still happen
         logger.exception("ih_v2 teacher: could not persist failure")
-    await send_telegram(f"⚠️ IH v2 teacher {job} {trading_date}: {err_type} — {detail}")
+    if notify:
+        await send_telegram(f"⚠️ IH v2 teacher {job} {trading_date}: {err_type} — {detail}")
 
 
 async def build_plan(trading_date: date, workdir: str, whisper_fallback=None) -> tuple[dict, str]:
@@ -95,8 +97,10 @@ async def build_live(trading_date: date, workdir: str) -> tuple[dict, str]:
     return await extract_live(path, trading_date), vid["id"]
 
 
-async def run_plan_job(trading_date: date, attempt: str) -> IhTeacherDay | None:
-    """Fetch + store the teacher's plan for trading_date. Skips if already present/disabled."""
+async def run_plan_job(trading_date: date, attempt: str, *, final: bool = True) -> IhTeacherDay | None:
+    """Fetch + store the teacher's plan for trading_date. Skips if already present/disabled.
+
+    `final=False` (an earlier attempt that will be retried) records a failure without Telegram."""
     job = f"plan@{attempt}"
     if not _enabled():
         return None
@@ -108,11 +112,11 @@ async def run_plan_job(trading_date: date, attempt: str) -> IhTeacherDay | None:
     try:
         plan, vid = await build_plan(trading_date, workdir)
     except TeacherIngestError as e:
-        await _record_failure(trading_date, job, e.error_type, e.detail)
+        await _record_failure(trading_date, job, e.error_type, e.detail, notify=final)
         return None
     except Exception as e:  # noqa: BLE001
         logger.exception("ih_v2 teacher plan job crashed")
-        await _record_failure(trading_date, job, "PARSE_FAILED", repr(e))
+        await _record_failure(trading_date, job, "PARSE_FAILED", repr(e), notify=final)
         return None
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -138,8 +142,11 @@ async def plan_missing_check(trading_date: date) -> bool:
     return True
 
 
-async def run_live_job(trading_date: date, attempt: str) -> IhTeacherDay | None:
-    """Fetch + store the teacher's live trade for trading_date (attempt '15:45'|'17:30'|'manual')."""
+async def run_live_job(trading_date: date, attempt: str, *, final: bool = True) -> IhTeacherDay | None:
+    """Fetch + store the teacher's live trade for trading_date.
+
+    `final=True` (the last scheduled attempt, or a manual run) marks LIVE_MISSING and alerts on
+    failure; earlier attempts record the failure silently and leave the day for the next retry."""
     job = f"live@{attempt}"
     if not _enabled():
         return None
@@ -148,17 +155,16 @@ async def run_live_job(trading_date: date, attempt: str) -> IhTeacherDay | None:
         if row is not None and row.live:
             return row
     workdir = _workdir(trading_date, "live")
-    final = attempt in ("17:30", "manual")
     try:
         live, vid = await build_live(trading_date, workdir)
     except TeacherIngestError as e:
         await _record_failure(trading_date, job, e.error_type, e.detail,
-                              status="LIVE_MISSING" if final else None)
+                              status="LIVE_MISSING" if final else None, notify=final)
         return None
     except Exception as e:  # noqa: BLE001
         logger.exception("ih_v2 teacher live job crashed")
         await _record_failure(trading_date, job, "PARSE_FAILED", repr(e),
-                              status="LIVE_MISSING" if final else None)
+                              status="LIVE_MISSING" if final else None, notify=final)
         return None
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

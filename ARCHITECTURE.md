@@ -380,7 +380,7 @@ trade_monitor (500ms): _check_ih_baskets in a SAVEPOINT, BEFORE the per-position
    BASKET_TIME; per-leg checks bypassed for IH legs (15:25 last-resort fallback);
    "Close v1/v2 basket" → MANUAL_BASKET (shadow left as counterfactual)
 09:34   alert if v1 or v2 has no decision · 09:20–15:20 alert on missing/stale index candles
-15:45/17:30  teacher live trade (5s frames → PIL positions-screen detector → Claude vision on a
+15:45/17:30/19:30/21:30 (+07:30 next-day catch-up)  teacher live trade (5s frames → PIL positions-screen detector → Claude vision on a
         few frames → teaser-aware entry/exit + per-leg merge) → ih_teacher_days (after hours)
 16:00   grade → ih_day_grades (market first-touch labels, teacher, v1/v2 real P&L, every arm's
         counterfactual basket replayed on the captured premium candles, gate what-ifs, lesson)
