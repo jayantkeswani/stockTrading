@@ -64,7 +64,7 @@ def _savepoint_db(db):
 @patch("app.agent.trade_monitor.ws_manager")
 @patch("app.agent.trade_monitor.notify_sl_hit", new_callable=AsyncMock)
 @patch("app.agent.trade_monitor.get_cached_price", new_callable=AsyncMock)
-async def test_v1_leg_still_hits_its_own_sl(mock_price, _n, mock_ws):
+async def test_non_ih_leg_still_hits_its_own_sl(mock_price, _n, mock_ws):
     from app.agent.trade_monitor import _check_position
 
     mock_ws.broadcast = AsyncMock()
@@ -72,22 +72,25 @@ async def test_v1_leg_still_hits_its_own_sl(mock_price, _n, mock_ws):
     db = _db_returning_trade()
     with patch("app.agent.trade_monitor._check_per_lot_stop", new=AsyncMock(return_value=None)), \
          patch("app.services.live_price.get_fill_price", side_effect=Exception("no quote")):
-        action = await _check_position(db, _pos(StrategyName.INTRADAY_HUNTER.value))
+        action = await _check_position(db, _pos(StrategyName.VWAP_PULLBACK.value))
     assert action is not None and action["details"]["reason"] == ExitReason.AGENT_SL.value
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", [StrategyName.INTRADAY_HUNTER.value,
+                                      StrategyName.INTRADAY_HUNTER_V2.value])
 @patch("app.agent.trade_monitor.is_past_close_deadline", return_value=False)
 @patch("app.agent.trade_monitor.ws_manager")
 @patch("app.agent.trade_monitor.get_cached_price", new_callable=AsyncMock)
-async def test_v2_leg_bypasses_per_leg_sl_and_target(mock_price, mock_ws, _d):
+async def test_ih_leg_bypasses_per_leg_sl_and_target(mock_price, mock_ws, _d, strategy):
+    """v1 and v2 legs exit only at the basket level — per-leg SL/target never fire."""
     from app.agent.trade_monitor import _check_position
 
     mock_ws.broadcast = AsyncMock()
     db = _db_returning_trade()
     for ltp in (10.0, 900.0):  # far below SL and far above target
         mock_price.return_value = {"ltp": ltp}
-        pos = _pos(StrategyName.INTRADAY_HUNTER_V2.value)
+        pos = _pos(strategy)
         assert await _check_position(db, pos) is None
         assert pos.current_price == Decimal(str(ltp))  # MTM still updated
     db.delete.assert_not_called()
@@ -110,9 +113,9 @@ async def test_v2_leg_falls_back_to_1525_close_when_basket_check_throws(mock_pri
     db = _savepoint_db(AsyncMock())
     db.execute = AsyncMock(return_value=res)
     db.add = MagicMock()
-    trade_monitor._ih_v2_basket_alerted.clear()
+    trade_monitor._ih_basket_alerted.clear()
     with patch.object(trade_monitor, "_check_pnl_caps", new=AsyncMock(return_value=None)), \
-         patch.object(trade_monitor, "_check_ih_v2_baskets", new=AsyncMock(side_effect=RuntimeError("boom"))), \
+         patch.object(trade_monitor, "_check_ih_baskets", new=AsyncMock(side_effect=RuntimeError("boom"))), \
          patch("app.services.live_price.get_fill_price", side_effect=Exception("no quote")), \
          patch("app.agent.notification.send_telegram", new=AsyncMock()) as tg:
         actions = await trade_monitor.monitor_positions(db, yolo_mode=True)
@@ -122,30 +125,35 @@ async def test_v2_leg_falls_back_to_1525_close_when_basket_check_throws(mock_pri
     assert len(basket_alerts) == 1  # once per day, not once per poll
 
 
-def test_basket_keys_separate_shadow_and_yolo():
-    from app.agent.trade_monitor import _ih_v2_basket_key
+def test_basket_keys_separate_strategy_shadow_and_yolo():
+    from app.agent.trade_monitor import _ih_basket_key
 
+    v1, v2 = StrategyName.INTRADAY_HUNTER.value, StrategyName.INTRADAY_HUNTER_V2.value
     prof = uuid.uuid4()
     entry = datetime(2026, 10, 9, 3, 47, tzinfo=timezone.utc)  # 09:17 IST
     t = MagicMock(entry_time=entry)
-    shadow = _pos(StrategyName.INTRADAY_HUNTER_V2.value, is_shadow=True)
-    yolo = _pos(StrategyName.INTRADAY_HUNTER_V2.value)
+    shadow = _pos(v2, is_shadow=True)
+    yolo = _pos(v2)
     yolo.yolo_profile_id = prof
-    ks, ky = _ih_v2_basket_key(shadow, t), _ih_v2_basket_key(yolo, t)
-    assert ks == (date(2026, 10, 9), "SHADOW") and ky == (date(2026, 10, 9), str(prof))
+    ks, ky = _ih_basket_key(shadow, t), _ih_basket_key(yolo, t)
+    assert ks == (v2, date(2026, 10, 9), "SHADOW") and ky == (v2, date(2026, 10, 9), str(prof))
     assert ks != ky
+    # a v1 shadow leg on the same day is a different basket from the v2 shadow basket
+    assert _ih_basket_key(_pos(v1, is_shadow=True), t) == (v1, date(2026, 10, 9), "SHADOW")
     # entry_time missing → falls back to opened_at
     t2 = MagicMock(entry_time=None)
     yolo.opened_at = entry
-    assert _ih_v2_basket_key(yolo, t2) == ky
+    assert _ih_basket_key(yolo, t2) == ky
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", [StrategyName.INTRADAY_HUNTER.value,
+                                      StrategyName.INTRADAY_HUNTER_V2.value])
 @patch("app.agent.trade_monitor.get_cached_price", new_callable=AsyncMock, return_value=None)
-async def test_v2_shadow_leg_is_never_stale_closed_alone(_p):
+async def test_ih_shadow_leg_is_never_stale_closed_alone(_p, strategy):
     from app.agent.trade_monitor import _check_position
 
-    pos = _pos(StrategyName.INTRADAY_HUNTER_V2.value, is_shadow=True)
+    pos = _pos(strategy, is_shadow=True)
     pos.created_at = datetime.now(timezone.utc) - timedelta(minutes=30)
     with patch("app.agent.trade_monitor._fetch_option_price_rest", new=AsyncMock(return_value=None)), \
          patch("app.agent.trade_monitor._close_stale_shadow", new=AsyncMock()) as stale:
@@ -154,7 +162,7 @@ async def test_v2_shadow_leg_is_never_stale_closed_alone(_p):
 
 
 @pytest.mark.asyncio
-async def test_v2_basket_crash_never_stops_the_monitor():
+async def test_basket_crash_never_stops_the_monitor():
     from app.agent import trade_monitor
 
     v1 = _pos(StrategyName.INTRADAY_HUNTER.value)
@@ -163,7 +171,7 @@ async def test_v2_basket_crash_never_stops_the_monitor():
     db = _savepoint_db(AsyncMock())
     db.execute = AsyncMock(return_value=res)
     with patch.object(trade_monitor, "_check_pnl_caps", new=AsyncMock(return_value=None)), \
-         patch.object(trade_monitor, "_check_ih_v2_baskets", new=AsyncMock(side_effect=RuntimeError("boom"))), \
+         patch.object(trade_monitor, "_check_ih_baskets", new=AsyncMock(side_effect=RuntimeError("boom"))), \
          patch.object(trade_monitor, "_check_position", new=AsyncMock(return_value={"ok": 1})) as chk:
         actions = await trade_monitor.monitor_positions(db, yolo_mode=True)
     chk.assert_awaited_once()
@@ -257,14 +265,19 @@ async def test_open_position_check_isolated(dbf):
         assert await strategy_runner._has_open_position(_strategy_signal(v2, "NSE:ZZ56100CE")) is False
         async with dbf() as s:
             await _add_position(s, v1.value, "NSE:ZZ55900CE")
-        # v1 behaves exactly as before against its own/other strategies' positions
+        # v1 is strike-aware against its OWN legs (BN ITM-2 + ITM-1 co-exist)…
+        assert await strategy_runner._has_open_position(_strategy_signal(v1, "NSE:ZZ55800CE")) is False
+        assert await strategy_runner._has_open_position(_strategy_signal(v1, "NSE:ZZ55900CE")) is True
+        # …but any other (non-v2) strategy's position on the index still blocks it
+        async with dbf() as s:
+            await _add_position(s, StrategyName.VWAP_PULLBACK.value, "NSE:ZZ55700CE")
         assert await strategy_runner._has_open_position(_strategy_signal(v1, "NSE:ANY")) is True
         # v1 positions do not block v2 either (v2 is fully isolated)
         assert await strategy_runner._has_open_position(_strategy_signal(v2, "NSE:ZZ57000CE")) is False
 
 
 @pytest.mark.asyncio
-async def test_dedup_isolated_and_v2_strike_aware(dbf):
+async def test_dedup_isolated_and_strike_aware(dbf):
     from app.models.signal import Signal
     from app.services.strategy_runner import strategy_runner
 
@@ -284,6 +297,16 @@ async def test_dedup_isolated_and_v2_strike_aware(dbf):
         assert await strategy_runner._dedup_signal(_strategy_signal(v2, "NSE:ZZ56100CE", 120.0), now, True, None) is None
         # the same v2 contract re-firing identically is noise
         assert await strategy_runner._dedup_signal(_strategy_signal(v2, "NSE:ZZ56000CE"), now, True, None) == "skip"
+    async with dbf() as s:
+        s.add(Signal(strategy_name=v1.value, symbol=SYM, signal_type="BUY_CE", instrument_type="OPTION",
+                     strike_price=Decimal("55800"), expiry_date=TEST_DATE, entry_price=Decimal("300"),
+                     stop_loss=Decimal("255"), target_price=Decimal("345"), confidence=Decimal("60"),
+                     status="PENDING", reason="t", indicators={}, fyers_option_symbol="NSE:ZZ55800CE",
+                     generated_at=now))
+        await s.commit()
+    with patch("app.services.strategy_runner.async_session_factory", dbf):
+        # v1's BN ITM-1 leg is a NEW signal, never folded into the PENDING ITM-2 leg
+        assert await strategy_runner._dedup_signal(_strategy_signal(v1, "NSE:ZZ55900CE", 250.0), now, True, None) is None
 
 
 @pytest.mark.asyncio
@@ -305,8 +328,8 @@ async def test_basket_db_error_rolls_back_savepoint_and_monitor_continues(dbf):
         await _add_position(s, StrategyName.INTRADAY_HUNTER.value, "NSE:ZZ56000CE")
     async with dbf() as db:
         with patch.object(trade_monitor, "_check_pnl_caps", new=AsyncMock(return_value=None)), \
-             patch.object(trade_monitor, "_check_ih_v2_baskets", side_effect=broken_basket_check), \
-             patch.object(trade_monitor, "_alert_ih_v2_basket_failure", new=AsyncMock()) as alert, \
+             patch.object(trade_monitor, "_check_ih_baskets", side_effect=broken_basket_check), \
+             patch.object(trade_monitor, "_alert_ih_basket_failure", new=AsyncMock()) as alert, \
              patch.object(trade_monitor, "_check_position", new=AsyncMock(return_value=None)) as chk:
             await trade_monitor.monitor_positions(db, yolo_mode=True)
             await db.commit()

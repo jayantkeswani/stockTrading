@@ -54,9 +54,16 @@ logger = logging.getLogger(__name__)
 # 500ms poll cannot inflate it. Pruned in monitor_positions when positions close/vanish.
 _invalidation_state: dict[uuid.UUID, tuple[str | None, int]] = {}
 
-# Intraday Hunter v2 round-number-hold state per basket key (date, book). In-memory: a restart
-# simply re-evaluates the hold from the next poll. Pruned when the basket has no open legs.
-_ih_v2_basket_state: dict[tuple, "object"] = {}
+# Intraday Hunter (v1 + v2) basket state per basket key (strategy, date, book) — v2's round-number
+# hold. In-memory: a restart simply re-evaluates the hold from the next poll. Pruned when the basket
+# has no open legs.
+_ih_basket_state: dict[tuple, "object"] = {}
+
+# Strategies whose legs exit TOGETHER at the basket level (label used in logs / Telegram).
+_IH_BASKET_STRATEGIES: dict[str, str] = {
+    StrategyName.INTRADAY_HUNTER.value: "v1",
+    StrategyName.INTRADAY_HUNTER_V2.value: "v2",
+}
 
 
 async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[dict]:
@@ -74,19 +81,19 @@ async def monitor_positions(db: AsyncSession, yolo_mode: bool = False) -> list[d
     if cap_actions:
         actions.extend(cap_actions)
 
-    # Intraday Hunter v2 — basket-level exits (all legs of a basket close together). Isolated:
-    # a failure here must never stop the per-position monitor for every other strategy.
+    # Intraday Hunter (v1 + v2) — basket-level exits (all legs of a basket close together).
+    # Isolated: a failure here must never stop the per-position monitor for every other strategy.
     # The check runs inside a SAVEPOINT: any error (incl. a DB error mid-basket) rolls back every
     # leg it touched — a basket is never committed half-closed — and leaves the session usable.
     try:
         async with db.begin_nested():
-            basket_actions = await _check_ih_v2_baskets(db)
+            basket_actions = await _check_ih_baskets(db)
         if basket_actions:
             await db.commit()
             actions.extend(basket_actions)
     except Exception as e:  # noqa: BLE001
-        logger.exception("IH v2 basket check failed (rolled back to savepoint)")
-        await _alert_ih_v2_basket_failure(e)
+        logger.exception("IH basket check failed (rolled back to savepoint)")
+        await _alert_ih_basket_failure(e)
 
     result = await db.execute(select(Position))
     positions = result.scalars().all()
@@ -314,9 +321,9 @@ async def _check_position(
         if not price_data:
             if _is_within_grace_period(pos):
                 return None
-            # IH v2 legs are never closed one-by-one (the basket closes together — its 11:30
+            # IH legs are never closed one-by-one (the basket closes together — its 11:30
             # backstop handles a leg that lost its quote).
-            if pos.is_shadow and pos.strategy_name != StrategyName.INTRADAY_HUNTER_V2.value:
+            if pos.is_shadow and pos.strategy_name not in _IH_BASKET_STRATEGIES:
                 return await _close_stale_shadow(db, pos)
             return None
 
@@ -324,7 +331,7 @@ async def _check_position(
     if current_price <= 0:
         if _is_within_grace_period(pos):
             return None
-        if pos.is_shadow and pos.strategy_name != StrategyName.INTRADAY_HUNTER_V2.value:
+        if pos.is_shadow and pos.strategy_name not in _IH_BASKET_STRATEGIES:
             return await _close_stale_shadow(db, pos)
         return None
 
@@ -351,12 +358,12 @@ async def _check_position(
         "pnl_percent": pnl_pct,
     })
 
-    # Intraday Hunter v2 legs: the per-leg SL / per-lot stop / target / trailing / 15:25 checks are
-    # BYPASSED — v2 exits are basket-level only (_check_ih_v2_baskets, which runs before this
-    # loop). The legs' stop_loss/target_price fields are informational (the basket band per leg).
-    if pos.strategy_name == StrategyName.INTRADAY_HUNTER_V2.value:
+    # Intraday Hunter (v1 + v2) legs: the per-leg SL / per-lot stop / target / trailing / 15:25
+    # checks are BYPASSED — IH exits are basket-level only (_check_ih_baskets, which runs before
+    # this loop). The legs' stop_loss/target_price fields are informational (the per-leg band).
+    if pos.strategy_name in _IH_BASKET_STRATEGIES:
         # Last-resort fallback: if the basket check is broken (it raises every poll — caught and
-        # alerted in monitor_positions), still never hold a v2 leg past 15:25.
+        # alerted in monitor_positions), still never hold an IH leg past 15:25.
         if getattr(pos, "position_type", "INTRADAY") == "INTRADAY" and is_past_close_deadline():
             return await _close_position(
                 db, pos, current_price, ExitReason.TIME_EXIT,
@@ -499,59 +506,72 @@ async def _check_position(
     return None
 
 
-_ih_v2_basket_alerted: set = set()  # dates the basket-failure Telegram already went out
+_ih_basket_alerted: set = set()  # dates the basket-failure Telegram already went out
 
 
-async def _alert_ih_v2_basket_failure(exc: Exception) -> None:
-    """Once per day: Telegram that the v2 basket check is failing (legs then fall back to 15:25)."""
+async def _alert_ih_basket_failure(exc: Exception) -> None:
+    """Once per day: Telegram that the IH basket check is failing (legs then fall back to 15:25)."""
     today = now_ist().date()
-    if today in _ih_v2_basket_alerted:
+    if today in _ih_basket_alerted:
         return
-    _ih_v2_basket_alerted.add(today)
-    logger.warning("IH v2 ALERT [basket_check] basket check raising: %s", exc)
+    _ih_basket_alerted.add(today)
+    logger.warning("IH ALERT [basket_check] basket check raising: %s", exc)
     try:
         from app.agent.notification import send_telegram
         await send_telegram(
-            f"⚠️ <b>IH v2</b> basket exit check is FAILING ({type(exc).__name__}: {exc}). "
-            "v2 legs will only close at the 15:25 fallback — use 'Close v2 basket' if needed."
+            f"⚠️ <b>Intraday Hunter</b> basket exit check is FAILING "
+            f"({type(exc).__name__}: {exc}). "
+            "v1/v2 legs will only close at the 15:25 fallback — use 'Close basket' if needed."
         )
     except Exception:  # noqa: BLE001
-        logger.warning("IH v2 basket-failure Telegram failed")
+        logger.warning("IH basket-failure Telegram failed")
 
 
-def _ih_v2_basket_key(pos: Position, trade: Trade) -> tuple:
-    """(entry trading date IST, book) — book = 'SHADOW' or the YOLO profile id."""
+def _ih_basket_key(pos: Position, trade: Trade) -> tuple:
+    """(strategy, entry trading date IST, book) — book = 'SHADOW' or the YOLO profile id."""
     entry = trade.entry_time or pos.opened_at
     d = entry.astimezone(IST).date() if entry else now_ist().date()
-    return (d, "SHADOW" if pos.is_shadow else str(pos.yolo_profile_id))
+    return (pos.strategy_name, d, "SHADOW" if pos.is_shadow else str(pos.yolo_profile_id))
 
 
-async def _ih_v2_open_baskets(db: AsyncSession) -> dict[tuple, list[tuple[Position, Trade]]]:
-    """Open IH v2 legs grouped by basket key."""
+async def _ih_open_baskets(
+    db: AsyncSession, strategy: str | None = None,
+) -> dict[tuple, list[tuple[Position, Trade]]]:
+    """Open IH legs grouped by basket key — one strategy, or every basket strategy (None)."""
+    strategies = [strategy] if strategy else list(_IH_BASKET_STRATEGIES)
     rows = (
         await db.execute(
             select(Position, Trade)
             .join(Trade, Trade.id == Position.trade_id)
-            .where(Position.strategy_name == StrategyName.INTRADAY_HUNTER_V2.value)
+            .where(Position.strategy_name.in_(strategies))
         )
     ).all()
     groups: dict[tuple, list[tuple[Position, Trade]]] = {}
     for pos, trade in rows:
-        groups.setdefault(_ih_v2_basket_key(pos, trade), []).append((pos, trade))
+        groups.setdefault(_ih_basket_key(pos, trade), []).append((pos, trade))
     return groups
 
 
-_IH_V2_TICK_MAX_AGE_S = 60
-_IH_V2_REST_TTL_S = 5.0  # the monitor polls every 500ms — throttle REST fallbacks per symbol
-_ih_v2_rest_cache: dict[str, tuple[float, float]] = {}
+async def _ih_basket_params(strategy: str) -> dict:
+    """Merged basket params for one IH strategy (v1 and v2 keep separate copies)."""
+    if strategy == StrategyName.INTRADAY_HUNTER.value:
+        from app.services.intraday_hunter.params import v1_params_async
+        return await v1_params_async()
+    from app.services.intraday_hunter_v2.params import v2_params
+    return v2_params()
 
 
-async def _ih_v2_rest_ltp(symbol: str) -> float | None:
+_IH_TICK_MAX_AGE_S = 60
+_IH_REST_TTL_S = 5.0  # the monitor polls every 500ms — throttle REST fallbacks per symbol
+_ih_rest_cache: dict[str, tuple[float, float]] = {}
+
+
+async def _ih_rest_ltp(symbol: str) -> float | None:
     """REST LTP for a stale/missing leg, cached ~5s per symbol (rate-limit safe)."""
     import time as _t
 
-    hit = _ih_v2_rest_cache.get(symbol)
-    if hit and _t.monotonic() - hit[0] < _IH_V2_REST_TTL_S:
+    hit = _ih_rest_cache.get(symbol)
+    if hit and _t.monotonic() - hit[0] < _IH_REST_TTL_S:
         return hit[1]
     rest = await _fetch_option_price_rest(symbol)
     try:
@@ -559,7 +579,7 @@ async def _ih_v2_rest_ltp(symbol: str) -> float | None:
     except (TypeError, ValueError):
         ltp = 0.0
     if ltp > 0:
-        _ih_v2_rest_cache[symbol] = (_t.monotonic(), ltp)
+        _ih_rest_cache[symbol] = (_t.monotonic(), ltp)
         return ltp
     return None
 
@@ -572,12 +592,12 @@ def _tick_is_fresh(pd: dict, now: datetime) -> bool:
         ts = datetime.fromisoformat(str(pd.get("timestamp")))
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=IST)
-        return (now - ts).total_seconds() <= _IH_V2_TICK_MAX_AGE_S
+        return (now - ts).total_seconds() <= _IH_TICK_MAX_AGE_S
     except (TypeError, ValueError):
         return False
 
 
-async def _ih_v2_quotes(legs: list[tuple[Position, Trade]]):
+async def _ih_quotes(legs: list[tuple[Position, Trade]]):
     """LegQuotes (LTP + bid from the Redis tick cache) + the traded indices' live spots.
 
     A leg with no tick, or a tick older than 60s, falls back to a Fyers REST quote (LTP only —
@@ -597,7 +617,7 @@ async def _ih_v2_quotes(legs: list[tuple[Position, Trade]]):
         sym = pos.fyers_option_symbol or pos.symbol
         pd = await get_cached_price(sym) or {}
         if not _tick_is_fresh(pd, now) and pos.fyers_option_symbol:
-            rest_ltp = await _ih_v2_rest_ltp(pos.fyers_option_symbol)
+            rest_ltp = await _ih_rest_ltp(pos.fyers_option_symbol)
             if rest_ltp:
                 pd = {"ltp": rest_ltp}  # REST quote: LTP only, no (stale) bid
 
@@ -611,7 +631,7 @@ async def _ih_v2_quotes(legs: list[tuple[Position, Trade]]):
     return quotes, spots
 
 
-async def _close_ih_v2_basket(
+async def _close_ih_basket(
     db: AsyncSession,
     legs: list[tuple[Position, Trade]],
     exit_reason: ExitReason,
@@ -627,122 +647,126 @@ async def _close_ih_v2_basket(
     return actions
 
 
-async def _check_ih_v2_baskets(db: AsyncSession) -> list[dict] | None:
-    """Intraday Hunter v2 BASKET-level exits — evaluated before the per-position loop.
+async def _check_ih_baskets(db: AsyncSession) -> list[dict] | None:
+    """Intraday Hunter (v1 + v2) BASKET-level exits — evaluated before the per-position loop.
 
-    Groups open `intraday_hunter_v2` legs per (trading day, book = YOLO profile or SHADOW),
-    values the basket at the exit side (bid; LTP fallback; LTP when fill_model=LTP) and applies
-    `intraday_hunter_v2.basket.evaluate_basket` (±T 1:1, round-number hold, 11:30 backstop).
-    On CLOSE every leg closes together (BASKET_TARGET / BASKET_STOP / BASKET_TIME). Round-hold
-    activations and their results are logged as IH_V2_ROUND_HOLD agent logs.
+    Groups open `intraday_hunter` / `intraday_hunter_v2` legs per (strategy, trading day, book =
+    YOLO profile or SHADOW), values the basket at the exit side (bid; LTP fallback; LTP when
+    fill_model=LTP) and applies `intraday_hunter_v2.basket.evaluate_basket` with that strategy's
+    own params (±T 1:1, v2's optional round-number hold, 11:30 backstop). On CLOSE every leg closes
+    together (BASKET_TARGET / BASKET_STOP / BASKET_TIME). Round-hold activations and their
+    results are logged as IH_V2_ROUND_HOLD agent logs.
     """
     from app.services.intraday_hunter_v2.basket import (
         RoundHoldState, basket_mtm, evaluate_basket, lots_by_index,
     )
-    from app.services.intraday_hunter_v2.params import v2_params
     from app.services.trading_config import get_trading_config_sync
 
-    groups = await _ih_v2_open_baskets(db)
-    for key in [k for k in _ih_v2_basket_state if k not in groups]:
-        _ih_v2_basket_state.pop(key, None)
+    groups = await _ih_open_baskets(db)
+    for key in [k for k in _ih_basket_state if k not in groups]:
+        _ih_basket_state.pop(key, None)
     if not groups:
         return None
 
-    params = v2_params()
+    params_by_strategy = {s: await _ih_basket_params(s) for s in {k[0] for k in groups}}
     cfg = get_trading_config_sync()
     use_book = cfg is None or cfg.fill_model == "BID_ASK"
     now = now_ist()
     all_actions: list[dict] = []
 
     for key, legs in groups.items():
-        quotes, spots = await _ih_v2_quotes(legs)
+        strategy, day, book = key
+        label = _IH_BASKET_STRATEGIES.get(strategy, strategy)
+        quotes, spots = await _ih_quotes(legs)
         mtm, cost = basket_mtm(quotes, use_book=use_book)
         direction = legs[0][0].option_type
-        state = _ih_v2_basket_state.setdefault(key, RoundHoldState())
+        state = _ih_basket_state.setdefault(key, RoundHoldState())
         was_holding = state.active
         dec = evaluate_basket(
             mtm=mtm, cost=cost, direction=direction, spots=spots,
-            traded_indices=[q.index for q in quotes], now=now, state=state, params=params,
-            lots=lots_by_index(quotes),
+            traded_indices=[q.index for q in quotes], now=now, state=state,
+            params=params_by_strategy[strategy], lots=lots_by_index(quotes),
         )
-        book = key[1]
         if dec.event == "round_hold_activated":
             db.add(AgentLog(
                 action_type=AgentActionType.IH_V2_ROUND_HOLD.value,
-                details={"phase": "activated", "book": book, "date": str(key[0]),
-                         "direction": direction, "spots": spots, **dec.detail},
+                details={"phase": "activated", "strategy": strategy, "book": book,
+                         "date": str(day), "direction": direction, "spots": spots, **dec.detail},
             ))
             await db.flush()
-            logger.info("IH v2 round-hold ACTIVATED book=%s %s", book, dec.detail)
+            logger.info("IH %s round-hold ACTIVATED book=%s %s", label, book, dec.detail)
         if dec.action != "CLOSE":
             continue
 
         if was_holding:
             db.add(AgentLog(
                 action_type=AgentActionType.IH_V2_ROUND_HOLD.value,
-                details={"phase": "result", "result": dec.reason, "book": book,
-                         "date": str(key[0]), "direction": direction, "spots": spots,
-                         **dec.detail},
+                details={"phase": "result", "result": dec.reason, "strategy": strategy,
+                         "book": book, "date": str(day), "direction": direction,
+                         "spots": spots, **dec.detail},
             ))
         exit_reason = ExitReason(dec.exit_reason)
         logger.info(
-            "IH v2 basket CLOSE book=%s reason=%s (%s) mtm=%s T=%s legs=%d",
-            book, exit_reason.value, dec.reason, dec.detail.get("mtm"), dec.detail.get("T"), len(legs),
+            "IH %s basket CLOSE book=%s reason=%s (%s) mtm=%s T=%s legs=%d",
+            label, book, exit_reason.value, dec.reason, dec.detail.get("mtm"),
+            dec.detail.get("T"), len(legs),
         )
         all_actions.extend(
-            await _close_ih_v2_basket(db, legs, exit_reason, AgentActionType.BASKET_CLOSE)
+            await _close_ih_basket(db, legs, exit_reason, AgentActionType.BASKET_CLOSE)
         )
-        _ih_v2_basket_state.pop(key, None)
+        _ih_basket_state.pop(key, None)
         if book != "SHADOW":
             try:
                 from app.agent.notification import send_telegram
                 await send_telegram(
-                    f"🧺 <b>IH v2 basket closed</b> — {exit_reason.value} ({dec.reason})\n"
+                    f"🧺 <b>IH {label} basket closed</b> — {exit_reason.value} ({dec.reason})\n"
                     f"{direction} x{len(legs)} legs · MTM ₹{dec.detail.get('mtm')} vs T ₹{dec.detail.get('T')}"
                 )
             except Exception:  # noqa: BLE001
-                logger.warning("IH v2 basket close Telegram failed")
+                logger.warning("IH basket close Telegram failed")
 
     return all_actions or None  # the caller commits (savepoint in monitor_positions)
 
 
-async def close_ih_v2_basket_manual(db: AsyncSession, include_shadow: bool = False) -> dict:
-    """Emergency "Close v2 basket": close ALL open v2 YOLO legs together (MANUAL_BASKET).
+async def close_ih_basket_manual(
+    db: AsyncSession, strategy: str, include_shadow: bool = False,
+) -> dict:
+    """Emergency "Close basket": close ALL open YOLO legs of one IH strategy (MANUAL_BASKET).
 
     The SHADOW basket is left running by default — it keeps following the system's basket rules,
-    so it IS the system's counterfactual for this manual close (grading compares the two). The
-    system's view at the moment of the close (MTM, T, round-hold state) is recorded in a
-    MANUAL_BASKET_CLOSE agent log.
+    so it IS the system's counterfactual for this manual close. The system's view at the moment
+    of the close (MTM, T, round-hold state) is recorded in a MANUAL_BASKET_CLOSE agent log.
     """
     from app.services.intraday_hunter_v2.basket import basket_mtm, basket_target, lots_by_index
-    from app.services.intraday_hunter_v2.params import v2_params
 
-    groups = await _ih_v2_open_baskets(db)
-    params = v2_params()
+    groups = await _ih_open_baskets(db, strategy)
+    params = await _ih_basket_params(strategy)
     closed: list[dict] = []
     snapshots: list[dict] = []
     for key, legs in groups.items():
-        if key[1] == "SHADOW" and not include_shadow:
+        _strategy, day, book = key
+        if book == "SHADOW" and not include_shadow:
             continue
-        quotes, spots = await _ih_v2_quotes(legs)
+        quotes, spots = await _ih_quotes(legs)
         mtm, cost = basket_mtm(quotes)
-        state = _ih_v2_basket_state.get(key)
+        state = _ih_basket_state.get(key)
         snapshots.append({
-            "book": key[1], "date": str(key[0]), "legs": len(legs),
+            "strategy": strategy, "book": book, "date": str(day), "legs": len(legs),
             "mtm": None if mtm is None else round(mtm, 2), "cost": round(cost, 2),
             "T": round(basket_target(params, cost, lots_by_index(quotes)), 2),
             "round_hold_active": bool(state and getattr(state, "active", False)),
             "spots": spots,
             "counterfactual": "shadow basket left open — it follows the system rules",
         })
-        closed.extend(await _close_ih_v2_basket(
+        closed.extend(await _close_ih_basket(
             db, legs, ExitReason.MANUAL_BASKET, AgentActionType.MANUAL_BASKET_CLOSE,
         ))
-        _ih_v2_basket_state.pop(key, None)
+        _ih_basket_state.pop(key, None)
     if snapshots:
         db.add(AgentLog(
             action_type=AgentActionType.MANUAL_BASKET_CLOSE.value,
-            details={"system_view_at_close": snapshots, "closed_legs": len(closed)},
+            details={"strategy": strategy, "system_view_at_close": snapshots,
+                     "closed_legs": len(closed)},
         ))
     await db.commit()
     return {"closed_legs": len(closed), "baskets": snapshots}

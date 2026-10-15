@@ -98,26 +98,25 @@ def _num(v) -> float | None:
     return f if f > 0 else None
 
 
-@router.get("/v2/basket", response_model=IhV2BasketResponse)
-async def v2_basket(db: AsyncSession = Depends(get_db)):
-    """Today's v2 baskets per book: basket-level MTM (bid) vs ±T, round-hold state, legs."""
+async def build_basket_view(db: AsyncSession, strategy: str, params: dict) -> IhV2BasketResponse:
+    """Today's baskets for one IH strategy (v1 or v2), per book: basket-level MTM (bid) vs ±T,
+    round-hold state, legs — open baskets from positions, closed ones from today's trades."""
     from app.agent import trade_monitor
     from app.core.enums import TradeSource, TradeStatus
-    from app.core.redis import get_cached_price
     from app.models.trade import Trade
     from app.services.intraday_hunter_v2.basket import basket_mtm, basket_target, lots_by_index
     from app.services.yolo_profile_service import get_all_profiles
 
-    params = await v2_params_async()
     pct = float(params["basket_tp_sl_pct"])
     today = now_ist().date()
     names = {str(p.id): p.name for p in await get_all_profiles()}
     books: list[IhV2Book] = []
 
-    for key, legs in (await trade_monitor._ih_v2_open_baskets(db)).items():
-        quotes, _spots = await trade_monitor._ih_v2_quotes(legs)
+    for key, legs in (await trade_monitor._ih_open_baskets(db, strategy)).items():
+        book_key = key[2]
+        quotes, _spots = await trade_monitor._ih_quotes(legs)
         mtm, cost = basket_mtm(quotes)
-        state = trade_monitor._ih_v2_basket_state.get(key)
+        state = trade_monitor._ih_basket_state.get(key)
         T = basket_target(params, cost, lots_by_index(quotes))
         out_legs = []
         for (pos, trade), q in zip(legs, quotes):
@@ -130,8 +129,8 @@ async def v2_basket(db: AsyncSession = Depends(get_db)):
                 pnl=round((px - q.entry_price) * q.qty, 2) if px else None, status="OPEN",
             ))
         books.append(IhV2Book(
-            book="SHADOW" if key[1] == "SHADOW" else names.get(key[1], key[1]),
-            is_shadow=key[1] == "SHADOW", direction=legs[0][0].option_type, status="OPEN",
+            book="SHADOW" if book_key == "SHADOW" else names.get(book_key, book_key),
+            is_shadow=book_key == "SHADOW", direction=legs[0][0].option_type, status="OPEN",
             cost=round(cost, 2), mtm=None if mtm is None else round(mtm, 2), T=round(T, 2),
             pct_of_T=None if (mtm is None or not T) else round(mtm / T * 100, 1),
             round_hold_active=bool(state and state.active),
@@ -140,7 +139,7 @@ async def v2_basket(db: AsyncSession = Depends(get_db)):
         ))
 
     closed = (await db.execute(select(Trade).where(
-        Trade.strategy_name == STRATEGY, Trade.status == TradeStatus.CLOSED.value,
+        Trade.strategy_name == strategy, Trade.status == TradeStatus.CLOSED.value,
         cast(func.timezone("Asia/Kolkata", Trade.entry_time), Date) == today,
     ))).scalars().all()
     by_book: dict[str, list] = {}
@@ -173,13 +172,19 @@ async def v2_basket(db: AsyncSession = Depends(get_db)):
                               time_exit=str(params["basket_time_exit"]), books=books)
 
 
+@router.get("/v2/basket", response_model=IhV2BasketResponse)
+async def v2_basket(db: AsyncSession = Depends(get_db)):
+    """Today's v2 baskets per book: basket-level MTM (bid) vs ±T, round-hold state, legs."""
+    return await build_basket_view(db, STRATEGY, await v2_params_async())
+
+
 @router.post("/v2/basket/close")
 async def v2_basket_close(db: AsyncSession = Depends(get_db)):
     """Emergency: close ALL open v2 YOLO legs together (MANUAL_BASKET). The shadow basket keeps
     running under the system rules as the counterfactual."""
-    from app.agent.trade_monitor import close_ih_v2_basket_manual
+    from app.agent.trade_monitor import close_ih_basket_manual
 
-    return await close_ih_v2_basket_manual(db)
+    return await close_ih_basket_manual(db, STRATEGY)
 
 
 # ── learning loop ──

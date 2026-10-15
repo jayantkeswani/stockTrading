@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { formatTime } from "@/lib/formatters";
-import type { IntradayHunterRun, IntradayHunterHistoryItem, IntradayHunterBasketLeg } from "@/lib/types";
+import type { IntradayHunterRun, IntradayHunterHistoryItem } from "@/lib/types";
 import { StatusChip } from "@/components/intraday-hunter/badges";
 import { ThesisCard } from "@/components/intraday-hunter/ThesisCard";
 import { DecisionCard } from "@/components/intraday-hunter/DecisionCard";
-import { BasketCard } from "@/components/intraday-hunter/BasketCard";
+import { BasketCard } from "@/components/intraday-hunter/v2/BasketCard";
 import { HistoryTimeline } from "@/components/intraday-hunter/HistoryTimeline";
 import { HistoryDetailModal } from "@/components/intraday-hunter/HistoryDetailModal";
 import { V2Panel } from "@/components/intraday-hunter/v2/V2Panel";
@@ -17,21 +17,18 @@ const POLL_MS = 20000;
 function IntradayHunterV1() {
   const [run, setRun] = useState<IntradayHunterRun | null>(null);
   const [history, setHistory] = useState<IntradayHunterHistoryItem[]>([]);
-  const [basket, setBasket] = useState<IntradayHunterBasketLeg[]>([]);
   const [historyDate, setHistoryDate] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [today, hist, legs] = await Promise.all([
+      const [today, hist] = await Promise.all([
         api.getIntradayHunterToday(),
         api.getIntradayHunterHistory(30),
-        api.getIntradayHunterBasket(),
       ]);
       setRun(today);
       setHistory(hist);
-      setBasket(legs);
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to load");
     }
@@ -117,7 +114,7 @@ function IntradayHunterV1() {
         <div className="col-span-12 lg:col-span-8 space-y-3">
           <ThesisCard call1={run?.call1_json ?? null} generatedAt={run?.created_at} />
           {run && <DecisionCard run={run} />}
-          <BasketCard legs={basket} onClosed={load} />
+          <BasketCard variant="v1" />
         </div>
         <div className="col-span-12 lg:col-span-4">
           <HistoryTimeline items={history} onSelect={setHistoryDate} />
