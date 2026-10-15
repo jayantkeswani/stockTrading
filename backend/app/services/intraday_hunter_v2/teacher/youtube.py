@@ -43,8 +43,10 @@ def require_tool(name: str) -> str:
 def classify_ytdlp_error(stderr: str) -> str:
     """Map yt-dlp stderr text to a TeacherIngestError type (PURE)."""
     s = (stderr or "").lower()
-    if "proxy" in s or "tunnel connection failed" in s or "407" in s:
-        return "PROXY_FAILED"
+    if "proxy" in s or "tunnel connection failed" in s or "407" in s \
+            or "connection refused" in s or "transporterror" in s or "connection reset" in s \
+            or "network is unreachable" in s or "timed out" in s or "name or service not known" in s:
+        return "PROXY_FAILED"  # network-level: the proxy (or the path through it) is down
     if "requested format is not available" in s or "only images are available" in s:
         return "FORMAT_UNAVAILABLE"  # a half-blocked exit serves storyboards only
     if "sign in to confirm" in s or "429" in s or "403" in s or "too many requests" in s \
