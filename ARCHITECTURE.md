@@ -366,7 +366,7 @@ Kill switch: strategy_configs.is_active('intraday_hunter_v2') (≤15s, fails clo
 09:10   ATM±2 CE/PE subscribe (re-centred 09:16:30) → feed_manager persists premium 1m candles
 09:15–09:45  1-min option chain → oi_snapshots (opening OI flow)
 NIFTY 1m candle close (feed_manager._emit_candle, wrapped, fire-and-forget):
-   ├── ih_v2_watcher: Call 2 at candle+1 → 09:16 first, every minute, 09:25 deadline
+   ├── ih_v2_watcher: Call 2 at candle+1 → 09:16 first, every minute, 09:30 deadline
    │     text-only facts (levels.py stop pools, OI flow, order flow, teacher side) → Sonnet-class
    │     ENTER → signals.py: BN ATM+OTM-1, NIFTY ATM, SENSEX ATM → strategy_runner._handle_signal
    │            → shadow (1 lot) + YOLO profile IH-v2 (2 lots/leg) — strike-aware, isolated from v1

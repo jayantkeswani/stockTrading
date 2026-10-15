@@ -40,6 +40,11 @@ export function GradesCard() {
                   <span className="text-text-muted">mkt {g.market?.clean_side ?? "—"} / {g.market?.opening ?? "—"}</span>
                   <span>v2 {g.v2?.side ?? "—"} {g.v2?.decision ?? ""} <span className={pnlCls(g.v2?.yolo_net_pnl)}>{formatPnl(g.v2?.yolo_net_pnl)}</span></span>
                   <span>teacher {g.teacher?.side ?? "—"} <span className={pnlCls(g.teacher?.pnl)}>{formatPnl(g.teacher?.pnl)}</span></span>
+                  {g.arms?.skip_cost?.side && (
+                    <span title="v2 skipped: the teacher's plan side entered at the deadline (+ = the skip cost money, − = it saved money)">
+                      skip cost <span className={pnlCls(g.arms.skip_cost.cf?.pnl)}>{formatPnl(g.arms.skip_cost.cf?.pnl)}</span>
+                    </span>
+                  )}
                   {g.lesson?.one_line_takeaway && (
                     <span className="basis-full text-text-secondary italic">{g.lesson.one_line_takeaway}</span>
                   )}

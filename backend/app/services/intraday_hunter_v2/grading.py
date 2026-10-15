@@ -47,7 +47,9 @@ from app.services.intraday_hunter_v2.params import STRATEGY, parse_hhmm, v2_para
 
 logger = logging.getLogger(__name__)
 
-ARMS = ("rule_a", "plan_side", "oi_flow_side", "v1", "v2_llm", "jev", "teacher")
+# skip_cost: on a v2 SKIP day, the teacher's plan side entered at the Call 2 deadline — what the
+# skip cost (+) or saved (−). Priced like every other arm; absent on days v2 entered.
+ARMS = ("rule_a", "plan_side", "oi_flow_side", "v1", "v2_llm", "jev", "teacher", "skip_cost")
 
 
 # ─────────────────────────── pure helpers ───────────────────────────
@@ -96,6 +98,14 @@ def majority(sides: dict[str, str | None], k: int = 2) -> str | None:
         if vals.count(s) >= k:
             return s
     return None
+
+
+def skip_cost_entry(v2_decision: str | None, plan_side: str | None, deadline: str) -> dict | None:
+    """The skip-cost arm's entry: {side, decision_at=deadline} when v2 SKIPped and the teacher's
+    plan gives a side for today's opening; None otherwise (v2 entered, never ran, or no plan). Pure."""
+    if v2_decision != "SKIP" or plan_side not in ("CE", "PE"):
+        return None
+    return {"side": plan_side, "decision_at": deadline}
 
 
 def move_pct(candles: list[dict], ref: float, until: str | None = None) -> float | None:
@@ -446,6 +456,10 @@ async def grade_day(session: AsyncSession, d: date) -> IhDayGrade | None:
             entries[arm] = {"side": out_variants[v]["side"], "decision_at": out_variants[v]["decision_at"]}
     if teacher and teacher.get("side") in ("CE", "PE") and teacher.get("entry_clock"):
         entries["teacher"] = {"side": teacher["side"], "decision_at": teacher["entry_clock"]}
+    sc = skip_cost_entry(out_variants["v2"]["decision"], plan_info["side_for_opening"],
+                         params["call2_deadline"])
+    if sc:
+        entries["skip_cost"] = sc
 
     cap = await capture.load_capture(d)
     contracts = cap.get("contracts") or {}

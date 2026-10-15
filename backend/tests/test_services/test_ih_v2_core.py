@@ -38,12 +38,36 @@ class TestLevelFacts:
         f = levels.level_facts("NIFTY", PREV, cs)
         pdl = next(x for x in f["levels"] if x["name"] == "pdl")
         assert pdl["broken"] and pdl["holding"] is False
-        assert any("swept" in ln for ln in levels.describe_facts(f))
+        assert pdl["ever_closed_beyond"] is False and pdl["closes_beyond"] == 0
+        assert any("wick only" in ln for ln in levels.describe_facts(f))
         cs2 = [c("09:15", 24950, 24960, 24880, 24885)]
         pdl2 = next(x for x in levels.level_facts("NIFTY", PREV, cs2)["levels"] if x["name"] == "pdl")
         assert pdl2["holding"] is True
         unb = next(x for x in levels.level_facts("NIFTY", PREV, cs2)["levels"] if x["name"] == "pdh")
         assert unb["holding"] is None
+
+    def test_closes_beyond_streak_and_failed_after_close(self):
+        cs = [c("09:15", 25040, 25090, 25030, 25085), c("09:16", 25085, 25100, 25080, 25095)]
+        pdh = next(x for x in levels.level_facts("NIFTY", PREV, cs)["levels"] if x["name"] == "pdh")
+        assert pdh["closes_beyond"] == 2 and pdh["ever_closed_beyond"] is True
+        assert any("closed beyond for the last 2 candles" in ln
+                   for ln in levels.describe_facts(levels.level_facts("NIFTY", PREV, cs)))
+        cs.append(c("09:17", 25095, 25096, 25060, 25070))  # closes back under PDH 25080
+        f = levels.level_facts("NIFTY", PREV, cs)
+        pdh = next(x for x in f["levels"] if x["name"] == "pdh")
+        assert pdh["closes_beyond"] == 0 and pdh["ever_closed_beyond"] is True
+        assert any("closed beyond earlier, now back inside" in ln for ln in levels.describe_facts(f))
+
+    def test_last_candle_impulse(self):
+        quiet = [c("09:15", 25000, 25012, 24995, 25008), c("09:16", 25008, 25015, 25002, 25010)]
+        assert levels.last_candle(quiet)["impulse"] is False
+        spike = quiet + [c("09:17", 25010, 25075, 25008, 25070)]  # 67 pts vs ~15 avg, 0.27%
+        lc = levels.last_candle(spike)
+        assert lc["impulse"] is True and lc["dir"] == "up" and lc["ratio"] >= 2
+        assert levels.last_candle([c("09:15", 25000, 25050, 24990, 25040)])["impulse"] is True
+        assert levels.last_candle([c("09:15", 25000, 25010, 24995, 25005)])["impulse"] is False
+        f = levels.level_facts("NIFTY", PREV, spike)
+        assert any("IMPULSE candle" in ln for ln in levels.describe_facts(f))
 
     def test_gap_open_above_pdh_counts_as_broken_at_open(self):
         f = levels.level_facts("NIFTY", PREV, [c("09:15", 25100, 25120, 25090, 25110)])
@@ -363,6 +387,25 @@ class TestGrading:
         tie = [c("09:16", 100, 100.3, 99.7, 100)]
         assert grading.first_touch(tie, 100.0, "CE", 0.25, 0.20) == "stop"  # same-candle tie
         assert grading.clean_side([c("09:16", 100, 100.1, 99.9, 100)], 100.0, 0.25, 0.2) is None
+
+    def test_skip_cost_entry_only_on_skip_with_plan(self):
+        assert grading.skip_cost_entry("SKIP", "CE", "09:30") == {"side": "CE", "decision_at": "09:30"}
+        assert grading.skip_cost_entry("ENTER", "CE", "09:30") is None   # v2 traded
+        assert grading.skip_cost_entry(None, "PE", "09:30") is None      # v2 never ran
+        assert grading.skip_cost_entry("SKIP", None, "09:30") is None    # no teacher plan
+        assert "skip_cost" in grading.ARMS
+
+    def test_ledger_counts_skip_cost_days_only(self):
+        rows = [
+            {"trading_date": "2026-10-14", "market": {"clean_side": "CE"},
+             "arms": {"skip_cost": {"side": "CE", "cf": {"pnl": 12000.0}}}},
+            {"trading_date": "2026-10-15", "market": {"clean_side": "CE"},
+             "arms": {"skip_cost": {"side": None}}},                       # v2 entered that day
+            {"trading_date": "2026-10-16", "market": {"clean_side": "PE"},
+             "arms": {"skip_cost": {"side": "CE", "cf": {"pnl": -10000.0}}}},
+        ]
+        sc = grading.compute_ledger(rows, 20)["skip_cost"]
+        assert sc["n"] == 2 and sc["n_cf"] == 2 and sc["mean_cf_pnl"] == 1000.0
 
     def test_majority(self):
         assert grading.majority({"a": "CE", "b": "CE", "c": "PE"}) == "CE"
