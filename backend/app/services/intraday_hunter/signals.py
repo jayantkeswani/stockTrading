@@ -9,12 +9,12 @@ Strike structure (fixed, independent of the LLM's strike hint): per traded index
 ``_IH_LEG_STRUCTURE`` legs at specific ITM depths — **BANKNIFTY = two legs (ITM-2 + ITM-1)**,
 NIFTY = ITM-1, SENSEX = ITM-1. Lots are fixed per leg at execution (see lot_sizing).
 
-SL/target: symmetric **1:1**, sized as ``IH_SL_TGT_PCT`` of the entry premium (a single knob
-that auto-scales the rupee move with the option price). That premium move is also converted to
-an index-points distance via a delta approximation and stored as ``index_sl``/``index_target``
-on the signal (informational context — e.g. for the Basket & Exits UI card) — the trade monitor
-exits each leg on the **option premium** ``stop_loss``/``target_price`` fields via the normal
-per-position SL/target check, same as every other strategy.
+Exits are BASKET-level: all legs of a book close together on basket MTM ±T (rupees per lot,
+1:1) or at the 11:30 backstop — `trade_monitor._check_ih_baskets` with v1's own params
+(`intraday_hunter.params`). The per-leg ``stop_loss``/``target_price`` are INFORMATIONAL: the
+leg's share of the basket band, premium x (1 ∓ ``basket_tp_sl_pct``); the monitor bypasses the
+per-leg checks for v1 legs. That premium move is also converted to an index-points distance via a
+delta approximation and stored as ``index_sl``/``index_target`` (informational context).
 
 Index direction != option win-rate (the S7 lesson): these signals are PAPER-validated
 (shadow always 1 lot; a fixed-qty YOLO profile in parallel) before any capital.
@@ -29,16 +29,12 @@ from sqlalchemy import Date, cast, func, select
 from app.core.constants import STRIKE_GAPS
 from app.core.enums import InstrumentType, SignalType, StrategyName
 from app.models.signal import Signal
+from app.services.intraday_hunter.params import v1_params_async
 from app.services.option_resolver import resolve_option_details
 from app.strategies.base import StrategySignal
 
 logger = logging.getLogger(__name__)
 
-# Symmetric (1:1) SL/target sized as a fraction of the entry premium. Auto-scales the rupee
-# move with the option price (e.g. ~60% → 180 pts on a 300 premium, 360 on a 600). Widened from
-# 0.30 (2×) — real premium paths showed the tighter stop chopped winners that keep running well
-# past a 30% target and got stopped out well before a 30% adverse move exhausted.
-IH_SL_TGT_PCT = 0.60
 # Per-index leg structure as ITM depths (0 = ATM, 1 = ITM-1, 2 = ITM-2). BANKNIFTY trades two
 # legs (a deeper ITM-2 + an ITM-1); NIFTY and SENSEX a single ITM-1 leg.
 _IH_LEG_STRUCTURE: dict[str, list[int]] = {
@@ -48,7 +44,7 @@ _IH_LEG_STRUCTURE: dict[str, list[int]] = {
 }
 _IH_DEFAULT_DEPTHS = [1]
 # Delta approximation by ITM depth (premium pts ≈ delta × index pts), to convert the desired
-# premium move into the index-points SL/target distance the monitor validates against.
+# premium move into the informational index-points SL/target distance.
 _IH_DELTA_BY_DEPTH = {0: 0.50, 1: 0.60, 2: 0.68}
 _INDEX_SET = {"NIFTY", "BANKNIFTY", "SENSEX"}
 
@@ -97,6 +93,7 @@ async def emit_signals_for_enter(session, run, live: dict) -> list[str]:
     thesis = (call2.get("thesis") or "Intraday Hunter ENTER").strip()
     setup_type = (call2.get("regime") or "intraday_hunter").strip()
     trapped_side = call2.get("trapped_side")
+    band_pct = float((await v1_params_async())["basket_tp_sl_pct"])
 
     emitted: list[str] = []
     seen_indices: set[str] = set()
@@ -122,7 +119,7 @@ async def emit_signals_for_enter(session, run, live: dict) -> list[str]:
         for depth in _IH_LEG_STRUCTURE.get(index, _IH_DEFAULT_DEPTHS):
             label = await _emit_leg(
                 session, index, opt_type, signal_type, spot, depth,
-                confidence, thesis, setup_type, trapped_side, call2,
+                confidence, thesis, setup_type, trapped_side, call2, band_pct,
             )
             if label:
                 emitted.append(label)
@@ -133,6 +130,7 @@ async def emit_signals_for_enter(session, run, live: dict) -> list[str]:
 async def _emit_leg(
     session, index: str, opt_type: str, signal_type, spot: float, depth: int,
     confidence: float, thesis: str, setup_type: str, trapped_side, call2: dict,
+    band_pct: float,
 ) -> str | None:
     """Resolve and emit ONE option leg at the requested ITM depth. Returns its label or None."""
     # Resolve the contract at the requested depth (fall back one strike toward ATM if the
@@ -141,7 +139,7 @@ async def _emit_leg(
         symbol=index,
         index_price=spot,
         signal_type=signal_type,
-        sl_pct=IH_SL_TGT_PCT,
+        sl_pct=band_pct,
         rr_multiplier=1.0,
         itm_offsets=(depth, max(depth - 1, 0)),
     )
@@ -163,8 +161,8 @@ async def _emit_leg(
 
     premium = float(resolution.option_premium)
     resolved_depth = _resolved_depth(index, float(resolution.strike_price), spot)
-    # Symmetric premium move = IH_SL_TGT_PCT of premium; convert to an index distance via delta.
-    premium_move = IH_SL_TGT_PCT * premium
+    # Informational leg band = band_pct of premium; convert to an index distance via delta.
+    premium_move = band_pct * premium
     delta = _IH_DELTA_BY_DEPTH.get(min(resolved_depth, 2), 0.60)
     index_move = premium_move / delta if delta > 0 else premium_move * 2
 
@@ -175,7 +173,7 @@ async def _emit_leg(
         index_sl = spot + index_move
         index_target = spot - index_move
 
-    # Premium stop/target are display-only (the monitor validates the exit on the index).
+    # Premium stop/target are display-only (the basket exits on its rupee MTM band).
     stop_loss = round(premium - premium_move, 2)
     target_price = round(premium + premium_move, 2)  # 1:1 on premium
 
@@ -201,7 +199,8 @@ async def _emit_leg(
             "ih_thesis": thesis,
             "ih_decision_at": call2.get("_at"),
             "ih_itm_depth": resolved_depth,
-            "ih_sl_tgt_pct": IH_SL_TGT_PCT,
+            "ih_leg": f"ITM-{resolved_depth}",
+            "ih_basket_tp_sl_pct": band_pct,
             "is_permanent_watchlist": False,
         },
         index_sl=round(index_sl, 2),

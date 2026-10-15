@@ -82,8 +82,18 @@ function Book({ b }: { b: IhV2Book }) {
   );
 }
 
-/** Live v2 basket per book (SHADOW + YOLO profiles), polled every 3s while any book is OPEN; single emergency close. Used by: V2Panel */
-export function BasketCard() {
+/** Which IH strategy's baskets a card shows — v1 and v2 both exit at the basket level. */
+export type IhVariant = "v1" | "v2";
+
+/** The basket endpoints for one IH variant (same response shape for both). */
+export function basketApi(variant: IhVariant) {
+  return variant === "v1"
+    ? { get: api.getIhV1Basket, close: api.closeIhV1Basket }
+    : { get: api.getIhV2Basket, close: api.closeIhV2Basket };
+}
+
+/** Live IH basket per book (SHADOW + YOLO profiles) for v1 or v2, polled every 3s while any book is OPEN; single emergency close of the YOLO book (shadow keeps running). Used by: V2Panel (v2), intraday-hunter page (v1) */
+export function BasketCard({ variant = "v2" }: { variant?: IhVariant }) {
   const [data, setData] = useState<IhV2Basket | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -92,12 +102,12 @@ export function BasketCard() {
 
   const load = useCallback(async () => {
     try {
-      setData(await api.getIhV2Basket());
+      setData(await basketApi(variant).get());
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to load");
     }
-  }, []);
+  }, [variant]);
 
   const anyOpen = !!data?.books.some((b) => b.status === "OPEN");
 
@@ -116,7 +126,7 @@ export function BasketCard() {
   const doClose = async () => {
     setBusy(true);
     try {
-      setResult(await api.closeIhV2Basket());
+      setResult(await basketApi(variant).close());
       setConfirming(false);
       await load();
     } catch (e) {
@@ -141,12 +151,12 @@ export function BasketCard() {
               onClick={() => setConfirming(true)}
               className="text-[10px] font-mono px-2 py-0.5 rounded bg-loss text-white hover:opacity-90"
             >
-              Close v2 basket
+              Close {variant} basket
             </button>
           )}
           {confirming && (
             <span className="flex items-center gap-1.5 text-[10px] font-mono">
-              <span className="text-loss">close all open YOLO v2 legs?</span>
+              <span className="text-loss">close all open YOLO {variant} legs?</span>
               <button onClick={doClose} disabled={busy} className="px-2 py-0.5 rounded bg-loss text-white disabled:opacity-50">
                 {busy ? "closing…" : "Confirm"}
               </button>
@@ -171,7 +181,7 @@ export function BasketCard() {
         </div>
       )}
       {!data || data.books.length === 0 ? (
-        <Empty>no v2 basket today</Empty>
+        <Empty>no {variant} basket today</Empty>
       ) : (
         <div className="space-y-2">
           {data.books.map((b) => (

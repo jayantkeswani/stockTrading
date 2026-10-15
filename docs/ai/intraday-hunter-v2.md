@@ -2,7 +2,7 @@
 
 Learning loop, weekly proposals and the change-approval procedure: see `docs/ai/intraday-hunter-v2-learning-loop.md`.
 
-**Status:** BUILT (paper only). Runs **beside** v1 (`docs/ai/intraday-hunter-agent.md`, unchanged) on its own run rows (`intraday_hunter_runs.variant='v2'`), its own strategy name `intraday_hunter_v2`, its own YOLO profile **`IH-v2`** and the shadow book. Code: `backend/app/services/intraday_hunter_v2/`, scheduler `backend/app/tasks/intraday_hunter_v2_task.py`, API `backend/app/api/v1/intraday_hunter_v2.py`, migration `c4d2e8f1a703`.
+**Status:** BUILT (paper only). Runs **beside** v1 (`docs/ai/intraday-hunter-agent.md`) on its own run rows (`intraday_hunter_runs.variant='v2'`), its own strategy name `intraday_hunter_v2`, its own YOLO profile **`IH-v2`** and the shadow book. Code: `backend/app/services/intraday_hunter_v2/`, scheduler `backend/app/tasks/intraday_hunter_v2_task.py`, API `backend/app/api/v1/intraday_hunter_v2.py`, migration `c4d2e8f1a703`.
 
 ## Why v2 exists (evidence, 26 Jun – 1 Oct 2026, 67 trading days)
 
@@ -24,7 +24,7 @@ Learning loop, weekly proposals and the change-approval procedure: see `docs/ai/
 
 ## v1 vs v2
 
-| | v1 (unchanged) | v2 |
+| | v1 | v2 |
 |---|---|---|
 | Strategy / book | `intraday_hunter` / YOLO `IntradayHunter` | `intraday_hunter_v2` / YOLO `IH-v2` (subscribes only to v2, exec confidence 0) + shadow (1 lot) |
 | Evening input | — | teacher plan (00:00 / 06:00 / 08:00 jobs; 08:30 Telegram alert if missing → `teacher_plan_missing`) |
@@ -34,8 +34,8 @@ Learning loop, weekly proposals and the change-approval procedure: see `docs/ai/
 | Gates | — | plan gate + OI gate, **shadow-only** (`enforce_*_gate=false`): computed + logged, never block |
 | Strikes | BN ITM-2 + ITM-1, NIFTY ITM-1, SENSEX ITM-1 | **BN ATM + OTM-1, NIFTY ATM, SENSEX ATM** (`leg_structure`; option_resolver depth −1 = OTM-1) |
 | Size | fixed 2 lots/leg | same fixed 2 lots/leg (`lot_sizing`); shadow 1 lot |
-| Exit | per leg ±60% premium, 15:25 | **basket-level 1:1** (below); all legs together |
-| Manual close | multi-select per-leg card | v2 legs are not in that card; one **"Close v2 basket"** emergency button (`MANUAL_BASKET`) |
+| Exit | **basket-level 1:1**, all legs together — same `evaluate_basket` rules with v1's own params (rupees per lot, 11:30, no round-hold) | **basket-level 1:1** (below); all legs together |
+| Manual close | one **"Close v1 basket"** emergency button (`MANUAL_BASKET`) | one **"Close v2 basket"** emergency button (`MANUAL_BASKET`) |
 
 ## Runtime controls
 
@@ -48,7 +48,9 @@ Learning loop, weekly proposals and the change-approval procedure: see `docs/ai/
 - **Tunables:** `strategy_configs.parameters['intraday_hunter_v2']`, with defaults in `params.INTRADAY_HUNTER_V2_DEFAULTS`. The keys are `basket_tp_sl_pct`, `basket_t_mode`, `rupees_per_lot`, `basket_time_exit`, `call2_prompt_addendum`, `round_hold_*`, `round_step`, `call2_first`, `call2_deadline`, `call2_model`, `call2_timeout_s`, `call1_model`, `enforce_plan_gate`, `enforce_oi_gate`, `oi_flow_deadband`, `opening_type_gap_pct`, `opening_range_end`, `leg_structure`, `minute_log_start/end`, `capture_strikes_each_side`, `lessons_n` and `grade_barriers`. They will be recalibrated from the exit-behaviour study.
 - **Jev arm:** `JEV_ENABLED` + `OPENROUTER_API_KEY` + `JEV_MODEL` (pinned `typesafe/jev-1.13`). **ON in production:** `deploy.yml` writes `OPENROUTER_API_KEY` (GH secret) and `JEV_ENABLED=true` into the prod `.env`. It is shadow-only and never trades. The client never raises: a non-200, timeout (3s) or unparseable reply is logged as `arms.jev = {error, latency_ms}` and the rest of the minute-log row is written as usual (`tests/test_services/test_ih_v2_jev.py`). Verified live against OpenRouter on 2026-10-09: HTTP 200 in ~600ms with parsed answers.
 
-## Basket-level exit (`basket.py`, `trade_monitor._check_ih_v2_baskets`)
+## Basket-level exit (`basket.py`, `trade_monitor._check_ih_baskets`)
+
+The same monitor check and pure rules also exit v1's baskets, grouped separately (the basket key includes the strategy) and with v1's own params — see `docs/ai/intraday-hunter-agent.md` §Exits.
 
 Open v2 legs are grouped per **(trading day, book)**, where the book is the YOLO profile or SHADOW. ±T comes from `basket.basket_target`, picked by `basket_t_mode`:
 

@@ -330,16 +330,18 @@ Strategy 5 uses dynamic symbols (Redis watchlist, not DB config).
 get_auto_strategies_for_symbol() calls strategy.get_symbols() for dynamic matching.
 ```
 
-### 4c. Intraday Hunter Agent (discretionary index-options SUGGESTER — MANUAL-alert only)
+### 4c. Intraday Hunter Agent (v1 — discretionary index-options basket, PAPER)
 ```
 A human-like LLM agent that reasons like the @IntradayHunter trader (stop-loss-hunting /
-trapped-trader framework) and SUGGESTS a CE/PE basket (or SKIP) near the open. It NEVER
-auto-executes — it only writes intraday_hunter_runs rows and surfaces them on /intraday-hunter.
+trapped-trader framework) and decides a CE/PE basket (or SKIP) near the open. On ENTER it emits
+intraday_hunter OPTION signals (BN ITM-2 + ITM-1, NIFTY ITM-1, SENSEX ITM-1) → shadow (1 lot) +
+YOLO profile IntradayHunter (2 lots/leg); legs exit TOGETHER per book in trade_monitor
+._check_ih_baskets (basket MTM ±T in rupees/lot, 11:30 BASKET_TIME, "Close v1 basket").
 
 08:45 AM  — Call 1 (pre-open thesis): intraday_hunter_task.py → thesis.run_call1()
              Builds per-index prev-day structure + multi-day STRUCTURAL memory (no P&L) +
              India VIX + expiry calendar → renders mplfinance prev-day charts → calls Claude
-             (variant C, claude CLI on CLAUDE_CODE_OAUTH_TOKEN, inline base64 charts) →
+             (variant D, claude CLI on CLAUDE_CODE_OAUTH_TOKEN, inline base64 charts) →
              persists call1_json (status THESIS_READY).
 09:18–09:30 — Call 2 (decision): IntradayHunterWatcher hooks the NIFTY 1m candle-close in
              feed_manager._emit_candle → decision.run_call2(). Live open/gap/first-candles +
@@ -355,7 +357,7 @@ the live paper book — no capital until real-premium profit is confirmed. Spec:
 (v1 rows are intraday_hunter_runs.variant='v1'.)
 ```
 
-### 4d. Intraday Hunter v2 (parallel PAPER strategy + learning loop — v1 untouched)
+### 4d. Intraday Hunter v2 (parallel PAPER strategy + learning loop beside v1)
 ```
 Kill switch: strategy_configs.is_active('intraday_hunter_v2') (≤15s, fails closed) · env INTRADAY_HUNTER_V2_ENABLED
 00:00/06:00/08:00  teacher plan (yt-dlp → Hindi subs + keyframes → Claude) → ih_teacher_days
@@ -371,11 +373,12 @@ NIFTY 1m candle close (feed_manager._emit_candle, wrapped, fire-and-forget):
    └── minute_log: ih_minute_log row per index (09:15–10:45 + while in position): features + arms
          (rule_a, plan_side, oi_flow_side, v1_state, v2_llm, gates, jev)
 Ticks: fyers_ws_client keeps tot_buy_qty/tot_sell_qty/bid_size/ask_size → Redis + orderflow_tracker
-trade_monitor (500ms): _check_ih_v2_baskets in a SAVEPOINT, BEFORE the per-position loop —
-   per (day, book); stale/missing leg ticks (>60s) fall back to a throttled REST quote:
-   bid-valued basket MTM vs ±T (0.20×cost) → close ALL legs (BASKET_TARGET/STOP), round-number
-   hold (0.9T, giveback 0.75T, 5 min), 11:30 BASKET_TIME; per-leg checks bypassed for v2
-   (15:25 last-resort fallback); "Close v2 basket" → MANUAL_BASKET (shadow left as counterfactual)
+trade_monitor (500ms): _check_ih_baskets in a SAVEPOINT, BEFORE the per-position loop —
+   per (strategy, day, book) for v1 AND v2, each with its own params; stale/missing leg ticks
+   (>60s) fall back to a throttled REST quote: bid-valued basket MTM vs ±T (rupees/lot or
+   pct×cost) → close ALL legs (BASKET_TARGET/STOP), optional round-number hold (v2), 11:30
+   BASKET_TIME; per-leg checks bypassed for IH legs (15:25 last-resort fallback);
+   "Close v1/v2 basket" → MANUAL_BASKET (shadow left as counterfactual)
 09:34   alert if v1 or v2 has no decision · 09:20–15:20 alert on missing/stale index candles
 15:45/17:30  teacher live trade (5s frames → PIL positions-screen detector → Claude vision on a
         few frames → teaser-aware entry/exit + per-leg merge) → ih_teacher_days (after hours)

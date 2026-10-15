@@ -1,4 +1,4 @@
-import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance, IntradayBias, IntradayHunterRun, IntradayHunterHistoryItem, IntradayHunterBasketLeg, IhV2Basket, IhV2CloseResult, IhV2Ledger, IhV2Grade, IhTeacher, IhV2Proposal, IhV2ProposalAction, IhV2Review } from "./types";
+import type { S5WatchlistItem, S5AgentLogEntry, S5GlobalCues, S5MorningBriefing, S5DailyStats, S5SetupPerformance, IntradayBias, IntradayHunterRun, IntradayHunterHistoryItem, IhV2Basket, IhV2CloseResult, IhV2Ledger, IhV2Grade, IhTeacher, IhV2Proposal, IhV2ProposalAction, IhV2Review } from "./types";
 
 function getApiBase(): string {
   if (typeof window === "undefined") return "http://localhost:8080";
@@ -451,8 +451,9 @@ export const api = {
       { method: "POST" }
     );
   },
-  getIntradayHunterBasket: () =>
-    request<IntradayHunterBasketLeg[]>(`/api/v1/intraday-hunter/basket`),
+  getIhV1Basket: () => request<IhV2Basket>(`/api/v1/intraday-hunter/basket`),
+  closeIhV1Basket: () =>
+    request<IhV2CloseResult>(`/api/v1/intraday-hunter/basket/close`, { method: "POST" }),
   // Intraday Hunter v2 (parallel paper strategy)
   getIhV2Today: () => request<IntradayHunterRun>(`/api/v1/intraday-hunter/v2/today`),
   getIhV2History: (limit = 30) =>

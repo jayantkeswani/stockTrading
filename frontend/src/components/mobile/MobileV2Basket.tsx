@@ -1,11 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api } from "@/lib/api";
 import type { IhV2Basket, IhV2Book, IhV2CloseResult } from "@/lib/types";
 import { formatPnl, basketTLabel } from "@/lib/ihV2";
 import { DirectionBadge } from "../intraday-hunter/badges";
-import { MtmBar } from "../intraday-hunter/v2/BasketCard";
+import { MtmBar, basketApi, type IhVariant } from "../intraday-hunter/v2/BasketCard";
 import { Section, Empty, pnlCls } from "../intraday-hunter/v2/common";
 
 const POLL_MS = 5000;
@@ -45,11 +44,11 @@ function MobileBook({ b }: { b: IhV2Book }) {
 }
 
 /**
- * Phone v2 basket: per-book MTM bar + stacked leg rows and a two-step emergency close
- * (Close → inline Confirm/Cancel) via api.closeIhV2Basket (non-shadow books only).
- * Polls every 5s while any book is OPEN and on `refreshKey`. Used by: MobileHunterV2
+ * Phone IH basket (v1 or v2): per-book MTM bar + stacked leg rows and a two-step emergency close
+ * (Close → inline Confirm/Cancel) via the variant's close endpoint (non-shadow books only).
+ * Polls every 5s while any book is OPEN and on `refreshKey`. Used by: MobileHunterV2 (v2), MobileHunter (v1)
  */
-export function MobileV2Basket({ refreshKey }: { refreshKey?: number }) {
+export function MobileV2Basket({ refreshKey, variant = "v2" }: { refreshKey?: number; variant?: IhVariant }) {
   const [data, setData] = useState<IhV2Basket | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -58,12 +57,12 @@ export function MobileV2Basket({ refreshKey }: { refreshKey?: number }) {
 
   const load = useCallback(async () => {
     try {
-      setData(await api.getIhV2Basket());
+      setData(await basketApi(variant).get());
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to load");
     }
-  }, []);
+  }, [variant]);
 
   const anyOpen = !!data?.books.some((b) => b.status === "OPEN");
   const realOpen = !!data?.books.some((b) => b.status === "OPEN" && !(b.is_shadow || b.book === "SHADOW"));
@@ -82,7 +81,7 @@ export function MobileV2Basket({ refreshKey }: { refreshKey?: number }) {
   const doClose = async () => {
     setBusy(true);
     try {
-      setResult(await api.closeIhV2Basket());
+      setResult(await basketApi(variant).close());
       setConfirming(false);
       await load();
     } catch (e) {
@@ -100,12 +99,12 @@ export function MobileV2Basket({ refreshKey }: { refreshKey?: number }) {
       {error && <p className="text-[11px] font-mono text-loss">{error}</p>}
       {realOpen && !confirming && (
         <button onClick={() => setConfirming(true)} className="w-full py-2 rounded bg-loss text-white text-[12px] font-mono font-medium">
-          EMERGENCY CLOSE v2 basket
+          EMERGENCY CLOSE {variant} basket
         </button>
       )}
       {confirming && (
         <div className="border border-loss/50 rounded p-2 space-y-2">
-          <p className="text-[11px] font-mono text-loss">Close all open YOLO v2 legs now? This cannot be undone.</p>
+          <p className="text-[11px] font-mono text-loss">Close all open YOLO {variant} legs now? This cannot be undone.</p>
           <div className="grid grid-cols-2 gap-2">
             <button onClick={doClose} disabled={busy} className="py-2 rounded bg-loss text-white text-[12px] font-mono disabled:opacity-50">
               {busy ? "closing…" : "Confirm close"}
@@ -127,7 +126,7 @@ export function MobileV2Basket({ refreshKey }: { refreshKey?: number }) {
         </div>
       )}
       {!data || data.books.length === 0 ? (
-        <Empty>no v2 basket today</Empty>
+        <Empty>no {variant} basket today</Empty>
       ) : (
         <div className="space-y-2">
           {data.books.map((b) => (

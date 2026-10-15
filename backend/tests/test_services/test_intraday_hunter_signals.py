@@ -1,8 +1,8 @@
-"""Tests for Intraday Hunter signal emission — leg structure + symmetric 1:1 SL/target.
+"""Tests for Intraday Hunter signal emission — leg structure + informational per-leg band.
 
-BANKNIFTY expands to two legs (ITM-2 + ITM-1); NIFTY/SENSEX one ITM-1 leg. SL/target are
-sized at IH_SL_TGT_PCT of premium (informational index_sl/index_target are also derived
-via a delta approximation, for display only — the monitor exits on the option premium).
+BANKNIFTY expands to two legs (ITM-2 + ITM-1); NIFTY/SENSEX one ITM-1 leg. v1 exits at the
+BASKET level, so each leg's stop_loss/target_price is informational: premium x (1 ∓
+basket_tp_sl_pct) from v1's params (index_sl/index_target derived via a delta approximation).
 """
 from datetime import date
 from types import SimpleNamespace
@@ -13,10 +13,12 @@ import pytest
 from app.core.constants import STRIKE_GAPS
 from app.core.enums import SignalType
 from app.services.intraday_hunter import signals as ih_signals
-from app.services.intraday_hunter.signals import IH_SL_TGT_PCT, emit_signals_for_enter
+from app.services.intraday_hunter.params import INTRADAY_HUNTER_DEFAULTS
+from app.services.intraday_hunter.signals import emit_signals_for_enter
 from app.services.option_resolver import OptionResolution, select_strike_at_itm_depth
 
 _PREMIUM = 300.0
+_BAND = INTRADAY_HUNTER_DEFAULTS["basket_tp_sl_pct"]
 
 
 async def _fake_resolve(*, symbol, index_price, signal_type, sl_pct, rr_multiplier=1.0,
@@ -59,6 +61,8 @@ async def _emit(run, live=_LIVE):
     mock_handle = AsyncMock()
     with patch.object(ih_signals, "resolve_option_details", side_effect=_fake_resolve), \
          patch.object(ih_signals, "_already_emitted_today", new=AsyncMock(return_value=False)), \
+         patch.object(ih_signals, "v1_params_async",
+                      new=AsyncMock(return_value=dict(INTRADAY_HUNTER_DEFAULTS))), \
          patch("app.data_feed.fyers_ws_client.fyers_ws_client.subscribe_symbols",
                new=AsyncMock()), \
          patch("app.services.strategy_runner.strategy_runner._handle_signal", new=mock_handle):
@@ -92,10 +96,11 @@ async def test_banknifty_two_legs_nifty_sensex_one():
 
 @pytest.mark.asyncio
 async def test_premium_sl_target_is_symmetric():
-    """Premium stop/target = entry ∓ IH_SL_TGT_PCT of premium (1:1)."""
+    """Informational premium stop/target = entry ∓ basket_tp_sl_pct of premium (1:1)."""
     _, sigs = await _emit(_run("PE"))
-    pm = IH_SL_TGT_PCT * _PREMIUM
+    pm = _BAND * _PREMIUM
     for s in sigs:
+        assert s.indicators["ih_leg"] == f"ITM-{s.indicators['ih_itm_depth']}"
         assert s.entry_price == _PREMIUM
         assert s.stop_loss == round(_PREMIUM - pm, 2)
         assert s.target_price == round(_PREMIUM + pm, 2)
@@ -111,8 +116,8 @@ async def test_index_levels_symmetric_around_spot_pe():
     down = spot - nifty.index_target
     assert nifty.index_sl > spot and nifty.index_target < spot
     assert abs(up - down) < 0.01  # symmetric
-    # ITM-1 delta 0.60 → index move = (IH_SL_TGT_PCT * premium) / 0.60
-    expected_move = (IH_SL_TGT_PCT * _PREMIUM) / 0.60
+    # ITM-1 delta 0.60 → index move = (band * premium) / 0.60
+    expected_move = (_BAND * _PREMIUM) / 0.60
     assert abs(up - expected_move) < 0.5
 
 

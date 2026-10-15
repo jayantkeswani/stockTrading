@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { formatTime } from "@/lib/formatters";
-import type { IntradayHunterRun, IntradayHunterHistoryItem, IntradayHunterBasketLeg } from "@/lib/types";
+import type { IntradayHunterRun, IntradayHunterHistoryItem } from "@/lib/types";
 import { StatusChip } from "@/components/intraday-hunter/badges";
 import { ThesisCard } from "@/components/intraday-hunter/ThesisCard";
 import { DecisionCard } from "@/components/intraday-hunter/DecisionCard";
-import { BasketCard } from "@/components/intraday-hunter/BasketCard";
+import { MobileV2Basket } from "./MobileV2Basket";
 import { HistoryTimeline } from "@/components/intraday-hunter/HistoryTimeline";
 import { HistoryDetailModal } from "@/components/intraday-hunter/HistoryDetailModal";
 import { MobileHunterV2 } from "./MobileHunterV2";
@@ -40,21 +40,18 @@ export function MobileHunter({ refreshKey }: { refreshKey?: number }) {
   };
   const [run, setRun] = useState<IntradayHunterRun | null>(null);
   const [history, setHistory] = useState<IntradayHunterHistoryItem[]>([]);
-  const [basket, setBasket] = useState<IntradayHunterBasketLeg[]>([]);
   const [historyDate, setHistoryDate] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [today, hist, legs] = await Promise.all([
+      const [today, hist] = await Promise.all([
         api.getIntradayHunterToday(),
         api.getIntradayHunterHistory(30),
-        api.getIntradayHunterBasket(),
       ]);
       setRun(today);
       setHistory(hist);
-      setBasket(legs);
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to load");
     }
@@ -160,7 +157,7 @@ export function MobileHunter({ refreshKey }: { refreshKey?: number }) {
 
       <ThesisCard call1={run?.call1_json ?? null} generatedAt={run?.created_at} />
       {run && <DecisionCard run={run} />}
-      <BasketCard legs={basket} onClosed={load} />
+      <MobileV2Basket variant="v1" refreshKey={refreshKey} />
       <HistoryTimeline items={history} onSelect={setHistoryDate} />
 
       {historyDate && (

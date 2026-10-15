@@ -3,16 +3,13 @@
 **Status:** BUILT (2026-06-24); **extended 2026-06-29 to generate tradeable signals** — on a
 Call 2 ENTER it emits `intraday_hunter` OPTION signals per basket leg into the shared pipeline
 (shadow always + a fixed-qty paper YOLO profile), no longer suggester-only. All paper; the
-real-option-P&L gate is *measured* by that shadow+YOLO book. **Extended 2026-06-30** (this
-revision): a fixed multi-strike structure (BANKNIFTY two legs ITM-2 + ITM-1; NIFTY/SENSEX
-ITM-1), a 60%-of-premium 1:1 SL/target (widened from 30% — real premium paths showed the
-tighter stop chopped winners that kept running well past a 30% target and stopped out well
-before a 30% adverse move exhausted), and UI for the full Call 2 log + a live Basket & Exits
-card (manual multi-select close; the index spot vs index SL/target shown is informational, not
-the exit trigger — each leg's own premium SL/target closes it via the normal per-position check).
-This document is the blueprint; the implementation matches it (see the File map below +
-§Signal generation).
-**Last updated:** 2026-06-30
+real-option-P&L gate is *measured* by that shadow+YOLO book. A fixed multi-strike structure
+(BANKNIFTY two legs ITM-2 + ITM-1; NIFTY/SENSEX ITM-1), **basket-level exits** like v2 (each
+book's legs close together on basket MTM ±T in rupees per lot, 1:1, or at the 11:30 backstop —
+no per-leg SL/target), and UI for the full Call 2 log + a per-book basket card with one
+"Close v1 basket" emergency button. This document is the blueprint; the implementation matches it
+(see the File map below + §Signal generation).
+**Last updated:** 2026-10-15
 
 > **As-built notes (where the implementation refines this spec):**
 > - Prompt: **variant D is the active live baseline** (`settings.intraday_hunter_variant`,
@@ -226,42 +223,48 @@ NIFTY = ITM-1; SENSEX = ITM-1** (independent of the LLM's `strike` hint) — and
 2. `option_resolver.resolve_option_details(..., itm_offsets=(depth, depth-1))` → the real strike at
    that ITM depth (one-strike fallback toward ATM if the exact strike has no premium) + expiry +
    **current premium**;
-3. sizes a **symmetric 1:1** SL/target as `IH_SL_TGT_PCT` of the entry premium (default **60%** —
-   widened from an initial 30% after real premium paths showed the tighter stop chopped winners
-   that kept running well past a 30% target and got stopped out well before a 30% adverse move
-   exhausted; a single knob that auto-scales the rupee move with the option price), and also
-   converts that premium move to an **index-points distance via a delta approximation**
-   (`_IH_DELTA_BY_DEPTH`: 0.50 ATM / 0.60 ITM-1 / 0.68 ITM-2): `index_move = (IH_SL_TGT_PCT ×
-   premium) / delta`, then `index_sl = spot ∓ index_move`, `index_target = spot ± index_move` (CE
-   stop below/target above, PE mirror) — stored as **informational context** (e.g. the Basket &
-   Exits card) alongside the premium `stop_loss`/`target_price`, which are what the monitor
-   actually exits on, via the normal per-position SL/target check (same as every other strategy);
+3. sets an **informational** per-leg band = premium × (1 ∓ `basket_tp_sl_pct`) (v1 params,
+   default 0.15) as the leg's `stop_loss`/`target_price`, and converts that premium move to an
+   **index-points distance via a delta approximation** (`_IH_DELTA_BY_DEPTH`: 0.50 ATM / 0.60
+   ITM-1 / 0.68 ITM-2) → `index_sl`/`index_target`. Neither is an exit trigger — the legs exit at
+   the BASKET level (below);
 4. **subscribes** the contract to the Fyers WS feed (IH bypasses `strategy_runner._resolve_option`,
    so it must subscribe here or the monitor gets no live option LTP / index ticks);
 5. builds an OPTION `StrategySignal` (`strategy_name=intraday_hunter`, `confidence`=Call 2 conf,
-   `fyers_option_symbol` set, `index_sl`/`index_target`/`ih_itm_depth` in `indicators`) and hands it
+   `fyers_option_symbol` set, `index_sl`/`index_target`/`ih_itm_depth`/`ih_leg` in `indicators`) and hands it
    to `strategy_runner._handle_signal(signal, executable=True)` (dedup → persist → broadcast →
    shadow + `on_new_signal`/YOLO). Idempotent per day (skips if an `intraday_hunter` signal already
    exists for the date; one structure per index even if the LLM repeats it).
 
-**Strike-aware dedup:** because BANKNIFTY now opens two positions on the SAME index+strategy, the
-per-symbol+strategy position-dedup guard in `shadow_executor` and `auto_executor` is made
-**strike-aware for `intraday_hunter`** (also keyed on `fyers_option_symbol`) so the two BANKNIFTY
-strikes co-exist; other strategies stay one-position-per-symbol+strategy.
+**Strike-aware dedup:** BANKNIFTY opens two positions on the SAME index+strategy, so every guard
+that would fold them into one is **strike-aware for `intraday_hunter`** (also keyed on
+`fyers_option_symbol`): the PENDING-signal dedup (`strategy_runner._dedup_signal`), the
+open-position check (`strategy_runner._has_open_position` — v1's own leg on another contract never
+blocks the next leg), and the per-book position dedup in `shadow_executor` / `auto_executor`.
 
-**Exits — normal per-position, plus a manual whole-basket close:** each leg is exited individually
-by `trade_monitor`'s standard per-position SL/target check (`_check_position`) on its own option
-`stop_loss`/`target_price`, exactly like every other strategy — there is no automatic coordinated
-basket exit. The `GET /intraday-hunter/basket` endpoint + the **Basket & Exits** UI card surface
-each leg's live P&L and (informational) index spot vs `index_sl`/`index_target`, with a
-select-all + "Close selected" control so the trader can close some or all of a book's legs
-together by hand when the discretionary read calls for it.
+**Exits — basket-level (since 2026-10-16):** each book's legs (the YOLO profile, and SHADOW
+separately) exit **together**, like v2 and like the teacher (all-in / all-out, fixed rupee 1:1).
+`trade_monitor._check_ih_baskets` groups open `intraday_hunter` legs per (strategy, day, book),
+values the basket at the bid and applies the pure `intraday_hunter_v2.basket.evaluate_basket` with
+**v1's own params** (`intraday_hunter/params.py` → `strategy_configs.parameters['intraday_hunter']`):
 
-**Why size the index distance from a premium %, not the LLM `invalidation_level`:** Call 2 emits
-*one* `invalidation_level`, but the basket spans three indices at very different price scales, so one
-number can't anchor all three. Sizing each leg from `IH_SL_TGT_PCT` of its own premium (then
-delta-converting to that index's points for display) gives a per-leg, premium-scaled 1:1 that is
-consistent across indices and option prices.
+| Rule | Exit reason |
+|---|---|
+| MTM ≥ +T → close all legs | `BASKET_TARGET` |
+| MTM ≤ −T → close all legs | `BASKET_STOP` |
+| Backstop at `basket_time_exit` (11:30) | `BASKET_TIME` |
+| Basket check raising (alerted once/day) → 15:25 last resort | `TIME_EXIT` |
+| User emergency close of the YOLO book (shadow keeps running as the counterfactual) | `MANUAL_BASKET` |
+
+T = Σ over the legs traded of lots × `rupees_per_lot[index]` (BN 3915 / NIFTY 1640 / SENSEX 862 —
+seeded from v2's 2026-10-09 table, kept as v1's own copy so a v2 promotion never moves v1): the
+2-lot YOLO basket (BN ×2 legs, NIFTY, SENSEX) ≈ ±₹20.7K, the 1-lot shadow ±₹10.3K. No round-number
+hold. The per-leg SL/target/per-lot/trailing/15:25 checks are bypassed for v1 legs. The
+`GET /intraday-hunter/basket` endpoint returns the same per-book view as `/v2/basket`;
+`POST /intraday-hunter/basket/close` is the emergency close.
+
+**Regime split:** v1 P&L before and after 2026-10-16 is not comparable — the exits and the leg
+count changed that day. See the change log in `docs/ai/intraday-hunter-v2-learning-loop.md` §6.
 
 **Sizing — fixed basket, not capital-risk-scaled:** `lot_sizing.compute_lots_for_yolo` returns
 `_IH_FIXED_LOTS = {BANKNIFTY: 2, NIFTY: 2, SENSEX: 2}` **lots PER LEG** for `intraday_hunter` (keyed
@@ -270,7 +273,7 @@ on `signal.symbol`) — BANKNIFTY's two legs = 4 lots total across two strikes; 
 **Wiring / seeds** (migration `a1c2e3f40b91`): a `strategy_configs` row (`intraday_hunter`,
 `shadow_enabled`/`yolo_enabled` true, `is_active`/`auto_mode` false — not candle-evaluated) and the
 `IntradayHunter` YOLO profile (`strategies=["intraday_hunter"]`, `min_confidence_for_execution=40` since
-IH confidence runs ~60, `profit_cap=100000` ≈ non-binding so per-leg 1:1 targets do the booking,
+IH confidence runs ~60, `profit_cap=100000` ≈ non-binding so the basket ±T does the booking,
 `sort_order=100` to stay off the protected default slot — tune profit/loss caps in Settings → YOLO
 Profiles). `intraday_hunter` is added to the `_INTRADAY_STRATEGIES` sets (strategy_runner today-scoped
 dedup + `signal_expiry_task` 3:30 PM expiry).
@@ -416,7 +419,8 @@ Table `intraday_hunter_runs` (one row per trading day **per variant**, updated a
 |--------|------|---------|
 | GET | `/api/v1/intraday-hunter/today` | Today's run row (thesis + latest decision + chart URLs + status) |
 | GET | `/api/v1/intraday-hunter/history?limit=N` | Prior days (decision, direction, confidence, outcome) |
-| GET | `/api/v1/intraday-hunter/basket` | Today's basket legs (open + closed-today): book, strike, P&L, live index spot vs index SL/target, exit reason — backs the Basket & Exits card |
+| GET | `/api/v1/intraday-hunter/basket` | Today's v1 baskets per book (YOLO profile / SHADOW): basket MTM (bid) vs ±T, legs, exit reason — same shape as `/v2/basket` |
+| POST | `/api/v1/intraday-hunter/basket/close` | Emergency close of all open v1 YOLO legs together (`MANUAL_BASKET`); the v1 shadow basket keeps running |
 | POST | `/api/v1/intraday-hunter/run-call1` | Manual re-run of Call 1 (testing) |
 | POST | `/api/v1/intraday-hunter/run-call2` | Force a Call 2 (testing) |
 | GET | `/api/v1/intraday-hunter/chart/{run_id}/{which}` | Serve a rendered PNG (`prev_day` / `opening`) |
@@ -431,7 +435,7 @@ Next.js 15 / Tailwind v4 dark / Zustand, polled REST (~15–30s; decisions are s
 - Header: date, expiry badge, status chip (`PENDING → THESIS_READY → WATCHING → ENTER/WAIT/SKIP`).
 - **Pre-market thesis (Call 1):** trapped side + evidence, conditional plan, per-index key levels, generated-at time.
 - **Live decision (Call 2):** big decision + direction + confidence number; the basket (indices + strikes); excluded indices with reasons; entry trigger / invalidation / target; rationale in his voice; the two chart images; fired-at time. **+ a Decision Log** rendering every Call 2 in `call2_history` (each WAIT→…→ENTER/SKIP with its time, decision, direction, confidence, recheck, rationale) — re-running Call 2 no longer overwrites the verdict on screen.
-- **Basket & Exits card** (`GET /intraday-hunter/basket`): today's emitted legs (open + closed-today) — book, index·strike·CE/PE·ITM-depth, entry/LTP, P&L, and the live **index spot vs index SL/target** (informational context, not the exit trigger — each leg's own premium SL/target closes it via the normal per-position check). Open real-book legs carry a checkbox + select-all + "Close selected" for a manual whole-basket close; shadow legs are read-only; closed legs show the exit reason + realized P&L.
+- **Basket card** (the shared `v2/BasketCard` with `variant="v1"`, `GET /intraday-hunter/basket`): one card per book — direction, status, cost, an MTM-vs-±T bar, exit reason and the legs (index, ITM-n, strike, entry, LTP, bid, P&L). No per-leg close: one red "Close v1 basket" button (YOLO book only, inline Confirm) — the shadow basket keeps running as the counterfactual.
 - **History list:** prior days — decision, direction, confidence, and `thesis_played_out` / human P&L note (the part not fed to the model).
 
 Keep it clean and crisp, matching the existing page/component conventions. Optional manual "re-run Call 1 / force Call 2" buttons for testing.

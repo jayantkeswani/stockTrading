@@ -132,6 +132,7 @@ VWAP_RECLAIM_DEFAULTS: dict = {
     # latency erodes the fill while the stop stays pinned structural — the S6 lesson).
 }
 
+from app.services.intraday_hunter.params import INTRADAY_HUNTER_DEFAULTS  # noqa: E402
 from app.services.intraday_hunter_v2.params import INTRADAY_HUNTER_V2_DEFAULTS  # noqa: E402
 
 _STRATEGY_DEFAULTS: dict[str, dict] = {
@@ -140,6 +141,7 @@ _STRATEGY_DEFAULTS: dict[str, dict] = {
     "intraday_futures": INTRADAY_FUTURES_DEFAULTS,
     "breakout_retest": BREAKOUT_RETEST_DEFAULTS,
     "vwap_reclaim": VWAP_RECLAIM_DEFAULTS,
+    "intraday_hunter": INTRADAY_HUNTER_DEFAULTS,
     "intraday_hunter_v2": INTRADAY_HUNTER_V2_DEFAULTS,
 }
 

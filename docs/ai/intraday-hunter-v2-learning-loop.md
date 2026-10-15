@@ -16,7 +16,7 @@ Read this first, then `docs/ai/intraday-hunter-v2.md`, which describes the strat
 2. **Nothing is auto-applied.** Every change to how v2 trades is approved by the user.
 3. **Changes run as challengers.** An approved change runs beside the current champion, never replacing it in place.
 4. **Promotion needs evidence.** A challenger is promoted only after **≥ 20 trading days** with **both halves positive** on real paper P&L (BID_ASK fills), compared on the same days.
-5. **v1 is the control group.** Never change v1's prompts, timing or exits as part of v2 learning.
+5. **v1 is the control group.** Never change v1's prompts, timing or exits as part of v2 learning. Changes to v1 itself are made only on the user's explicit decision, outside the learning loop, and reset the v1-vs-v2 comparison from their effective date (recorded in §6). The last reset: 2026-10-16 (v1 basket exits + both BANKNIFTY legs).
 6. **Judge on real premiums, not index direction.** Index direction ≠ option P&L (the Strategy 7 lesson).
 7. **State n and t.** Small samples are labelled as such. A single day is never evidence.
 
@@ -117,3 +117,4 @@ Every transition is appended to the row's `history` (status, time, note). The UI
 | 2026-10-09 | `basket_tp_sl_pct` 0.20 → 0.15; `round_hold_enabled` → false | Teacher exit study, 72 days: rupee-amount 1:1 exits (median win ₹2.54L / loss ₹2.63L), exits at 97% of peak, no round-number waiting. Study in `~/Downloads/ih_research/exit_study/FINDINGS.md` | User (overnight go-ahead) |
 | 2026-10-09 | Jev shadow arm enabled in prod (`deploy.yml`) | Live API check: HTTP 200, ~600ms | User |
 | 2026-10-09 | `basket_t_mode` → `rupees` (`rupees_per_lot` BN 3915 / NIFTY 1640 / SENSEX 862), applied ~15:50 IST after the v1.34.2 deploy as a direct PUT on the champion params (predates the approval flow) | Same exit study | User |
+| 2026-10-16 | **v1 (control) reset.** v1 YOLO + SHADOW exit as a basket (MTM ±T, v1's own `rupees_per_lot` copy BN 3915 / NIFTY 1640 / SENSEX 862, 11:30 backstop, no per-leg exits) instead of per-leg ±60% premium SL/target + 15:25; v1 dedup made strike-aware so both BANKNIFTY legs (ITM-2 + ITM-1) trade — before this, the ITM-1 leg was folded into the ITM-2 signal on every v1 ENTER day since 07-02 (3 legs, BN 2 lots); the per-leg card's multi-select close replaced by "Close v1 basket". **Split every v1 / v1-vs-v2 comparison on this date.** | Per-leg exits did not match the teacher's all-in/all-out basket; 65 of 101 v1 YOLO legs were hand-closed (MANUAL), so the "control" was mostly discretion | User (2026-10-15 session: convert YOLO + SHADOW, rupee T, no per-leg exits, 11:30, basket button, fix the BN leg) |
