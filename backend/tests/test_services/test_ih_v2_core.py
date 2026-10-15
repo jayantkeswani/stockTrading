@@ -38,12 +38,36 @@ class TestLevelFacts:
         f = levels.level_facts("NIFTY", PREV, cs)
         pdl = next(x for x in f["levels"] if x["name"] == "pdl")
         assert pdl["broken"] and pdl["holding"] is False
-        assert any("swept" in ln for ln in levels.describe_facts(f))
+        assert pdl["ever_closed_beyond"] is False and pdl["closes_beyond"] == 0
+        assert any("wick only" in ln for ln in levels.describe_facts(f))
         cs2 = [c("09:15", 24950, 24960, 24880, 24885)]
         pdl2 = next(x for x in levels.level_facts("NIFTY", PREV, cs2)["levels"] if x["name"] == "pdl")
         assert pdl2["holding"] is True
         unb = next(x for x in levels.level_facts("NIFTY", PREV, cs2)["levels"] if x["name"] == "pdh")
         assert unb["holding"] is None
+
+    def test_closes_beyond_streak_and_failed_after_close(self):
+        cs = [c("09:15", 25040, 25090, 25030, 25085), c("09:16", 25085, 25100, 25080, 25095)]
+        pdh = next(x for x in levels.level_facts("NIFTY", PREV, cs)["levels"] if x["name"] == "pdh")
+        assert pdh["closes_beyond"] == 2 and pdh["ever_closed_beyond"] is True
+        assert any("closed beyond for the last 2 candles" in ln
+                   for ln in levels.describe_facts(levels.level_facts("NIFTY", PREV, cs)))
+        cs.append(c("09:17", 25095, 25096, 25060, 25070))  # closes back under PDH 25080
+        f = levels.level_facts("NIFTY", PREV, cs)
+        pdh = next(x for x in f["levels"] if x["name"] == "pdh")
+        assert pdh["closes_beyond"] == 0 and pdh["ever_closed_beyond"] is True
+        assert any("closed beyond earlier, now back inside" in ln for ln in levels.describe_facts(f))
+
+    def test_last_candle_impulse(self):
+        quiet = [c("09:15", 25000, 25012, 24995, 25008), c("09:16", 25008, 25015, 25002, 25010)]
+        assert levels.last_candle(quiet)["impulse"] is False
+        spike = quiet + [c("09:17", 25010, 25075, 25008, 25070)]  # 67 pts vs ~15 avg, 0.27%
+        lc = levels.last_candle(spike)
+        assert lc["impulse"] is True and lc["dir"] == "up" and lc["ratio"] >= 2
+        assert levels.last_candle([c("09:15", 25000, 25050, 24990, 25040)])["impulse"] is True
+        assert levels.last_candle([c("09:15", 25000, 25010, 24995, 25005)])["impulse"] is False
+        f = levels.level_facts("NIFTY", PREV, spike)
+        assert any("IMPULSE candle" in ln for ln in levels.describe_facts(f))
 
     def test_gap_open_above_pdh_counts_as_broken_at_open(self):
         f = levels.level_facts("NIFTY", PREV, [c("09:15", 25100, 25120, 25090, 25110)])

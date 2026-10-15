@@ -17,6 +17,12 @@ Semantics (documented in docs/ai/intraday-hunter-v2.md §Level facts):
   low <= level. A level exactly at the open is not broken by the open itself.
 - A broken level is *holding* while price stays beyond it; otherwise it was swept and reclaimed
   (a failed break — the one case where fading, not riding, can apply).
+- `closes_beyond` counts the consecutive most-recent 1m CLOSES beyond a broken level, and
+  `ever_closed_beyond` says whether any close since the break got beyond it. A break that never
+  closed beyond is wick-only (a failed break), however far the wick went.
+- The last candle is an *impulse* when its range is at least IMPULSE_MIN_PCT of price and at
+  least IMPULSE_RATIO x the average range of the earlier candles today (the first candle only
+  needs IMPULSE_MIN_PCT). The v2 prompt never enters on the candle right after an impulse.
 - Breaking a level UP takes the stops resting above it (shorts' stops → fuel for CE); breaking
   DOWN takes the stops below (longs' stops → fuel for PE). "Riding the break" = trading WITH it.
 """
@@ -28,6 +34,8 @@ from datetime import datetime, time
 INDICES = ("NIFTY", "BANKNIFTY", "SENSEX")
 DEFAULT_ROUND_STEP = {"NIFTY": 100.0, "BANKNIFTY": 500.0, "SENSEX": 500.0}
 OPENING_RANGE_END = time(9, 19)
+IMPULSE_MIN_PCT = 0.15
+IMPULSE_RATIO = 2.0
 
 
 def _hhmm(ts) -> str:
@@ -96,7 +104,44 @@ def opening_range(candles: list[dict], end: time = OPENING_RANGE_END) -> dict | 
     return {"high": max(_f(c["high"]) for c in win), "low": min(_f(c["low"]) for c in win)}
 
 
-def _level(name: str, price: float, last: float, broken: bool, at, direction) -> dict:
+def _closes_beyond(price: float, direction: str | None, at: str | None,
+                   candles: list[dict]) -> tuple[int, bool]:
+    """(consecutive most-recent closes beyond `price`, any close beyond since `at`) for a break."""
+    if direction not in ("up", "down") or not candles:
+        return 0, False
+
+    def beyond(c) -> bool:
+        return _f(c["close"]) > price if direction == "up" else _f(c["close"]) < price
+
+    since = [c for c in candles if at is None or _hhmm(c["ts"]) >= at]
+    streak = 0
+    for c in reversed(candles):
+        if not beyond(c):
+            break
+        streak += 1
+    return streak, any(beyond(c) for c in since)
+
+
+def last_candle(candles: list[dict]) -> dict | None:
+    """Size of the latest candle vs the earlier ones today → {asof, range_pts, ratio, dir, impulse}. Pure."""
+    if not candles:
+        return None
+    c = candles[-1]
+    rng = _f(c["high"]) - _f(c["low"])
+    px = _f(c["close"]) or 1.0
+    prior = [_f(x["high"]) - _f(x["low"]) for x in candles[:-1]]
+    avg = sum(prior) / len(prior) if prior else None
+    ratio = round(rng / avg, 2) if avg else None
+    big = rng / px * 100.0 >= IMPULSE_MIN_PCT
+    impulse = big and (ratio is None or ratio >= IMPULSE_RATIO)
+    move = _f(c["close"]) - _f(c["open"])
+    return {"asof": _hhmm(c["ts"]), "range_pts": round(rng, 2), "range_pct": _pct(rng, px),
+            "avg_prior_range_pts": round(avg, 2) if avg else None, "ratio": ratio,
+            "dir": "up" if move > 0 else ("down" if move < 0 else "flat"), "impulse": impulse}
+
+
+def _level(name: str, price: float, last: float, broken: bool, at, direction,
+           candles: list[dict] | None = None) -> dict:
     dist = price - last
     # For a broken pool: is price still beyond it (the break is HOLDING) or back through it
     # (swept-and-reclaimed — a failed break)? None while unbroken.
@@ -105,6 +150,7 @@ def _level(name: str, price: float, last: float, broken: bool, at, direction) ->
         holding = last > price
     elif broken and direction == "down":
         holding = last < price
+    streak, ever = _closes_beyond(price, direction, at, candles or []) if broken else (0, False)
     return {
         "name": name,
         "price": round(price, 2),
@@ -115,6 +161,8 @@ def _level(name: str, price: float, last: float, broken: bool, at, direction) ->
         "broken_at": at,
         "broken_dir": direction,
         "holding": holding,
+        "closes_beyond": streak,
+        "ever_closed_beyond": ever,
     }
 
 
@@ -140,13 +188,13 @@ def level_facts(
     sess_lo = min(_f(c["low"]) for c in candles)
 
     levels: list[dict] = []
-    levels.append(_level("prev_close", pc, last, *_cross(pc, open_px, candles)))
-    levels.append(_level("pdh", pdh, last, *_pdh_status(pdh, open_px, candles)))
-    levels.append(_level("pdl", pdl, last, *_pdl_status(pdl, open_px, candles)))
+    levels.append(_level("prev_close", pc, last, *_cross(pc, open_px, candles), candles))
+    levels.append(_level("pdh", pdh, last, *_pdh_status(pdh, open_px, candles), candles))
+    levels.append(_level("pdl", pdl, last, *_pdl_status(pdl, open_px, candles), candles))
 
     r_above, r_below = round_levels(last, step)
-    levels.append(_level("round_above", r_above, last, *_cross(r_above, open_px, candles)))
-    levels.append(_level("round_below", r_below, last, *_cross(r_below, open_px, candles)))
+    levels.append(_level("round_above", r_above, last, *_cross(r_above, open_px, candles), candles))
+    levels.append(_level("round_below", r_below, last, *_cross(r_below, open_px, candles), candles))
 
     orng = opening_range(candles, or_end)
     if orng:
@@ -154,9 +202,9 @@ def level_facts(
         up = next((c for c in after if _f(c["high"]) > orng["high"]), None)
         dn = next((c for c in after if _f(c["low"]) < orng["low"]), None)
         levels.append(_level("or_high", orng["high"], last, up is not None,
-                             _hhmm(up["ts"]) if up else None, "up" if up else None))
+                             _hhmm(up["ts"]) if up else None, "up" if up else None, candles))
         levels.append(_level("or_low", orng["low"], last, dn is not None,
-                             _hhmm(dn["ts"]) if dn else None, "down" if dn else None))
+                             _hhmm(dn["ts"]) if dn else None, "down" if dn else None, candles))
 
     levels.append(_level("session_high", sess_hi, last, False, None, None))
     levels.append(_level("session_low", sess_lo, last, False, None, None))
@@ -165,7 +213,7 @@ def level_facts(
             pxf = float(px)
         except (TypeError, ValueError):
             continue
-        levels.append(_level(f"drawn_{i + 1}", pxf, last, *_cross(pxf, open_px, candles)))
+        levels.append(_level(f"drawn_{i + 1}", pxf, last, *_cross(pxf, open_px, candles), candles))
 
     pools = [lv for lv in levels if not lv["name"].startswith("session_")]
     taken = [lv["name"] for lv in pools if lv["broken"]]
@@ -190,6 +238,7 @@ def level_facts(
         "opening_range": orng,
         "levels": levels,
         "pools_taken": taken,
+        "last_candle": last_candle(candles),
         # CE rides UP into the untaken pool above; PE rides DOWN into the pool below.
         "nearest_ahead": {"CE": _brief(above[0] if above else None),
                           "PE": _brief(below[0] if below else None)},
@@ -256,13 +305,25 @@ def describe_facts(facts: dict) -> list[str]:
         if lv["name"].startswith("session_"):
             continue
         if lv["broken"]:
-            state = (f"BROKEN {lv['broken_dir']} at {lv['broken_at']}, "
-                     + ("break HOLDING (price still beyond it)" if lv["holding"]
-                        else "price back through it (swept / failed break)"))
+            if not lv.get("ever_closed_beyond"):
+                held = "wick only, never closed beyond it (failed break)"
+            elif lv.get("closes_beyond"):
+                n = lv["closes_beyond"]
+                held = f"closed beyond for the last {n} candle{'s' if n != 1 else ''} (HOLDING)"
+            else:
+                held = "closed beyond earlier, now back inside (failed break)"
+            state = f"BROKEN {lv['broken_dir']} at {lv['broken_at']}, {held}"
         else:
             state = "not broken"
         out.append(f"  {lv['name']} {lv['price']}: {abs(lv['dist_pts']):.0f} pts "
                    f"({abs(lv['dist_pct']):.2f}%) {lv['side']} price, {state}.")
+    lc = facts.get("last_candle")
+    if lc:
+        size = (f"{lc['ratio']}x the earlier average" if lc.get("ratio") is not None
+                else "first candle of the day")
+        out.append(f"  Last candle ({lc['asof']}): {lc['dir']}, range {lc['range_pts']:.0f} pts "
+                   f"({lc['range_pct']:.2f}%), {size}"
+                   + (" — IMPULSE candle." if lc["impulse"] else "."))
     for side in ("CE", "PE"):
         a = facts["nearest_ahead"][side]
         if a:
