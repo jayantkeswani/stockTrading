@@ -51,6 +51,9 @@ def combine_flow(per_index: dict[str, float | None], deadband: float = 0.0) -> d
             "n": len(vals)}
 
 
+# Filter on the raw `timestamp` range (and expiry_date >= d) so idx_oi_snapshots_lookup
+# (symbol, expiry_date, timestamp) serves it: ~6 ms. Wrapping `timestamp` in AT TIME ZONE in the
+# WHERE clause defeats the index and scans the symbols' whole history (~3 s per call on prod).
 _SUMS_SQL = text(
     """
     WITH snaps AS (
@@ -59,10 +62,11 @@ _SUMS_SQL = text(
         FROM oi_snapshots
         WHERE symbol = ANY(:symbols)
           AND option_type IN ('CE', 'PE')
-          AND (timestamp AT TIME ZONE 'Asia/Kolkata')::date = :d
-          AND (timestamp AT TIME ZONE 'Asia/Kolkata')::time BETWEEN :t0 AND :t1
+          AND expiry_date >= :d
+          AND timestamp BETWEEN ((CAST(:d AS date) + CAST(:t0 AS time)) AT TIME ZONE 'Asia/Kolkata')
+                            AND ((CAST(:d AS date) + CAST(:t1 AS time)) AT TIME ZONE 'Asia/Kolkata')
     ), nearest AS (
-        SELECT symbol, MIN(expiry_date) AS exp FROM snaps WHERE expiry_date >= :d GROUP BY symbol
+        SELECT symbol, MIN(expiry_date) AS exp FROM snaps GROUP BY symbol
     )
     SELECT s.symbol, to_char(s.ts_ist, 'HH24:MI') AS hm, s.option_type, SUM(s.open_interest) AS oi
     FROM snaps s JOIN nearest n ON n.symbol = s.symbol AND n.exp = s.expiry_date
