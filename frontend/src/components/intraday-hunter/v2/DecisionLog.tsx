@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { IhGateResult, IhV2Call2Entry } from "@/lib/types";
-import { formatLatency, gateChipClass } from "@/lib/ihV2";
+import { formatLatency, gateChipClass, isTrue } from "@/lib/ihV2";
 import { StatusChip, DirectionBadge, confidenceColor } from "../badges";
 import { Section, Empty, Val } from "./common";
 
@@ -23,7 +23,7 @@ function Gate({ label, gate }: { label: string; gate?: IhGateResult }) {
   );
 }
 
-/** v2 Call 2 per-minute decision log (09:16-09:25). Used by: V2Panel, V2HistoryModal */
+/** v2 Call 2 per-minute decision log (09:16-09:30). Used by: V2Panel, V2HistoryModal */
 export function DecisionLog({ history }: { history: IhV2Call2Entry[] }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
   const toggle = (i: number) =>
@@ -36,7 +36,7 @@ export function DecisionLog({ history }: { history: IhV2Call2Entry[] }) {
   return (
     <Section title="Decision log (Call 2)" right={<span className="text-[10px] font-mono text-text-muted">{history.length} calls</span>}>
       {history.length === 0 ? (
-        <Empty>no decisions yet — watcher runs every minute 09:16–09:25</Empty>
+        <Empty>no decisions yet — watcher runs every minute 09:16–09:30</Empty>
       ) : (
         <div className="space-y-1.5 max-h-[520px] overflow-y-auto">
           {[...history].reverse().map((h, ri) => {
@@ -56,10 +56,22 @@ export function DecisionLog({ history }: { history: IhV2Call2Entry[] }) {
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-text-secondary">
+                  {h.entry_type && <span>{h.entry_type.replace(/_/g, " ")}</span>}
+                  {h.following_plan != null && h.plan_side && (
+                    <span className={isTrue(h.following_plan) ? "" : "text-warning"}>
+                      {isTrue(h.following_plan) ? `plan ${h.plan_side}` : `overrides plan ${h.plan_side}`}
+                    </span>
+                  )}
                   {h.pool_broken && <span>broken: {h.pool_broken}</span>}
                   {h.next_pool_target != null && <span>next: {String(h.next_pool_target)}</span>}
                   {h.skip_reason_code && <span className="text-warning">skip: {h.skip_reason_code}</span>}
                 </div>
+                {h.decision === "WAIT" && h.waiting_for && (
+                  <div className="text-text-secondary whitespace-normal">waiting for: {h.waiting_for}</div>
+                )}
+                {!isTrue(h.following_plan) && h.override_evidence && (
+                  <div className="text-warning whitespace-normal">override: {h.override_evidence}</div>
+                )}
                 <div className="flex items-center gap-1.5">
                   <Gate label="plan" gate={gates.plan} />
                   <Gate label="oi" gate={gates.oi} />

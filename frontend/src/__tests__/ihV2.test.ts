@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mtmBarPct, formatLatency, gateChipClass, formatPnl, basketTLabel } from "@/lib/ihV2";
+import { mtmBarPct, formatLatency, gateChipClass, formatPnl, basketTLabel, isTrue } from "@/lib/ihV2";
 
 describe("mtmBarPct", () => {
   it("centres at 0 MTM", () => expect(mtmBarPct(0, 100)).toBe(50));
@@ -88,5 +88,17 @@ describe("proposal helpers", () => {
     expect(g.map((x) => x.week_ending)).toEqual(["2026-10-03", "2026-09-26"]);
     expect(g[0].items.map((i) => i.n)).toEqual([1, 2]);
     expect(groupByWeek([])).toEqual([]);
+  });
+});
+
+describe("isTrue", () => {
+  it("accepts JSON booleans and their string forms", () => {
+    expect(isTrue(true)).toBe(true);
+    expect(isTrue("true")).toBe(true);
+    expect(isTrue(" True ")).toBe(true);
+    expect(isTrue(false)).toBe(false);
+    expect(isTrue("false")).toBe(false);
+    expect(isTrue(null)).toBe(false);
+    expect(isTrue(undefined)).toBe(false);
   });
 });

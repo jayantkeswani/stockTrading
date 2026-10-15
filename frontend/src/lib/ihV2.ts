@@ -97,3 +97,8 @@ export function groupByWeek<T extends { week_ending: string }>(proposals: T[]): 
   }
   return out;
 }
+
+/** A model-returned boolean that may arrive as true/false or "true"/"false". */
+export function isTrue(v: boolean | string | null | undefined): boolean {
+  return v === true || (typeof v === "string" && v.trim().toLowerCase() === "true");
+}

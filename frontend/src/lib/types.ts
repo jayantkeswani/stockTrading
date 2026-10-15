@@ -617,6 +617,12 @@ export interface IhGateResult {
 }
 
 export interface IhV2Call2Entry extends IHCall2 {
+  plan_side?: string | null;
+  /** The model returns a JSON boolean, occasionally the string "true"/"false". */
+  following_plan?: boolean | string | null;
+  override_evidence?: string | null;
+  entry_type?: string | null;
+  waiting_for?: string | null;
   pool_broken?: string | null;
   next_pool_target?: string | number | null;
   skip_reason_code?: string | null;
