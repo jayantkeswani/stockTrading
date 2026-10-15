@@ -7,19 +7,23 @@ Learning loop, weekly proposals and the change-approval procedure: see `docs/ai/
 ## Why v2 exists (evidence, 26 Jun – 1 Oct 2026, 67 trading days)
 
 - **The teacher** (@IntradayHunter, read from his Zerodha positions screen, Jul–Sep) made +₹78L over 65 days, 47W/18L (72%). He trades **every day** with **one direction** across a 4-leg basket (BANKNIFTY ×2 strikes, NIFTY, SENSEX, all ~ATM).
-  - He enters and exits the **whole basket together**, usually in by 09:16–09:20.
+  - He enters and exits the **whole basket together**. There is no fixed entry clock: median 09:18, about 4 in 10 by 09:17, a quarter after 09:21.
   - Median hold is 31 min. P&L is ~1:1 in rupees at the basket level: average winning day +₹2.65L, average losing day −₹2.59L.
 - **v1** (paper YOLO `IntradayHunter`) is flat: −₹6.3K over 32 ENTER days (t ≈ −0.09). It skips about half the days.
   - Its direction is a coin flip and leans CE.
   - It is slow, with ~2 min from candle to signal.
   - It exits per leg.
   - It never learned: `outcome_played_out` was never written.
-- **Stop-hunting:** the teacher **rides** the run into other traders' stops and does not fade sweeps. With a PDH/PDL broken before his entry, he went with the break 64% of the time. He won 74% going with it vs 46% going against it.
+- **Breaks:** when a PDH/PDL had closed beyond and was still beyond at his entry, he went with it on 23 of 31 days (NIFTY). His talk about whose stops get hit does **not** mark his good days (see the entry-timing study below), so v2 uses levels to describe structure and targets, not as a "ride the break" default.
 - **Offline signals:**
   - His **evening plan** as a filter on v1 split the book +₹79.9K vs −₹86.2K (t ≈ 1.4).
   - **Opening OI flow** matched the clean side on 61% of 33 days.
   - "Ride the PDH/PDL break" (Rule A) was 68% right, but not robust (73%→50% between the two halves).
   - "Plan agrees with the open" as a trigger was rejected.
+- **Entry timing and pre-entry reasoning (72 live days, studied 2026-10-15; `~/Downloads/ih_research/psych_study/FINDINGS.md`):**
+  - His edge is mostly the MOMENT of entry. On his own side, a 09:16 entry moved the right way about 60% of the time over 15 minutes; at the minute he chose, 71%. No fixed clock or mechanical pullback rule reproduced that.
+  - He follows his evening plan's side on 54 of 67 days; when he leaves it he wins 11 of 13.
+  - Blind-coded narration before each entry: the one habit that separates his wins is refusing to chase a big/fast candle — he waits for the counter-move to stall and enters with the larger move (15 of 16 days won vs 39 of 56). Stop/trap talk, waiting, two-case talk and confidence words do not separate wins from losses.
 - **Conclusion:** no simple rule reproduces him. v2 trades a best-guess policy that uses all of the above, and **logs every input and every candidate arm each minute** so a learning loop can find what works. Research CSVs: `~/Downloads/ih_research/live_review_2026q3/` (calibration / fixtures only — nothing reads them at runtime).
 
 ## v1 vs v2
@@ -29,8 +33,8 @@ Learning loop, weekly proposals and the change-approval procedure: see `docs/ai/
 | Strategy / book | `intraday_hunter` / YOLO `IntradayHunter` | `intraday_hunter_v2` / YOLO `IH-v2` (subscribes only to v2, exec confidence 0) + shadow (1 lot) |
 | Evening input | — | teacher plan (00:00 / 06:00 / 08:00 jobs; 08:30 Telegram alert if missing → `teacher_plan_missing`) |
 | Call 1 (08:45) | prev-day charts + VIX + structural memory | same base **+** teacher plan + drawn levels, pre-open stop pools, last N **graded lessons** (separate v2 prompt). A failed Call 1 does NOT SKIP the day |
-| Call 2 | 09:18 with charts, WAIT re-checks to 09:30 | **09:16** (on the 09:15 candle close), **every minute** to a **09:25** deadline, **text-only**, model `call2_model` (default `claude-sonnet-5-5`); latency logged per call (~15s measured) |
-| Direction logic | wait for break + hold | stop-hunting: identify pools, **ride the break**, CE/PE symmetric, default = trade the morning; SKIP only for two-sided chop with a required `skip_reason_code` |
+| Call 2 | 09:18 with charts, WAIT re-checks to 09:30 | **09:16** (on the 09:15 candle close), **every minute** to a **09:30** deadline, **text-only**, model `call2_model` (default `claude-sonnet-5-5`); latency logged per call (~15s measured) |
+| Direction logic | wait for break + hold | **plan side first, then the moment** (see Call 2 prompt below): start from the teacher's side for today's opening; override only on a level closed beyond for 2+ candles on 2 of 3 indices; never enter on the candle after an impulse — wait for the counter-move to stall, then enter with the larger move; WAIT is normal and must name what it waits for; CE/PE symmetric; SKIP when neither case confirms (required `skip_reason_code`) |
 | Gates | — | plan gate + OI gate, **shadow-only** (`enforce_*_gate=false`): computed + logged, never block |
 | Strikes | BN ITM-2 + ITM-1, NIFTY ITM-1, SENSEX ITM-1 | **BN ATM + OTM-1, NIFTY ATM, SENSEX ATM** (`leg_structure`; option_resolver depth −1 = OTM-1) |
 | Size | fixed 2 lots/leg | same fixed 2 lots/leg (`lot_sizing`); shadow 1 lot |
@@ -76,7 +80,9 @@ For each index as of any minute, every pool gets its distance (pts and %) and it
 Breaking rules:
 - PDH breaks when the open is above it or any high trades through it. PDL mirrors this.
 - Every other level breaks on a cross relative to the open.
-- `holding` = price is still beyond a broken level. False means it was swept and reclaimed: a failed break, the only case where fading can apply.
+- `holding` = price is still beyond a broken level. False means it was swept and reclaimed: a failed break.
+- `closes_beyond` = consecutive most-recent 1m closes beyond a broken level; `ever_closed_beyond` = any close beyond since the break. A break that never closed beyond is **wick-only** (a failed break), however far the wick went. `describe_facts` says "closed beyond for the last N candles (HOLDING)", "wick only, never closed beyond it (failed break)" or "closed beyond earlier, now back inside (failed break)".
+- `last_candle` (`last_candle(candles)`): the latest candle's range, its ratio to the average range of the earlier candles today, its direction, and `impulse` — range ≥ `IMPULSE_MIN_PCT` (0.15%) of price and ≥ `IMPULSE_RATIO` (2×) the earlier average (the first candle needs only the 0.15%). Rendered as "Last candle (09:16): up, range 83 pts (0.37%), 1.5x the earlier average — IMPULSE candle." The Call 2 prompt never enters on the candle right after an impulse.
 
 Also computed:
 - **pools_taken**, and the nearest untaken pool ahead and behind for each side.
@@ -84,6 +90,23 @@ Also computed:
 - **Rule A:** ride the PDH/PDL break when 2 of 3 indices broke the same way.
 
 `describe_facts` renders the facts as plain words (no arithmetic left to do) for Call 2 and Jev.
+
+## Call 2 prompt (`prompts.py`)
+
+The system prompt states the teacher's behaviour as rules and keeps the study's statistics out (no clock anchors, no win rates for the model to quote):
+
+1. Start from the plan side for today's opening type; keep two cases open (what confirms it, what would flip it).
+2. Override the plan side only on CLOSES: a level closed beyond and held for ≥2 one-minute candles on 2 of the 3 indices.
+3. Never enter on the candle right after an impulse; wait for the counter-move to stall, then enter WITH the larger move.
+4. A wick through a level that closes back inside is a failed break.
+5. WAIT is a normal answer and names the exact index / level / candle behaviour it waits for.
+6. SKIP when neither case confirms by the deadline. One direction for the whole basket; exits are the system's.
+
+Levels (prev close, PDH/PDL, round numbers, opening range, drawn levels) describe structure and targets. Opening OI flow does not exist before ~09:20 and its absence is not a signal.
+
+Reply fields beyond decision/direction/confidence/thesis/rationale: `plan_side`, `following_plan`, `override_evidence` (required when not following the plan), `entry_type` (`after_counter_move | continuation | reversal`), `waiting_for` (required on WAIT), `pool_broken`, `legs`, `excluded_indices`, `next_pool_target`, `skip_reason_code`. The Call 1 plan returns, per opening type, the side and the counter-move wanted before entering, plus an `override_case`.
+
+**Replay check (2026-10-15).** `scripts/intraday_hunter/v2_replay_*.py` re-ran Call 2 for Oct 9–15 with the previous prompt and this one, on the exact live inputs (candles, plan, OI flow, minute-log order flow), two runs each, priced through the grade's counterfactual basket (1 lot/leg): previous prompt −₹1.1K, this prompt +₹46.5K / +₹45.5K, live v2's own decisions −₹12.8K. It never entered at 09:16; it skipped Oct 14 (a day he won). Five days, and written knowing v2's Oct 12–14 failures — a design check, not out-of-sample evidence.
 
 ## Call 2 cadence (`watcher.py`, `decision.py`)
 
@@ -105,7 +128,7 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
   - The list is stored in Redis `ih_v2:capture:{date}`, re-subscribed after WS reconnects (`_collect_dynamic_symbols`) and used by grading.
   - Prod sees ~170 WS symbols against the Fyers cap of 5000.
 - **1-minute option chain 09:15–09:45** (`oi_snapshot_task.fetch_oi_snapshots_hf`) for NIFTY, BANKNIFTY and SENSEX into `oi_snapshots`. The 3-minute job is unchanged.
-- **Opening OI flow** (`oi_flow.py`): the per-index mean of ((ΔPE − ΔCE) / (CE+PE OI at 09:16)) from 09:16→09:19, nearest expiry. This reproduces the research `flow` column. Positive means CE.
+- **Opening OI flow** (`oi_flow.py`): the per-index mean of ((ΔPE − ΔCE) / (CE+PE OI at 09:16)) from 09:16→09:19, nearest expiry. This reproduces the research `flow` column. Positive means CE. `fetch_oi_sums` filters on the raw `timestamp` range plus `expiry_date >= d`, so `idx_oi_snapshots_lookup` serves it (~6 ms); casting `timestamp` to IST date/time inside the WHERE clause would scan the symbols' whole history (~3 s per call).
 - **Order flow** (`orderflow.py`): `fyers_ws_client` keeps `tot_buy_qty`, `tot_sell_qty`, `bid_size` and `ask_size` (Fyers SDK `map.json` names; verified on live NSE and BSE option ticks 2026-10-09).
   - They go into the Redis price cache.
   - Per-minute aggregates are computed for the index futures and **every captured contract** (the whole ATM±2 ladder). The minute log reads the captured strike nearest the live spot, which drifts off the capture-time ATM within minutes; tracking only that ATM left `atm_ce`/`atm_pe` null whenever spot sat nearer another strike (SENSEX for most of 2026-10-09). The minute log also re-registers the day's capture each minute, so a mid-day restart resumes order flow. The aggregates are: buy/sell imbalance, average spread, bid/ask size imbalance, tick-rule volume delta, and depth imbalance when `IH_V2_DEPTH_ENABLED` is set (depth is subscribed for the ATM CE/PE only). DepthUpdate messages are routed away from the price path.
