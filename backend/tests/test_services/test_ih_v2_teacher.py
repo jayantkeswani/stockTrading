@@ -11,7 +11,8 @@ from app.services.intraday_hunter_v2.teacher.live import (
     detect_entry_exit, merge_live, normalize_live, pick_frames, positions_segments, sum_check)
 from app.services.intraday_hunter_v2.teacher.plan import normalize_plan
 from app.services.intraday_hunter_v2.teacher.youtube import (
-    classify_ytdlp_error, find_live_video, find_plan_video, vtt_to_text, ytdlp_network_args)
+    classify_ytdlp_error, find_live_video, find_plan_video, proxy_label, redact, vtt_to_text,
+    ytdlp_network_args, ytdlp_proxy_chain)
 
 FIX = Path(__file__).resolve().parents[1] / "fixtures" / "ih_teacher"
 
@@ -74,6 +75,7 @@ def test_find_live_video():
 def test_classify_ytdlp_error_and_vtt():
     assert classify_ytdlp_error("HTTP Error 429: Too Many Requests") == "DOWNLOAD_BLOCKED"
     assert classify_ytdlp_error("Sign in to confirm you're not a bot") == "DOWNLOAD_BLOCKED"
+    assert classify_ytdlp_error("ERROR: Requested format is not available") == "FORMAT_UNAVAILABLE"
     assert classify_ytdlp_error("Video unavailable") == "VIDEO_NOT_FOUND"
     text = vtt_to_text((FIX / "subs_synthetic.vtt").read_text())
     assert text.count("नमस्कार दोस्तों") == 1 and "निफ्टी आज" in text
@@ -295,3 +297,76 @@ async def test_live_catchup_targets_previous_day_and_regrades():
         await task.live_job("07:30 catch-up", True, True)
     run.assert_awaited_once_with(date(2026, 10, 15), "07:30 catch-up", final=True)
     grade.assert_awaited_once_with(date(2026, 10, 15))
+
+
+def test_proxy_chain_warp_then_residential():
+    res = "http://user__cr.in:pw@gw.example.com:10000"
+    assert ytdlp_proxy_chain({"IH_YTDLP_PROXY": "socks5h://warp:1080", "IH_YTDLP_PROXY_FALLBACK": res}) == [
+        "socks5h://warp:1080", res]
+    # no secret configured -> compose leaves the fallback blank; deduped / blanks dropped
+    assert ytdlp_proxy_chain({"IH_YTDLP_PROXY": "socks5h://warp:1080",
+                              "IH_YTDLP_PROXY_FALLBACK": ""}) == ["socks5h://warp:1080"]
+    assert ytdlp_proxy_chain({"IH_YTDLP_PROXY": "socks5h://warp:1080",
+                              "IH_YTDLP_PROXY_FALLBACK": "socks5h://warp:1080"}) == ["socks5h://warp:1080"]
+    assert ytdlp_proxy_chain({}) == [""]
+    assert ytdlp_network_args({}, "socks5h://warp:1080") == ["--proxy", "socks5h://warp:1080"]
+
+
+def test_proxy_credentials_never_logged():
+    res = "http://user__cr.in:pw@gw.example.com:10000"
+    assert proxy_label(res) == "http://gw.example.com:10000"
+    assert proxy_label("") == "direct"
+    assert "pw" not in redact(f"ERROR: Unable to connect to proxy {res}")
+    assert classify_ytdlp_error(f"ERROR: Unable to connect to proxy {res}") == "PROXY_FAILED"
+    assert classify_ytdlp_error("HTTP Error 407 Proxy Authentication Required") == "PROXY_FAILED"
+    assert classify_ytdlp_error("Sign in to confirm you're not a bot") == "DOWNLOAD_BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_ytdlp_falls_back_to_warp_when_primary_blocked(monkeypatch):
+    from app.services.intraday_hunter_v2.teacher import youtube as yt
+
+    monkeypatch.setenv("IH_YTDLP_PROXY", "http://u:p@res:1")
+    monkeypatch.setenv("IH_YTDLP_PROXY_FALLBACK", "socks5h://warp:1080")
+    monkeypatch.setattr(yt, "require_tool", lambda n: "/bin/yt-dlp")
+    calls = []
+
+    async def fake_run(cmd, timeout_s=120):
+        calls.append(cmd[cmd.index("--proxy") + 1])
+        if "res:1" in calls[-1]:
+            return 1, "", "ERROR: Sign in to confirm you're not a bot"
+        return 0, "ok", ""
+
+    monkeypatch.setattr(yt, "run_cmd", fake_run)
+    assert await yt._ytdlp(["x"]) == "ok"
+    assert calls == ["http://u:p@res:1", "socks5h://warp:1080"]
+
+    async def not_found(cmd, timeout_s=120):  # a real "no such video" is not retried
+        return 1, "", "ERROR: Video unavailable"
+
+    monkeypatch.setattr(yt, "run_cmd", not_found)
+    with pytest.raises(yt.TeacherIngestError) as ei:
+        await yt._ytdlp(["x"])
+    assert ei.value.error_type == "VIDEO_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_download_video_reuses_cache(monkeypatch, tmp_path):
+    from app.services.intraday_hunter_v2.teacher import youtube as yt
+
+    monkeypatch.setenv("IH_TEACHER_VIDEO_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(yt, "require_tool", lambda n: "/bin/" + n)
+    downloads = []
+
+    async def fake_ytdlp(args, timeout_s=120):
+        out = args[args.index("-o") + 1]
+        downloads.append(out)
+        Path(out).write_bytes(b"video")
+        return ""
+
+    monkeypatch.setattr(yt, "_ytdlp", fake_ytdlp)
+    p1 = await yt.download_video("abc", str(tmp_path / "w1"), height=360)
+    p2 = await yt.download_video("abc", str(tmp_path / "w2"), height=360)   # retry: no refetch
+    assert len(downloads) == 1 and Path(p1).read_bytes() == Path(p2).read_bytes() == b"video"
+    await yt.download_video("abc", str(tmp_path / "w3"), height=480)        # other height: fetch
+    assert len(downloads) == 2

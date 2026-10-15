@@ -24,7 +24,7 @@ _PLAN_RE = re.compile(r"prediction\s+for\s+(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})
 
 class TeacherIngestError(Exception):
     """Classified ingestion failure. error_type: VIDEO_NOT_FOUND | DOWNLOAD_BLOCKED |
-    SUBS_MISSING | TOOL_MISSING | PARSE_FAILED | TIMEOUT."""
+    PROXY_FAILED | FORMAT_UNAVAILABLE | SUBS_MISSING | TOOL_MISSING | PARSE_FAILED | TIMEOUT."""
 
     def __init__(self, error_type: str, detail: str = ""):
         super().__init__(f"{error_type}: {detail}")
@@ -43,6 +43,10 @@ def require_tool(name: str) -> str:
 def classify_ytdlp_error(stderr: str) -> str:
     """Map yt-dlp stderr text to a TeacherIngestError type (PURE)."""
     s = (stderr or "").lower()
+    if "proxy" in s or "tunnel connection failed" in s or "407" in s:
+        return "PROXY_FAILED"
+    if "requested format is not available" in s or "only images are available" in s:
+        return "FORMAT_UNAVAILABLE"  # a half-blocked exit serves storyboards only
     if "sign in to confirm" in s or "429" in s or "403" in s or "too many requests" in s \
             or "forbidden" in s or "bot" in s:
         return "DOWNLOAD_BLOCKED"
@@ -70,16 +74,52 @@ async def run_cmd(cmd: list[str], timeout_s: int = 120) -> tuple[int, str, str]:
     return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
 
-def ytdlp_network_args(env: dict) -> list[str]:
-    """yt-dlp proxy / player-client / cookie flags from the environment (PURE).
+# A failure on the primary proxy that is worth retrying on the fallback one.
+_FALLBACK_ON = frozenset({"DOWNLOAD_BLOCKED", "PROXY_FAILED", "TIMEOUT", "FORMAT_UNAVAILABLE"})
 
-    IH_YTDLP_PROXY (prod: socks5h://warp:1080, the Cloudflare WARP container) routes every
-    yt-dlp request through the proxy — YouTube blocks the VM's datacenter IP outright. Behind
-    the proxy the default player client is used: `web_embedded` returns only storyboard images
-    there. Without a proxy (the Mac) `web_embedded` stays the default. IH_YTDLP_PLAYER_CLIENT
-    overrides the client either way ("" = yt-dlp's default); IH_YTDLP_COOKIES adds --cookies.
+
+def ytdlp_proxy_chain(env: dict) -> list[str]:
+    """Proxies to try in order: IH_YTDLP_PROXY then IH_YTDLP_PROXY_FALLBACK (deduped, blanks
+    dropped); [""] = direct when neither is set. PURE.
+
+    Prod: the Cloudflare WARP container first (free), then the residential proxy (GitHub secret
+    IH_YTDLP_RESIDENTIAL_PROXY, a sticky India home IP, paid per GB) only when YouTube is
+    rate-limiting WARP's shared exits.
     """
-    proxy = env.get("IH_YTDLP_PROXY") or ""
+    chain: list[str] = []
+    for key in ("IH_YTDLP_PROXY", "IH_YTDLP_PROXY_FALLBACK"):
+        p = (env.get(key) or "").strip()
+        if p and p not in chain:
+            chain.append(p)
+    return chain or [""]
+
+
+_CREDS_RE = re.compile(r"(://)[^/@\s]+@")
+
+
+def redact(text: str) -> str:
+    """Strip `user:pass@` from any URL in `text` (yt-dlp errors can echo the proxy URL). PURE."""
+    return _CREDS_RE.sub(r"\1***@", text or "")
+
+
+def proxy_label(proxy: str) -> str:
+    """`scheme://host:port` with any credentials stripped — safe to log. PURE."""
+    if not proxy:
+        return "direct"
+    scheme, _, rest = proxy.partition("://")
+    return f"{scheme}://{rest.rsplit('@', 1)[-1]}" if rest else proxy.rsplit("@", 1)[-1]
+
+
+def ytdlp_network_args(env: dict, proxy: str | None = None) -> list[str]:
+    """yt-dlp proxy / player-client / cookie flags (PURE).
+
+    `proxy` (default: env IH_YTDLP_PROXY) routes every yt-dlp request through it — YouTube
+    blocks the VM's datacenter IP outright. Behind a proxy the default player client is used:
+    `web_embedded` returns only storyboard images there. Without a proxy (the Mac) `web_embedded`
+    stays the default. IH_YTDLP_PLAYER_CLIENT overrides the client either way ("" = yt-dlp's
+    default); IH_YTDLP_COOKIES adds --cookies.
+    """
+    proxy = (env.get("IH_YTDLP_PROXY") or "") if proxy is None else proxy
     client = env.get("IH_YTDLP_PLAYER_CLIENT", "" if proxy else "web_embedded")
     extra: list[str] = []
     if proxy:
@@ -98,11 +138,24 @@ async def _ytdlp(args: list[str], timeout_s: int = 120) -> str:
     fetch to ffmpeg — ffmpeg ignores --proxy and would hit YouTube from the blocked IP).
     """
     exe = require_tool("yt-dlp")
-    extra = ytdlp_network_args(dict(os.environ))
-    rc, out, err = await run_cmd([exe, "--no-update", *extra, *args], timeout_s)
-    if rc != 0:
-        raise TeacherIngestError(classify_ytdlp_error(err), err.strip()[-300:])
-    return out
+    env = dict(os.environ)
+    chain = ytdlp_proxy_chain(env)
+    for i, proxy in enumerate(chain):
+        last = i == len(chain) - 1
+        try:
+            rc, out, err = await run_cmd(
+                [exe, "--no-update", *ytdlp_network_args(env, proxy), *args], timeout_s)
+            if rc != 0:
+                raise TeacherIngestError(classify_ytdlp_error(err), redact(err.strip())[-300:])
+            if i:
+                logger.info("ih_v2 teacher: yt-dlp succeeded via fallback %s", proxy_label(proxy))
+            return out
+        except TeacherIngestError as e:
+            if last or e.error_type not in _FALLBACK_ON:
+                raise
+            logger.warning("ih_v2 teacher: yt-dlp %s via %s — retrying via %s",
+                           e.error_type, proxy_label(proxy), proxy_label(chain[i + 1]))
+    raise TeacherIngestError("PARSE_FAILED", "empty proxy chain")  # unreachable
 
 
 async def list_channel_videos(limit: int = 40) -> list[dict]:
@@ -240,11 +293,41 @@ async def fetch_hindi_auto_subs(video_id: str, workdir: str) -> str | None:
     return text or None
 
 
+CACHE_KEEP_S = 3 * 24 * 3600
+
+
+def video_cache_dir(env: dict) -> str:
+    """Where downloaded videos are kept between attempts (IH_TEACHER_VIDEO_CACHE). PURE."""
+    import tempfile
+    return env.get("IH_TEACHER_VIDEO_CACHE") or os.path.join(tempfile.gettempdir(), "ih_teacher_video_cache")
+
+
+def _prune_cache(cache: str, now: float, keep_s: int = CACHE_KEEP_S) -> None:
+    """Delete cached videos older than `keep_s`."""
+    for f in glob.glob(os.path.join(cache, "*.mp4")):
+        try:
+            if now - os.path.getmtime(f) > keep_s:
+                os.remove(f)
+        except OSError:
+            pass
+
+
 async def download_video(video_id: str, workdir: str, height: int = 720) -> str:
-    """Download the video (<= height p, mp4) into workdir; returns the file path."""
+    """Download the video (<= height p, mp4) into workdir; returns the file path.
+
+    A successful download is kept in `video_cache_dir` (3 days), so a retry after a parse
+    failure reuses it instead of fetching the video again through the proxy.
+    """
+    import time as _t
     os.makedirs(workdir, exist_ok=True)
     require_tool("ffmpeg")
     target = os.path.join(workdir, f"{video_id}.mp4")
+    cache = video_cache_dir(dict(os.environ))
+    cached = os.path.join(cache, f"{video_id}_{height}.mp4")
+    if os.path.exists(cached) and os.path.getsize(cached) > 0:
+        shutil.copyfile(cached, target)
+        logger.info("ih_v2 teacher: reusing cached video %s (%dp)", video_id, height)
+        return target
     await _ytdlp(["-f", f"b[height<={height}][ext=mp4]/bv*[height<={height}]+ba/b[height<={height}]",
                   "--merge-output-format", "mp4", "-o", target,
                   f"https://www.youtube.com/watch?v={video_id}"], timeout_s=900)
@@ -254,6 +337,12 @@ async def download_video(video_id: str, workdir: str, height: int = 720) -> str:
         if not found:
             raise TeacherIngestError("DOWNLOAD_BLOCKED", "download produced no file")
         target = found[0]
+    try:
+        os.makedirs(cache, exist_ok=True)
+        _prune_cache(cache, _t.time())
+        shutil.copyfile(target, cached)
+    except OSError:
+        logger.warning("ih_v2 teacher: could not cache video %s", video_id)
     return target
 
 

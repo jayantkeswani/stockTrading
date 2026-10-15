@@ -43,9 +43,12 @@ services:
       # default /tmp lives on the container's ephemeral layer and every deploy
       # (docker compose up recreates st-backend) wipes the chart history.
       INTRADAY_HUNTER_CHART_DIR: /app/intraday_hunter_charts
-      # IH v2 teacher ingestion: yt-dlp goes through the WARP container — YouTube blocks the
-      # VM's datacenter IP. Unset it to download direct (with the web_embedded client).
+      # IH v2 teacher ingestion: YouTube blocks the VM's datacenter IP. yt-dlp tries the WARP
+      # container first (free) and falls back to the paid residential proxy only when WARP is
+      # blocked (IH_YTDLP_RESIDENTIAL_PROXY, a sticky India home IP, written into .env from the
+      # GitHub secret by deploy.yml). Without the secret there is no fallback.
       IH_YTDLP_PROXY: socks5h://warp:1080
+      IH_YTDLP_PROXY_FALLBACK: ${IH_YTDLP_RESIDENTIAL_PROXY:-}
     volumes:
       - backend_logs:/app/logs
       - st_ih_charts:/app/intraday_hunter_charts
