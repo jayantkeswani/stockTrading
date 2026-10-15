@@ -163,6 +163,7 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
    - **teacher:** side, entry/exit clocks, P&L, whether a PDH/PDL broke before his entry and whether he went with it.
    - **v1 / v2:** decision, side, decision time, real paper net P&L (YOLO and SHADOW), exit reasons, and the barrier label from their own entry.
    - **arms:** each arm's first side in the decision window, plus a **counterfactual basket P&L on the real captured premium candles**. The replay uses v2's basket shape, 1 lot per leg, and the same `evaluate_basket` rules: entry at the close of the candle before the decision, evaluated on each later candle close, LTP basis.
+   - **skip_cost arm:** on a day v2 SKIPs and the teacher's plan has a side for today's opening, that side entered at the Call 2 deadline (`call2_deadline`), priced like the other arms. Positive = the skip left money on the table; negative = it saved money. Absent on days v2 entered. The ledger's `skip_cost` row counts skip days (`n`) and their mean cost — the check on whether the plan-side-first prompt skips too much.
    - **gates:** v2's P&L with each gate enforced.
    - Also fills **v1's `outcome_played_out`**: on ENTER, side == clean side; on SKIP, no clean side.
 2. **Ledger** — `GET /v2/ledger`, per arm over the last 20 and 60 graded days: n, right-side %, win %, mean counterfactual P&L, t-stat, first-half vs second-half mean, and the gate what-ifs.

@@ -388,6 +388,25 @@ class TestGrading:
         assert grading.first_touch(tie, 100.0, "CE", 0.25, 0.20) == "stop"  # same-candle tie
         assert grading.clean_side([c("09:16", 100, 100.1, 99.9, 100)], 100.0, 0.25, 0.2) is None
 
+    def test_skip_cost_entry_only_on_skip_with_plan(self):
+        assert grading.skip_cost_entry("SKIP", "CE", "09:30") == {"side": "CE", "decision_at": "09:30"}
+        assert grading.skip_cost_entry("ENTER", "CE", "09:30") is None   # v2 traded
+        assert grading.skip_cost_entry(None, "PE", "09:30") is None      # v2 never ran
+        assert grading.skip_cost_entry("SKIP", None, "09:30") is None    # no teacher plan
+        assert "skip_cost" in grading.ARMS
+
+    def test_ledger_counts_skip_cost_days_only(self):
+        rows = [
+            {"trading_date": "2026-10-14", "market": {"clean_side": "CE"},
+             "arms": {"skip_cost": {"side": "CE", "cf": {"pnl": 12000.0}}}},
+            {"trading_date": "2026-10-15", "market": {"clean_side": "CE"},
+             "arms": {"skip_cost": {"side": None}}},                       # v2 entered that day
+            {"trading_date": "2026-10-16", "market": {"clean_side": "PE"},
+             "arms": {"skip_cost": {"side": "CE", "cf": {"pnl": -10000.0}}}},
+        ]
+        sc = grading.compute_ledger(rows, 20)["skip_cost"]
+        assert sc["n"] == 2 and sc["n_cf"] == 2 and sc["mean_cf_pnl"] == 1000.0
+
     def test_majority(self):
         assert grading.majority({"a": "CE", "b": "CE", "c": "PE"}) == "CE"
         assert grading.majority({"a": "CE", "b": None, "c": "PE"}) is None
