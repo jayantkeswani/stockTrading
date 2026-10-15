@@ -129,6 +129,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN=${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
           JEV_ENABLED=true
+          IH_YTDLP_RESIDENTIAL_PROXY=${{ secrets.IH_YTDLP_RESIDENTIAL_PROXY }}
           GCP_PROJECT_ID=stock-trading-prod
           VERTEX_AI_LOCATION=global
           RESEARCH_LLM_PROVIDER=${{ vars.RESEARCH_LLM_PROVIDER }}
