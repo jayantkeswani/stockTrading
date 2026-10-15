@@ -319,6 +319,10 @@ def test_proxy_credentials_never_logged():
     assert "pw" not in redact(f"ERROR: Unable to connect to proxy {res}")
     assert classify_ytdlp_error(f"ERROR: Unable to connect to proxy {res}") == "PROXY_FAILED"
     assert classify_ytdlp_error("HTTP Error 407 Proxy Authentication Required") == "PROXY_FAILED"
+    # a dead first proxy (e.g. the WARP container down) must fall back too
+    assert classify_ytdlp_error("ERROR: [youtube] x: Unable to download API page: [Errno 111] Connection "
+                                "refused (caused by TransportError('[Errno 111] Connection refused'))") == "PROXY_FAILED"
+    assert classify_ytdlp_error("ERROR: Read timed out.") == "PROXY_FAILED"
     assert classify_ytdlp_error("Sign in to confirm you're not a bot") == "DOWNLOAD_BLOCKED"
 
 
