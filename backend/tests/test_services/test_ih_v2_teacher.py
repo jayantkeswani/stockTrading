@@ -244,3 +244,54 @@ def test_real_live_fixtures(d, side, entry, exit_, total):
     assert (live["side"], live["entry_clock"], live["exit_clock"]) == (side, entry, exit_)
     assert live["total_pnl"] == total and live["legs_sum_ok"]
     assert len(live["legs"]) == 4 and {l["index"] for l in live["legs"]} == {"BANKNIFTY", "NIFTY", "SENSEX"}
+
+
+# ── retry policy: only the final attempt alerts (YouTube blocks come and go for hours) ──
+@pytest.mark.asyncio
+async def test_record_failure_notifies_only_when_asked():
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.services.intraday_hunter_v2.teacher import ingest
+
+    sess = MagicMock()
+    sess.commit = AsyncMock()
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=sess)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    row = MagicMock(errors=[])
+    with patch.object(ingest, "async_session_factory", return_value=cm), \
+         patch.object(ingest, "_get_or_create", new=AsyncMock(return_value=row)), \
+         patch.object(ingest, "send_telegram", new=AsyncMock()) as tg:
+        await ingest._record_failure(date(2026, 10, 15), "live@17:30", "DOWNLOAD_BLOCKED", "bot check",
+                                     notify=False)
+        tg.assert_not_awaited()
+        await ingest._record_failure(date(2026, 10, 15), "live@07:30", "DOWNLOAD_BLOCKED", "bot check")
+        tg.assert_awaited_once()
+
+
+def test_next_and_prev_trading_day_skip_weekends():
+    from app.tasks.intraday_hunter_v2_task import next_trading_day, prev_trading_day
+
+    assert next_trading_day(date(2026, 10, 16)) == date(2026, 10, 19)   # Fri -> Mon
+    assert prev_trading_day(date(2026, 10, 19)) == date(2026, 10, 16)   # Mon -> Fri
+    assert next_trading_day(date(2026, 10, 14)) == date(2026, 10, 15)
+
+
+@pytest.mark.asyncio
+async def test_live_catchup_targets_previous_day_and_regrades():
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.tasks import intraday_hunter_v2_task as task
+    from app.services.intraday_hunter_v2.teacher import ingest
+
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=MagicMock())
+    cm.__aexit__ = AsyncMock(return_value=False)
+    fetched = MagicMock(live={"side": "CE"})
+    with patch.object(task, "now_ist", return_value=datetime(2026, 10, 16, 7, 30, tzinfo=IST)), \
+         patch.object(task, "_enabled_for", new=AsyncMock(return_value=True)), \
+         patch.object(task, "async_session_factory", return_value=cm), \
+         patch.object(ingest, "get_teacher_day", new=AsyncMock(return_value=None)), \
+         patch.object(ingest, "run_live_job", new=AsyncMock(return_value=fetched)) as run, \
+         patch.object(task, "_grade", new=AsyncMock()) as grade:
+        await task.live_job("07:30 catch-up", True, True)
+    run.assert_awaited_once_with(date(2026, 10, 15), "07:30 catch-up", final=True)
+    grade.assert_awaited_once_with(date(2026, 10, 15))
