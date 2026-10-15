@@ -1,5 +1,5 @@
 """IH v2 flow: basket signal shape (his strikes), OTM strike selection, the runtime kill switch,
-and the Call 2 watcher cadence (09:16 first, every minute, 09:25 deadline, single-flight)."""
+and the Call 2 watcher cadence (09:16 first, every minute, 09:30 deadline, single-flight)."""
 from datetime import date, datetime, time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -148,8 +148,8 @@ class TestWatcherCadence:
 
     @pytest.mark.asyncio
     async def test_first_at_0916_every_minute_to_deadline(self):
-        calls = await self._drive(range(14, 30), {})
-        assert calls == [f"09:{m}" for m in range(16, 26)]
+        calls = await self._drive(range(14, 35), {})
+        assert calls == [f"09:{m}" for m in range(16, 31)]
 
     @pytest.mark.asyncio
     async def test_enter_finalizes(self):
@@ -327,5 +327,5 @@ class TestChallengerWatcher:
 
     @pytest.mark.asyncio
     async def test_runs_to_deadline_while_waiting(self):
-        calls = await self._drive(range(15, 30), {})
-        assert [c[0] for c in calls] == [f"09:{m}" for m in range(16, 26)]
+        calls = await self._drive(range(15, 35), {})
+        assert [c[0] for c in calls] == [f"09:{m}" for m in range(16, 31)]

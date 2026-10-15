@@ -37,7 +37,7 @@ INTRADAY_HUNTER_V2_DEFAULTS: dict = {
     "round_step": {"NIFTY": 100, "BANKNIFTY": 500, "SENSEX": 500},
     # ── Call 2 cadence (wall-clock decision times, IST) ──
     "call2_first": "09:16",               # first decision fires on the 09:15 candle close
-    "call2_deadline": "09:25",            # last possible decision; WAIT at the deadline -> SKIP
+    "call2_deadline": "09:30",            # last possible decision; WAIT at the deadline -> SKIP
     "call2_model": None,                  # None -> settings.intraday_hunter_v2_call2_model
     "call2_timeout_s": 60,
     # Extra system-prompt text appended to every Call 2 ("" = none). A prompt challenger

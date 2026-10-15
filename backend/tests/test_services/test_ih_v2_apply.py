@@ -43,7 +43,7 @@ class TestValidatePlan:
         assert v["override"] == {"call2_prompt_addendum": "Wait for a second index to confirm."}
 
     def test_call2_input_param_is_shadow_call2(self):
-        v = apply.validate_plan(plan(params_override={"call2_deadline": "09:30"}), CHAMP)
+        v = apply.validate_plan(plan(params_override={"call2_deadline": "09:35"}), CHAMP)
         assert v["mode"] == "shadow_call2"
 
     def test_code_needs_brief(self):

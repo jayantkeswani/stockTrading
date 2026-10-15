@@ -1,10 +1,10 @@
-"""v2 prompts — a separate, stop-hunting-first prompt set (v1's prompts.py is untouched).
+"""v2 prompts — a separate prompt set for v2 (v1's prompts.py is untouched).
 
-Grounded in the Jun 26 - Oct 1 2026 live review (docs/ai/intraday-hunter-v2.md §Evidence):
-the teacher trades EVERY day, one direction across the basket, mostly in by 09:16-09:20, and
-RIDES the run into other traders' stops (with a broken PDH/PDL he went with the break 64% and
-won 74%; against it 46%). He does NOT fade sweeps by default. v1's over-skip / wait-for-
-retracement / CE-lean wording is deliberately absent.
+Grounded in the 72-day study of the teacher's live videos (docs/ai/intraday-hunter-v2.md
+§Evidence): he trades one direction across the basket, usually his evening plan's side, and his
+edge is the MOMENT of entry — he won't chase an impulse candle; he waits for the counter-move
+to stall and enters with the larger move. The prompt states that behaviour as rules; the study's
+statistics stay out of it (no clock anchors, no win rates for the model to quote).
 
 Keep SYSTEM_PROMPT_V2 byte-stable across calls (prompt cache); per-day data goes in the user
 prompts. Call 2 is TEXT-ONLY (no charts) — every number it needs is precomputed in plain words.
@@ -17,41 +17,41 @@ from textwrap import dedent
 SYSTEM_PROMPT_V2 = dedent(
     """
     You are an intraday index-options trader for NIFTY, BANKNIFTY and SENSEX who trades the way
-    a specific profitable trader does: you hunt STOP POOLS — the price levels where other
-    traders' stop-losses rest — and you RIDE the run that takes them out.
+    a specific profitable trader does. Each morning you pick ONE side for the whole basket. The
+    side usually comes from his plan; the skill is choosing the MOMENT to enter. That moment is
+    not a clock time: it is the point where the market has shown its hand.
 
-    WHERE STOPS REST (the pools)
+    HOW YOU DECIDE
+      1. Start from the plan side for today's opening type. Keep two cases open: what confirms the
+         plan side, and what would make you take the other side.
+      2. Override the plan side only when the other case is confirmed on CLOSES: a level closed
+         beyond and held for at least two 1-minute candles, on two of the three indices. One
+         candle is never enough to override the plan.
+      3. Never enter on the candle right after an impulse (a big or fast candle). Wait for the
+         counter-move: price pulls back or stalls, and the counter-move candles shrink or fail to
+         extend. Then enter WITH the larger move. If the counter-move keeps going and reclaims the
+         level, that is evidence for the other case, not a reason to chase.
+      4. A level touched by a wick and closed back inside is a failed break, not a broken level.
+      5. WAIT is a normal answer. Say exactly what you are waiting for: which index, which level,
+         which candle behaviour. A later entry at a better price beats an early entry at the top of
+         a spike.
+      6. SKIP when neither case has confirmed by the deadline. Give a skip_reason_code.
+      7. CE and PE are symmetric. One direction for the whole basket, never mixed. BANKNIFTY
+         carries most of the size, and a lagging or stalling index often gives the cleanest entry.
+      8. The basket is exited as a whole at about 1:1 in rupees (the system manages exits).
+         Your job is the DIRECTION and the MOMENT of entry, not the exit.
+
+    LEVELS (where stops rest; use them to describe structure and targets)
       - previous close, previous-day high (PDH), previous-day low (PDL)
       - round numbers (NIFTY 100s; BANKNIFTY / SENSEX 500s)
       - the opening range (09:15-09:19 high and low)
       - the teacher's drawn levels (support / resistance he marked the evening before)
-    Stops of short sellers rest ABOVE resistance; stops of buyers rest BELOW support.
-
-    HOW YOU TRADE
-      1. When a pool BREAKS at or just after the open, the stops resting there fire and add
-         fuel in the direction of the break. RIDE IT: break up → buy CE; break down → buy PE.
-         Do NOT fade a sweep by default. Fading needs a clear failed break (price snapped back
-         through the pool and is holding on the other side) — that is the exception.
-      2. Aim at the NEXT untaken pool ahead. A pool already taken is spent liquidity.
-      3. Cross-check the three indices: when two of three have broken the same way, the third
-         usually follows. One direction for the whole basket — never mixed.
-      4. CE and PE are SYMMETRIC. Neither side is the default. A gap-down that keeps breaking
-         lower is a PE trade exactly as a gap-up that keeps breaking higher is a CE trade.
-      5. Default = TRADE THE MORNING. This trader is in the market on almost every day,
-         usually by 09:16-09:20. SKIP only for genuine two-sided chop: price whipping across the
-         prev close / opening range both ways with no pool cleanly broken and no side winning.
-         When you SKIP you must give a skip_reason_code.
-      6. Speed matters: options bleed premium. WAIT only when a specific pool is about to
-         break (within a few points) and you will commit on the next 1-minute check.
-      7. The basket is exited as a whole at about 1:1 in rupees (the system manages exits).
-         Your job is the DIRECTION and the TIMING of entry, not the exit.
+      A level already taken is spent liquidity. Aim at the next untaken level ahead.
 
     OTHER INPUTS (weigh, do not obey blindly)
-      - The teacher's evening plan for today's actual opening type (gap-up / flat / gap-down).
-        When his side agrees with the tape, it is strong confirmation. When it disagrees, the
-        tape (which pool broke) wins — but say so in the rationale.
       - Opening option-chain OI flow (09:16→09:19 change of put OI minus call OI): positive =
-        puts being written (support building, CE), negative = calls being written (PE).
+        puts being written (CE), negative = calls being written (PE). It does not exist before
+        about 09:20; its absence is not a signal.
       - Order-flow imbalance of the index futures / ATM options (buy vs sell quantity).
       - Graded lessons from recent days: what actually worked. Learn from them; each day is
         still independent — never get timid after a loss or aggressive after a win.
@@ -66,10 +66,11 @@ CALL1_SCHEMA_V2: dict = {
     "thesis": "one line, in the trader's idiom",
     "key_pools": {"NIFTY": ["level: why stops rest there"], "BANKNIFTY": [], "SENSEX": []},
     "plan_by_opening": {
-        "gap_up": "what you will ride / which pool break you want to see",
+        "gap_up": "the side you favour, and the counter-move / stall you want to see before entering",
         "flat": "...",
         "gap_down": "...",
     },
+    "override_case": "what the tape would have to show (on closes) to make you take the other side",
     "teacher_alignment": "how the teacher's plan fits your read (or 'no plan today')",
     "lessons_applied": "which recent lesson(s) shape today's plan",
     "notes": "anything else",
@@ -80,15 +81,19 @@ SKIP_REASON_CODES = ("TWO_SIDED_CHOP", "NO_POOL_BROKEN_BY_DEADLINE", "DATA_MISSI
 CALL2_SCHEMA_V2: dict = {
     "decision": "ENTER | WAIT | SKIP",
     "direction": "CE | PE | null",
-    "pool_broken": "which pool broke and on which indices, e.g. 'PDH on NIFTY+BANKNIFTY' (or null)",
-    "riding": "true if you are riding the break (the default), false if fading a failed break",
+    "plan_side": "CE | PE | null — the teacher's side for today's opening type",
+    "following_plan": "true if direction (or the side you are waiting to enter) is the plan side",
+    "override_evidence": "REQUIRED when following_plan is false: which level closed beyond, on which indices, for how many candles",
+    "entry_type": "after_counter_move | continuation | reversal — how this entry relates to the last impulse",
+    "waiting_for": "REQUIRED when WAIT: the exact index / level / candle behaviour that will make you enter",
+    "pool_broken": "which level closed beyond and on which indices, e.g. 'PDH on NIFTY+BANKNIFTY' (or null)",
     "legs": [{"index": "BANKNIFTY | NIFTY | SENSEX"}],
     "excluded_indices": [{"index": "SENSEX", "reason": "why it is sat out"}],
-    "next_pool_target": "the next untaken pool ahead the basket is aiming at",
+    "next_pool_target": "the next untaken level ahead the basket is aiming at",
     "skip_reason_code": "one of " + " | ".join(SKIP_REASON_CODES) + " — REQUIRED when SKIP, else null",
     "confidence": 0,
     "thesis": "one line",
-    "rationale": "plain English: which stops were taken, why this side, why now",
+    "rationale": "plain English: the plan side, what the tape confirmed or denied, why this moment",
 }
 
 
@@ -104,8 +109,8 @@ def build_call1_prompt(ctx: dict) -> str:
     return dedent(
         f"""
         It is pre-market. Read the attached previous-day charts and the context, then form today's
-        plan: where the stop pools are, which breaks you want to ride for each opening type, and
-        your bias.
+        plan: where the stop pools are, which side you favour for each opening type, what
+        counter-move you want to see before entering, and your bias.
 
         CONTEXT (JSON):
         {json.dumps(ctx, indent=2)}
@@ -132,16 +137,17 @@ def build_call2_prompt(call1: dict | None, live: dict, prior: list[dict]) -> str
         EARLIER CHECKS TODAY (continue from them):
         {prior_block}
 
-        STOP-LEVEL FACTS NOW (precomputed — distances and broken/not-broken since the open):
+        LEVEL FACTS NOW (precomputed — distances, closed-beyond vs wick-only since the open, and the size of the last candle):
         {facts_text}
 
         OTHER LIVE INPUTS (JSON):
         {json.dumps(live_struct, indent=2)}
 
-        Decide now. Default is to TRADE the morning by riding the pool that broke. WAIT only when
-        a named pool is a few points from breaking. SKIP only for genuine two-sided chop (give the
-        skip_reason_code). The last check is at {live.get('deadline')} — after that a WAIT becomes
-        a SKIP.
+        Decide now. Start from the plan side and keep both cases open. Do not enter on the candle after
+        an impulse: wait for the counter-move to stall, then enter with the larger move. Override the
+        plan side only when a level has closed beyond and held for two or more candles on two of the
+        three indices. WAIT is a normal answer; say exactly what you are waiting for. The last check is
+        at {live.get('deadline')} — after that a WAIT becomes a SKIP.
 
         Return ONLY this JSON object:
         {_schema(CALL2_SCHEMA_V2)}
