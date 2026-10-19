@@ -366,7 +366,7 @@ Kill switch: strategy_configs.is_active('intraday_hunter_v2') (≤15s, fails clo
 09:10   ATM±2 CE/PE subscribe (re-centred 09:16:30) → feed_manager persists premium 1m candles
 09:15–09:45  1-min option chain → oi_snapshots (opening OI flow)
 NIFTY 1m candle close (feed_manager._emit_candle, wrapped, fire-and-forget):
-   ├── ih_v2_watcher: Call 2 at candle+1 → 09:16 first, every minute, 09:30 deadline
+   ├── ih_v2_watcher: Call 2 at candle+1 → 09:16 first, every minute, 09:45 deadline
    │     text-only facts (levels.py stop pools, OI flow, order flow, teacher side) → Sonnet-class
    │     ENTER → signals.py: BN ATM+OTM-1, NIFTY ATM, SENSEX ATM → strategy_runner._handle_signal
    │            → shadow (1 lot) + YOLO profile IH-v2 (2 lots/leg) — strike-aware, isolated from v1
@@ -379,7 +379,7 @@ trade_monitor (500ms): _check_ih_baskets in a SAVEPOINT, BEFORE the per-position
    pct×cost) → close ALL legs (BASKET_TARGET/STOP), optional round-number hold (v2), 11:30
    BASKET_TIME; per-leg checks bypassed for IH legs (15:25 last-resort fallback);
    "Close v1/v2 basket" → MANUAL_BASKET (shadow left as counterfactual)
-09:34   alert if v1 or v2 has no decision · 09:20–15:20 alert on missing/stale index candles
+09:49   alert if v1 or v2 has no decision · 09:20–15:20 alert on missing/stale index candles
 15:45/17:30/19:30/21:30 (+07:30 next-day catch-up)  teacher live trade (5s frames → PIL positions-screen detector → Claude vision on a
         few frames → teaser-aware entry/exit + per-leg merge) → ih_teacher_days (after hours)
 16:00   grade → ih_day_grades (market first-touch labels, teacher, v1/v2 real P&L, every arm's

@@ -277,7 +277,7 @@ def build_lesson(d: date, market: dict, teacher: dict | None, v2: dict | None, a
     v2_res = (v2 or {}).get("yolo_net_pnl")
     taken = sorted({p for ps in pools_by_index.values() for p in ps})
     take = (f"{market.get('opening', '?').replace('_', '-')} open; "
-            f"{'pools taken: ' + ', '.join(taken) if taken else 'no pool broken by 09:25'}; "
+            f"{'pools taken: ' + ', '.join(taken) if taken else 'no pool broken by the deadline'}; "
             f"clean side {clean or 'none (chop)'}; "
             f"v2 {v2_side or 'skipped'}{'' if v2_res is None else f' ({v2_res:+.0f})'}"
             f"{'; teacher ' + t_side if t_side else ''}; right arms: {', '.join(right) or 'none'}.")

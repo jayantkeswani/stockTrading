@@ -23,7 +23,7 @@ function Gate({ label, gate }: { label: string; gate?: IhGateResult }) {
   );
 }
 
-/** v2 Call 2 per-minute decision log (09:16-09:30). Used by: V2Panel, V2HistoryModal */
+/** v2 Call 2 per-minute decision log (09:16-09:45). Used by: V2Panel, V2HistoryModal */
 export function DecisionLog({ history }: { history: IhV2Call2Entry[] }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
   const toggle = (i: number) =>
@@ -36,7 +36,7 @@ export function DecisionLog({ history }: { history: IhV2Call2Entry[] }) {
   return (
     <Section title="Decision log (Call 2)" right={<span className="text-[10px] font-mono text-text-muted">{history.length} calls</span>}>
       {history.length === 0 ? (
-        <Empty>no decisions yet — watcher runs every minute 09:16–09:30</Empty>
+        <Empty>no decisions yet — watcher runs every minute 09:16–09:45</Empty>
       ) : (
         <div className="space-y-1.5 max-h-[520px] overflow-y-auto">
           {[...history].reverse().map((h, ri) => {

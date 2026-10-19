@@ -3,7 +3,7 @@
 Behind `JEV_ENABLED` + `OPENROUTER_API_KEY` (+ `JEV_MODEL`, default the pinned latest stable
 `typesafe/jev-1.13`). Jev answers typed questions (Choice / Score / Noul) with probabilities in
 ~70-500ms; it is weak at arithmetic, so it gets plain-language precomputed facts only. From 09:15
-to 09:25 each minute: side ∈ {CE, PE, WAIT} + pool_broken_and_riding (Noul); while v2 holds a
+to `call2_deadline` each minute: side ∈ {CE, PE, WAIT} + pool_broken_and_riding (Noul); while v2 holds a
 position: hold ∈ {HOLD, EXIT}. The answer, probabilities and latency go into
 ih_minute_log.arms.jev. Any failure returns {"error": ...} — never raises.
 

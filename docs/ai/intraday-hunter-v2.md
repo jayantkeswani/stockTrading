@@ -33,7 +33,7 @@ Learning loop, weekly proposals and the change-approval procedure: see `docs/ai/
 | Strategy / book | `intraday_hunter` / YOLO `IntradayHunter` | `intraday_hunter_v2` / YOLO `IH-v2` (subscribes only to v2, exec confidence 0) + shadow (1 lot) |
 | Evening input | — | teacher plan (00:00 / 06:00 / 08:00 jobs; 08:30 Telegram alert if missing → `teacher_plan_missing`) |
 | Call 1 (08:45) | prev-day charts + VIX + structural memory | same base **+** teacher plan + drawn levels, pre-open stop pools, last N **graded lessons** (separate v2 prompt). A failed Call 1 does NOT SKIP the day |
-| Call 2 | 09:18 with charts, WAIT re-checks to 09:30 | **09:16** (on the 09:15 candle close), **every minute** to a **09:30** deadline, **text-only**, model `call2_model` (default `claude-sonnet-5-5`); latency logged per call (~15s measured) |
+| Call 2 | 09:18 with charts, WAIT re-checks to 09:30 | **09:16** (on the 09:15 candle close), **every minute** to a **09:45** deadline, **text-only**, model `call2_model` (default `claude-sonnet-5-5`); latency logged per call (~15s measured) |
 | Direction logic | wait for break + hold | **plan side first, then the moment** (see Call 2 prompt below): start from the teacher's side for today's opening; override only on a level closed beyond for 2+ candles on 2 of 3 indices; never enter on the candle after an impulse — wait for the counter-move to stall, then enter with the larger move; WAIT is normal and must name what it waits for; CE/PE symmetric; SKIP when neither case confirms (required `skip_reason_code`) |
 | Gates | — | plan gate + OI gate, **shadow-only** (`enforce_*_gate=false`): computed + logged, never block |
 | Strikes | BN ITM-2 + ITM-1, NIFTY ITM-1, SENSEX ITM-1 | **BN ATM + OTM-1, NIFTY ATM, SENSEX ATM** (`leg_structure`; option_resolver depth −1 = OTM-1) |
@@ -96,11 +96,11 @@ Also computed:
 The system prompt states the teacher's behaviour as rules and keeps the study's statistics out (no clock anchors, no win rates for the model to quote):
 
 1. Start from the plan side for today's opening type; keep two cases open (what confirms it, what would flip it).
-2. Override the plan side only on CLOSES: a level closed beyond and held for ≥2 one-minute candles on 2 of the 3 indices.
+2. Override the plan side only on CLOSES: a level closed beyond and held for ≥2 one-minute candles on 2 of the 3 indices, AND the `override_case` written in Call 1 is met. If its own pre-open override case is not met, it does not switch sides.
 3. Never enter on the candle right after an impulse; wait for the counter-move to stall, then enter WITH the larger move.
 4. A wick through a level that closes back inside is a failed break.
 5. WAIT is a normal answer and names the exact index / level / candle behaviour it waits for.
-6. SKIP when neither case confirms by the deadline. One direction for the whole basket; exits are the system's.
+6. SKIP when neither case confirms by the deadline. A skip costs nothing; the deadline is never a reason to enter — at the last check, enter only on evidence that would have entered at an earlier check. One direction for the whole basket; exits are the system's.
 
 Levels (prev close, PDH/PDL, round numbers, opening range, drawn levels) describe structure and targets. Opening OI flow does not exist before ~09:20 and its absence is not a signal.
 
@@ -175,7 +175,7 @@ The NIFTY candle stamped 09:15 closes at ~09:16:00, so **decision time = candle 
 
 ## Reliability alerts
 
-- 09:34: Telegram if v1 or v2 has no ENTER/SKIP **status**. 09:34 rather than 09:30 so the check never races v1's 09:30 backstop call.
+- 09:49: Telegram if v1 or v2 has no ENTER/SKIP **status**. 4 minutes after v2's 09:45 deadline so the check never races the final deadline call; it must stay after `call2_deadline`.
 - A v2 ENTER that emits zero legs → status `ENTER_RETRY` plus a Telegram alert. Each later minute re-tries the emission (not a new LLM call) up to the deadline. Signal emission stops only on an **explicit** kill (`v2_active(fail_closed=False)`), so a transient DB error cannot drop a decided basket.
 - Basket check failure → it runs inside a SAVEPOINT (rolled back, so it is never half-committed), Telegram once per day, and legs fall back to the 15:25 close.
 - ATM±2 capture (09:10, 09:16:30): Telegram if the job crashes (`capture`) or if any index ends with **no** contracts (`capture_empty` — spot missing or strikes absent from the symbol master), since grading would then have no premium paths for it.

@@ -472,3 +472,20 @@ class TestGrading:
                                       {"NIFTY": ["pdl"]})
         assert lesson["arms_right"] == ["rule_a"] and "pdl" in lesson["one_line_takeaway"]
         assert lesson["v2"] == {"side": "CE", "result": -3000}
+
+
+class TestCall2PromptDeadline:
+    """The deadline must not read as pressure to enter, and an override is held to Call 1's case."""
+
+    def test_skip_is_free_at_deadline(self):
+        from app.services.intraday_hunter_v2.prompts import build_call2_prompt
+
+        p = build_call2_prompt({"override_case": "x"}, {"now": "09:45", "deadline": "09:45",
+                                                         "facts_text": []}, [])
+        assert "the deadline is never a reason to enter" in p
+        assert "WAIT becomes a SKIP" not in p
+
+    def test_override_held_to_preopen_case(self):
+        from app.services.intraday_hunter_v2.prompts import SYSTEM_PROMPT_V2
+
+        assert "override case you wrote in your pre-open plan" in " ".join(SYSTEM_PROMPT_V2.split())

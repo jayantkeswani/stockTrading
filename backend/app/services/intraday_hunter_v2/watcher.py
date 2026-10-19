@@ -3,7 +3,7 @@
 The candle stamped 09:15 closes at ~09:16:00, so decision time = candle minute + 1:
   - 09:16 (the 09:15 candle close): first Call 2.
   - every minute after: re-check while the decision is WAIT.
-  - 09:25 (`call2_deadline`): last call; a WAIT there becomes SKIP.
+  - `call2_deadline` (09:45): last call; a WAIT there becomes SKIP.
 ENTER / SKIP (status) finalize the day. A decided ENTER whose emission produced no legs is
 ENTER_RETRY: each later minute re-tries the emission (no new LLM call) up to the deadline. Single-flight: if a call is still running when the next minute
 arrives, that minute is skipped — unless it is the deadline, in which case a final deadline call

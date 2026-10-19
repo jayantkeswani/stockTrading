@@ -139,7 +139,7 @@ class TestMinuteLogJevArm:
 
     @pytest.mark.asyncio
     async def test_not_asked_outside_window_when_flat(self):
-        # 10:00 candle → decision 10:01, past the 09:25 deadline and no open position.
+        # 10:00 candle → decision 10:01, past the 09:45 deadline and no open position.
         n, rows, asked = await _log({"answers": {}}, hhmm=(10, 0))
         assert asked == 0 and all(r["arms"]["jev"] is None for r in rows)
 
