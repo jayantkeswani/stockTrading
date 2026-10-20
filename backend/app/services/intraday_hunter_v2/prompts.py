@@ -26,7 +26,9 @@ SYSTEM_PROMPT_V2 = dedent(
          plan side, and what would make you take the other side.
       2. Override the plan side only when the other case is confirmed on CLOSES: a level closed
          beyond and held for at least two 1-minute candles, on two of the three indices. One
-         candle is never enough to override the plan.
+         candle is never enough to override the plan. The override must also meet the override
+         case you wrote in your pre-open plan; if your own override case is not met, do not
+         switch sides.
       3. Never enter on the candle right after an impulse (a big or fast candle). Wait for the
          counter-move: price pulls back or stalls, and the counter-move candles shrink or fail to
          extend. Then enter WITH the larger move. If the counter-move keeps going and reclaims the
@@ -35,7 +37,9 @@ SYSTEM_PROMPT_V2 = dedent(
       5. WAIT is a normal answer. Say exactly what you are waiting for: which index, which level,
          which candle behaviour. A later entry at a better price beats an early entry at the top of
          a spike.
-      6. SKIP when neither case has confirmed by the deadline. Give a skip_reason_code.
+      6. SKIP when neither case has confirmed by the deadline. Give a skip_reason_code. A skip
+         costs nothing; a forced trade does. The deadline is never a reason to enter: at the
+         last check, enter only on evidence that would have made you enter at an earlier check.
       7. CE and PE are symmetric. One direction for the whole basket, never mixed. BANKNIFTY
          carries most of the size, and a lagging or stalling index often gives the cleanest entry.
       8. The basket is exited as a whole at about 1:1 in rupees (the system manages exits).
@@ -83,7 +87,7 @@ CALL2_SCHEMA_V2: dict = {
     "direction": "CE | PE | null",
     "plan_side": "CE | PE | null — the teacher's side for today's opening type",
     "following_plan": "true if direction (or the side you are waiting to enter) is the plan side",
-    "override_evidence": "REQUIRED when following_plan is false: which level closed beyond, on which indices, for how many candles",
+    "override_evidence": "REQUIRED when following_plan is false: which level closed beyond, on which indices, for how many candles, and how your pre-open override_case is met",
     "entry_type": "after_counter_move | continuation | reversal — how this entry relates to the last impulse",
     "waiting_for": "REQUIRED when WAIT: the exact index / level / candle behaviour that will make you enter",
     "pool_broken": "which level closed beyond and on which indices, e.g. 'PDH on NIFTY+BANKNIFTY' (or null)",
@@ -146,8 +150,10 @@ def build_call2_prompt(call1: dict | None, live: dict, prior: list[dict]) -> str
         Decide now. Start from the plan side and keep both cases open. Do not enter on the candle after
         an impulse: wait for the counter-move to stall, then enter with the larger move. Override the
         plan side only when a level has closed beyond and held for two or more candles on two of the
-        three indices. WAIT is a normal answer; say exactly what you are waiting for. The last check is
-        at {live.get('deadline')} — after that a WAIT becomes a SKIP.
+        three indices, and only when the override case in your pre-open plan is met. WAIT is a normal
+        answer; say exactly what you are waiting for. The last check is at {live.get('deadline')}. If
+        neither case has confirmed by then, the answer is SKIP: skipping is a normal outcome that costs
+        nothing, and the deadline is never a reason to enter.
 
         Return ONLY this JSON object:
         {_schema(CALL2_SCHEMA_V2)}

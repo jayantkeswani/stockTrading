@@ -1,4 +1,4 @@
-"""v2 Call 2 — the fast, text-only at-open decision (09:16 → every minute → 09:25 deadline).
+"""v2 Call 2 — the fast, text-only at-open decision (09:16 → every minute → `call2_deadline`, 09:45).
 
 Builds precomputed live facts (stop-level facts per index in plain words, opening type, OI flow
 so far, order-flow aggregates, the teacher's side for today's opening, VIX) — no charts — calls the

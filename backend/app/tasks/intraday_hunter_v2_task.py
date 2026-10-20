@@ -7,8 +7,9 @@
   09:05                  reset the order-flow tracker for the day
   09:10 / 09:16          ATM±2 CE/PE capture (counterfactual premium paths), re-centred after the open
   09:20, then :20/:50    index-candle presence check to 15:20 → alert once per index per day (the 2 Sep gap)
-  09:34                  Call 2 decision check for v1 AND v2 → alert if either has no ENTER/SKIP
-                         (09:34, not 09:30, so it never races v1's 09:30 backstop call)
+  09:49                  Call 2 decision check for v1 AND v2 → alert if either has no ENTER/SKIP
+                         (4 min after v2's 09:45 `call2_deadline`, so it never races the final
+                         deadline call; keep it after the deadline if the deadline moves)
                          (these two reliability checks ignore the v2 kill switch — they also guard v1)
   15:45 / 17:30 / 19:30 / 21:30  teacher live-trade ingest — AFTER market hours so the download +
                          ffmpeg never competes with the feed/monitor; a success re-grades the day (→ FINAL)
@@ -48,7 +49,7 @@ JOB_SCHEDULE = {
     "ih_v2_orderflow_reset_0905": "09:05",
     "ih_v2_capture_0910": "09:10", "ih_v2_capture_0916": "09:16:30",
     "ih_v2_candle_check": "09:20 + :20/:50 to 15:20",
-    "ih_v2_call2_check_0934": "09:34",
+    "ih_v2_call2_check_0949": "09:49",
     "ih_v2_live_1545": "15:45", "ih_v2_live_1730": "17:30", "ih_v2_live_1930": "19:30",
     "ih_v2_live_2130": "21:30", "ih_v2_live_catchup_0730": "07:30 (previous day)",
     "ih_v2_grade_1600": "16:00", "ih_v2_weekly_review": "Sat 10:00",
@@ -201,7 +202,7 @@ async def candle_check_job() -> None:
 
 
 async def call2_check_job() -> None:
-    """09:34: every variant must have a final Call 2 decision (status ENTER/SKIP) by now."""
+    """09:49: every variant must have a final Call 2 decision (status ENTER/SKIP) by now."""
     if not (settings.intraday_hunter_v2_enabled and is_trading_day(now_ist().date())):
         return
     from app.services.intraday_hunter import store
@@ -215,7 +216,7 @@ async def call2_check_job() -> None:
             run = await store.get_run(session, d, variant)
             if run is None or (run.status or "").upper() not in ("ENTER", "SKIP"):
                 state = "no run row" if run is None else f"status={run.status} decision={run.decision}"
-                await alert("call2_missing", f"{variant} Call 2 has no decision by 09:34 on {d} "
+                await alert("call2_missing", f"{variant} Call 2 has no decision by 09:49 on {d} "
                                              f"({state})", variant)
 
 
@@ -272,7 +273,7 @@ async def start_intraday_hunter_v2_scheduler() -> None:
     add(capture_job, cron(hour=9, minute=16, second=30), args=["09:16 recentre"],
         id="ih_v2_capture_0916", replace_existing=True)
     add(candle_check_job, cron(hour="9-15", minute="20,50"), id="ih_v2_candle_check", replace_existing=True)
-    add(call2_check_job, cron(hour=9, minute=34), id="ih_v2_call2_check_0934", replace_existing=True)
+    add(call2_check_job, cron(hour=9, minute=49), id="ih_v2_call2_check_0949", replace_existing=True)
     for hh, mm in ((15, 45), (17, 30), (19, 30), (21, 30)):
         add(live_job, cron(hour=hh, minute=mm), args=[f"{hh:02d}:{mm:02d}"],
             id=f"ih_v2_live_{hh:02d}{mm:02d}", replace_existing=True)
